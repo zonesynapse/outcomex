@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { rtdb, auth } from "../firebase";
 import { ref, onValue, set, get } from "firebase/database";
@@ -24,6 +24,7 @@ import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { useSemesterType } from "../hooks/useSemesterType";
 import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay } from "../lib/utils";
+import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
 
 import Layout from "../components/Layout";
 
@@ -70,6 +71,8 @@ export default function Dashboard() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [modal, setModal] = useState({ show: false, type: 'alert', title: '', message: '', onConfirm: null });
+  const [facultySignatureForQP, setFacultySignatureForQP] = useState('');
+  const [hodSignatureForQP, setHodSignatureForQP] = useState('');
   const [userRole, setUserRole] = useState(null);
   const [userAssignments, setUserAssignments] = useState([]);
   const [assignedProgs, setAssignedProgs] = useState([]);
@@ -156,6 +159,65 @@ export default function Dashboard() {
       setTimeout(() => setUserAssignments([]), 0);
     }
   }, [programme, department, batch, academicYear, semester, userAssignments.length, userRole]);
+
+  // Fetch COs for the selected QP's subject when modal opens
+  const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
+  useEffect(() => {
+    const fetchModalCOs = async () => {
+      if (!selectedQP || !selectedQP.programme || !selectedQP.department || !selectedQP.batch || !selectedQP.subject || !selectedQP.academic_year) {
+        setModalCourseOutcomes([]);
+        return;
+      }
+      const progKey = formatProgrammeKey(selectedQP.programme);
+      const regulation = getRegulationForBatch(progKey, selectedQP.batch);
+      if (!regulation) {
+        setModalCourseOutcomes([]);
+        return;
+      }
+      const coKey = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(selectedQP.subject)}_${sanitizeKey(selectedQP.academic_year)}`;
+      const coRef = ref(rtdb, `course_outcomes/${coKey}`);
+      const coSnapshot = await get(coRef);
+      if (coSnapshot.exists()) {
+        const data = coSnapshot.val();
+        const loadedCOs = Object.entries(data)
+          .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
+          .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+        setModalCourseOutcomes(loadedCOs);
+      } else {
+        setModalCourseOutcomes([]);
+      }
+    };
+    fetchModalCOs();
+  }, [selectedQP, getRegulationForBatch]);
+
+  // Fetch signatures for the selected QP when modal opens
+  useEffect(() => {
+    const fetchSignatures = async () => {
+      if (!selectedQP) {
+        setFacultySignatureForQP('');
+        setHodSignatureForQP('');
+        return;
+      }
+
+      // Fetch Faculty Signature (forwarded_by)
+      if (selectedQP.forwarded_by) {
+        const userRef = ref(rtdb, `users/${selectedQP.forwarded_by}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+          setFacultySignatureForQP(snapshot.val().signatureUrl || '');
+        } else {
+          setFacultySignatureForQP('');
+        }
+      } else {
+        setFacultySignatureForQP('');
+      }
+
+      // HOD Signature (if approved and available in QP data)
+      setHodSignatureForQP(selectedQP.hod_signature_url || '');
+    };
+    fetchSignatures(); // This effect depends on selectedQP, so it should run when selectedQP changes
+  }, [selectedQP]);
+
 
   const showAlert = (title, message) => {
     setModal({ show: true, type: 'alert', title, message, onConfirm: null });
@@ -355,168 +417,18 @@ export default function Dashboard() {
     return labels[String(semNum)] || "";
   };
 
-  const renderQuestionPaper = (qp) => {
+  const renderQuestionPaper = useCallback((qp, cos, facultySig, hodSig, ciaConf) => {
     if (!qp) return "";
-    
-    const yearSemester = `${getYearLabel(qp.semester)} / ${getSemesterLabel(qp.semester)}`;
-    // Get exam name from exam_name field, or look it up from cia_configs using the config ID
-    let examDisplay = qp.exam_name;
-    if (!examDisplay) {
-      const configId = qp.qpaper_name;
-      examDisplay = ciaConfigs[configId]?.examName || configId;
-    }
-    const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+    return getQuestionPaperHTML(
+      qp,
+      cos, // Pass fetched COs
+      facultySig,
+      hodSig,
+      ciaConf
+    );
+  }, []); // Dependencies are now passed as arguments, so this callback itself has no external deps
 
-    let html = `
-<div style="font-family: Arial, sans-serif; font-size: 11px; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background: white;">
-  <!-- Row 1: CO Assessment + Examination Cell -->
-  <table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3; margin-bottom: 10px;">
-    <tr>
-      <td style="text-align: left; padding: 4px;">
-        CO Assessment - Direct Assessment Tool - Descriptive Continuous Assessment (DCA)
-      </td>
-      <td style="text-align: right; padding: 4px;">
-        <div style="border: 1px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
-          Examination Cell
-        </div>
-      </td>
-    </tr>
-  </table>
-  <!-- Row 2: Logo + College Info -->
-  <div style="text-align: center; margin-bottom: 15px;">
-    <img alt="logo" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="width: 100%; height: auto; display: block;" />
-  </div>
-  
-  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #333;" border="1">
-    <tr>
-      <td style="padding: 4px;"><strong>Internal Assessment Test</strong></td>
-      <td colspan="3" style="padding: 4px;">${examDisplay}</td>
-      <td style="padding: 4px;"><strong>Academic Year</strong></td>
-      <td style="padding: 4px;">${qp.academic_year}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Subject Code / Subject Title</strong></td>
-      <td colspan="5" style="padding: 4px;">${subjectDisplay}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Year / Semester</strong></td>
-      <td style="padding: 4px;">${yearSemester}</td>
-      <td style="padding: 4px;"><strong>Department</strong></td>
-      <td style="padding: 4px;">${qp.department}</td>
-      <td style="padding: 4px;"><strong>Common to</strong></td>
-      <td style="padding: 4px;">-</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Max. Marks</strong></td>
-      <td style="padding: 4px;">${qp.total_marks}</td>
-      <td style="padding: 4px;"><strong>Duration</strong></td>
-      <td style="padding: 4px;">180 min</td>
-      <td style="padding: 4px;"><strong>Date</strong></td>
-      <td style="padding: 4px;">${new Date(qp.saved_at).toLocaleDateString()}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Register No.</strong></td>
-      <td colspan="5" style="padding: 4px;"></td>
-    </tr>
-  </table>
-
-  <div style="margin-top: 20px;">
-    ${qp.parts.map(part => `
-      <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
-        <tr>
-          <td style="width: 50%; padding: 6px; border: none;">Part ${part.part}</td>
-          <td style="width: 50%; padding: 6px; border: none; text-align: right;">
-            ${part.num_questions} &times; ${part.marks_per_question} = <strong>${part.num_questions * part.marks_per_question}</strong> Marks
-          </td>
-        </tr>
-      </table>
-      <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
-        <thead>
-          <tr style="background: #f9f9f9;">
-            <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #333;">Q. No.</th>
-            <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #333;">Question(s)</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">KL</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">CO</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">PI</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${part.questions.map((q, qIdx) => {
-            if (q.either_or) {
-              if (q.sub === 'a') {
-                const nextQ = part.questions[qIdx + 1];
-                return `
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
-                    <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
-                  </tr>
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"><strong>(Or)</strong></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                  </tr>
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.qno || ""}</td>
-                    <td style="padding: 4px; border: 1px solid #333;">${nextQ?.question || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.kl || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.co || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.pi || ""}</td>
-                  </tr>
-                `;
-              }
-              return ""; // Skip 'b' as it's handled by 'a'
-            } else {
-              return `
-                <tr>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
-                  <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
-                </tr>
-              `;
-            }
-          }).join('')}
-        </tbody>
-      </table>
-    `).join('')}
-  </div>
-
-  <div style="margin-top: 30px;">
-    <h3 style="font-size: 14px; margin-bottom: 10px;">Subject Outcomes Details</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 10px;">
-      <thead>
-        <tr style="background: #f9f9f9;">
-          <th style="padding: 4px; border: 1px solid #333;">Subject Outcome Code</th>
-          <th style="padding: 4px; border: 1px solid #333;">Description</th>
-          <th style="padding: 4px; border: 1px solid #333;">COs covered</th>
-          <th style="padding: 4px; border: 1px solid #333;">Weightage</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <table style="width: 100%; border-collapse: collapse; margin-top: 40px;">
-    <tr>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Signature of HoD</td>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Academic Coordinator</td>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Principal</td>
-    </tr>
-  </table>
-</div>
-    `;
-    return html;
-  };
-
-  const handleDownloadQP = (qp) => {
+  const handleDownloadQP = useCallback((qp) => {
     try {
       const content = renderQuestionPaper(qp);
       const wordHTML = `
@@ -553,8 +465,8 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Word export failed:', err);
     }
-  };
-
+  }, [renderQuestionPaper]);
+  
   // Fetch Students when filters change
   useEffect(() => {
     if ((module === "students" || module === "consolidation") && programme && department && batch) {
@@ -2071,9 +1983,19 @@ export default function Dashboard() {
                 </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/50">
-                <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
-                  <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
+              <div className="flex-1 overflow-y-auto p-8 bg-zinc-50">
+                <style>{`
+                  .qp-print-wrapper table { border-collapse: collapse; width: 100%; border-color: #000 !important; }
+                  .qp-print-wrapper td, .qp-print-wrapper th { border: 1px solid #000 !important; padding: 6px; font-family: 'Times New Roman', serif; }
+                  .qp-print-wrapper .logo-img { max-width: 100%; height: 70px !important; }
+                  .qp-print-wrapper p { margin: 0 0 5px 0; }
+                  .qp-preview-container { background: white; }
+                `}</style>
+                <div 
+                  className="bg-white shadow-2xl mx-auto qp-print-wrapper" 
+                  style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}
+                >
+                  <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP, modalCourseOutcomes, facultySignatureForQP, hodSignatureForQP, ciaConfigs) }} />
                 </div>
               </div>
             </div>

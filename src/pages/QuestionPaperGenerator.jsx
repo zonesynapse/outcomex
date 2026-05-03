@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import { auth, rtdb } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ref, get, set, onValue } from 'firebase/database';
+import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
@@ -13,11 +14,9 @@ import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDis
 
 function deriveSemesterNumber(semStr) {
   if (!semStr) return '';
-  const romanToNum = { "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10 };
-  if (romanToNum[semStr]) return String(romanToNum[semStr]);
-  const match = String(semStr).match(/\d+/);
-  return match ? match[0] : '';
-}
+  const m = String(semStr).match(/(\d+)/);
+  return m ? m[1] : '';
+};
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -2584,20 +2583,59 @@ const initEditor = useCallback(() => {
         return;
     }
 
-    // 1. Get current editor content with signature
+    // 1. Construct qpData with actual current questions to ensure HTML is complete for extraction
+    let finalizedParts = [];
+    let overallTotal = 0;
+    const semesterNum = deriveSemesterNumber(selectedSemester);
+
+    if (assessmentType === 'Exam') {
+      let counter = 1;
+      finalizedParts = (partsConfig || []).map((part, index) => {
+        const count = parseInt(part?.numQuestions, 10) || 0;
+        const marks = parseInt(part?.marksPerQuestion, 10) || 0;
+        const questions = [];
+        for (let i = 0; i < count; i++) {
+          if (part?.isEitherOr) {
+            const qa = getQuestionByQNo(qpQuestions, `${counter}a`);
+            const qb = getQuestionByQNo(qpQuestions, `${counter}b`);
+            questions.push({
+              qno: `${counter}(a)`, sub: 'a', either_or: true, marks,
+              question: qa?.question || '', co: qa?.co || '', kl: qa?.kl || '', pi: qa?.pi || ''
+            });
+            questions.push({
+              qno: `${counter}(b)`, sub: 'b', either_or: true, marks,
+              question: qb?.question || '', co: qb?.co || '', kl: qb?.kl || '', pi: qb?.pi || ''
+            });
+          } else {
+            const q = getQuestionByQNo(qpQuestions, `${counter}`);
+            questions.push({
+              qno: `${counter}`, sub: '', either_or: false, marks,
+              question: q?.question || '', co: q?.co || '', kl: q?.kl || '', pi: q?.pi || ''
+            });
+          }
+          counter += 1;
+        }
+        overallTotal += count * marks;
+        const partLetter = String.fromCharCode(64 + index + 1);
+        return { part: partLetter, num_questions: count, marks_per_question: marks, questions };
+      });
+    } else {
+      overallTotal = assignmentConfig[0]?.marks || 0;
+    }
+
     const qpDataForForward = {
         programme: program,
         department,
         batch,
         academic_year: academicYear,
-        semester: String(deriveSemesterNumber(selectedSemester) || ''),
+        semester: String(semesterNum || ''),
         subject,
         subject_name: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
         qpaper_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || exam),
-        total_marks: 0, // Will be calculated in handleSaveQuestionPaper
+        total_marks: overallTotal,
         exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
         assessment_type: assessmentType,
-        parts: assessmentType === 'Exam' ? partsConfig : [],
+        parts: finalizedParts,
         assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
         assignment_kl: assignmentKL,
         assignment_kl_domain: assignmentKLDomain

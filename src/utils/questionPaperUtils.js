@@ -1,0 +1,299 @@
+import { formatProgDisplay } from '../lib/utils';
+
+export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}) => {
+  // Compute exam display name (resolve config ID to name)
+  let examDisplay = qp.exam_name;
+  if (!examDisplay) {
+    const configObj = ciaConfigs[qp.qpaper_name]; // Use qp.qpaper_name as config ID
+    examDisplay = configObj?.examName || qp.qpaper_name;
+  }
+
+  const isAssignment = qp.assessment_type === 'Assignment';
+
+  const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
+  const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
+  const yearSemester = `${yearLabel} / ${semLabel}`;
+  const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+
+  // Prepare signature HTML
+  let facultySignatureHtml = '';
+  if (facultySignatureUrl) {
+    facultySignatureHtml = `<img src="${facultySignatureUrl}" alt="Faculty Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
+  } else {
+    facultySignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`; // Placeholder if no signature
+  }
+
+  let hodSignatureHtml = '';
+  if (hodSignatureUrl) {
+    hodSignatureHtml = `<img src="${hodSignatureUrl}" alt="HOD Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
+  } else {
+    hodSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
+  }
+
+  let html = `
+<div class="qp-preview-container" style="font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.4;">
+<table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3;">
+  <tr>
+    <td style="text-align: left; padding: 4px;">
+      CO Assessment - Direct Assessment Tool - ${isAssignment ? 'Assignment' : 'Descriptive Continuous Assessment (DCA)'}
+    </td>
+    <td style="text-align: right; padding: 4px;">
+      <div style="border: 2px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
+        EXAMINATION CELL
+      </div>
+    </td>
+  </tr>
+</table>
+<table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; width:100%; border:1.5px solid #000; margin-bottom: 10px;">
+  <tbody>
+    <tr>
+      <td style="height:80px; text-align:center; width:100%; padding: 5px;"><img alt="logo" class="logo-img" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="height:70px; max-width:100%; width:auto;" /></td>
+    </tr>
+  </tbody>
+</table>
+<table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #000;" border="1">
+  <tr>
+    <td style="padding: 6px;"><strong>${isAssignment ? 'Assignment' : 'Internal Assessment Test'}</strong></td>
+    <td colspan="3" style="padding: 6px;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
+    <td style="padding: 6px;"><strong>Academic Year</strong></td>
+    <td style="padding: 6px;">${qp.academic_year}</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px;"><strong>Course Code / Title</strong></td>
+    <td colspan="5" style="padding: 6px;">${subjectDisplay}</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px;"><strong>Year / Semester</strong></td>
+    <td style="padding: 6px;">${yearSemester}</td>
+    <td style="padding: 6px;"><strong>Department</strong></td>
+    <td style="padding: 6px;">${qp.department}</td>
+    <td style="padding: 6px;"><strong>Common for</strong></td>
+    <td style="padding: 6px;">-</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px;"><strong>Max Mark</strong></td>
+    <td style="padding: 6px;">${qp.total_marks}</td>
+    <td style="padding: 6px;"><strong>Duration</strong></td>
+    <td style="padding: 6px;">180 min</td>
+    <td style="padding: 6px;"><strong>Date</strong></td>
+    <td style="padding: 6px;">${qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : ''}</td>
+  </tr>
+  <tr>
+    <td style="padding: 6px;"><strong>Reg. No.</strong></td>
+    <td colspan="5" style="padding: 6px;"></td>
+  </tr>
+</table>
+  `;
+
+  if (isAssignment) {
+    html += `
+<table border="1" style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; text-align: left; font-size: 12px;">
+  <thead>
+    <tr>
+      <th style="width: 8%; text-align: center; padding: 4px;">Q. No.</th>
+      <th style="width: 52%; text-align: center; padding: 4px;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">PI</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">Marks</th>
+    </tr>
+  </thead>
+  <tbody>`;
+    if (qp.assignment_config && qp.assignment_config.length > 0) {
+      qp.assignment_config.forEach((q, idx) => {
+        const allCOs = (q.mappings || []).map(m => `${m.co} (${m.marks || 0})`).join(', ');
+        const allPIs = (q.mappings || []).flatMap(m => m.pis).join(', ');
+        html += `
+          <tr>
+            <td style="text-align: center; padding: 8px;">${idx + 1}</td>
+            <td style="padding: 8px;">${q.question || ''}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px;">${qp.assignment_kl || ''}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px;">${allCOs}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px;">${allPIs}</td>
+            <td style="text-align: center; padding: 4px;">${q.marks}</td>
+          </tr>
+        `;
+      });
+    }
+    html += `</tbody></table>`;
+  } else {
+    (qp.parts || []).forEach((part, index) => {
+      const partLetter = String.fromCharCode(64 + index + 1);
+      const totalMarks = `
+<span style="font-weight: bold;">
+  <span>${part.num_questions}</span>
+  <span>&times;</span>
+  <span>${part.marks_per_question}</span>
+  <span>=</span>
+  <span>${part.num_questions * part.marks_per_question}</span>
+</span>`;
+
+      html += `
+<table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1.5px solid black; margin-top: 15px;">
+  <tr>
+    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter}</td>
+    <td style="width: 50%; padding: 6px; border: none; text-align: right;">${totalMarks} Marks</td>
+  </tr>
+</table>
+<table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 12px; border: 1px solid #000;">
+  <thead>
+    <tr>
+      <th style="width: 8%; text-align: center; padding: 4px;">Q. No.</th>
+      <th style="width: 62%; text-align: center; padding: 4px;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px;">PI</th>
+    </tr>
+  </thead>
+  <tbody>`;
+
+      if (part.questions && part.questions.length > 0) {
+        const filteredQuestions = (part.questions || []).filter(q =>
+          !(q.question && q.question.trim().toLowerCase() === '(or)')
+        );
+
+        filteredQuestions.forEach((q, qIdx) => {
+          if (q.either_or) {
+            if (q.sub === 'a') {
+              const nextQ = filteredQuestions[qIdx + 1];
+              html += `
+                <tr>
+                  <td style="text-align: center; padding: 4px;">${q.qno}</td>
+                  <td style="padding: 4px;">${q.question || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
+                </tr>
+                <tr>
+                  <td style="text-align: center; padding: 4px;"></td>
+                  <td style="text-align: center; padding: 4px;"><strong>(Or)</strong></td>
+                  <td style="text-align: center; padding: 4px;"></td>
+                  <td style="text-align: center; padding: 4px;"></td>
+                  <td style="text-align: center; padding: 4px;"></td>
+                </tr>
+                <tr>
+                  <td style="text-align: center; padding: 4px;">${nextQ?.qno || ""}</td>
+                  <td style="padding: 4px;">${nextQ?.question || ""}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.kl || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.co || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.pi || ''}</td>
+                </tr>
+              `;
+            }
+          } else {
+            html += `
+              <tr>
+                <td style="text-align: center; padding: 4px;">${q.qno}</td>
+                <td style="padding: 4px;">${q.question || ''}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
+              </tr>
+            `;
+          }
+        });
+      } else {
+        // Generate placeholders
+        let questionCounter = 1; // This counter should be passed or managed differently if parts are dynamic
+        for (let j = 0; j < part.num_questions; j++) {
+          if (part.isEitherOr) {
+            html += `
+              <tr>
+                <td style="text-align: center; padding: 4px;">${questionCounter}(a)</td>
+                <td style="padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+              </tr>
+              <tr>
+                <td style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px;"><strong>(Or)</strong></td>
+                <td style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px;"></td>
+              </tr>
+              <tr>
+                <td style="text-align: center; padding: 4px;">${questionCounter}(b)</td>
+                <td style="padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+              </tr>`;
+          } else {
+            html += `
+              <tr>
+                <td style="text-align: center; padding: 4px;">${questionCounter}</td>
+                <td style="padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+              </tr>`;
+          }
+          questionCounter++;
+        }
+      }
+      html += `</tbody></table>`;
+    });
+  }
+
+  let coRows = '';
+  if (cos && cos.length > 0) {
+    // This part needs to derive activeCOs and coWeightage from the qp object itself
+    // as Dashboard doesn't have these states readily available.
+    // For simplicity in Dashboard preview, we'll just list all COs.
+    coRows = cos.map((co) => {
+      return `
+        <tr>
+          <td style="padding: 4px;">${co.code}</td>
+          <td style="padding: 4px;">${co.description}</td>
+          <td style="text-align: center; padding: 4px;"></td>
+          <td style="text-align: center; padding: 4px;"></td>
+        </tr>
+      `;
+    }).join('');
+  } else {
+    coRows = `
+      <tr>
+        <td style="padding: 4px;">-</td>
+        <td style="padding: 4px;">-</td>
+        <td style="text-align: center; padding: 4px;">-</td>
+        <td style="padding: 4px;"></td>
+      </tr>
+    `;
+  }
+
+  html += `
+      <div class="outcomes-summary-section" style="margin-top: 25px;">
+        <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 8px;">Details of Course Outcomes</h3>
+        <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px; border: 1px solid #000;">
+            <thead>
+                <tr>
+                    <th style="padding: 6px; border: 1px solid #000;">Outcome Code</th>
+                    <th style="padding: 6px; border: 1px solid #000;">Description</th>
+                    <th style="padding: 6px; border: 1px solid #000;">Tick Covered COs</th>
+                    <th style="padding: 6px; border: 1px solid #000;">Weightage</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${coRows}
+            </tbody>
+        </table>
+      </div>
+<table border="1" style="width: 100%; border-collapse: collapse; margin-top: 40px; font-size: 11px; border: 1.5px solid #000;">
+  <tr>
+    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>
+    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${hodSignatureHtml}</td>
+    <td style="height: 80px; width: 25%;"></td>
+    <td style="height: 80px; width: 25%;"></td>
+  </tr>
+  <tr>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Subject Faculty</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">HOD</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Academic Coord.</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Principal</td>
+  </tr>
+</table>
+</div>
+  `;
+  return html;
+};
