@@ -113,7 +113,12 @@ const deriveSemesterNumber = (label) => {
     setIsAiMappingActive(true);
     try {
       const { GoogleGenAI, Type } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: "AIzaSyAycIwjJ5CWKU1N6Y7u2lUC0gvX4o9i_v8" });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+      if (!apiKey) {
+        throw new Error("Gemini API Key is missing. Check your .env file.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
 
       // Fetch Course Content from courses node for enriched AI mapping
       const progKey = formatProgrammeKey(programme);
@@ -195,7 +200,7 @@ Do not be overly strict. If the syllabus content logically contributes to the PI
 Return an exhaustive list of all plausible mappings.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-1.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are an experienced academic coordinator and accreditation expert. Map COs to PIs accurately using deep comprehensive analysis. Do not be overly strict; include all plausible mappings. Output only JSON with a 'mappings' key.",

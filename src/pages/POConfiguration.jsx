@@ -54,14 +54,19 @@ const POConfiguration = () => {
 
     try {
       const { GoogleGenAI, Type } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: "AIzaSyAycIwjJ5CWKU1N6Y7u2lUC0gvX4o9i_v8" });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+      if (!apiKey) {
+        throw new Error("Gemini API Key is missing. Check your .env file.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
 
       const prompt = `As an expert OBE coordinator, break down the following PO/PSO statement into logical Competencies and specific, measurable Performance Indicators (PIs).
 Be highly efficient, precise, and concise to save tokens. Generate only the naturally required number of competencies and PIs based strictly on the statement's scope (do not force exactly 3).
 Statement: "${item.statement}"`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-pro",
         contents: prompt,
         config: {
           systemInstruction: "You are an expert Outcome-Based Education (OBE) coordinator. Output only JSON containing an array of 'competencies'. Each competency must have a concise 'statement' (string) and 'pis' (array of crisp strings).",

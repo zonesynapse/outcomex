@@ -481,10 +481,10 @@ export default function MarkEntry() {
       .filter(c => 
         (c.isUniversity || c.isIndirectAssessment) &&
         formatProgDisplay(c.program) === formatProgDisplay(programme) &&
-        c.department === department &&
-        c.batch === batch &&
-        c.academicYear === academicYear &&
-        String(c.semester) === needSem
+        (c.department === department || !c.department) &&
+        (!c.batch || c.batch === batch) &&
+        (!c.academicYear || c.academicYear === academicYear) &&
+        (!c.semester || String(c.semester) === needSem)
       )
       .map(c => {
         // Check if a QP exists for this university exam

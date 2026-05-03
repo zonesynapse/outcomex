@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle } from 'lucide-react';
 import Layout from '../components/Layout';
 import { auth, rtdb } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ref, get, set, onValue } from 'firebase/database';
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
@@ -31,6 +32,8 @@ export default function QuestionPaperGenerator() {
   const editId = searchParams.get('id');
   const compositeKey = searchParams.get('compositeKey');
   const editorRef = useRef(null);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [currentUserSignatureUrl, setCurrentUserSignatureUrl] = useState('');
   const hasLoadedRef = useRef(false);
 
   const [program, setProgram] = useState('');
@@ -61,6 +64,8 @@ export default function QuestionPaperGenerator() {
   const [showParts, setShowParts] = useState(false);
   const [partsConfig, setPartsConfig] = useState([]);
   const [assignmentConfig, setAssignmentConfig] = useState([]);
+  const [savedAssignmentConfig, setSavedAssignmentConfig] = useState([]);
+
   const [assignmentKL, setAssignmentKL] = useState('L1');
   const [assignmentKLDomain, setAssignmentKLDomain] = useState('');
   // Question Builder states
@@ -77,7 +82,6 @@ export default function QuestionPaperGenerator() {
   const [qbMarks, setQbMarks] = useState(2);
   const qbQuestionRef = useRef(null);
   const isEditingQbRef = useRef(false);  // Track if we're editing an existing question
-  const [showFinalPreview, setShowFinalPreview] = useState(false);
   const [showQbEditor, setShowQbEditor] = useState(true);
   const [qbEditorData, setQbEditorData] = useState('');
 
@@ -308,7 +312,7 @@ export default function QuestionPaperGenerator() {
   }, [qbQuestion, qbMarks, bloomsDomains, qbKLDomain, qbQNo, qpQuestions, qbKL, qbCO, qbPI, coPiMapping]);
 
   const handleDeleteQuestion = (index) => {
-    setQpQuestions(prev => {
+    setQpQuestions(prev => { // This is for Exam type
       const updated = prev.filter((_, i) => i !== index);
       return updated;
     });
@@ -351,8 +355,31 @@ export default function QuestionPaperGenerator() {
   const [aiSyllabus, setAiSyllabus] = useState('');
   const [aiDistribution, setAiDistribution] = useState('Easy: 30%, Medium: 50%, Hard: 20%');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [qpSet, setQpSet] = useState('Set 1');
+  const [showFinalPreview, setShowFinalPreview] = useState(false);
+
+  const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
   const [aiUnitConstraints, setAiUnitConstraints] = useState('');
   const [aiIncludeImages, setAiIncludeImages] = useState(false);
+
+  // Fetch current user's signature URL
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setCurrentUserId(user.uid);
+        const userRef = ref(rtdb, `users/${user.uid}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+          const userData = snapshot.val();
+          setCurrentUserSignatureUrl(userData.signatureUrl || '');
+        }
+      } else {
+        setCurrentUserId(null);
+        setCurrentUserSignatureUrl('');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -430,6 +457,39 @@ export default function QuestionPaperGenerator() {
     return () => unsub();
   }, [qbKLDomain]);
 
+  // Fetch Course Details (including CO content and levels) for AI generation
+  useEffect(() => {
+    const fetchCourseDetails = async () => {
+      if (!program || !department || !batch || !subject) {
+        setSubjectCourseDetails(null);
+        return;
+      }
+      const progKey = formatProgrammeKey(program);
+      const regulation = getRegulationForBatch(progKey, batch);
+      if (!regulation) {
+        setSubjectCourseDetails(null);
+        return;
+      }
+
+      const deptKey = sanitizeKey(department);
+      const regKey = sanitizeKey(regulation);
+      const subjectKey = sanitizeKey(subject);
+
+      let courseData = null;
+      try {
+        let courseRef = ref(rtdb, `courses/${progKey}/${deptKey}/${regKey}/${subjectKey}`);
+        let snap = await get(courseRef);
+        if (!snap.exists()) { // Fallback to Overall if not found in specific department
+          courseRef = ref(rtdb, `courses/${progKey}/Overall/${regKey}/${subjectKey}`);
+          snap = await get(courseRef);
+        }
+        if (snap.exists()) courseData = snap.val();
+      } catch (error) { console.error("Error fetching course details for AI:", error); }
+      setSubjectCourseDetails(courseData);
+    };
+    fetchCourseDetails();
+  }, [program, department, batch, subject, getRegulationForBatch]);
+
   const filteredExams = useMemo(() => {
     if (!program || !department || !batch || !academicYear || !selectedSemester) return [];
     
@@ -437,10 +497,10 @@ export default function QuestionPaperGenerator() {
     
     return ciaConfigs.filter(config => 
       formatProgDisplay(config.program) === formatProgDisplay(program) &&
-      config.department === department &&
-      config.batch === batch &&
-      config.academicYear === academicYear &&
-      String(config.semester) === semNum &&
+      (config.department === department || !config.department) &&
+      (!config.batch || config.batch === batch) &&
+      (!config.academicYear || config.academicYear === academicYear) &&
+      (!config.semester || String(config.semester) === semNum) &&
       (assessmentType === 'Assignment' ? config.isAssignment : !config.isAssignment)
     );
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType]);
@@ -567,18 +627,20 @@ export default function QuestionPaperGenerator() {
 
   // Marks calculation helper
   const calculatePoMarks = useCallback((questionsSource) => {
+    if (!questionsSource || !Array.isArray(questionsSource) || questionsSource.length === 0) return {};
     if (assessmentType !== 'Exam' && assessmentType !== 'Assignment') return {};
 
     const summaryEntries = Object.entries(poSummaryMapping || {});
     if (!summaryEntries.length) return {};
 
+    const poMarks = {};
+
     if (assessmentType === 'Assignment') {
-      const poMarks = {};
-      (assignmentConfig || []).forEach((q) => {
+      questionsSource.forEach((q) => {
         (q?.mappings || []).forEach((m) => {
-          const coCode = String(m?.co || '').trim();
+          const coCode = String(m?.co || '').trim().toUpperCase();
           const selectedPis = Array.isArray(m?.pis) ? m.pis : [];
-          const mapMarks = parseInt(m?.marks, 10) || 0;
+          const mapMarks = Number(m?.marks) || 0;
 
           if (!coCode || mapMarks <= 0 || selectedPis.length === 0) return;
 
@@ -596,8 +658,6 @@ export default function QuestionPaperGenerator() {
       return poMarks;
     }
 
-    if (!questionsSource || questionsSource.length === 0) return {};
-
     const groups = {};
     questionsSource.forEach((q) => {
       const normalized = normalizeQNo(q?.qno);
@@ -607,9 +667,9 @@ export default function QuestionPaperGenerator() {
       const base = qMatch ? qMatch[1] : normalized;
       if (!base) return;
 
-      const coCode = String(q?.co || '').trim();
+      const coCode = String(q?.co || '').trim().toUpperCase();
       const piCode = String(q?.pi || '').trim();
-      const qMarks = parseInt(q?.marks, 10) || 0;
+      const qMarks = Number(q?.marks) || 0;
       if (!coCode || !piCode || qMarks <= 0 || coCode.toUpperCase() === 'CO' || piCode.toUpperCase() === 'PI') return;
 
       if (!groups[base]) {
@@ -626,9 +686,8 @@ export default function QuestionPaperGenerator() {
       });
     });
 
-    const poMarks = {};
     Object.values(groups).forEach(group => {
-      const marks = parseInt(group?.marks, 10) || 0;
+      const marks = Number(group?.marks) || 0;
       if (marks <= 0) return;
       group.pos.forEach(poCode => {
         poMarks[poCode] = (poMarks[poCode] || 0) + marks;
@@ -636,18 +695,22 @@ export default function QuestionPaperGenerator() {
     });
 
     return poMarks;
-  }, [assessmentType, poSummaryMapping, normalizeQNo, assignmentConfig]);
+  }, [assessmentType, poSummaryMapping, normalizeQNo]);
 
   // Marks strictly from saved/loaded state
   const savedPoMarks = useMemo(() => {
-    const questions = [];
-    if (Array.isArray(savedExamParts) && savedExamParts.length > 0) {
-      savedExamParts.forEach(part => {
-        (part?.questions || []).forEach(q => questions.push(q));
-      });
+    if (assessmentType === 'Assignment') {
+      return calculatePoMarks(savedAssignmentConfig);
+    } else {
+      const questions = [];
+      if (Array.isArray(savedExamParts) && savedExamParts.length > 0) {
+        savedExamParts.forEach(part => {
+          (part?.questions || []).forEach(q => questions.push(q));
+        });
+      }
+      return calculatePoMarks(questions);
     }
-    return calculatePoMarks(questions);
-  }, [savedExamParts, calculatePoMarks]);
+  }, [savedExamParts, savedAssignmentConfig, assessmentType, calculatePoMarks]);
 
   // Marks strictly from the current in-memory editor qpQuestions
   const activePoMarks = useMemo(() => {
@@ -730,10 +793,13 @@ export default function QuestionPaperGenerator() {
     });
   }, [batches, assessmentType, ciaConfigs, program, department]);
 
-  const filteredDepartments = (programToDepartments[formatProgrammeKey(program)] || []).filter(dept => {
+  const filteredDepartments = useMemo(() => {
+  const depts = programToDepartments[formatProgrammeKey(program)] || [];
+  return depts.filter(dept => {
     if (userRole !== 'Faculty') return true;
     return assignedDepts.includes(sanitizeKey(dept));
   });
+}, [program, userRole, assignedDepts, programToDepartments]);
 
   useEffect(() => {
     if (exam && exam !== 'custom') {
@@ -748,10 +814,10 @@ export default function QuestionPaperGenerator() {
         setNumParts(String(parts.length));
         setShowParts(true);
       }
-    }
+    } // No else, if config has no parts, it means it's a custom exam or assignment, handled by other logic
   }, [exam, ciaConfigs]);
 
-  const getQuestionPaperHTML = useCallback((qp, cos = courseOutcomes, activeCOs = null, coWeightage = null) => {
+  const getQuestionPaperHTML = useCallback((qp, cos = courseOutcomes, activeCOs = null, coWeightage = null, facultySignatureUrl = '') => {
     // Compute exam display name (resolve config ID to name)
     let examDisplay = qp.exam_name;
     if (!examDisplay) {
@@ -765,6 +831,22 @@ export default function QuestionPaperGenerator() {
     const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
     const yearSemester = `${yearLabel} / ${semLabel}`;
     const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+
+    // Prepare signature HTML
+    let facultySignatureHtml = '';
+    if (facultySignatureUrl) {
+      facultySignatureHtml = `<img src="${facultySignatureUrl}" alt="Faculty Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
+    } else {
+      facultySignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`; // Placeholder if no signature
+    }
+
+    // Placeholder for HOD signature (will be filled when approved)
+    let hodSignatureHtml = '';
+    if (qp.status === 'approved' && qp.hod_signature_url) {
+      hodSignatureHtml = `<img src="${qp.hod_signature_url}" alt="HOD Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
+    } else {
+      hodSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
+    }
 
     let html = `
 <!-- Row 1: CO Assessment + Examination Cell -->
@@ -1040,8 +1122,8 @@ export default function QuestionPaperGenerator() {
   </tr>
 </table>
     `;
-    return html;
-  }, [courseOutcomes, ciaConfigs, deriveCOSummaryFromQp]);
+    return html; // Removed facultySignatureUrl from deps because it's passed as an arg
+  }, [courseOutcomes, ciaConfigs, deriveCOSummaryFromQp]); // Add facultySignatureUrl to deps if it's a state
 
   useEffect(() => {
     if (program) {
@@ -1151,11 +1233,12 @@ export default function QuestionPaperGenerator() {
 
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}_${sanitizeKey(examDisplay)}`;
 
     const checkExisting = async () => {
       try {
-        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : exam;
+        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
         const qpRef = ref(rtdb, `generated_qps/${key}/${existingQpId}`);
         const snapshot = await get(qpRef);
         if (snapshot.exists()) {
@@ -1168,6 +1251,7 @@ export default function QuestionPaperGenerator() {
             if (qp.assessment_type === 'Assignment') {
               setNumParts(String(qp.assignment_config?.length || ''));
               setAssignmentConfig(qp.assignment_config || []);
+              setSavedAssignmentConfig(qp.assignment_config || []);
               setSavedExamParts([]);
               setQpQuestions(qp.assignment_config || []);
             } else {
@@ -1220,7 +1304,7 @@ export default function QuestionPaperGenerator() {
             setCourseOutcomes(fetchedCOs);
 
             // Wait for editor to be ready
-            const checkEditor = setInterval(() => {
+            const checkEditor = setInterval(() => { // This interval is for loading existing paper on initial load
               if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
                 clearInterval(checkEditor);
                 const html = getQuestionPaperHTML(qp, fetchedCOs);
@@ -1236,7 +1320,7 @@ export default function QuestionPaperGenerator() {
     };
 
     checkExisting();
-  }, [program, department, batch, academicYear, selectedSemester, subject, exam, customExam, ciaConfigs, editId, compositeKey, getQuestionPaperHTML, assessmentType, getRegulationForBatch]);
+  }, [program, department, batch, academicYear, selectedSemester, subject, exam, qpSet, customExam, ciaConfigs, editId, compositeKey, getQuestionPaperHTML, assessmentType, getRegulationForBatch]);
 
   useEffect(() => {
     const loadSavedPaper = async () => {
@@ -1261,6 +1345,7 @@ export default function QuestionPaperGenerator() {
           if (qp.assessment_type === 'Assignment') {
             setNumParts(String(qp.assignment_config?.length || ''));
             setAssignmentConfig(qp.assignment_config || []);
+            setSavedAssignmentConfig(qp.assignment_config || []);
             setSavedExamParts([]);
             setQpQuestions(qp.assignment_config || []);
           } else {
@@ -1312,7 +1397,7 @@ export default function QuestionPaperGenerator() {
           setCourseOutcomes(fetchedCOs);
 
           // Wait for editor to be ready
-          const checkEditor = setInterval(() => {
+            const checkEditor = setInterval(() => { // This interval is for loading saved paper when editing
             if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
               clearInterval(checkEditor);
               
@@ -1505,132 +1590,114 @@ export default function QuestionPaperGenerator() {
     }
   }, [assessmentType]);
 
-  const initEditor = () => {
-    if (window.CKEDITOR && !window.CKEDITOR.instances.questionEditor) {
-      const element = document.getElementById('questionEditor');
-      if (!element) return;
+const initEditor = useCallback(() => {
+  if (window.CKEDITOR && !window.CKEDITOR.instances.questionEditor) {
+    const element = document.getElementById('questionEditor');
+    if (!element) return;
 
-      const editor = window.CKEDITOR.replace('questionEditor', {
-        versionCheck: false,
-        width: '210mm',
-        height: '297mm',
-        extraPlugins: 'print',
-        toolbar: [
-          { name: 'document', items: ['Source', '-', 'Print'] },
-          { name: 'clipboard', items: ['Undo', 'Redo'] },
-          { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', '-', 'RemoveFormat'] },
-          { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
-          { name: 'insert', items: ['Image', 'Table', 'HorizontalRule'] },
-          { name: 'styles', items: ['Format', 'FontSize'] },
-          { name: 'colors', items: ['TextColor', 'BGColor'] },
-          { name: 'tools', items: ['Maximize'] }
-        ],
-        contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
-        contentsStyle: `
-          @page { size: A4; margin: 20mm; }
-          html, body { width: 210mm; }
-          body { font-family: Arial, sans-serif; font-size: 12pt; margin: 0; padding: 20mm; line-height: 1.5; box-sizing: border-box; }
-          *, *::before, *::after { box-sizing: border-box; }
-          p { margin: 0 0 8px 0; }
-          img { max-width: 100%; height: auto; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-          td, th { padding: 6px; border: 1px solid #333; }
-          @media print {
-            body { padding: 20mm; }
-            table, td, th { border-color: #000 !important; }
-          }
-        `
-      });
+    const editor = window.CKEDITOR.replace('questionEditor', {
+      versionCheck: false,
+      width: '210mm',
+      height: '297mm',
+      extraPlugins: 'print',
+      toolbar: [
+        { name: 'document', items: ['Source', '-', 'Print'] },
+        { name: 'clipboard', items: ['Undo', 'Redo'] },
+        { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', '-', 'RemoveFormat'] },
+        { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
+        { name: 'insert', items: ['Image', 'Table', 'HorizontalRule'] },
+        { name: 'styles', items: ['Format', 'FontSize'] },
+        { name: 'colors', items: ['TextColor', 'BGColor'] },
+        { name: 'tools', items: ['Maximize'] }
+      ],
+      contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
+      contentsStyle: `
+        @page { size: A4; margin: 20mm; }
+        html, body { width: 210mm; }
+        body { font-family: Arial, sans-serif; font-size: 12pt; margin: 0; padding: 20mm; line-height: 1.5; box-sizing: border-box; }
+        *, *::before, *::after { box-sizing: border-box; }
+        p { margin: 0 0 8px 0; }
+        img { max-width: 100%; height: auto; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        td, th { padding: 6px; border: 1px solid #333; }
+        @media print {
+          body { padding: 20mm; }
+          table, td, th { border-color: #000 !important; }
+        }
+      `
+    });
 
-      editor.on('instanceReady', function (evt) {
-        try {
-          evt.editor.container.setStyle('width', '210mm');
-          evt.editor.container.setStyle('max-width', '210mm');
-          evt.editor.container.setStyle('background', 'transparent');
-          evt.editor.container.setStyle('margin', '0 auto');
+    editor.on('instanceReady', function (evt) {
+      try {
+        evt.editor.container.setStyle('width', '210mm');
+        evt.editor.container.setStyle('max-width', '210mm');
+        evt.editor.container.setStyle('background', 'transparent');
+        evt.editor.container.setStyle('margin', '0 auto');
 
-          const contents = evt.editor.container.findOne('.cke_contents');
-          if (contents) {
-            contents.setStyle('height', 'calc(297mm - 40mm)');
-            contents.setStyle('overflow', 'auto');
-          }
+        const contents = evt.editor.container.findOne('.cke_contents');
+        if (contents) {
+          contents.setStyle('height', 'calc(297mm - 40mm)');
+          contents.setStyle('overflow', 'auto');
+        }
 
-          window.CKEDITOR.addCss(
-            'select{border:1px solid #d1d5db; border-radius:4px; padding:2px 4px; background-color:#f9fafb; font-size:11px; color:#374151; outline:none; cursor:pointer; transition:border-color 0.2s;}' +
-            'select:focus{border-color:#3b82f6; background-color:#fff;}'
-          );
+        window.CKEDITOR.addCss(
+          'select{border:1px solid #d1d5db; border-radius:4px; padding:2px 4px; background-color:#f9fafb; font-size:11px; color:#374151; outline:none; cursor:pointer; transition:border-color 0.2s;}' +
+          'select:focus{border-color:#3b82f6; background-color:#fff;}'
+        );
 
-          // Add event listener for select changes inside the editor
-          evt.editor.document.on('change', function(e) {
-            const target = e.data.getTarget();
-            if (target.getName() === 'select') {
-              const val = target.getValue();
-              
-              // Update selected attribute for all options in this select
-              const options = target.find('option');
-              for (let i = 0; i < options.count(); i++) {
-                const option = options.getItem(i);
-                if (option.getValue() === val) {
-                  option.setAttribute('selected', 'selected');
-                } else {
-                  option.removeAttribute('selected');
-                }
+        evt.editor.document.on('change', function(e) {
+          const target = e.data.getTarget();
+          if (target.getName() === 'select') {
+            const val = target.getValue();
+            const options = target.find('option');
+            for (let i = 0; i < options.count(); i++) {
+              const option = options.getItem(i);
+              if (option.getValue() === val) {
+                option.setAttribute('selected', 'selected');
+              } else {
+                option.removeAttribute('selected');
               }
-
-              if (target.hasClass('co-select')) {
-                const selectedCO = val;
-                const tr = target.getAscendant('tr');
-                if (tr) {
-                  const piSelect = tr.findOne('.pi-select');
-                  if (piSelect) {
-                    // Clear existing options
-                    piSelect.setHtml('<option value="">Select PI</option>');
-                    
-                    const mapping = window.coPiMappingData || {};
-                    const pis = mapping[selectedCO] || [];
-                    
-                    if (pis.length > 0) {
-                      pis.forEach(pi => {
-                        const option = evt.editor.document.createElement('option');
-                        option.setAttribute('value', pi);
-                        option.setText(pi);
-                        piSelect.append(option);
-                      });
-                    } else if (selectedCO) {
+            }
+            if (target.hasClass('co-select')) {
+              const selectedCO = val;
+              const tr = target.getAscendant('tr');
+              if (tr) {
+                const piSelect = tr.findOne('.pi-select');
+                if (piSelect) {
+                  piSelect.setHtml('<option value="">Select PI</option>');
+                  const mapping = window.coPiMappingData || {};
+                  const pis = mapping[selectedCO] || [];
+                  if (pis.length > 0) {
+                    pis.forEach(pi => {
                       const option = evt.editor.document.createElement('option');
-                      option.setAttribute('value', '');
-                      option.setText('No PIs mapped');
+                      option.setAttribute('value', pi);
+                      option.setText(pi);
                       piSelect.append(option);
-                    }
-                    
-                    // Reset PI selection and its selected attribute
-                    piSelect.setValue('');
-                    const piOptions = piSelect.find('option');
-                    for (let i = 0; i < piOptions.count(); i++) {
-                      piOptions.getItem(i).removeAttribute('selected');
-                    }
-                    if (piOptions.count() > 0) {
-                      piOptions.getItem(0).setAttribute('selected', 'selected');
-                    }
+                    });
+                  }
+                  piSelect.setValue('');
+                  const piOptions = piSelect.find('option');
+                  for (let i = 0; i < piOptions.count(); i++) {
+                    piOptions.getItem(i).removeAttribute('selected');
+                  }
+                  if (piOptions.count() > 0) {
+                    piOptions.getItem(0).setAttribute('selected', 'selected');
                   }
                 }
               }
-              // Refresh the summary table
-              if (typeof window.refreshOutcomesSummary === 'function') {
-                setTimeout(() => window.refreshOutcomesSummary(), 100);
-              }
-              // Explicitly fire editor change event to ensure data is updated
-              evt.editor.fire('change');
             }
-          }, null, null, 1); // Use high priority to ensure it runs before other handlers if any
-
-        } catch (e) {
-          console.warn('Failed to apply A4 styles to CKEditor instance', e);
-        }
-      });
-    }
-  };
-
+            if (typeof window.refreshOutcomesSummary === 'function') {
+              setTimeout(() => window.refreshOutcomesSummary(), 100);
+            }
+            evt.editor.fire('change');
+          }
+        }, null, null, 1);
+      } catch (e) {
+        console.warn('Failed to apply A4 styles to CKEditor instance', e);
+      }
+    });
+  }
+}, []); // ✅ Fixed: removed extra closing brace
   const handleGenerateParts = () => {
     if (assessmentType !== 'Assignment') {
       if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
@@ -1916,7 +1983,7 @@ export default function QuestionPaperGenerator() {
       });
     }
 
-    const qpData = {
+    const qpDataForFinalize = {
       programme: program,
       department,
       batch,
@@ -1934,8 +2001,8 @@ export default function QuestionPaperGenerator() {
       assignment_kl_domain: assignmentKLDomain
     };
 
-    const coSummary = deriveCOSummaryFromQp(qpData);
-    const combinedContent = getQuestionPaperHTML(qpData, courseOutcomes, coSummary.activeCOs, coSummary.coWeightage);
+    const coSummary = deriveCOSummaryFromQp(qpDataForFinalize);
+    const combinedContent = getQuestionPaperHTML(qpDataForFinalize, courseOutcomes, coSummary.activeCOs, coSummary.coWeightage);
     
     // Always set preview to true (make the textarea visible)
     setShowFinalPreview(true);
@@ -2103,7 +2170,7 @@ export default function QuestionPaperGenerator() {
     };
   }, [refreshOutcomesSummary]);
 
-  const handleSaveAssignment = async () => {
+  const handleSaveAssignment = async (status = 'draft', forwardedToUid = null) => {
     const isFieldsValid = program && department && batch && academicYear && selectedSemester && subject && exam;
     if (!isFieldsValid) {
       showToast("Please fill in all required fields before saving.", "error");
@@ -2137,6 +2204,7 @@ export default function QuestionPaperGenerator() {
     const semesterNum = deriveSemesterNumber(selectedSemester);
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
 
     const sanitizeKey = (key) => {
       if (!key) return '';
@@ -2165,17 +2233,25 @@ export default function QuestionPaperGenerator() {
       subject: subject,
       subject_name: subjectName,
       total_marks: overallTotal,
-      co_weightage: co_weightage
+      co_weightage: co_weightage,
+      status: status,
+      forwarded_to: forwardedToUid,
+      forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
+      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null
     };
 
     try {
       if (editId && compositeKey) {
         await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
+      } else if (status === 'forwarded') { // For new papers being forwarded
+        await set(ref(rtdb, `generated_qps/${key}/${exam}`), payload); // Use exam ID as key for new forwarded papers
       } else {
+        // For new papers being saved as draft
         // Use exam ID as key if not custom, otherwise fallback to 'Assignment'
         const qpId = exam === 'custom' ? 'Assignment' : exam;
         await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
       }
+      setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
       return true;
     } catch (error) {
@@ -2185,7 +2261,7 @@ export default function QuestionPaperGenerator() {
     }
   };
 
-  const handleSaveQuestionPaper = async (silentArg = false) => {
+  const handleSaveQuestionPaper = async (silentArg = false, status = 'draft', forwardedToUid = null) => {
     const silent = silentArg === true;
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
       if (!silent) showToast("Please fill in all required fields before saving.", "error");
@@ -2454,6 +2530,7 @@ export default function QuestionPaperGenerator() {
       department: department,
       programme: program,
       batch: batch,
+      qp_set: qpSet,
       parts: partsForPayload,
       assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
       assessment_type: assessmentType,
@@ -2464,15 +2541,22 @@ export default function QuestionPaperGenerator() {
       subject: subject,
       subject_name: subjectName,
       total_marks: overallTotal,
-      co_weightage: co_weightage
+      co_weightage: co_weightage,
+      status: status,
+      forwarded_to: forwardedToUid,
+      forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
+      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null
     };
 
     try {
       if (editId && compositeKey) {
         await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
+      } else if (status === 'forwarded') { // For new papers being forwarded
+        await set(ref(rtdb, `generated_qps/${key}/${exam}`), payload); // Use exam ID as key for new forwarded papers
       } else {
-        // Use exam ID as key if not custom, otherwise fallback to 'Exam' or 'Assignment'
-        const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : exam;
+        // For new papers being saved as draft
+        // Use exam ID + Set as key if not custom
+        const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
         await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
       }
       if (assessmentType === 'Exam') {
@@ -2489,8 +2573,82 @@ export default function QuestionPaperGenerator() {
     }
   };
 
-  const downloadQuestionPaperDocx = async () => {
+  const handleForwardPaper = async () => {
+    if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
+        showToast("Please fill in all required fields before forwarding.", "error");
+        return;
+    }
+
+    if (!currentUserSignatureUrl) {
+        showToast("Please upload your digital signature in your profile before forwarding.", "error");
+        return;
+    }
+
+    // 1. Get current editor content with signature
+    const qpDataForForward = {
+        programme: program,
+        department,
+        batch,
+        academic_year: academicYear,
+        semester: String(deriveSemesterNumber(selectedSemester) || ''),
+        subject,
+        subject_name: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
+        qpaper_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || exam),
+        total_marks: 0, // Will be calculated in handleSaveQuestionPaper
+        exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
+        assessment_type: assessmentType,
+        parts: assessmentType === 'Exam' ? partsConfig : [],
+        assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
+        assignment_kl: assignmentKL,
+        assignment_kl_domain: assignmentKLDomain
+    };
+
+    const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, currentUserSignatureUrl);
+
+    // 2. Find HOD for the selected department
+    let hodUid = null;
     try {
+        const usersRef = ref(rtdb, 'users');
+        const usersSnapshot = await get(usersRef);
+        if (usersSnapshot.exists()) {
+            const allUsers = usersSnapshot.val();
+            const hods = Object.values(allUsers).filter(
+                user => user.role === 'HOD' && user.department === department && user.isApproved
+            );
+            if (hods.length > 0) {
+                hodUid = hods[0].uid; // Assuming one HOD per department or picking the first
+            }
+        }
+    } catch (error) {
+        console.error("Error finding HOD:", error);
+        showToast("Failed to find HOD for the department.", "error");
+        return;
+    }
+
+    if (!hodUid) {
+        showToast(`No HOD found for department ${department}. Cannot forward.`, "error");
+        return;
+    }
+
+    // 3. Update the editor with the content including signature before saving
+    if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
+        window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
+            // 4. Save the paper with 'forwarded' status
+            const isSaved = await handleSaveQuestionPaper(true, 'forwarded', hodUid);
+            if (isSaved) {
+                showToast("Question paper forwarded to HOD successfully!", "success");
+            } else {
+                showToast("Failed to forward question paper.", "error");
+            }
+        });
+    } else {
+        showToast("Editor not ready. Please finalize the paper first.", "error");
+    }
+};
+
+  const downloadQuestionPaperDocx = async () => { // Kept for now, but will be removed from UI
+    try {
+      // Ensure the editor content is up-to-date with any active changes
       refreshOutcomesSummary(true);
       
       let content = '';
@@ -2590,34 +2748,72 @@ export default function QuestionPaperGenerator() {
     }
   };
 
+  // Helper to validate and correct PI for a single question object
+  const validateAndCorrectPI = (q) => {
+    const chosenCO = q.co;
+    const chosenPI = q.pi;
+    const validPIsForCO = coPiMapping[chosenCO] || [];
+
+    if (chosenCO && validPIsForCO.length > 0) {
+      if (!validPIsForCO.includes(chosenPI)) {
+        // If AI picked an invalid PI, replace with the first valid one
+        q.pi = validPIsForCO[0];
+        console.warn(`AI generated invalid PI '${chosenPI}' for CO '${chosenCO}'. Replaced with '${validPIsForCO[0]}'.`);
+      }
+    } else if (chosenCO && validPIsForCO.length === 0) {
+      // If CO is chosen but has no mapped PIs, clear PI
+      q.pi = '';
+      console.warn(`CO '${chosenCO}' has no mapped PIs. PI field cleared.`);
+    } else {
+      // If CO is invalid or missing, clear PI
+      q.pi = '';
+    }
+    return q;
+  };
+
   const handleGenerateAI = async () => {
-    if (!aiSyllabus.trim()) {
-      showToast("Please enter the syllabus or topics.", "error");
+  if (!aiSyllabus.trim()) {
+    if (!subjectCourseDetails || !Array.isArray(subjectCourseDetails.co) || subjectCourseDetails.co.length === 0) {
+      showToast("No syllabus content found for the selected subject. Please ensure COs are defined in the Course Bank.", "error");
       return;
     }
+  }
 
-    setIsGeneratingAI(true);
-    try {
-      const mappingContext = {};
-      courseOutcomes.forEach(co => {
-        mappingContext[co.code] = {
-          description: co.description,
-          pis: coPiMapping[co.code] || []
-        };
-      });
+  let syllabusContentForAI = "No specific syllabus content provided in the course node.";
+  if (subjectCourseDetails && Array.isArray(subjectCourseDetails.co)) {
+    syllabusContentForAI = subjectCourseDetails.co.map(co => {
+      let coText = `CO ${co.id}: ${co.description}`;
+      if (co.content) coText += `\n  Content: ${co.content}`;
+      if (co.domain) coText += `\n  Domain: ${co.domain}`;
+      if (co.level) coText += `\n  Level: ${co.level}`;
+      return coText;
+    }).join('\n\n');
+  }
+  
+  setIsGeneratingAI(true);
+  try {
+    const mappingContext = {};
+    courseOutcomes.forEach(co => {
+      mappingContext[co.code] = {
+        description: co.description,
+        pis: coPiMapping[co.code] || []
+      };
+    });
 
-      const { GoogleGenAI, Type } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: "AIzaSyAycIwjJ5CWKU1N6Y7u2lUC0gvX4o9i_v8" });
-      
-      const prompt = `
-You are an expert Question Paper Setter for an engineering college.
+    const { GoogleGenAI, Type } = await import('@google/genai');
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      throw new Error("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file and restart the server.");
+    }
+    const ai = new GoogleGenAI({ apiKey });
+    
+    // ✅ FIXED: Properly formatted prompt as a single string
+    const prompt = `You are an expert Question Paper Setter for an engineering college.
 Based on the following syllabus/topics, generate a high-quality assessment paper.
 
-SYLLABUS/TOPICS:
-${aiSyllabus}
-
-DIFFICULTY DISTRIBUTION (APPROXIMATE):
-${aiDistribution || 'Balanced'}
+DETAILED COURSE OUTCOMES & SYLLABUS CONTENT:
+${syllabusContentForAI}
 
 UNIT & PART CONSTRAINTS:
 ${aiUnitConstraints || 'No specific unit constraints provided. Extract evenly from the syllabus.'}
@@ -2629,214 +2825,151 @@ COURSE OUTCOMES & PERFORMANCE INDICATORS (MAPPING CONTEXT):
 ${JSON.stringify(mappingContext, null, 2)}
 
 INSTRUCTIONS:
-1. For each part, generate exactly the requested number of questions based on the Unit Distribution.
+1. For each part, generate exactly the requested number of questions.
 2. If "isEitherOr" is true, generate an 'a' and 'b' option for each question number.
 3. Strictly adhere to the requested marks per question.
-4. Each question must be assigned a valid KL (Knowledge Level, e.g., L1, L2, L3, L4, L5, L6), a single valid CO (from the mapping context), and a valid PI mapped to that CO.
-5. If mapping context is empty or invalid, try to guess the appropriate KL (L1-L6) and leave CO and PI as 'CO1' and 'PI1' or similar defaults.
+4. Each question must be assigned a valid KL (Knowledge Level, e.g., L1, L2, L3, L4, L5, L6), a single valid CO (from the MAPPING CONTEXT), and a single valid PI that is explicitly listed as mapped to that CO within the MAPPING CONTEXT. You MUST select a PI from the 'pis' array associated with the chosen 'coCode' in the MAPPING CONTEXT. Do NOT invent PIs or use PIs not present in the provided mapping for the chosen CO.
+5. When generating questions, consider the Bloom's Taxonomy Level (KL) specified for each CO in the DETAILED COURSE OUTCOMES & SYLLABUS CONTENT section. Generate questions that primarily align with or are slightly below the CO's specified level to ensure comprehensive assessment. For example, if a CO is L3 (Apply), questions should be L3 or L2.
 ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requested to generate diagrams (graphs, circuits, architecture, meshes, mechanical parts) for SOME of the questions if the syllabus topic implies it. For these questions, you MUST generate a valid HTML5 inline <svg> element to represent the diagram. Append or prepend the raw <svg>...</svg> code directly inside the "question" string, together with the question text. Use responsive widths (e.g. width="300" height="200") and clear styling inside the SVG. Remember to escape quotes properly for JSON output! Do NOT skip this step; we need at least a few diagrams when applicable.` : `6. Do NOT include any images, SVG, or HTML diagrams. Output plain text questions only.`}
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              parts: {
-                type: Type.ARRAY,
-                description: "Array of parts for the exam paper",
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    partLetter: { type: Type.STRING },
-                    questions: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          qnoText: { type: Type.STRING, description: "E.g., '1' or '11(a)'" },
-                          eitherOrSub: { type: Type.STRING, description: "Empty string, or 'a' or 'b'" },
-                          question: { type: Type.STRING },
-                          kl: { type: Type.STRING },
-                          co: { type: Type.STRING },
-                          pi: { type: Type.STRING },
-                          marks: { type: Type.NUMBER }
-                        },
-                        required: ["qnoText", "question", "kl", "co", "pi", "marks"]
-                      }
+    // ✅ FIXED: Changed model to working Gemini model
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',  // Changed from 'gemini-pro'
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            parts: {
+              type: Type.ARRAY,
+              description: "Array of parts for the exam paper",
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  partLetter: { type: Type.STRING },
+                  questions: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        qnoText: { type: Type.STRING, description: "E.g., '1' or '11(a)'" },
+                        eitherOrSub: { type: Type.STRING, description: "Empty string, or 'a' or 'b'" },
+                        question: { type: Type.STRING },
+                        kl: { type: Type.STRING },
+                        co: { type: Type.STRING },
+                        pi: { type: Type.STRING },
+                        marks: { type: Type.NUMBER }
+                      },
+                      required: ["qnoText", "question", "kl", "co", "pi", "marks"]
                     }
-                  },
-                  required: ["partLetter", "questions"]
-                }
+                  }
+                },
+                required: ["partLetter", "questions"]
               }
-            },
-            required: ["parts"]
+            }
+          },
+          required: ["parts"]
+        }
+      }
+    });
+    
+    const responseData = response.text;
+    if (!responseData) throw new Error("Empty response from AI");
+    const data = JSON.parse(responseData);
+    
+    let overallTotal = 0;
+    let finalizedParts = [];
+    
+    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    const semesterNum = deriveSemesterNumber(selectedSemester);
+    const subjectObj = subjects.find(s => s.value === subject);
+    const subjectDisplay = subjectObj ? subjectObj.text : subject;
+    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    
+    const qpData = {
+      programme: program,
+      department: department,
+      batch: batch,
+      academic_year: academicYear,
+      semester: String(semesterNum || ''),
+      subject: subject,
+      subject_name: subjectDisplay.split(' - ')[1] || '',
+      qpaper_name: exam === 'custom' ? examDisplay : exam,
+      total_marks: overallTotal,
+      exam_date: selectedConfig ? selectedConfig.examDate : new Date().toISOString(),
+      assessment_type: assessmentType,
+      parts: [],
+      assignment_config: []
+    };
+    
+    if (assessmentType === 'Exam') {
+      let questionCounter = 1;
+      const newQpQuestions = [];
+      data.parts.forEach((p, index) => {
+        const originalPart = partsConfig[index];
+        if (!originalPart) return;
+        
+        let aiQuestionIdx = 0;
+        for (let i = 0; i < originalPart.numQuestions; i++) {
+          if (originalPart.isEitherOr) {
+            const qa = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+            const qb = p.questions[aiQuestionIdx + 1] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+            newQpQuestions.push({
+              qno: `${questionCounter}(a)`,
+              sub: 'a',
+              either_or: true,
+              marks: originalPart.marksPerQuestion,
+              question: qa.question,
+              co: qa.co || "CO1",
+              kl: qa.kl || "L1",
+              pi: qa.pi || (coPiMapping[qa.co]?.[0] || "")
+            });
+            newQpQuestions.push({
+              qno: `${questionCounter}(b)`,
+              sub: 'b',
+              either_or: true,
+              marks: originalPart.marksPerQuestion,
+              question: qb.question,
+              co: qb.co || "CO1",
+              kl: qb.kl || "L1",
+              pi: qb.pi || (coPiMapping[qb.co]?.[0] || "")
+            });
+            aiQuestionIdx += 2;
+          } else {
+            const q = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L1", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+            newQpQuestions.push({
+              qno: `${questionCounter}`,
+              sub: '',
+              either_or: false,
+              marks: originalPart.marksPerQuestion,
+              question: q.question,
+              co: q.co || "CO1",
+              kl: q.kl || "L1",
+              pi: q.pi || (coPiMapping[q.co]?.[0] || "")
+            });
+            aiQuestionIdx += 1;
           }
+          questionCounter++;
         }
       });
-      
-      const responseData = response.text;
-      if (!responseData) throw new Error("Empty response from AI");
-      const data = JSON.parse(responseData);
-
-      let overallTotal = 0;
-      if (assessmentType === 'Assignment') {
-        assignmentConfig.forEach(q => {
-          overallTotal += q.marks;
-        });
-      } else {
-        partsConfig.forEach(part => {
-          overallTotal += part.numQuestions * part.marksPerQuestion;
-        });
-      }
-
-      const semesterNum = deriveSemesterNumber(selectedSemester);
-      const subjectObj = subjects.find(s => s.value === subject);
-      const subjectDisplay = subjectObj ? subjectObj.text : subject;
-      const selectedConfig = ciaConfigs.find(c => c.id === exam);
-      const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
-
-      const qpData = {
-        programme: program,
-        department: department,
-        batch: batch,
-        academic_year: academicYear,
-        semester: String(semesterNum || ''),
-        subject: subject,
-        subject_name: subjectDisplay.split(' - ')[1] || '',
-        qpaper_name: exam === 'custom' ? examDisplay : exam,
-        total_marks: overallTotal,
-        exam_date: selectedConfig ? selectedConfig.examDate : new Date().toISOString(),
-        assessment_type: assessmentType,
-        parts: [],
-        assignment_config: []
-      };
-
-      if (assessmentType === 'Exam') {
-        let questionCounter = 1;
-        qpData.parts = data.parts.map((p, index) => {
-          const originalPart = partsConfig[index];
-          const questions = [];
-          
-          let aiQuestionIdx = 0;
-          for (let i = 0; i < originalPart.numQuestions; i++) {
-            if (originalPart.isEitherOr) {
-              const qa = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L4", co: "CO", pi: "PI", marks: originalPart.marksPerQuestion };
-              const qb = p.questions[aiQuestionIdx + 1] || { question: "AI missed this question", kl: "L4", co: "CO", pi: "PI", marks: originalPart.marksPerQuestion };
-              
-              questions.push({
-                qno: `${questionCounter}(a)`,
-                sub: 'a',
-                either_or: true,
-                marks: originalPart.marksPerQuestion,
-                question: qa.question,
-                co: qa.co,
-                kl: qa.kl,
-                pi: qa.pi
-              });
-              questions.push({
-                qno: `${questionCounter}(b)`,
-                sub: 'b',
-                either_or: true,
-                marks: originalPart.marksPerQuestion,
-                question: qb.question,
-                co: qb.co,
-                kl: qb.kl,
-                pi: qb.pi
-              });
-              aiQuestionIdx += 2;
-            } else {
-              const q = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L1", co: "CO", pi: "PI", marks: originalPart.marksPerQuestion };
-              questions.push({
-                qno: `${questionCounter}`,
-                sub: '',
-                either_or: false,
-                marks: originalPart.marksPerQuestion,
-                question: q.question,
-                co: q.co,
-                kl: q.kl,
-                pi: q.pi
-              });
-              aiQuestionIdx += 1;
-            }
-            questionCounter++;
-          }
-          
-          return {
-            part: p.partLetter,
-            num_questions: originalPart.numQuestions,
-            marks_per_question: originalPart.marksPerQuestion,
-            questions: questions
-          };
-        });
-      } else {
-        if (data.parts && data.parts[0] && data.parts[0].questions) {
-            qpData.assignment_config = data.parts[0].questions.map(q => ({
-               question: q.question,
-               kl: q.kl,
-               co: q.co,
-               pi: q.pi,
-               marks: q.marks
-            }));
-        } else {
-            qpData.assignment_config = assignmentConfig;
-        }
-      }
-
-      const combinedContent = getQuestionPaperHTML(qpData);
-
-      // Ensure preview is visible and editor is initialized before setting data
-      setShowFinalPreview(true);
-      const applyToEditor = () => {
-        try {
-          if (!window.CKEDITOR) return false;
-          const editor = window.CKEDITOR.instances && window.CKEDITOR.instances['questionEditor'];
-          if (!editor || editor.status !== 'ready') return false;
-          editor.setData(combinedContent, () => {
-            try {
-              const content = editor.getData();
-              const qnos = extractQNosFromHtml(content);
-              if (qnos && qnos.length) setQbAvailableQNos(qnos);
-              if (typeof window.refreshOutcomesSummary === 'function') window.refreshOutcomesSummary(true);
-            } catch {
-              /* ignore */
-            }
-          });
-          return true;
-        } catch (e) {
-          return false;
-        }
-      };
-
-      // Try to initialize editor if not present
-      if (!window.CKEDITOR || !window.CKEDITOR.instances || !window.CKEDITOR.instances['questionEditor']) {
-        initEditor();
-      }
-
-      // Wait for editor to be ready then set data
-      const waitInterval = setInterval(() => {
-        const done = applyToEditor();
-        if (done) {
-          clearInterval(waitInterval);
-        }
-      }, 300);
-
-      setShowAIModal(false);
-      showToast("Questions generated successfully by AI!", "success");
-    } catch (err) {
-      console.error(err);
-      if (err && err.status === 429) {
-        showToast("API Quota Exceeded. Please check API usage.", "error");
-      } else {
-        showToast(err.message || "Failed to generate questions", "error");
-      }
-    } finally {
-      setIsGeneratingAI(false);
+      setQpQuestions(newQpQuestions);
+      showToast("Questions generated by AI! Review and click 'Finalize Question Paper' to see the full preview.", "success");
     }
-  };
+    
+    setShowAIModal(false);
+  } catch (err) {
+    console.error(err);
+    if (err && err.status === 429) {
+      showToast("API Quota Exceeded. Please check API usage.", "error");
+    } else {
+      showToast(err.message || "Failed to generate questions", "error");
+    }
+  } finally {
+    setIsGeneratingAI(false);
+  }
+};
 
   return (
     <Layout title="Question Paper Generator">
@@ -3006,6 +3139,22 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               />
             )}
           </div>
+
+          {exam && exam !== 'custom' && ciaConfigs.find(c => c.id === exam)?.numSets > 1 && (
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Choose Question Paper Set</label>
+              <div className="relative">
+                <select 
+                  className="w-full appearance-none bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-black text-blue-700" 
+                  value={qpSet} 
+                  onChange={e => setQpSet(e.target.value)}
+                >
+                  {Array.from({ length: ciaConfigs.find(c => c.id === exam).numSets }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2.5">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Assignment' ? 'Questions (Fixed to 1)' : 'Parts'}</label>
@@ -3654,11 +3803,12 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 Refresh Outcomes
               </button>
               <button
-                onClick={downloadQuestionPaperDocx}
-                className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-900/20 flex items-center gap-2"
+                onClick={handleForwardPaper}
+                disabled={!currentUserSignatureUrl}
+                className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 disabled:opacity-50"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                Download Word
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Forward to HOD
               </button>
               <button
                 onClick={handleSaveQuestionPaper}
@@ -3677,22 +3827,18 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             <h2 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">
               <div className="w-2 h-8 bg-purple-600 rounded-full"></div>
               Generate with AI
+              <span className="text-sm font-normal text-slate-500 ml-2">(Syllabus fetched automatically)</span>
             </h2>
             
             <div className="space-y-6">
-              <div className="space-y-2.5">
-                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Syllabus / Topics (Paste the text here)</label>
-                <textarea
-                  className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-xl resize-y focus:ring-2 focus:ring-purple-500 outline-none transition-all font-medium"
-                  rows="8"
-                  value={aiSyllabus}
-                  onChange={(e) => setAiSyllabus(e.target.value)}
-                  placeholder="E.g. Unit 1: Introduction to Data Structures, Arrays, Linked Lists..."
-                />
+              <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-sm flex items-center gap-3">
+                <AlertCircle size={20} className="shrink-0" />
+                <p>Syllabus content and CO Bloom's levels are automatically fetched from the selected subject's Course Bank entry to guide AI generation.</p>
               </div>
 
-              <div className="space-y-2.5">
-                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Difficulty & Distribution</label>
+              {/* Removed aiDistribution input, AI will infer from CO levels */}
+              {/* <div className="space-y-2.5">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Difficulty & Distribution (AI will infer from CO levels)</label>
                 <input
                   type="text"
                   className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none transition-all font-medium"
@@ -3700,7 +3846,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                   onChange={(e) => setAiDistribution(e.target.value)}
                   placeholder="E.g. 50% Easy (L1-L2), 30% Medium (L3), 20% Hard (L4-L6)"
                 />
-              </div>
+              </div> */}
 
               <div className="space-y-2.5">
                 <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Unit & Topic Requirements (Optional)</label>

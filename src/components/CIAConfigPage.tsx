@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Settings, Save, AlertCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { CIAConfig, PartConfig } from '../types';
-import { cn, formatProgDisplay, formatProgrammeKey } from '../lib/utils';
-import { useSemesterType } from '../hooks/useSemesterType';
+import { Plus, Trash2, Save, AlertCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CIAConfig } from '../types';
 import { rtdb } from '../firebase';
 import { ref, set, push, onValue, remove } from 'firebase/database';
-import { useDepartments } from '../hooks/useDepartments';
 
 interface CIAConfigPageProps {
   program?: string;
@@ -14,8 +11,13 @@ interface CIAConfigPageProps {
   regulation?: string;
 }
 
+// Local extension of type to include DB id
+interface CIAConfigWithId extends CIAConfig {
+  id: string;
+}
+
 const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regulation }) => {
-  const [configs, setConfigs] = useState<CIAConfig[]>([]);
+  const [configs, setConfigs] = useState<CIAConfigWithId[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -38,8 +40,12 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           ...data[key]
         }));
         // Sort by createdAt descending
-        configsArray.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setConfigs(configsArray);
+        configsArray.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+        setConfigs(configsArray as CIAConfigWithId[]);
       } else {
         setConfigs([]);
       }
@@ -62,18 +68,17 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           ...prev, 
           isUniversity: true,
           isIndirectAssessment: true,
+          isAssignment: false,
           totalMarks: 0 // Hide total marks value potentially
         }));
+      } else if (name === 'isUniversity' && !checked) {
+        setFormData(prev => ({ ...prev, isUniversity: false, isIndirectAssessment: false }));
       } else {
         setFormData(prev => ({ ...prev, [name]: checked }));
       }
     } else {
       setFormData(prev => ({ ...prev, [name]: value }));
     }
-  };
-
-  const calculateTotalMarks = (parts: PartConfig[]) => {
-    return parts.reduce((total, part) => total + (part.marksPerQuestion * part.numberOfQuestions), 0);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -84,8 +89,8 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     const { examName, totalMarks, isUniversity, isIndirectAssessment, isAssignment } = formData;
 
     const needsTotalMarks = !isUniversity && !isIndirectAssessment;
-    if (!program || !department || !regulation || !examName) {
-      setError("Please ensure Program, Department, Regulation, and Exam Name are provided.");
+    if (!program || !regulation || !examName) {
+      setError("Please ensure Program, Regulation, and Exam Name are provided.");
       return;
     }
 
@@ -98,13 +103,14 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
       const newConfigRef = push(ref(rtdb, 'cia_configs'));
       await set(newConfigRef, {
         program,
-        department,
+        department: department || "",
         regulation,
         examName,
         totalMarks: Number(totalMarks),
         isUniversity,
         isIndirectAssessment,
         isAssignment,
+        numSets: 1,
         createdAt: new Date().toISOString()
       });
       
@@ -133,13 +139,14 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
 
   const filteredConfigs = configs.filter(config => {
     if (program && config.program !== program) return false;
-    if (department && config.department !== department) return false;
+    // If a department filter is provided (non-empty), match it. If empty, show all for that regulation.
+    if (department && (config.department || "") !== department) return false;
     if (regulation && config.regulation !== regulation) return false;
     return true;
   });
 
   // Only show configs if all required filters are selected
-  const hasRequiredFilters = program && department && regulation;
+  const hasRequiredFilters = !!(program && regulation);
   const displayConfigs = hasRequiredFilters ? filteredConfigs : [];
 
   return (
@@ -295,9 +302,11 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                         <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-bold rounded uppercase">
                           {config.program}
                         </span>
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs font-bold rounded uppercase">
-                          {config.department}
-                        </span>
+                        {config.department && (
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs font-bold rounded uppercase">
+                            {config.department}
+                          </span>
+                        )}
                       </div>
                       <h3 className="text-lg font-bold text-slate-900">{config.examName}</h3>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">

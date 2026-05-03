@@ -19,7 +19,7 @@ export default function CreateCourse() {
   const [courseCode, setCourseCode] = useState("");
   const [courseName, setCourseName] = useState("");
   const [credits, setCredits] = useState(3);
-  const [courseType, setCourseType] = useState("Program Course");
+  const [courseType, setCourseType] = useState("");
   const [numCOs, setNumCOs] = useState(0);
   const [coDefs, setCoDefs] = useState([]);
   const [coContents, setCoContents] = useState([]);
@@ -30,12 +30,30 @@ export default function CreateCourse() {
   const [bloomsDomains, setBloomsDomains] = useState({});
   const [existingCourses, setExistingCourses] = useState([]); // merged list for dropdown
   const [selectedExistingCourseKey, setSelectedExistingCourseKey] = useState("");
+  const [courseTypeConfigs, setCourseTypeConfigs] = useState({});
+
+  useEffect(() => {
+    const ctRef = ref(rtdb, 'course_type_configs');
+    const unsubscribe = onValue(ctRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setCourseTypeConfigs(snapshot.val());
+      } else {
+        setCourseTypeConfigs({});
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const dynamicCourseTypes = useMemo(() => {
+    if (!regulation) return [];
+    return courseTypeConfigs[sanitizeKey(regulation)] || [];
+  }, [regulation, courseTypeConfigs]);
 
   const deptKey = department || "Overall";
   const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
 
   // ensure arrays stay in sync when coDefs changes
-  useEffect(() => {
+  useEffect(() => { // This useEffect should depend on numCOs or coDefs.length, not coDefs directly.
     setCoContents((prev) => {
       const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
       return next;
@@ -48,7 +66,7 @@ export default function CreateCourse() {
       const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
       return next;
     });
-  }, [coDefs]);
+  }, [coDefs.length]); // Changed dependency to coDefs.length
 
   // subscribe to Bloom's taxonomy from RTDB
   useEffect(() => {
@@ -405,9 +423,10 @@ export default function CreateCourse() {
                       value={courseType}
                       onChange={(e) => setCourseType(e.target.value)}
                     >
-                      <option>Program Course</option>
-                      <option>Elective</option>
-                      <option>Open Elective</option>
+                      <option value="">--select--</option>
+                      {dynamicCourseTypes.map((type, idx) => (
+                        <option key={idx} value={type}>{type}</option>
+                      ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>

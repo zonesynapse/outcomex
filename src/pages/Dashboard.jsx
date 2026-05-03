@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { rtdb, auth } from "../firebase";
 import { ref, onValue, set, get } from "firebase/database";
 import { 
+  Check,
   ChevronDown, 
   Plus, 
   Minus, 
@@ -180,10 +181,10 @@ export default function Dashboard() {
     const progKey = formatProgrammeKey(programme);
     return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => 
       formatProgrammeKey(c.program) === progKey && 
-      c.department === department && 
-      c.batch === batch && 
-      c.academicYear === academicYear && 
-      String(c.semester) === semNum
+      (c.department === department || !c.department) &&
+      (!c.batch || c.batch === batch) &&
+      (!c.academicYear || c.academicYear === academicYear) &&
+      (!c.semester || String(c.semester) === semNum)
     );
   }, [ciaConfigs, programme, department, batch, academicYear, semester]);
 
@@ -1692,6 +1693,14 @@ export default function Dashboard() {
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))
                     .filter(qp => !selectedSubject || `${qp.subject} - ${qp.subject_name}` === selectedSubject)
                     .filter(qp => {
+                      // HOD can see everything in their dept OR papers forwarded to them
+                      if (userRole === 'HOD') {
+                        return qp.department === department || qp.forwarded_to === auth.currentUser?.uid;
+                      }
+                      // Faculty only sees their assignments
+                      return userAssignments.includes(qp.subject);
+                    })
+                    .filter(qp => {
                       if (!selectedExam) return true;
                       // Get the exam name for this QP
                       let qpExamName = qp.exam_name;
@@ -1721,6 +1730,7 @@ export default function Dashboard() {
                             <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Semester</th>
                             <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Subject</th>
                             <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Exam</th>
+                            <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Status</th>
                             <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Actions</th>
                           </tr>
                         </thead>
@@ -1749,6 +1759,15 @@ export default function Dashboard() {
                                     const configId = qp.qpaper_name;
                                     return ciaConfigs[configId]?.examName || configId;
                                   })()}
+                                </span>
+                              </td>
+                              <td className="p-4 text-center">
+                                <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                  qp.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                                  qp.status === 'forwarded' ? 'bg-blue-100 text-blue-700 animate-pulse' :
+                                  'bg-zinc-100 text-zinc-500'
+                                }`}>
+                                  {qp.status || 'Draft'}
                                 </span>
                               </td>
                               <td className="p-4">

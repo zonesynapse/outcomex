@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { auth, rtdb } from "../firebase";
 import { signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get, set, onValue } from "firebase/database";
+import { ref, get, set, onValue, update } from "firebase/database";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { formatProgDisplay } from "../lib/utils";
 import { 
@@ -10,6 +10,7 @@ import {
   Upload,
   FileText,
   BookOpen,
+  AlertCircle,
   Target,
   Settings2,
   Database,
@@ -35,6 +36,12 @@ export default function Layout({ children, title }) {
   const [hasAssignments, setHasAssignments] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editData, setEditData] = useState({ programme: "", department: "" });
+  const [signatureFile, setSignatureFile] = useState(null);
+  const [signatureUrl, setSignatureUrl] = useState("");
+  const [uploadingSignature, setUploadingSignature] = useState(false);
+  const [signatureError, setSignatureError] = useState("");
+  const [signatureSuccess, setSignatureSuccess] = useState("");
+  const MAX_SIGNATURE_SIZE = 100 * 1024; // 100 KB
   const { departments: allDepartments } = useDepartments();
   const profileRef = useRef(null);
   const navigate = useNavigate();
@@ -88,6 +95,7 @@ export default function Layout({ children, title }) {
                 }
               });
             }
+            setSignatureUrl(data.signatureUrl || "");
           }
         });
       } else {
@@ -96,6 +104,7 @@ export default function Layout({ children, title }) {
         setRolePermissions(null);
         setHasAssignments(false);
         unsubscribeUser();
+        setSignatureUrl("");
         unsubscribePerms();
       }
     });
@@ -135,10 +144,80 @@ export default function Layout({ children, title }) {
         programme: editData.programme,
         department: editData.department
       });
+      // No need to update signature here, it's handled separately
       setUserData({ ...userData, programme: editData.programme, department: editData.department });
       setIsEditingProfile(false);
     } catch (error) {
       console.error("Update Profile Error:", error);
+    }
+  };
+
+  const handleSignatureFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      if (file.size > MAX_SIGNATURE_SIZE) {
+        setSignatureError("Signature file size must be less than 100KB.");
+        setSignatureFile(null);
+        return;
+      }
+      if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) {
+        setSignatureError("Only PNG, JPG, or JPEG images are allowed for signature.");
+        setSignatureFile(null);
+        return;
+      }
+      setSignatureError("");
+      setSignatureFile(file);
+    } else {
+      setSignatureFile(null);
+    }
+  };
+
+  const handleSignatureUpload = async () => {
+    if (!user || !signatureFile) return;
+    setUploadingSignature(true);
+    setSignatureError("");
+    setSignatureSuccess("");
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const base64String = reader.result;
+        const userRef = ref(rtdb, `users/${user.uid}`);
+        await update(userRef, { signatureUrl: base64String });
+        
+        setSignatureUrl(base64String);
+        setUserData(prev => ({ ...prev, signatureUrl: base64String }));
+        setSignatureFile(null);
+        setSignatureSuccess("Signature uploaded successfully!");
+        alert("Signature uploaded successfully!");
+        setTimeout(() => setSignatureSuccess(""), 4000);
+      } catch (error) {
+        console.error("Error saving signature:", error);
+        setSignatureError("Failed to save signature. Please try again.");
+      } finally {
+        setUploadingSignature(false);
+      }
+    };
+    reader.readAsDataURL(signatureFile);
+  };
+
+  const handleSignatureRemove = async () => {
+    if (!user || !signatureUrl) return;
+    setUploadingSignature(true);
+    setSignatureError("");
+    setSignatureSuccess("");
+    try {
+      const userRef = ref(rtdb, `users/${user.uid}`);
+      await update(userRef, { signatureUrl: null });
+      setSignatureUrl("");
+      setUserData(prev => ({ ...prev, signatureUrl: null }));
+      setSignatureSuccess("Signature removed successfully!");
+      setTimeout(() => setSignatureSuccess(""), 4000);
+    } catch (error) {
+      console.error("Error removing signature:", error);
+      setSignatureError("Failed to remove signature. Please try again.");
+    } finally {
+      setUploadingSignature(false);
     }
   };
 
@@ -402,6 +481,59 @@ export default function Layout({ children, title }) {
                 <div className="pt-2 border-t border-zinc-100">
                   <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Email Address</p>
                   <p className="text-sm font-medium text-zinc-600 truncate">{userData?.email}</p>
+                </div>
+
+                {/* Digital Signature Section */}
+                <div className="pt-4 border-t border-zinc-100">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Digital Signature</p>
+                  {signatureUrl ? (
+                    <div className="flex items-center gap-3">
+                      <img src={signatureUrl} alt="Digital Signature" className="h-16 w-auto border border-zinc-200 rounded-lg p-1 bg-white" />
+                      <button
+                        onClick={handleSignatureRemove}
+                        disabled={uploadingSignature}
+                        className="px-3 py-1.5 bg-red-500 text-white text-[10px] font-bold rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+                      >
+                        {uploadingSignature ? 'Removing...' : 'Remove'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="file"
+                        accept="image/png, image/jpeg, image/jpg"
+                        onChange={handleSignatureFileChange}
+                        className="w-full text-[10px] text-zinc-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                      />
+                      {signatureFile && (
+                        <button
+                          onClick={handleSignatureUpload}
+                          disabled={uploadingSignature}
+                          className="w-full py-1.5 bg-blue-600 text-white text-[10px] font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {uploadingSignature ? (
+                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Check size={12} />
+                          )}
+                          Upload Signature
+                        </button>
+                      )}
+                      {signatureError && (
+                        <div className="text-red-500 text-[10px] mt-1 flex items-center gap-1">
+                          <AlertCircle size={10} /> {signatureError}
+                        </div>
+                      )}
+                      {signatureSuccess && (
+                        <div className="text-green-600 text-[10px] mt-1 flex items-center gap-1 font-bold">
+                          <Check size={12} /> {signatureSuccess}
+                        </div>
+                      )}
+                      <p className="text-[9px] text-zinc-400 mt-1 leading-tight">
+                        Max size: 100KB. Formats: PNG, JPG, JPEG.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 

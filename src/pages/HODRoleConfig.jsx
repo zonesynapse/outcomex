@@ -263,21 +263,17 @@ export default function HODRoleConfig() {
       for (const subjectCode of allAssignedSubjects) {
         let courseRef = ref(rtdb, `courses/${progKey}/${sanitizeKey(syllabusDept)}/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
         let snap = await get(courseRef);
-        let isOverall = false;
 
         if (!snap.exists()) {
           courseRef = ref(rtdb, `courses/${progKey}/Overall/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
           snap = await get(courseRef);
-          isOverall = true;
         }
 
         if (snap.exists()) {
           const courseData = snap.val();
           if (courseData.co && Array.isArray(courseData.co)) {
             const coDict = {};
-            const newCoursesCO = [];
             let needsOutcomeCopy = false;
-            let hasExtraFieldsInCourseNode = false;
 
             courseData.co.forEach((c) => {
               if (c.description || c.domain || c.level) {
@@ -288,26 +284,14 @@ export default function HODRoleConfig() {
                 };
                 needsOutcomeCopy = true;
               }
-              newCoursesCO.push({
-                id: c.id,
-                content: c.content || ""
-              });
-              if (c.description !== undefined || c.domain !== undefined || c.level !== undefined) {
-                hasExtraFieldsInCourseNode = true;
-              }
             });
 
             if (needsOutcomeCopy) {
               const coKey = `${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
               const coOutcomesRef = ref(rtdb, `course_outcomes/${coKey}`);
               
-              // Only save if it doesn't already exist or overwrite it? The requirement implies moving it over explicitly.
+              // Copy CO descriptions, domains, and levels to course_outcomes node
               await set(coOutcomesRef, coDict);
-
-              // If it's not overall, we remove description/domain/level from courses node
-              if (!isOverall && hasExtraFieldsInCourseNode) {
-                await update(courseRef, { co: newCoursesCO });
-              }
             }
           }
         }
@@ -533,7 +517,7 @@ export default function HODRoleConfig() {
                                 <span className="font-bold">{code}</span>
                                 <span className="truncate max-w-[100px] text-blue-700">{sub?.name || 'Unknown'}</span>
                                 <button 
-                                  onClick={() => handleRemoveSubject(faculty.uid, code)}
+                                  onClick={() => handleRemoveSubject(faculty.uid, code)} // Corrected to pass subjectCode
                                   className="text-blue-300 hover:text-red-500 transition-colors"
                                 >
                                   <Trash2 size={12} />

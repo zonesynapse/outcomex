@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { CKEditor } from 'ckeditor4-react';
-import { rtdb, auth } from "../firebase";
+import { rtdb, auth } from "../firebase"; // Ensure auth is imported
 import { ref, set, get, onValue } from "firebase/database";
 import { 
   ChevronDown, 
@@ -104,10 +104,10 @@ export default function QuestionPaper() {
     
     return ciaConfigs.filter(config => 
       config.program === programme &&
-      config.department === department &&
-      config.batch === batch &&
-      config.academicYear === academicYear &&
-      String(config.semester) === semNum
+      (config.department === department || !config.department) &&
+      (!config.batch || config.batch === batch) &&
+      (!config.academicYear || config.academicYear === academicYear) &&
+      (!config.semester || String(config.semester) === semNum)
     );
   }, [ciaConfigs, programme, department, batch, academicYear, semester]);
 
