@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile",
+      "description": "Stores user profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The Firebase Auth UID." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "displayName": { "type": "string", "description": "The user's display name." },
+        "photoURL": { "type": "string", "format": "uri", "description": "The user's profile picture URL." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created." }
+      },
+      "required": ["uid", "email"]
+    },
+    "students": {
+      "title": "Student List",
+      "description": "A list of students in a batch.",
+      "type": "object",
+      "properties": {
+        "batch": { "type": "string" },
+        "programme": { "type": "string" },
+        "department": { "type": "string" },
+        "students": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "reg": { "type": "string" },
+              "name": { "type": "string" }
+            }
+          }
+        },
+        "order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "poActionsTaken": {
+      "title": "PO Action Taken",
+      "description": "Stores the action plan for POs/PSOs that are not attained.",
+      "type": "object",
+      "properties": {
+        "programme": { "type": "string" },
+        "department": { "type": "string" },
+        "batch": { "type": "string" },
+        "regulation": { "type": "string" },
+        "outcomeCode": { "type": "string" },
+        "action": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["programme", "department", "batch", "regulation", "outcomeCode", "action"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profile documents."
+    },
+    "/students/{compositeKey}": {
+      "schema": "students",
+      "description": "Student list for a specific batch, programme, and department."
+    },
+    "/poActionsTaken/{actionId}": {
+      "schema": "poActionsTaken",
+      "description": "Action plans for non-attained outcomes."
+    }
+  }
+}

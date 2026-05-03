@@ -1,0 +1,289 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+@theme {
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --color-blue-50: #f0f0fa;
+  --color-blue-100: #e1e1f5;
+  --color-blue-200: #c4c4eb;
+  --color-blue-300: #a6a6e1;
+  --color-blue-400: #6b6bd0;
+  --color-blue-500: #120c7a;
+  --color-blue-600: #100b6e;
+  --color-blue-700: #0d095c;
+  --color-blue-800: #0a0749;
+  --color-blue-900: #08063d;
+}
+
+html, body {
+  font-size: 16px;
+  color: #1f2937;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input, select, textarea, button {
+  font-size: 14px;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f0f0fa;
+}
+::-webkit-scrollbar-thumb {
+  background: #120c7a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #100b6e;
+}
+
+/* ====== PART A ====== */
+.part-a-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.part-a-container .question-number-a {
+  width: 32px;
+  text-align: right;
+  font-weight: 600;
+  color: #3f3f46;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.part-a-container input[type="number"] {
+  width: 64px;
+  height: 32px;
+  border: 1px solid #e4e4e7;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  background-color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.part-a-container input[type="number"]:focus {
+  border-color: #120c7a;
+  box-shadow: 0 0 0 2px rgba(18, 12, 122, 0.1);
+  outline: none;
+}
+
+/* ====== PART B & C PERFECT LINEAR ALIGNMENT ====== */
+.part-b-container,
+.part-c-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+
+/* Question Number */
+.part-b-container .question-number-b,
+.part-c-container .question-number-c {
+  width: 32px;
+  text-align: right;
+  font-weight: 600;
+  color: #3f3f46;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Radio Buttons */
+.part-b-container input[type="radio"],
+.part-c-container input[type="radio"] {
+  cursor: pointer;
+  accent-color: #120c7a;
+  width: 16px;
+  height: 16px;
+}
+
+/* Number Input Box */
+.part-b-container input[type="number"],
+.part-c-container input[type="number"] {
+  width: 64px;
+  height: 32px;
+  border: 1px solid #e4e4e7;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  background-color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.part-b-container input[type="number"]:focus,
+.part-c-container input[type="number"]:focus {
+  border-color: #120c7a;
+  box-shadow: 0 0 0 2px rgba(18, 12, 122, 0.1);
+  outline: none;
+}
+
+/* Assignment mark input styling */
+.assignment-mark {
+    width: 64px;
+    height: 32px;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 14px;
+    margin: 0 auto;
+    display: block;
+    transition: all 0.2s ease;
+    font-variant-numeric: tabular-nums;
+}
+
+.assignment-mark:focus {
+    border-color: #120c7a;
+    box-shadow: 0 0 0 2px rgba(18, 12, 122, 0.1);
+    outline: none;
+}
+
+/* ✅ Keep everything visible normally */
+tr.absent-row .total-marks {
+  color: red;
+  font-weight: bold;
+}
+
+/* ✅ Make sure checkbox always clickable */
+tr.absent-row .absent-checkbox {
+  pointer-events: auto;
+}
+
+/* ====== QUESTION PAPER GENERATOR STYLES ====== */
+.bottom-space {
+    margin-top: 140px;
+    padding-top: 20px;
+}
+
+.flex-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.input-group-2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.input-group-2 label {
+    min-width: 160px;
+    font-weight: 500;
+    color: #444;
+}
+
+.input-group-2 input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background-color: #e6f3ff;
+}
+
+/* Editor container styles */
+.a4-wrapper {
+    display: flex;
+    justify-content: center;
+    padding: 20px;
+    background-color: #f1f5f9;
+}
+
+.a4-sheet {
+    width: 210mm;
+    min-height: 297mm;
+    background: white;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    margin: 0 auto 40px auto;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* Make CKEditor fit exactly in A4 dimensions */
+.a4-sheet .cke {
+    width: 210mm !important;
+    margin: 0 auto;
+}
+
+.a4-sheet .cke_contents {
+    height: 297mm !important;
+}
+
+.download-btn {
+    background: #120c7a;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    font-size: 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.3s ease;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.download-btn:hover {
+    background: #100b6e;
+    transform: scale(1.05);
+}
+
+.a4-body {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    padding: 20mm;
+    background: white;
+    box-sizing: border-box;
+}
+
+/* Print Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .qp-template, .qp-template * {
+    visibility: visible;
+  }
+  .qp-template {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  .no-print {
+    display: none !important;
+  }
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+}
+
+.q-content p {
+  margin: 0;
+}
+
+.q-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 10px 0;
+}

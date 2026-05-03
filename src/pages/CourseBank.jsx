@@ -1,0 +1,540 @@
+import { useState, useEffect, useMemo } from "react";
+import Layout from "../components/Layout";
+import { useDepartments } from "../hooks/useDepartments";
+import { useRegulations } from "../hooks/useRegulations";
+import { rtdb } from "../firebase";
+import { ref, set, onValue } from "firebase/database";
+import { sanitizeKey, formatProgDisplay } from "../lib/utils";
+import { ChevronDown, Trash2 } from "lucide-react";
+
+export default function CreateCourse() {
+  const { departments: allDepartments, durations, loading: dLoading } = useDepartments();
+  const { regulations, loading: rLoading } = useRegulations();
+
+  const [programme, setProgramme] = useState("");
+  const [department, setDepartment] = useState("");
+  const [regulation, setRegulation] = useState("");
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [courseCode, setCourseCode] = useState("");
+  const [courseName, setCourseName] = useState("");
+  const [credits, setCredits] = useState(3);
+  const [courseType, setCourseType] = useState("Program Course");
+  const [numCOs, setNumCOs] = useState(0);
+  const [coDefs, setCoDefs] = useState([]);
+  const [coContents, setCoContents] = useState([]);
+  const [coDomains, setCoDomains] = useState([]);
+  const [coLevels, setCoLevels] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [bloomsDomains, setBloomsDomains] = useState({});
+  const [existingCourses, setExistingCourses] = useState([]); // merged list for dropdown
+  const [selectedExistingCourseKey, setSelectedExistingCourseKey] = useState("");
+
+  const deptKey = department || "Overall";
+  const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
+
+  // ensure arrays stay in sync when coDefs changes
+  useEffect(() => {
+    setCoContents((prev) => {
+      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
+      return next;
+    });
+    setCoDomains((prev) => {
+      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
+      return next;
+    });
+    setCoLevels((prev) => {
+      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
+      return next;
+    });
+  }, [coDefs]);
+
+  // subscribe to Bloom's taxonomy from RTDB
+  useEffect(() => {
+    const bloomsRef = ref(rtdb, 'blooms_taxonomy');
+    const unsub = onValue(bloomsRef, (snap) => {
+      if (snap.exists()) setBloomsDomains(snap.val());
+      else setBloomsDomains({});
+    });
+    return () => unsub();
+  }, []);
+
+  const handleCoChange = (index, value) => {
+    setCoDefs((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleCoContentChange = (index, value) => {
+    setCoContents((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleCoDomainChange = (index, value) => {
+    setCoDomains((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleCoLevelChange = (index, value) => {
+    setCoLevels((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const addCO = () => {
+    setCoDefs(prev => [...prev, ""]);
+    setCoContents(prev => [...prev, ""]);
+    setCoDomains(prev => [...prev, ""]);
+    setCoLevels(prev => [...prev, ""]);
+  };
+
+  const removeCO = (index) => {
+    setCoDefs(prev => prev.filter((_, i) => i !== index));
+    setCoContents(prev => prev.filter((_, i) => i !== index));
+    setCoDomains(prev => prev.filter((_, i) => i !== index));
+    setCoLevels(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const getLevelsForDomain = (domainName) => {
+    if (!domainName) return [];
+    const domain = Object.values(bloomsDomains).find(d => d.name === domainName);
+    if (!domain || !Array.isArray(domain.levels)) return [];
+    return domain.levels;
+  };
+
+  const handleSave = async () => {
+    if (!programme || !regulation || !courseCode.trim() || !courseName.trim()) {
+      setMessage("Please fill Programme, Regulation, Course code and Course name.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const progKey = programme; // already stored as programme key (e.g., B_E)
+      const courseKey = sanitizeKey(courseCode.trim());
+      const payload = {
+        code: courseCode.trim(),
+        name: courseName.trim(),
+        credits: Number(credits) || 0,
+        type: courseType,
+        regulation,
+        programme: progKey,
+        department: deptKey,
+        co: coDefs.map((c, i) => ({ id: `CO${i + 1}`, description: c || "", content: (coContents[i] || ""), domain: (coDomains[i] || ""), level: (coLevels[i] || "") }))
+      };
+
+      await set(ref(rtdb, `courses/${progKey}/${deptKey}/${sanitizeKey(regulation)}/${courseKey}`), payload);
+      setMessage("Course saved successfully.");
+      setSelectedExistingCourseKey(`${deptKey}:${courseKey}`);
+      setShowCreate(false);
+      setCourseCode("");
+      setCourseName("");
+      setCredits(3);
+      setNumCOs(0);
+      setCoDefs([]);
+      setCoContents([]);
+      setCoDomains([]);
+      setCoLevels([]);
+    } catch (err) {
+      console.error(err);
+      setMessage("Error saving course.");
+    }
+    setSaving(false);
+    setTimeout(() => setMessage(""), 4000);
+  };
+
+  // Fetch existing courses for selected Programme + Department + Regulation.
+  // If a department is selected, also include Overall courses.
+  useEffect(() => {
+    if (!programme || !regulation) {
+      setExistingCourses([]);
+      setSelectedExistingCourseKey("");
+      return;
+    }
+
+    const baseRegKey = sanitizeKey(regulation);
+    const deptRefs = [];
+    if (department) {
+      deptRefs.push({ dept: department, ref: ref(rtdb, `courses/${programme}/${department}/${baseRegKey}`) });
+      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${programme}/Overall/${baseRegKey}`) });
+    } else {
+      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${programme}/Overall/${baseRegKey}`) });
+    }
+
+    const unsubs = [];
+    const combined = new Map();
+
+    const rebuild = () => {
+      const list = Array.from(combined.values()).sort((a, b) => {
+        const ac = (a.code || a.key || "").toUpperCase();
+        const bc = (b.code || b.key || "").toUpperCase();
+        return ac.localeCompare(bc);
+      });
+      setExistingCourses(list);
+    };
+
+    deptRefs.forEach(({ dept, ref: deptRef }) => {
+      const unsub = onValue(deptRef, (snap) => {
+        // Remove any previously added items from this dept
+        for (const [k, v] of combined.entries()) {
+          if (v._sourceDept === dept) combined.delete(k);
+        }
+        if (snap.exists()) {
+          const data = snap.val();
+          Object.entries(data).forEach(([key, course]) => {
+            combined.set(`${dept}:${key}`, {
+              key,
+              code: course?.code || key,
+              name: course?.name || "",
+              credits: course?.credits,
+              type: course?.type,
+              co: Array.isArray(course?.co) ? course.co : [],
+              _sourceDept: dept,
+            });
+          });
+        }
+        rebuild();
+      });
+      unsubs.push(unsub);
+    });
+
+    return () => {
+      unsubs.forEach(u => u && u());
+    };
+  }, [programme, department, regulation]);
+
+  const loadExistingCourseIntoForm = (compositeKey) => {
+    if (!compositeKey) return;
+    const match = existingCourses.find(c => `${c._sourceDept}:${c.key}` === compositeKey);
+    if (!match) return;
+
+    setShowCreate(true);
+    setCourseCode(match.code || "");
+    setCourseName(match.name || "");
+    setCredits(match.credits ?? 3);
+    setCourseType(match.type || "Program Course");
+
+    const cos = Array.isArray(match.co) ? match.co : [];
+    setCoDefs(cos.map(co => co?.description || ""));
+    setCoContents(cos.map(co => co?.content || ""));
+    setCoDomains(cos.map(co => co?.domain || ""));
+    setCoLevels(cos.map(co => co?.level || ""));
+  };
+
+  // Hide the form until a dropdown selection is made
+  useEffect(() => {
+    if (!selectedExistingCourseKey) {
+      setShowCreate(false);
+    }
+  }, [selectedExistingCourseKey]);
+
+  // Programs are the keys defined in Curriculum (durations / departments), e.g., B_E, B_Tech
+  const programmes = Object.keys(durations || allDepartments || {});
+
+  return (
+    <Layout title="Course Bank">
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+        <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
+          <div className="bg-[#120c7a] px-6 py-2">
+            <h2 className="text-white font-bold text-sm">New Course Setup</h2>
+          </div>
+
+          <div className="p-8 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600">Programme</label>
+                <div className="relative">
+                  <select
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={programme}
+                    onChange={(e) => {
+                      setProgramme(e.target.value);
+                      setDepartment("");
+                      setSelectedExistingCourseKey("");
+                    }}
+                  >
+                    <option value="">Select Programme</option>
+                    {programmes.map((p) => (
+                      <option key={p} value={p}>
+                        {formatProgDisplay(p)}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600">Department</label>
+                <div className="relative">
+                  <select
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={department}
+                    onChange={(e) => {
+                      setDepartment(e.target.value);
+                      setSelectedExistingCourseKey("");
+                    }}
+                    disabled={!programme}
+                  >
+                    <option value="">Overall Program</option>
+                    {programme && (allDepartments[programme] || []).map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600">Regulation</label>
+                <div className="relative">
+                  <select
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={regulation}
+                    onChange={(e) => {
+                      setRegulation(e.target.value);
+                      setSelectedExistingCourseKey("");
+                    }}
+                  >
+                    <option value="">Select Regulation</option>
+                    {(regulations || []).map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-zinc-600">Existing Courses (Code - Name)</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                  value={selectedExistingCourseKey}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSelectedExistingCourseKey(v);
+                    if (v === "__new__") {
+                      setShowCreate(true);
+                      setCourseCode("");
+                      setCourseName("");
+                      setCredits(3);
+                      setCourseType("Program Course");
+                      setNumCOs(0);
+                      setCoDefs([]);
+                      setCoContents([]);
+                      setCoDomains([]);
+                      setCoLevels([]);
+                      return;
+                    }
+                    if (v) loadExistingCourseIntoForm(v);
+                  }}
+                  disabled={!programme || !regulation}
+                >
+                  <option value="">Select Course</option>
+                  <option value="__new__">+ New Course</option>
+                  {existingCourses.map((c) => (
+                    <option
+                      key={`${c._sourceDept}:${c.key}`}
+                      value={`${c._sourceDept}:${c.key}`}
+                      title={`${c.code} - ${c.name}`}
+                    >
+                      {c.code}
+                      {c.name ? ` - ${c.name}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+              </div>
+              {programme && regulation && existingCourses.length === 0 && (
+                <div className="text-xs text-zinc-500">No courses found for {deptKey} / {regulation}.</div>
+              )}
+            </div>
+
+          {showCreate && selectedExistingCourseKey && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Course Code</label>
+                  <input
+                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={courseCode}
+                    onChange={(e) => setCourseCode(e.target.value)}
+                    placeholder="e.g., CS301"
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-bold text-zinc-600">Course Name</label>
+                  <input
+                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={courseName}
+                    onChange={(e) => setCourseName(e.target.value)}
+                    placeholder="Enter course name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Credits</label>
+                  <input
+                    type="number"
+                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                    value={credits}
+                    onChange={(e) => setCredits(e.target.value)}
+                    min={0}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Course Type</label>
+                  <div className="relative">
+                    <select
+                      className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                      value={courseType}
+                      onChange={(e) => setCourseType(e.target.value)}
+                    >
+                      <option>Program Course</option>
+                      <option>Elective</option>
+                      <option>Open Elective</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                  </div>
+                </div>
+              </div>
+
+              {coDefs.length > 0 && (
+                <div className="pt-3">
+                  <h3 className="text-sm font-bold text-zinc-700 mb-2">CO Definitions & Content</h3>
+                  <div className="space-y-4">
+                    {coDefs.map((c, i) => (
+                      <div key={i} className="bg-zinc-50 p-5 rounded-xl border border-zinc-200 shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <span className="w-8 h-8 flex items-center justify-center bg-[#120c7a] text-white rounded-lg font-bold text-xs shadow-sm">CO{i + 1}</span>
+                            <h4 className="text-sm font-bold text-zinc-700">Course Outcome</h4>
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              title="Remove CO"
+                              onClick={() => removeCO(i)}
+                              className="text-zinc-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-start gap-3">
+                          <div className="flex-1">
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Definition</label>
+                            <textarea
+                              className="w-full mt-2 bg-white border border-zinc-300 rounded-lg px-4 py-2.5 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm min-h-[90px]"
+                              value={c}
+                              onChange={(e) => handleCoChange(i, e.target.value)}
+                              rows={3}
+                              placeholder="Enter CO definition"
+                            />
+
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider mt-4">Content</label>
+                            <textarea
+                              className="w-full mt-2 bg-white border border-zinc-300 rounded-lg px-4 py-2.5 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm min-h-[140px]"
+                              value={coContents[i] || ""}
+                              onChange={(e) => handleCoContentChange(i, e.target.value)}
+                              rows={6}
+                              placeholder="Topics / subtopics / keywords for this CO"
+                            />
+                          </div>
+                          <div className="w-56 shrink-0">
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Domain</label>
+                            <div className="relative mt-2">
+                              <select
+                                className="w-full appearance-none bg-white border border-zinc-300 rounded-lg px-4 py-2.5 pr-10 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm font-medium"
+                                value={coDomains[i] || ""}
+                                onChange={(e) => handleCoDomainChange(i, e.target.value)}
+                              >
+                                <option value="">Select Domain</option>
+                                {Object.values(bloomsDomains).map((d) => (
+                                  <option key={d.name} value={d.name}>{d.name}</option>
+                                ))}
+                              </select>
+                              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={16} />
+                            </div>
+
+                            <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Level</label>
+                            <div className="relative mt-2">
+                              <select
+                                className="w-full appearance-none bg-white border border-zinc-300 rounded-lg px-4 py-2.5 pr-10 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm font-medium"
+                                value={coLevels[i] || ""}
+                                onChange={(e) => handleCoLevelChange(i, e.target.value)}
+                              >
+                                <option value="">Select Level</option>
+                                {getLevelsForDomain(coDomains[i] || "").map((lvl, idx) => (
+                                  <option key={idx} value={lvl.code || lvl.name}>
+                                    {(lvl.code ? `${lvl.code} - ` : "") + lvl.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={16} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-[#120c7a] hover:bg-[#100b6e] text-white font-bold rounded-lg shadow transition-all"
+                  onClick={addCO}
+                >
+                  + Add CO
+                </button>
+              </div>
+
+              <div className="pt-4 flex justify-end gap-3 border-t border-zinc-100">
+                <button
+                  className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 rounded-lg font-bold transition-all"
+                  onClick={() => setShowCreate(false)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow transition-all"
+                  onClick={handleSave}
+                  disabled={saving}
+                  type="button"
+                >
+                  {saving ? 'Saving...' : 'Save Course'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {message && (
+            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm font-medium">
+              {message}
+            </div>
+          )}
+        </div>
+      </div>
+      </div>
+    </Layout>
+  );
+}
