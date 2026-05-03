@@ -25,6 +25,16 @@ export default function RegulationFormation() {
   const [allCiaConfigs, setAllCiaConfigs] = useState({});
   const [updatingSet, setUpdatingSet] = useState(null);
 
+  const [weightageConfigs, setWeightageConfigs] = useState({});
+
+  useEffect(() => {
+    const wRef = dbRef(rtdb, 'course_type_weightage');
+    const unsubscribe = onValue(wRef, (snapshot) => {
+      setWeightageConfigs(snapshot.val() || {});
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Fetch CIA Configs to manage exam sets
   useEffect(() => {
     const ciaRef = dbRef(rtdb, 'cia_configs');
@@ -42,6 +52,37 @@ export default function RegulationFormation() {
     setUpdatingSet(configId);
     try {
       await update(dbRef(rtdb, `cia_configs/${configId}`), { numSets: parseInt(num) || 1 });
+      setSuccessMessage("Exam set count updated successfully!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+    setUpdatingSet(null);
+  };
+
+  const handleWeightageChange = (regKey, type, examId, value) => {
+    setWeightageConfigs(prev => ({
+      ...prev,
+      [regKey]: {
+        ...(prev[regKey] || {}),
+        [type]: {
+          ...(prev[regKey]?.[type] || {}),
+          [examId]: value === "" ? "" : parseInt(value)
+        }
+      }
+    }));
+  };
+
+  const handleSaveWeightage = async (regKey, type) => {
+    const data = weightageConfigs[regKey]?.[type] || {};
+    const total = Object.values(data).reduce((sum, v) => sum + (parseInt(v) || 0), 0);
+    
+    if (total !== 100) {
+      setMessage({ type: "error", text: `Total weightage for "${type}" must be exactly 100%. Current: ${total}%` });
+      return;
+    }
+
+    try {
+      await set(dbRef(rtdb, `course_type_weightage/${regKey}/${type}`), data);
       setSuccessMessage("Exam set count updated successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -97,9 +138,15 @@ export default function RegulationFormation() {
   };
 
   const handleRemoveCourseType = async (regKey, index) => {
+    const typeToRemove = courseTypeConfigs[regKey][index];
     const currentTypes = [...(courseTypeConfigs[regKey] || [])];
     currentTypes.splice(index, 1);
     await set(dbRef(rtdb, `course_type_configs/${regKey}`), currentTypes.length > 0 ? currentTypes : null);
+    
+    if (typeToRemove) {
+      await set(dbRef(rtdb, `course_type_weightage/${regKey}/${typeToRemove}`), null);
+    }
+    
     setSuccessMessage("Course type removed successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -155,6 +202,17 @@ export default function RegulationFormation() {
 
   return (
     <Layout title="Regulation Formation">
+      <style>{`
+        input[type='number']::-webkit-outer-spin-button,
+        input[type='number']::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type='number'] {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
+      `}</style>
       <div className="max-w-7xl mx-auto p-6 space-y-6">
 
         {/* Add Regulation */}
@@ -340,16 +398,52 @@ export default function RegulationFormation() {
                         Object.entries(courseTypeConfigs).map(([regKey, types]) => (
                           <div key={regKey} className="bg-white p-4 rounded-lg border border-zinc-200 shadow-sm">
                             <p className="text-xs font-black text-[#120c7a] uppercase mb-3 border-b border-zinc-100 pb-2">{regKey}</p>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="space-y-4">
                               {Array.isArray(types) && types.map((type, idx) => (
-                                <div key={idx} className="px-2.5 py-1.5 bg-zinc-50 text-zinc-700 border border-zinc-200 rounded-md text-xs font-bold flex items-center gap-2">
-                                  <span>{type}</span>
-                                  <button
-                                    className="text-zinc-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-colors"
-                                    onClick={() => handleRemoveCourseType(regKey, idx)}
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
+                                <div key={idx} className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-sm font-black text-zinc-700">{type}</span>
+                                    <button
+                                      className="text-zinc-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+                                      onClick={() => handleRemoveCourseType(regKey, idx)}
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                  
+                                  <div className="bg-white p-4 rounded-xl border border-zinc-100 shadow-inner">
+                                    <div className="flex justify-between items-center mb-3">
+                                      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Internal Weightage Split (Total 100%)</p>
+                                      <button 
+                                        onClick={() => handleSaveWeightage(regKey, type)}
+                                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                      >
+                                        <Save size={12} /> Save Split
+                                      </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {Object.entries(allCiaConfigs)
+                                        .filter(([id, config]) => sanitizeKey(config.regulation) === regKey && config.courseTypes?.includes(type))
+                                        .map(([id, config]) => (
+                                          <div key={id} className="flex items-center justify-between gap-4 py-1 border-b border-zinc-50 last:border-0">
+                                            <span className="text-xs font-bold text-zinc-600">{config.examName}</span>
+                                            <div className="flex items-center gap-2">
+                                              <input 
+                                                type="number" 
+                                                className="w-16 px-2 py-1 text-xs border border-zinc-200 rounded text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-100"
+                                                value={weightageConfigs[regKey]?.[type]?.[id] ?? ""}
+                                                onChange={(e) => handleWeightageChange(regKey, type, id, e.target.value)}
+                                                placeholder="0"
+                                              />
+                                              <span className="text-[10px] font-bold text-zinc-400">%</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      {Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === regKey && config.courseTypes?.includes(type)).length === 0 && (
+                                        <p className="text-[10px] text-amber-500 italic">No exams configured for this course type yet.</p>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -479,7 +573,7 @@ export default function RegulationFormation() {
                   <thead className="bg-zinc-50">
                     <tr className="text-zinc-600 border-b border-zinc-200">
                       <th className="px-6 py-4 font-bold uppercase tracking-wider text-[11px]">Exam Name</th>
-                      <th className="px-6 py-4 font-bold uppercase tracking-wider text-[11px]">Department</th>
+                      <th className="px-6 py-4 font-bold uppercase tracking-wider text-[11px]">Course Types</th>
                       <th className="px-6 py-4 font-bold uppercase tracking-wider text-[11px] text-center">Required QP Sets</th>
                     </tr>
                   </thead>
@@ -497,7 +591,11 @@ export default function RegulationFormation() {
                           .map(([id, config]) => (
                             <tr key={id} className="hover:bg-zinc-50 transition-colors">
                               <td className="px-6 py-4 font-bold text-zinc-800">{config.examName}</td>
-                              <td className="px-6 py-4 text-zinc-500 font-medium">{config.department}</td>
+                              <td className="px-6 py-4 text-zinc-500 font-medium">
+                                {config.courseTypes && Array.isArray(config.courseTypes) 
+                                  ? config.courseTypes.join(", ") 
+                                  : "N/A"}
+                              </td>
                               <td className="px-6 py-4 text-center">
                                 <div className="flex items-center justify-center gap-3">
                                   <input 

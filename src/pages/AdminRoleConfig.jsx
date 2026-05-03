@@ -46,7 +46,9 @@ export default function AdminRoleConfig() {
     { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment" },
     { id: "co_configuration", label: "CO Configuration", path: "/co_configuration" },
     { id: "questionpaper", label: "Question Papers", path: "/questionpaper" },
-    { id: "markk", label: "Marks Entry", path: "/markk" }
+    { id: "markk", label: "Marks Entry", path: "/markk" },
+    { id: "attendance", label: "Attendance", path: "/attendance" },
+    { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar" }
   ];
 
   const ROLES = ["Admin", "Principal", "HOD", "Faculty"];
@@ -97,10 +99,10 @@ export default function AdminRoleConfig() {
       } else {
         // Initialize with default static permissions if none exist
         setRolePermissions({
-          Admin: ["dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-bank"],
-          Principal: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank"],
-          HOD: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank"],
-          Faculty: ["dashboard", "co_configuration", "questionpaper", "markk", "course-bank"]
+          Admin: ["dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar"],
+          Principal: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"],
+          HOD: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "co_configuration", "questionpaper", "markk"], // Added co_configuration, questionpaper, markk for HOD
+          Faculty: ["dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"]
         });
       }
     });

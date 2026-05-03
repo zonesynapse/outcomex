@@ -22,7 +22,9 @@ import {
   Check,
   ChevronRight,
   Network,
-  BarChart3
+  BarChart3,
+  Calendar,
+  CalendarCheck2
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -244,7 +246,9 @@ export default function Layout({ children, title }) {
     { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
     { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
     { id: "questionpaper", icon: BookOpen, label: "Question Papers", path: "/questionpaper" },
-    { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" }
+    { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
+    { id: "attendance", icon: CalendarCheck2, label: "Attendance", path: "/attendance" },
+    { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" }
   ];
 
   const menuItems = [];
@@ -272,7 +276,7 @@ export default function Layout({ children, title }) {
     // If they have certain "HOD" level logic that depends on 'hasAssignments'
     if (hasAssignments) {
         // Ensure standard faculty items are there if they have assignments
-        const facultyItems = ["co_configuration", "questionpaper", "markk", "course-bank"];
+        const facultyItems = ["co_configuration", "questionpaper", "markk", "course-bank", "attendance"];
         facultyItems.forEach(id => {
             if (!menuItems.some(i => i.id === id)) {
                 const item = allPossibleItems.find(i => i.id === id);
@@ -284,14 +288,14 @@ export default function Layout({ children, title }) {
     // Fallback to static items if permissions haven't loaded yet
     const fallbackIds = [];
     if (isAdmin) {
-      fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank");
+      fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar");
     } else if (isPrincipal) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank");
+      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar");
     } else if (isHOD) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank");
-      if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk");
+      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar");
+      if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk", "attendance");
     } else if (isFaculty) {
-      fallbackIds.push("dashboard", "co_configuration", "questionpaper", "markk", "course-bank");
+      fallbackIds.push("dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar");
     }
 
     allPossibleItems.forEach(item => {

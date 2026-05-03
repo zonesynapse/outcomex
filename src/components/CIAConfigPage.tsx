@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Save, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CIAConfig } from '../types';
 import { rtdb } from '../firebase';
@@ -14,6 +14,7 @@ interface CIAConfigPageProps {
 // Local extension of type to include DB id
 interface CIAConfigWithId extends CIAConfig {
   id: string;
+  courseTypes?: string[];
 }
 
 const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regulation }) => {
@@ -25,10 +26,13 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     totalMarks: 0,
     isUniversity: false,
     isIndirectAssessment: false,
-    isAssignment: false
+    isAssignment: false,
+    courseTypes: [] as string[]
   });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [availableCourseTypes, setAvailableCourseTypes] = useState<string[]>([]);
+  const [selectedFilterTypes, setSelectedFilterTypes] = useState<string[]>([]);
 
   useEffect(() => {
     const configsRef = ref(rtdb, 'cia_configs');
@@ -57,6 +61,24 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
 
     return () => unsubscribe();
   }, []);
+
+  // Fetch available course types for the selected regulation
+  useEffect(() => {
+    if (!regulation) {
+      setAvailableCourseTypes([]);
+      return;
+    }
+    const regKey = regulation.replace(/[.#$[\]]/g, '_');
+    const ctRef = ref(rtdb, `course_type_configs/${regKey}`);
+    const unsubscribe = onValue(ctRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setAvailableCourseTypes(snapshot.val() || []);
+      } else {
+        setAvailableCourseTypes([]);
+      }
+    });
+    return () => unsubscribe();
+  }, [regulation]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -94,6 +116,11 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
       return;
     }
 
+    if (formData.courseTypes.length === 0) {
+      setError("Please select at least one Course Type for this configuration.");
+      return;
+    }
+
     if (needsTotalMarks && totalMarks <= 0) {
       setError("Total marks must be greater than 0.");
       return;
@@ -110,6 +137,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         isUniversity,
         isIndirectAssessment,
         isAssignment,
+        courseTypes: formData.courseTypes,
         numSets: 1,
         createdAt: new Date().toISOString()
       });
@@ -120,7 +148,8 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         totalMarks: 0,
         isUniversity: false,
         isIndirectAssessment: false,
-        isAssignment: false
+        isAssignment: false,
+        courseTypes: []
       });
     } catch (err) {
       console.error("Error saving config:", err);
@@ -142,6 +171,10 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     // If a department filter is provided (non-empty), match it. If empty, show all for that regulation.
     if (department && (config.department || "") !== department) return false;
     if (regulation && config.regulation !== regulation) return false;
+
+    if (selectedFilterTypes.length > 0) {
+      return config.courseTypes?.some(ct => selectedFilterTypes.includes(ct));
+    }
     return true;
   });
 
@@ -164,6 +197,46 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           </h2>
           
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">Select Course Type(s)</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-white border border-slate-200 rounded-lg px-4 py-2 pr-10 outline-none focus:ring-2 focus:ring-[#120c7a] transition-all font-medium text-sm"
+                  value=""
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val && !formData.courseTypes.includes(val)) {
+                      setFormData(prev => ({
+                        ...prev,
+                        courseTypes: [...prev.courseTypes, val]
+                      }));
+                      e.target.value = ""; // Reset dropdown after selection
+                    }
+                  }}
+                >
+                  <option value="">-- Add Course Type --</option>
+                  {availableCourseTypes.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+              </div>
+              
+              <div className="flex flex-wrap gap-2 mt-2">
+                {formData.courseTypes.map(type => (
+                  <span key={type} className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded flex items-center gap-1 border border-blue-100 uppercase tracking-tighter">
+                    {type}
+                    <button 
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, courseTypes: prev.courseTypes.filter(t => t !== type) }))}
+                      className="hover:text-red-500 transition-colors"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Exam Name</label>
               <input
@@ -175,7 +248,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                 className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-[#120c7a] focus:border-transparent outline-none transition-all"
               />
             </div>
-
             <div className="flex flex-wrap items-center gap-4 py-2">
               <div className="flex items-center gap-2">
                 <input
@@ -266,12 +338,35 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
 
         {/* Configurations List */}
         <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            Existing Configurations
-            <span className="text-sm font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-              {displayConfigs.length}
-            </span>
-          </h2>
+          <div className="flex flex-col gap-4">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              Existing Configurations
+              <span className="text-sm font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                {displayConfigs.length}
+              </span>
+            </h2>
+
+            {availableCourseTypes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">Filter Types:</span>
+                {availableCourseTypes.map(type => {
+                  const isSelected = selectedFilterTypes.includes(type);
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setSelectedFilterTypes(prev => isSelected ? prev.filter(t => t !== type) : [...prev, type])}
+                      className={`px-3 py-1 rounded-full text-[10px] font-bold transition-all border ${isSelected ? 'bg-[#120c7a] text-white border-[#120c7a]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#120c7a]'}`}
+                    >
+                      {type}
+                    </button>
+                  );
+                })}
+                {selectedFilterTypes.length > 0 && (
+                  <button onClick={() => setSelectedFilterTypes([])} className="text-[10px] font-bold text-red-500 hover:underline ml-auto">Clear Filters</button>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 gap-4">
             <AnimatePresence mode="popLayout">
@@ -329,6 +424,13 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                             Assignment
                           </span>
                         )}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {config.courseTypes?.map((ct, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded border border-blue-100 uppercase tracking-tighter">
+                            {ct}
+                          </span>
+                        ))}
                       </div>
                       {config.parts && config.parts.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">

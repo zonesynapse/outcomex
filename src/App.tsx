@@ -12,6 +12,8 @@ import PoAttainment from "./pages/PoAttainment";
 import CoPoMapping from "./pages/CoPoMapping";
 import PlaceholderPage from "./pages/PlaceholderPage";
 import Upload from "./pages/Upload";
+import Attendance from "./pages/Attendance";
+import AcademicCalendar from "./pages/AcademicCalendar";
 import HODRoleConfig from "./pages/HODRoleConfig";
 import Curriculum from "./pages/Curriculum";
 import RegulationFormation from "./pages/RegulationFormation";
@@ -40,6 +42,8 @@ export default function App() {
         <Route path="/markk" element={<ProtectedRoute><MarkEntry /></ProtectedRoute>} />
         <Route path="/co-po" element={<ProtectedRoute><CoPoMapping /></ProtectedRoute>} />
         <Route path="/po-attainment" element={<ProtectedRoute><PoAttainment /></ProtectedRoute>} />
+        <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
+        <Route path="/academic-calendar" element={<ProtectedRoute><AcademicCalendar /></ProtectedRoute>} />
         
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
