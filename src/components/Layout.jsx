@@ -231,6 +231,8 @@ export default function Layout({ children, title }) {
   // All possible menu items with their IDs
   const allPossibleItems = [
     { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+    { id: "faculty-dashboard", icon: BookOpen, label: "Faculty Dashboard", path: "/faculty-dashboard" },
+    { id: "hod-dashboard", icon: Users, label: "HOD Dashboard", path: "/hod-dashboard" },
     { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
     { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
     { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
@@ -249,6 +251,7 @@ export default function Layout({ children, title }) {
     { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
     { id: "attendance", icon: CalendarCheck2, label: "Attendance", path: "/attendance" },
     { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" }
+    ,{ id: "timetable", icon: Calendar, label: "Timetable", path: "/tt" }
   ];
 
   const menuItems = [];
@@ -289,13 +292,14 @@ export default function Layout({ children, title }) {
     const fallbackIds = [];
     if (isAdmin) {
       fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar");
+      fallbackIds.push("timetable");
     } else if (isPrincipal) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar");
+      fallbackIds.push("dashboard", "hod-role-configuration", "hod-dashboard", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar", "timetable");
     } else if (isHOD) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar");
+      fallbackIds.push("dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "timetable");
       if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk", "attendance");
     } else if (isFaculty) {
-      fallbackIds.push("dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar");
+      fallbackIds.push("dashboard", "faculty-dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar", "timetable");
     }
 
     allPossibleItems.forEach(item => {

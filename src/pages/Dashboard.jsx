@@ -422,8 +422,8 @@ export default function Dashboard() {
     return getQuestionPaperHTML(
       qp,
       cos, // Pass fetched COs
-      facultySig,
-      hodSig,
+      facultySig, // facultySignatureForQP
+      hodSig,     // hodSignatureForQP (this is the HOD signature from the QP itself)
       ciaConf
     );
   }, []); // Dependencies are now passed as arguments, so this callback itself has no external deps

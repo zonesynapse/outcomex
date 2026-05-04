@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X } from 'lucide-react';
 import Layout from '../components/Layout';
 import { auth, rtdb } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -45,6 +45,7 @@ export default function QuestionPaperGenerator() {
   const [courseOutcomes, setCourseOutcomes] = useState([]);
   const [coPiMapping, setCoPiMapping] = useState({});
   const [poSummaryMapping, setPoSummaryMapping] = useState({});
+  const [poList, setPoList] = useState([]);
   const [savedExamParts, setSavedExamParts] = useState([]);
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [userRole, setUserRole] = useState(null);
@@ -356,6 +357,8 @@ export default function QuestionPaperGenerator() {
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [qpSet, setQpSet] = useState('Set 1');
   const [showFinalPreview, setShowFinalPreview] = useState(false);
+  const [hodComments, setHodComments] = useState('');
+  const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
 
   const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
   const [aiUnitConstraints, setAiUnitConstraints] = useState('');
@@ -420,8 +423,38 @@ export default function QuestionPaperGenerator() {
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000);
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
   };
+
+  const getCurrentStructureTotalMarks = useCallback(() => {
+    if (assessmentType === 'Assignment') {
+      // Assignment has one question with a configured total mark
+      return parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
+    }
+    return (partsConfig || []).reduce((sum, part) => {
+      const count = parseInt(part?.numQuestions, 10) || 0;
+      const marks = parseInt(part?.marksPerQuestion, 10) || 0;
+      return sum + (count * marks);
+    }, 0);
+  }, [assessmentType, assignmentConfig, partsConfig]);
+
+  const alertIfMarksMismatchWithConfig = useCallback((selectedConfig, currentTotal) => {
+    const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+    if (!configTotal) return false; // Nothing to validate (e.g., ESE/Indirect)
+    if (currentTotal === configTotal) return false;
+
+    const diff = currentTotal - configTotal;
+    const status = diff > 0 ? 'HIGH' : 'LOW';
+    const action = diff > 0 ? 'reduce' : 'increase';
+    const by = Math.abs(diff);
+    alert(
+      `Your mark is ${status}.\n` +
+      `Configured total marks: ${configTotal}\n` +
+      `Your current paper total: ${currentTotal}\n` +
+      `Please ${action} by ${by} mark(s) before proceeding.`
+    );
+    return true;
+  }, []);
 
   useEffect(() => {
     const configsRef = ref(rtdb, 'cia_configs');
@@ -512,6 +545,13 @@ export default function QuestionPaperGenerator() {
     return { total, used, remaining, exceeded, balanced: used === total };
   }, [assignmentConfig]);
 
+  const getBaseQno = useCallback((qno) => {
+    let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
+    raw = raw.replace(/\(?[ab]\)/gi, '');
+    raw = raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
+    return raw;
+  }, []);
+
   const deriveCOSummaryFromQp = useCallback((qp) => {
     const activeCOs = new Set();
     const coWeightage = {};
@@ -542,10 +582,7 @@ export default function QuestionPaperGenerator() {
       const marks = parseInt(marksRaw, 10) || 0;
       if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
 
-      const base = String(qnoRaw || '')
-        .trim()
-        .replace(/\(a\)|\(b\)/gi, '')
-        .replace(/\s+/g, '');
+      const base = getBaseQno(qnoRaw);
       if (!base) return;
 
       activeCOs.add(co);
@@ -569,7 +606,7 @@ export default function QuestionPaperGenerator() {
     });
 
     return { activeCOs, coWeightage };
-  }, []);
+  }, [getBaseQno]);
 
   const normalizeQNo = useCallback((qno) => {
     const raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
@@ -659,11 +696,7 @@ export default function QuestionPaperGenerator() {
 
     const groups = {};
     questionsSource.forEach((q) => {
-      const normalized = normalizeQNo(q?.qno);
-      if (!normalized) return;
-
-      const qMatch = normalized.match(/^(\d+)([a-z])?$/i);
-      const base = qMatch ? qMatch[1] : normalized;
+      const base = getBaseQno(q?.qno);
       if (!base) return;
 
       const coCode = String(q?.co || '').trim().toUpperCase();
@@ -694,7 +727,7 @@ export default function QuestionPaperGenerator() {
     });
 
     return poMarks;
-  }, [assessmentType, poSummaryMapping, normalizeQNo]);
+  }, [assessmentType, poSummaryMapping, getBaseQno]);
 
   // Marks strictly from saved/loaded state
   const savedPoMarks = useMemo(() => {
@@ -733,14 +766,15 @@ export default function QuestionPaperGenerator() {
     if (poMatch) return code.toUpperCase();
     const psoMatch = String(code).match(/^PSO(\d+)$/i);
     if (psoMatch) {
-      const poCount = (sortedPoCodes || []).filter(c => /^PO\d+$/i.test(c)).length;
+      // Use the actual PO count from curriculum definition if available
+      const poCount = poList.length > 0 ? poList.length : 12;
       const num = parseInt(psoMatch[1], 10);
       if (num > poCount) {
         return `PSO${num - poCount}`;
       }
     }
     return code;
-  }, [sortedPoCodes]);
+  }, [poList]);
 
   // Build displayed summary (TOP TABLE): use ONLY savedPoMarks
   const displayedPoSummary = useMemo(() => {
@@ -1147,11 +1181,16 @@ export default function QuestionPaperGenerator() {
     const coKey = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
     const coRef = ref(rtdb, `course_outcomes/${coKey}`);
 
+    const poPsoKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
+    const poPsoRef = ref(rtdb, `po_pso/${poPsoKey}`);
+
     const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}`;
     const mappingRef = ref(rtdb, `mapping_summary/${mappingKey}`);
 
-    // console.log("Fetching COs from:", coKey);
-    // console.log("Fetching Mapping from:", mappingKey);
+    const unsubscribePoPso = onValue(poPsoRef, (snap) => {
+      const data = snap.val() || {};
+      setPoList(data.po_statements || []);
+    });
 
     const unsubscribeCO = onValue(coRef, (snapshot) => {
       const data = snapshot.val();
@@ -1204,6 +1243,7 @@ export default function QuestionPaperGenerator() {
     });
 
     return () => {
+      unsubscribePoPso();
       unsubscribeCO();
       unsubscribeMapping();
     };
@@ -1222,6 +1262,8 @@ export default function QuestionPaperGenerator() {
       setNumParts('');
       setAssignmentKL('L1');
       setAssignmentKLDomain('');
+      setHodComments(''); // Clear HOD comments when starting a new paper
+      setLoadedExamName('');
     }
   }, [editId, compositeKey, program, department, batch, academicYear, selectedSemester, subject, exam, customExam]);
 
@@ -1233,7 +1275,9 @@ export default function QuestionPaperGenerator() {
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}_${sanitizeKey(examDisplay)}`;
+    // Use a stable composite key that does NOT include the human-editable exam display name.
+    // This prevents creating a new DB node when exam display changes after recorrection.
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
 
     const checkExisting = async () => {
       try {
@@ -1339,6 +1383,8 @@ export default function QuestionPaperGenerator() {
           setAcademicYear(qp.academic_year || '');
           setSelectedSemester(qp.semester ? `${qp.semester}${qp.semester === '1' ? 'st' : qp.semester === '2' ? 'nd' : qp.semester === '3' ? 'rd' : 'th'} Semester` : '');
           setSubject(qp.subject || '');
+          setLoadedExamName(qp.exam_name || ''); // Preserve the human name from DB
+          setHodComments(qp.hod_comments || ''); // Load HOD comments
           setExam(qp.qpaper_name || '');
           
           if (qp.assessment_type === 'Assignment') {
@@ -1866,14 +1912,7 @@ const initEditor = useCallback(() => {
       });
     }
 
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
     
-    if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
-      if (overallTotal !== selectedConfig.totalMarks) {
-        showToast(`Error: Total marks (${overallTotal}) does not match CIA Config total marks (${selectedConfig.totalMarks}).`, "error");
-        return;
-      }
-    }
 
     // Do not render to the second CKEditor here.
     // Only prepare Q.No options for builder; final rendering happens on Finalize.
@@ -1882,7 +1921,49 @@ const initEditor = useCallback(() => {
       if (qnos.length) setQbAvailableQNos(qnos);
     }
     setShowFinalPreview(false);
+    // Validate against CIA Config total marks and offer AI generation option on mismatch
+    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
+      const overallTotal = (partsConfig || []).reduce((sum, part) => {
+        const count = parseInt(part?.numQuestions, 10) || 0;
+        const marks = parseInt(part?.marksPerQuestion, 10) || 0;
+        return sum + (count * marks);
+      }, 0);
+      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      if (configTotal > 0 && overallTotal !== configTotal) {
+        const diff = overallTotal - configTotal;
+        const status = diff > 0 ? 'HIGH' : 'LOW';
+        const by = Math.abs(diff);
+        alert(
+          `Your mark is ${status}.\nConfigured total marks: ${configTotal}\nCurrent paper total: ${overallTotal}\nPlease ${diff > 0 ? 'reduce' : 'increase'} by ${by} mark(s) before proceeding.`
+        );
+        // Do not open AI modal automatically; user must explicitly click "Generate with AI".
+        return;
+      }
+    }
+
     showToast('Parts ready. Enter questions and click Finalize to generate the paper.', 'success');
+  };
+
+  const handleOpenAIModal = () => {
+    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
+      const currentTotal = getCurrentStructureTotalMarks();
+      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      if (configTotal > 0 && currentTotal !== configTotal) {
+        const diff = currentTotal - configTotal;
+        const status = diff > 0 ? 'HIGH' : 'LOW';
+        const by = Math.abs(diff);
+        alert(
+          `Your mark is ${status}.\n` +
+          `Configured total marks: ${configTotal}\n` +
+          `Current paper total: ${currentTotal}\n` +
+          `Please ${diff > 0 ? 'reduce' : 'increase'} by ${by} mark(s) before opening the AI Generator.`
+        );
+        return; // Do not open AI modal when totals mismatch
+      }
+    }
+    setShowAIModal(true);
   };
 
   const handleFinalizeQuestions = () => {
@@ -1980,6 +2061,17 @@ const initEditor = useCallback(() => {
           questions
         };
       });
+    }
+
+    // Enforce CIA total marks match on finalize as well (AI path bypasses handleGenerateTable)
+    if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
+      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      if (configTotal > 0 && overallTotal !== configTotal) {
+        // Alert is required so users can correct mark definition
+        alertIfMarksMismatchWithConfig(selectedConfig, overallTotal);
+        showToast(`Total marks (${overallTotal}) does not match CIA Config (${configTotal}).`, 'error');
+        return;
+      }
     }
 
     const qpDataForFinalize = {
@@ -2202,7 +2294,7 @@ const initEditor = useCallback(() => {
 
     const semesterNum = deriveSemesterNumber(selectedSemester);
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
-    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
 
     const sanitizeKey = (key) => {
@@ -2210,7 +2302,8 @@ const initEditor = useCallback(() => {
       return String(key).replace(/[.#$[\]]/g, '_');
     };
 
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}_${sanitizeKey(examDisplay)}`;
+    // Use stable composite key not including examDisplay
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2236,7 +2329,8 @@ const initEditor = useCallback(() => {
       status: status,
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
-      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null
+      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
+      hod_comments: (status === 'recorrected') ? hodComments : null // Clear HOD comments if status changes from recorrected
     };
 
     try {
@@ -2447,7 +2541,7 @@ const initEditor = useCallback(() => {
 
     const semesterNum = deriveSemesterNumber(selectedSemester);
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
-    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
 
     const partsForPayload = [];
     let payloadQuestionCounter = 1;
@@ -2497,12 +2591,15 @@ const initEditor = useCallback(() => {
       });
     }
 
+    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+
     const sanitizeKey = (key) => {
       if (!key) return '';
       return String(key).replace(/[.#$[\]]/g, '_');
     };
 
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}_${sanitizeKey(examDisplay)}`;
+    // Use stable composite key not including examDisplay
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2544,7 +2641,8 @@ const initEditor = useCallback(() => {
       status: status,
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
-      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null
+      forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
+      hod_comments: (status === 'recorrected') ? hodComments : null
     };
 
     try {
@@ -2631,7 +2729,8 @@ const initEditor = useCallback(() => {
         semester: String(semesterNum || ''),
         subject,
         subject_name: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
-        qpaper_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || exam),
+        qpaper_name: exam, // Keep ID as the pointer
+        exam_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || (loadedExamName || exam)),
         total_marks: overallTotal,
         exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
         assessment_type: assessmentType,
@@ -2810,6 +2909,17 @@ const initEditor = useCallback(() => {
   };
 
   const handleGenerateAI = async () => {
+  // Marks sanity-check BEFORE calling AI
+  if (assessmentType === 'Exam' && exam && exam !== 'custom') {
+    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    if (selectedConfig) {
+      const currentTotal = getCurrentStructureTotalMarks();
+      if (alertIfMarksMismatchWithConfig(selectedConfig, currentTotal)) {
+        return;
+      }
+    }
+  }
+
   if (!aiSyllabus.trim()) {
     if (!subjectCourseDetails || !Array.isArray(subjectCourseDetails.co) || subjectCourseDetails.co.length === 0) {
       showToast("No syllabus content found for the selected subject. Please ensure COs are defined in the Course Bank.", "error");
@@ -3029,6 +3139,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           <span className="font-bold">{toast.message}</span>
         </div>
       )}
+
+      {hodComments && (
+        <div className="mb-6 p-4 rounded-xl flex items-center gap-3 font-medium border bg-amber-50 text-amber-700 border-amber-200">
+          <AlertCircle size={20} />
+          <span className="font-bold">HOD Comments:</span>
+          <span>{hodComments}</span>
+        </div>
+      )}
+
       <div className="question-paper-page container mx-auto p-6 max-w-7xl">
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
@@ -3288,7 +3407,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               Generate Table
             </button>
             <button
-              onClick={() => setShowAIModal(true)}
+              onClick={handleOpenAIModal}
               className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -3516,7 +3635,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               Save Assignment
             </button>
             <button
-              onClick={() => setShowAIModal(true)}
+              onClick={handleOpenAIModal}
               className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -3841,9 +3960,14 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 Refresh Outcomes
               </button>
               <button
-                onClick={handleForwardPaper}
-                disabled={!currentUserSignatureUrl}
-                className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 disabled:opacity-50"
+                onClick={() => {
+                  if (!currentUserSignatureUrl) {
+                    showToast("Please upload your digital signature in your profile before forwarding.", "error");
+                    return;
+                  }
+                  handleForwardPaper();
+                }}
+                className={`px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 ${!currentUserSignatureUrl ? 'opacity-60' : ''}`}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                 Forward to HOD

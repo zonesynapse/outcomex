@@ -31,6 +31,8 @@ export default function AdminRoleConfig() {
   // All available system pages
   const ALL_PAGES = [
     { id: "dashboard", label: "Dashboard", path: "/dashboard" },
+    { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard" },
+    { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard" },
     { id: "course-bank", label: "Course Bank", path: "/course-bank" },
     { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles" },
     { id: "info-configuration", label: "Info Configuration", path: "/info-configuration" },
@@ -48,7 +50,8 @@ export default function AdminRoleConfig() {
     { id: "questionpaper", label: "Question Papers", path: "/questionpaper" },
     { id: "markk", label: "Marks Entry", path: "/markk" },
     { id: "attendance", label: "Attendance", path: "/attendance" },
-    { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar" }
+    { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar" },
+    { id: "timetable", label: "Timetable", path: "/tt" }
   ];
 
   const ROLES = ["Admin", "Principal", "HOD", "Faculty"];
@@ -99,10 +102,10 @@ export default function AdminRoleConfig() {
       } else {
         // Initialize with default static permissions if none exist
         setRolePermissions({
-          Admin: ["dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar"],
-          Principal: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"],
-          HOD: ["dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "co_configuration", "questionpaper", "markk"], // Added co_configuration, questionpaper, markk for HOD
-          Faculty: ["dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"]
+          Admin: ["dashboard", "faculty-dashboard", "hod-dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar"],
+          Principal: ["dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"],
+          HOD: ["dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "co_configuration", "questionpaper", "markk"], // Added co_configuration, questionpaper, markk for HOD
+          Faculty: ["dashboard", "faculty-dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"]
         });
       }
     });
