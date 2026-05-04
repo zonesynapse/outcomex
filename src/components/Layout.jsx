@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { auth, rtdb } from "../firebase";
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { ref, get, set, onValue, update } from "firebase/database";
@@ -319,6 +319,25 @@ export default function Layout({ children, title }) {
     }
   }
 
+  const [sidebarSearch, setSidebarSearch] = useState("");
+
+  const displayedMenuItems = useMemo(() => {
+    const q = (sidebarSearch || "").trim().toLowerCase();
+    if (!q) return uniqueMenuItems;
+    const matches = [];
+    const others = [];
+    uniqueMenuItems.forEach(item => {
+      const label = (item.label || "").toLowerCase();
+      const idx = label.indexOf(q);
+      if (idx !== -1) {
+        matches.push({ item, idx });
+      } else others.push(item);
+    });
+    // sort matches by earliest match position, then alphabetically
+    matches.sort((a, b) => a.idx - b.idx || a.item.label.localeCompare(b.item.label));
+    return [...matches.map(m => m.item), ...others];
+  }, [sidebarSearch, uniqueMenuItems]);
+
   return (
     <div className="min-h-screen bg-[#f0f0fa] font-sans text-zinc-900">
       <style>{`
@@ -583,8 +602,16 @@ export default function Layout({ children, title }) {
             <X size={24} />
           </button>
         </div>
-        <nav className="p-4 space-y-1">
-          {uniqueMenuItems.map((item) => {
+        <div className="p-4">
+          <input
+            type="search"
+            placeholder="Search pages..."
+            value={sidebarSearch}
+            onChange={(e) => setSidebarSearch(e.target.value)}
+            className="w-full mb-3 px-3 py-2 rounded-lg text-sm font-medium outline-none bg-white/10 text-white placeholder-white/70"
+          />
+          <nav className="space-y-1">
+            {displayedMenuItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <Link 
@@ -598,8 +625,9 @@ export default function Layout({ children, title }) {
                 {isActive && <ChevronRight size={14} className="opacity-50" />}
               </Link>
             );
-          })}
-        </nav>
+            })}
+          </nav>
+        </div>
       </aside>
 
       {/* Main Content */}
