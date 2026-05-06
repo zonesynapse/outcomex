@@ -609,7 +609,7 @@ export default function QuestionPaper() {
                   value={academicYear}
                   disabled={!batch}
                   onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); }}
-                  className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium disabled:opacity-50"
+                  className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
                 >
                   <option value="">Select Year</option>
                   {academicYears.map(y => (

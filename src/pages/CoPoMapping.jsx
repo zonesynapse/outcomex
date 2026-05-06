@@ -17,7 +17,6 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
 
 const SEMESTER_MAPPING = {
@@ -36,7 +35,6 @@ export default function CoPoMapping() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
   const [batch, setBatch] = useState("");
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
@@ -228,14 +226,7 @@ export default function CoPoMapping() {
     const [batchStart] = batch.split("-").map(Number);
     const [yearStart] = academicYear.split("-").map(Number);
     const yearIndex = yearStart - batchStart;
-    const sems = SEMESTER_MAPPING[yearIndex] || [];
-    return sems.filter(s => {
-      const numMatch = s.match(/\d+/);
-      if (!numMatch) return true;
-      const num = parseInt(numMatch[0]);
-      if (semesterType === "Odd") return num % 2 !== 0;
-      return num % 2 === 0;
-    });
+    return SEMESTER_MAPPING[yearIndex] || [];
   };
 
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {

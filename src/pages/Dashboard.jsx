@@ -1,9 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { rtdb, auth } from "../firebase";
 import { ref, onValue, set, get } from "firebase/database";
 import { 
-  Check,
   ChevronDown, 
   Plus, 
   Minus, 
@@ -22,9 +21,7 @@ import {
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay } from "../lib/utils";
-import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
 
 import Layout from "../components/Layout";
 
@@ -46,7 +43,6 @@ export default function Dashboard() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
   // Selection States
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
@@ -71,8 +67,6 @@ export default function Dashboard() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [modal, setModal] = useState({ show: false, type: 'alert', title: '', message: '', onConfirm: null });
-  const [facultySignatureForQP, setFacultySignatureForQP] = useState('');
-  const [hodSignatureForQP, setHodSignatureForQP] = useState('');
   const [userRole, setUserRole] = useState(null);
   const [userAssignments, setUserAssignments] = useState([]);
   const [assignedProgs, setAssignedProgs] = useState([]);
@@ -160,65 +154,6 @@ export default function Dashboard() {
     }
   }, [programme, department, batch, academicYear, semester, userAssignments.length, userRole]);
 
-  // Fetch COs for the selected QP's subject when modal opens
-  const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
-  useEffect(() => {
-    const fetchModalCOs = async () => {
-      if (!selectedQP || !selectedQP.programme || !selectedQP.department || !selectedQP.batch || !selectedQP.subject || !selectedQP.academic_year) {
-        setModalCourseOutcomes([]);
-        return;
-      }
-      const progKey = formatProgrammeKey(selectedQP.programme);
-      const regulation = getRegulationForBatch(progKey, selectedQP.batch);
-      if (!regulation) {
-        setModalCourseOutcomes([]);
-        return;
-      }
-      const coKey = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(selectedQP.subject)}_${sanitizeKey(selectedQP.academic_year)}`;
-      const coRef = ref(rtdb, `course_outcomes/${coKey}`);
-      const coSnapshot = await get(coRef);
-      if (coSnapshot.exists()) {
-        const data = coSnapshot.val();
-        const loadedCOs = Object.entries(data)
-          .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
-          .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
-        setModalCourseOutcomes(loadedCOs);
-      } else {
-        setModalCourseOutcomes([]);
-      }
-    };
-    fetchModalCOs();
-  }, [selectedQP, getRegulationForBatch]);
-
-  // Fetch signatures for the selected QP when modal opens
-  useEffect(() => {
-    const fetchSignatures = async () => {
-      if (!selectedQP) {
-        setFacultySignatureForQP('');
-        setHodSignatureForQP('');
-        return;
-      }
-
-      // Fetch Faculty Signature (forwarded_by)
-      if (selectedQP.forwarded_by) {
-        const userRef = ref(rtdb, `users/${selectedQP.forwarded_by}`);
-        const snapshot = await get(userRef);
-        if (snapshot.exists()) {
-          setFacultySignatureForQP(snapshot.val().signatureUrl || '');
-        } else {
-          setFacultySignatureForQP('');
-        }
-      } else {
-        setFacultySignatureForQP('');
-      }
-
-      // HOD Signature (if approved and available in QP data)
-      setHodSignatureForQP(selectedQP.hod_signature_url || '');
-    };
-    fetchSignatures(); // This effect depends on selectedQP, so it should run when selectedQP changes
-  }, [selectedQP]);
-
-
   const showAlert = (title, message) => {
     setModal({ show: true, type: 'alert', title, message, onConfirm: null });
   };
@@ -243,10 +178,10 @@ export default function Dashboard() {
     const progKey = formatProgrammeKey(programme);
     return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => 
       formatProgrammeKey(c.program) === progKey && 
-      (c.department === department || !c.department) &&
-      (!c.batch || c.batch === batch) &&
-      (!c.academicYear || c.academicYear === academicYear) &&
-      (!c.semester || String(c.semester) === semNum)
+      c.department === department && 
+      c.batch === batch && 
+      c.academicYear === academicYear && 
+      String(c.semester) === semNum
     );
   }, [ciaConfigs, programme, department, batch, academicYear, semester]);
 
@@ -315,10 +250,6 @@ export default function Dashboard() {
     const sem2 = (yearIndex * 2) + 2;
     
     const allSems = [sem1, sem2];
-    const filteredSems = allSems.filter(num => {
-      if (semesterType === "Odd") return num % 2 !== 0;
-      return num % 2 === 0;
-    });
 
     const getLabel = (num) => {
       const suffixes = ["th", "st", "nd", "rd", "th", "th", "th", "th", "th"];
@@ -326,7 +257,7 @@ export default function Dashboard() {
       return `${num}${suffix} Semester`;
     };
 
-    return filteredSems.map(getLabel);
+    return allSems.map(getLabel);
   };
 
   const getQPFilterOptions = (field) => {
@@ -417,18 +348,168 @@ export default function Dashboard() {
     return labels[String(semNum)] || "";
   };
 
-  const renderQuestionPaper = useCallback((qp, cos, facultySig, hodSig, ciaConf) => {
+  const renderQuestionPaper = (qp) => {
     if (!qp) return "";
-    return getQuestionPaperHTML(
-      qp,
-      cos, // Pass fetched COs
-      facultySig, // facultySignatureForQP
-      hodSig,     // hodSignatureForQP (this is the HOD signature from the QP itself)
-      ciaConf
-    );
-  }, []); // Dependencies are now passed as arguments, so this callback itself has no external deps
+    
+    const yearSemester = `${getYearLabel(qp.semester)} / ${getSemesterLabel(qp.semester)}`;
+    // Get exam name from exam_name field, or look it up from cia_configs using the config ID
+    let examDisplay = qp.exam_name;
+    if (!examDisplay) {
+      const configId = qp.qpaper_name;
+      examDisplay = ciaConfigs[configId]?.examName || configId;
+    }
+    const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
 
-  const handleDownloadQP = useCallback((qp) => {
+    let html = `
+<div style="font-family: Arial, sans-serif; font-size: 11px; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background: white;">
+  <!-- Row 1: CO Assessment + Examination Cell -->
+  <table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3; margin-bottom: 10px;">
+    <tr>
+      <td style="text-align: left; padding: 4px;">
+        CO Assessment - Direct Assessment Tool - Descriptive Continuous Assessment (DCA)
+      </td>
+      <td style="text-align: right; padding: 4px;">
+        <div style="border: 1px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
+          Examination Cell
+        </div>
+      </td>
+    </tr>
+  </table>
+  <!-- Row 2: Logo + College Info -->
+  <div style="text-align: center; margin-bottom: 15px;">
+    <img alt="logo" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="width: 100%; height: auto; display: block;" />
+  </div>
+  
+  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #333;" border="1">
+    <tr>
+      <td style="padding: 4px;"><strong>Internal Assessment Test</strong></td>
+      <td colspan="3" style="padding: 4px;">${examDisplay}</td>
+      <td style="padding: 4px;"><strong>Academic Year</strong></td>
+      <td style="padding: 4px;">${qp.academic_year}</td>
+    </tr>
+    <tr>
+      <td style="padding: 4px;"><strong>Subject Code / Subject Title</strong></td>
+      <td colspan="5" style="padding: 4px;">${subjectDisplay}</td>
+    </tr>
+    <tr>
+      <td style="padding: 4px;"><strong>Year / Semester</strong></td>
+      <td style="padding: 4px;">${yearSemester}</td>
+      <td style="padding: 4px;"><strong>Department</strong></td>
+      <td style="padding: 4px;">${qp.department}</td>
+      <td style="padding: 4px;"><strong>Common to</strong></td>
+      <td style="padding: 4px;">-</td>
+    </tr>
+    <tr>
+      <td style="padding: 4px;"><strong>Max. Marks</strong></td>
+      <td style="padding: 4px;">${qp.total_marks}</td>
+      <td style="padding: 4px;"><strong>Duration</strong></td>
+      <td style="padding: 4px;">180 min</td>
+      <td style="padding: 4px;"><strong>Date</strong></td>
+      <td style="padding: 4px;">${new Date(qp.saved_at).toLocaleDateString()}</td>
+    </tr>
+    <tr>
+      <td style="padding: 4px;"><strong>Register No.</strong></td>
+      <td colspan="5" style="padding: 4px;"></td>
+    </tr>
+  </table>
+
+  <div style="margin-top: 20px;">
+    ${qp.parts.map(part => `
+      <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
+        <tr>
+          <td style="width: 50%; padding: 6px; border: none;">Part ${part.part}</td>
+          <td style="width: 50%; padding: 6px; border: none; text-align: right;">
+            ${part.num_questions} &times; ${part.marks_per_question} = <strong>${part.num_questions * part.marks_per_question}</strong> Marks
+          </td>
+        </tr>
+      </table>
+      <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
+        <thead>
+          <tr style="background: #f9f9f9;">
+            <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #333;">Q. No.</th>
+            <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #333;">Question(s)</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">KL</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">CO</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">PI</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${part.questions.map((q, qIdx) => {
+            if (q.either_or) {
+              if (q.sub === 'a') {
+                const nextQ = part.questions[qIdx + 1];
+                return `
+                  <tr>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
+                    <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
+                  </tr>
+                  <tr>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"><strong>(Or)</strong></td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
+                  </tr>
+                  <tr>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.qno || ""}</td>
+                    <td style="padding: 4px; border: 1px solid #333;">${nextQ?.question || ""}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.kl || ""}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.co || ""}</td>
+                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.pi || ""}</td>
+                  </tr>
+                `;
+              }
+              return ""; // Skip 'b' as it's handled by 'a'
+            } else {
+              return `
+                <tr>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
+                  <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
+                </tr>
+              `;
+            }
+          }).join('')}
+        </tbody>
+      </table>
+    `).join('')}
+  </div>
+
+  <div style="margin-top: 30px;">
+    <h3 style="font-size: 14px; margin-bottom: 10px;">Subject Outcomes Details</h3>
+    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 10px;">
+      <thead>
+        <tr style="background: #f9f9f9;">
+          <th style="padding: 4px; border: 1px solid #333;">Subject Outcome Code</th>
+          <th style="padding: 4px; border: 1px solid #333;">Description</th>
+          <th style="padding: 4px; border: 1px solid #333;">COs covered</th>
+          <th style="padding: 4px; border: 1px solid #333;">Weightage</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <table style="width: 100%; border-collapse: collapse; margin-top: 40px;">
+    <tr>
+      <td style="text-align: center; border: none; padding: 20px 10px;">Signature of HoD</td>
+      <td style="text-align: center; border: none; padding: 20px 10px;">Academic Coordinator</td>
+      <td style="text-align: center; border: none; padding: 20px 10px;">Principal</td>
+    </tr>
+  </table>
+</div>
+    `;
+    return html;
+  };
+
+  const handleDownloadQP = (qp) => {
     try {
       const content = renderQuestionPaper(qp);
       const wordHTML = `
@@ -465,8 +546,8 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Word export failed:', err);
     }
-  }, [renderQuestionPaper]);
-  
+  };
+
   // Fetch Students when filters change
   useEffect(() => {
     if ((module === "students" || module === "consolidation") && programme && department && batch) {
@@ -533,7 +614,7 @@ export default function Dashboard() {
 
   // Fetch Question Papers when filters change
   useEffect(() => {
-    if (module === "questionpaper" && programme && department) {
+    if (module === "question-paper-generator" && programme && department) {
       const qpRef = ref(rtdb, `generated_qps`);
       
       const unsubscribe = onValue(qpRef, (snapshot) => {
@@ -1099,7 +1180,7 @@ export default function Dashboard() {
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
                     if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
-                    if (module === "questionpaper") setLoadingQPs(true);
+                    if (module === "question-paper-generator") setLoadingQPs(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
@@ -1131,7 +1212,7 @@ export default function Dashboard() {
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
                     if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
-                    if (module === "questionpaper") setLoadingQPs(true);
+                    if (module === "question-paper-generator") setLoadingQPs(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                 >
@@ -1162,7 +1243,7 @@ export default function Dashboard() {
                     setConsolidationData(null);
                     if (e.target.value === "students") setLoadingStudents(true);
                     if (e.target.value === "syllabus" || e.target.value === "consolidation") setLoadingSyllabus(true);
-                    if (e.target.value === "questionpaper") setLoadingQPs(true);
+                    if (e.target.value === "question-paper-generator") setLoadingQPs(true);
                     if (e.target.value === "consolidation") setLoadingConsolidation(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
@@ -1170,7 +1251,7 @@ export default function Dashboard() {
                   <option value="">Choose Module</option>
                   <option value="syllabus">Syllabus</option>
                   <option value="students">Student Name List</option>
-                  <option value="questionpaper">Question Paper</option>
+                  <option value="question-paper-generator">Question Paper Generator</option>
                   <option value="timetable">Time Table</option>
                   <option value="consolidation">Consolidation</option>
                 </select>
@@ -1324,7 +1405,7 @@ export default function Dashboard() {
             )}
 
             {/* Subject (Question Paper only) */}
-            {module === "questionpaper" && (
+            {module === "question-paper-generator" && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
                 <div className="relative">
@@ -1348,7 +1429,7 @@ export default function Dashboard() {
             )}
 
             {/* Exam (Question Paper only) */}
-            {module === "questionpaper" && (
+            {module === "question-paper-generator" && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Exam</label>
                 <div className="relative">
@@ -1579,7 +1660,7 @@ export default function Dashboard() {
         )}
 
         {/* Question Paper Section */}
-        {module === "questionpaper" && programme && department && (
+        {module === "question-paper-generator" && programme && department && (
           <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center">
               <div className="flex items-center gap-3">
@@ -1604,14 +1685,6 @@ export default function Dashboard() {
                     .filter(qp => !academicYear || qp.academic_year === academicYear)
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))
                     .filter(qp => !selectedSubject || `${qp.subject} - ${qp.subject_name}` === selectedSubject)
-                    .filter(qp => {
-                      // HOD can see everything in their dept OR papers forwarded to them
-                      if (userRole === 'HOD') {
-                        return qp.department === department || qp.forwarded_to === auth.currentUser?.uid;
-                      }
-                      // Faculty only sees their assignments
-                      return userAssignments.includes(qp.subject);
-                    })
                     .filter(qp => {
                       if (!selectedExam) return true;
                       // Get the exam name for this QP
@@ -1642,7 +1715,6 @@ export default function Dashboard() {
                             <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Semester</th>
                             <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Subject</th>
                             <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Exam</th>
-                            <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Status</th>
                             <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Actions</th>
                           </tr>
                         </thead>
@@ -1673,15 +1745,6 @@ export default function Dashboard() {
                                   })()}
                                 </span>
                               </td>
-                              <td className="p-4 text-center">
-                                <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                                  qp.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-                                  qp.status === 'forwarded' ? 'bg-blue-100 text-blue-700 animate-pulse' :
-                                  'bg-zinc-100 text-zinc-500'
-                                }`}>
-                                  {qp.status || 'Draft'}
-                                </span>
-                              </td>
                               <td className="p-4">
                                 <div className="flex justify-center gap-2">
                                   <button 
@@ -1702,7 +1765,7 @@ export default function Dashboard() {
                                     <Download size={18} />
                                   </button>
                                   <button 
-                                    onClick={() => navigate(`/questionpaper?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                                    onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
                                     className="p-2 text-amber-500 hover:bg-amber-100 rounded-xl transition-all"
                                     title="Continue Editing"
                                   >
@@ -1983,19 +2046,9 @@ export default function Dashboard() {
                 </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-8 bg-zinc-50">
-                <style>{`
-                  .qp-print-wrapper table { border-collapse: collapse; width: 100%; border-color: #000 !important; }
-                  .qp-print-wrapper td, .qp-print-wrapper th { border: 1px solid #000 !important; padding: 6px; font-family: 'Times New Roman', serif; }
-                  .qp-print-wrapper .logo-img { max-width: 100%; height: 70px !important; }
-                  .qp-print-wrapper p { margin: 0 0 5px 0; }
-                  .qp-preview-container { background: white; }
-                `}</style>
-                <div 
-                  className="bg-white shadow-2xl mx-auto qp-print-wrapper" 
-                  style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}
-                >
-                  <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP, modalCourseOutcomes, facultySignatureForQP, hodSignatureForQP, ciaConfigs) }} />
+              <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/50">
+                <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
+                  <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
                 </div>
               </div>
             </div>

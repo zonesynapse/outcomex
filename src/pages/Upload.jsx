@@ -700,7 +700,7 @@ export default function Upload() {
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 mb-1">Regulation</label>
                   <div className="w-full px-4 py-2 border border-zinc-300 rounded-lg bg-zinc-100 text-zinc-500 font-medium">
-                    {studentRegulation || "Regulation not mapped"}
+                     {studentRegulation || "Regulation not mapped"}
                   </div>
                 </div>
                 <div>

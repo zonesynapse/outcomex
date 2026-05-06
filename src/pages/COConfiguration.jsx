@@ -6,14 +6,12 @@ import { Trash2, Save, Plus, ChevronDown, CheckCircle2, Download } from "lucide-
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
 
 const COConfiguration = () => {
   const { departments: deptMap, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
   // Filter States
   const [batch, setBatch] = useState("");
   const [programme, setProgramme] = useState("");
@@ -114,9 +112,8 @@ const deriveSemesterNumber = (label) => {
     try {
       const { GoogleGenAI, Type } = await import('@google/genai');
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
       if (!apiKey) {
-        throw new Error("Gemini API Key is missing. Check your .env file.");
+        throw new Error("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your secrets.");
       }
       const ai = new GoogleGenAI({ apiKey });
 
@@ -200,7 +197,7 @@ Do not be overly strict. If the syllabus content logically contributes to the PI
 Return an exhaustive list of all plausible mappings.`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are an experienced academic coordinator and accreditation expert. Map COs to PIs accurately using deep comprehensive analysis. Do not be overly strict; include all plausible mappings. Output only JSON with a 'mappings' key.",
@@ -310,10 +307,6 @@ Return an exhaustive list of all plausible mappings.`;
     const sem2 = (index * 2) + 2;
 
     const allSems = [sem1, sem2];
-    const filteredSems = allSems.filter(num => {
-      if (semesterType === "Odd") return num % 2 !== 0;
-      return num % 2 === 0;
-    });
     
     const getOrdinal = (n) => {
       const s = ["th", "st", "nd", "rd"];
@@ -321,7 +314,7 @@ Return an exhaustive list of all plausible mappings.`;
       return n + (s[(v - 20) % 10] || s[v] || s[0]);
     };
 
-    return filteredSems.map(semNum => `${getOrdinal(semNum)} Semester`);
+    return allSems.map(semNum => `${getOrdinal(semNum)} Semester`);
   };
 
   const filteredProgrammes = Object.keys(deptMap).filter(prog => {

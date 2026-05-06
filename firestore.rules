@@ -76,21 +76,5 @@ service cloud.firestore {
       allow create, update: if isAuthenticated() && isValidStudent(request.resource.data);
       allow delete: if isAuthenticated();
     }
-
-    function isValidPoActionsTaken(data) {
-      return data.keys().hasAll(['programme', 'department', 'batch', 'regulation', 'outcomeCode', 'action']) &&
-             data.programme is string && data.programme.size() < 100 &&
-             data.department is string && data.department.size() < 100 &&
-             data.batch is string && data.batch.size() < 100 &&
-             data.regulation is string && data.regulation.size() < 100 &&
-             data.outcomeCode is string && data.outcomeCode.size() < 20 &&
-             data.action is string && data.action.size() < 5000;
-    }
-
-    match /poActionsTaken/{actionId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && isValidPoActionsTaken(request.resource.data);
-      allow delete: if isAuthenticated();
-    }
   }
 }

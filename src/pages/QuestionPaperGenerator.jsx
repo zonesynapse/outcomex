@@ -523,9 +523,10 @@ export default function QuestionPaperGenerator() {
   }, [program, department, batch, subject, getRegulationForBatch]);
 
   const filteredExams = useMemo(() => {
-    if (!program || !department || !batch || !academicYear || !selectedSemester) return [];
+    if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
     
     const semNum = deriveSemesterNumber(selectedSemester);
+    const courseType = subjectCourseDetails?.type;
     
     return ciaConfigs.filter(config => 
       formatProgDisplay(config.program) === formatProgDisplay(program) &&
@@ -533,9 +534,10 @@ export default function QuestionPaperGenerator() {
       (!config.batch || config.batch === batch) &&
       (!config.academicYear || config.academicYear === academicYear) &&
       (!config.semester || String(config.semester) === semNum) &&
-      (assessmentType === 'Assignment' ? config.isAssignment : !config.isAssignment)
+      (assessmentType === 'Assignment' ? config.isAssignment : !config.isAssignment) &&
+      (!courseType || !config.courseTypes || config.courseTypes.includes(courseType))
     );
-  }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType]);
+  }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject]);
 
   const assignmentMarksMeta = useMemo(() => {
     const total = parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
@@ -1493,7 +1495,8 @@ export default function QuestionPaperGenerator() {
         const allSems = [sem1, sem2];
         const filteredSems = allSems.filter(num => {
           if (globalSemesterType === "Odd") return num % 2 !== 0;
-          return num % 2 === 0;
+          if (globalSemesterType === "Even") return num % 2 === 0;
+          return true; // For "Both" or any other value
         });
 
         const getOrdinal = (n) => {

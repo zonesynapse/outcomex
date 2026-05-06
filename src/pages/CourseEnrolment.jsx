@@ -1,318 +1,544 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { Search, Filter } from "lucide-react";
 import { rtdb } from "../firebase";
-import { ref as dbRef, get, set } from "firebase/database";
+import { ref, onValue, set, get } from "firebase/database";
+import { 
+  Users, 
+  Search, 
+  Filter, 
+  Save, 
+  ChevronDown, 
+  X,
+  BookOpen,
+  CheckCircle2,
+  FileText
+} from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
 
-const sanitizeKey = (k) => (k || '').toString().replace(/[.#$[\]]/g, '_');
+const sanitizeKey = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+};
+
+const deriveSemesterNumber = (label) => {
+  if (!label) return '';
+  const m = String(label).match(/(\d+)/);
+  return m ? m[1] : '';
+};
 
 export default function CourseEnrolment() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
+  const { departments: deptMap, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
 
+  // Selection States
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
-  const [subjects, setSubjects] = useState([]);
   const [subject, setSubject] = useState("");
-  const [students, setStudents] = useState([]);
-  const [enrolled, setEnrolled] = useState({});
-  const [allQPs, setAllQPs] = useState([]);
-  const [message, setMessage] = useState({ type: '', text: '' });
 
-  const availableBatches = useMemo(() => {
-    if (programme) return getActiveBatches(formatProgrammeKey(programme));
-    return [];
+  // Data States
+  const [students, setStudents] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [enrolments, setEnrolments] = useState({}); // { examNo: boolean }
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(true);
+
+  // Success Feedback State
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const batches = useMemo(() => {
+    const progKey = formatProgrammeKey(programme);
+    return getActiveBatches(progKey);
   }, [programme, getActiveBatches]);
 
-  // Fetch all generated QPs to derive academic years and semesters
-  useEffect(() => {
-    const fetchAllQPs = async () => {
-      try {
-        const qpRef = dbRef(rtdb, 'generated_qps');
-        const snapshot = await get(qpRef);
-        const root = snapshot.val() || {};
-        const list = [];
-        for (const groupingKey in root) {
-          const entries = root[groupingKey];
-          if (typeof entries === 'object') {
-            for (const recKey in entries) {
-              list.push(entries[recKey]);
-            }
-          }
-        }
-        setAllQPs(list);
-      } catch (err) {
-        console.error('Error fetching QPs', err);
-        setAllQPs([]);
-      }
+  const academicYearsAvailable = useMemo(() => getAcademicYears(batch), [batch]);
+
+  const semestersAvailable = useMemo(() => {
+    if (!batch || !academicYear) return [];
+    const index = academicYearsAvailable.indexOf(academicYear);
+    if (index === -1) return [];
+    
+    const sem1 = (index * 2) + 1;
+    const sem2 = (index * 2) + 2;
+    const allSems = [sem1, sem2];
+    
+    const getOrdinal = (n) => {
+      const s = ["th", "st", "nd", "rd"];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
     };
-    fetchAllQPs();
-  }, []);
 
-  const academicYears = useMemo(() => {
-    if (!programme || !department || !batch || allQPs.length === 0) {
-      return [];
-    }
-    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-    const needBatch = norm(batch);
+    return allSems.map(semNum => `${getOrdinal(semNum)} Semester`);
+  }, [batch, academicYear, academicYearsAvailable]);
 
-    const yrs = allQPs
-      .filter(qp => norm(qp.department || qp.dept || '') === needDept && (!qp.programme || norm(qp.programme) === needProg) && norm(qp.batch || '') === needBatch)
-      .map(qp => qp.academic_year || qp.academicYear)
-      .filter(Boolean);
-
-    return [...new Set(yrs)];
-  }, [programme, department, batch, allQPs]);
-
-  const semesters = useMemo(() => {
-    if (!programme || !department || !batch || !academicYear || allQPs.length === 0) {
-      return [];
-    }
-    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-    const needBatch = norm(batch);
-    const needAy = norm(academicYear);
-
-    const sems = allQPs
-      .filter(qp => norm(qp.department || qp.dept || '') === needDept && (!qp.programme || norm(qp.programme) === needProg) && norm(qp.batch || '') === needBatch && norm(qp.academic_year || qp.academicYear || '') === needAy)
-      .map(qp => String(qp.semester || qp.sem || '').trim())
-      .filter(Boolean);
-
-    return [...new Set(sems)];
-  }, [programme, department, batch, academicYear, allQPs]);
-
+  // Fetch Subjects from Syllabus
   useEffect(() => {
-    // Load subjects (elective only) from syllabus_data for selected prog/dept/reg and semester
     const fetchSubjects = async () => {
-      setSubjects([]);
-      if (!programme || !department || !batch || !academicYear || !semester) return;
+      const progKey = formatProgrammeKey(programme);
+      const regulation = getRegulationForBatch(progKey, batch);
+      if (!programme || !department || !regulation || !semester) {
+        setSubjects([]);
+        return;
+      }
+
+      const deptKey = sanitizeKey(department);
+      const regKey = sanitizeKey(regulation);
+      const syllabusKey = `${progKey}_${deptKey}_${regKey}`;
+      const semNum = deriveSemesterNumber(semester);
+
+      if (!semNum) return;
+
       try {
-        const progKey = formatProgrammeKey(programme);
-        const regulation = getRegulationForBatch(progKey, batch);
-        const syllabusKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}`;
-        const snap = await get(dbRef(rtdb, `syllabus_data/${syllabusKey}`));
-        const needSem = String(semester).replace(/[^0-9]/g, '');
-        const list = [];
-        if (snap.exists()) {
-          const data = snap.val();
-          const semList = data.semesters?.[needSem] || [];
-          semList.forEach(s => {
-            if (s.isElective) list.push({ value: s.code, text: `${s.code} - ${s.name}` });
-          });
+        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
+        const snapshot = await get(syllabusRef);
+        const data = snapshot.val();
+        
+        if (data && data.semesters && data.semesters[semNum]) {
+          const fetchedSubjects = data.semesters[semNum]
+            .filter(sub => sub != null && sub.isActive !== false && sub.isElective === true)
+            .map(sub => ({
+              id: sub.code,
+              name: sub.name,
+              isElective: true
+            }));
+          setSubjects(fetchedSubjects);
+        } else {
+          setSubjects([]);
         }
-        setSubjects(list);
-      } catch (err) {
-        console.error(err);
+      } catch (error) {
+        console.error("Error fetching subjects:", error);
         setSubjects([]);
       }
     };
+
     fetchSubjects();
-  }, [programme, department, batch, academicYear, semester, getRegulationForBatch]);
+  }, [programme, department, batch, semester, getRegulationForBatch]);
 
-  // Load students and enrolled set for selected subject
+  // Fetch Students and Existing Enrolments
   useEffect(() => {
-    const loadStudents = async () => {
-      setStudents([]);
-      setEnrolled({});
-      if (!programme || !department || !batch) return;
-      try {
-        const progKey = formatProgrammeKey(programme);
-        const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-        const snap = await get(dbRef(rtdb, `students/${compositeKey}`));
-        const list = [];
-        if (snap.exists()) {
-          const data = snap.val();
-          Object.entries(data).forEach(([k, v]) => {
-            if (!k.startsWith('_')) list.push({ reg: k, name: v });
-          });
-        }
-        setStudents(list);
-
-        if (subject && semester && academicYear) {
-          const progKey = formatProgrammeKey(programme);
-          const path = `course_enrollments/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semester}/${subject}`;
-          const enrollSnap = await get(dbRef(rtdb, path));
-          const e = {};
-          if (enrollSnap.exists()) {
-            const obj = enrollSnap.val();
-            Object.keys(obj).forEach(k => { e[k] = true; });
-          }
-          setEnrolled(e);
-        }
-      } catch (err) {
-        console.error(err);
+    const fetchData = () => {
+      if (!programme || !department || !batch || !academicYear || !semester || !subject) {
+        setStudents([]);
+        setEnrolments({});
+        return;
       }
-    };
-    loadStudents();
-  }, [programme, department, batch, subject, semester, academicYear]);
 
-  const toggleEnroll = (reg, checked) => {
-    setEnrolled(prev => ({ ...prev, [reg]: !!checked }));
-  };
-
-  const saveEnrollment = async () => {
-    if (!programme || !department || !batch || !academicYear || !semester || !subject) {
-      setMessage({ type: 'error', text: 'Please select programme/department/batch/academic year/semester and subject.' });
-      return;
-    }
-    try {
+      setLoading(true);
       const progKey = formatProgrammeKey(programme);
-      const path = `course_enrollments/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semester}/${subject}`;
-      const payload = {};
-      Object.keys(enrolled).forEach(reg => { if (enrolled[reg]) payload[reg] = true; });
-      await set(dbRef(rtdb, path), payload);
-      setMessage({ type: 'success', text: 'Enrollment saved.' });
-    } catch (err) {
-      console.error(err);
-      setMessage({ type: 'error', text: 'Failed to save enrollment.' });
+      const deptKey = sanitizeKey(department);
+      const batchKey = sanitizeKey(batch);
+      const yearKey = sanitizeKey(academicYear);
+      const semNum = deriveSemesterNumber(semester);
+      const subjectKey = sanitizeKey(subject);
+
+      // Path for Student List
+      const listKey = `${batchKey}_${progKey}_${deptKey}`;
+      const studentsRef = ref(rtdb, `students/${listKey}`);
+
+      // Path for Enrolments
+      const enrolKey = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
+      const enrolmentsRef = ref(rtdb, `course_enrolments/${enrolKey}`);
+
+      // Sequential fetching
+      get(studentsRef).then(studentSnap => {
+        const studentData = studentSnap.val() || {};
+        const studentsList = Object.entries(studentData)
+          .filter(([key]) => key !== '_meta')
+          .map(([examNo, name]) => ({ examNo, name }));
+        
+        setStudents(studentsList.sort((a,b) => a.examNo.localeCompare(b.examNo)));
+
+        get(enrolmentsRef).then(enrolSnap => {
+          setEnrolments(enrolSnap.val() || {});
+          setLoading(false);
+        });
+      });
+    };
+
+    fetchData();
+  }, [programme, department, batch, academicYear, semester, subject]);
+
+  const toggleEnrolment = (examNo) => {
+    setEnrolments(prev => ({
+      ...prev,
+      [examNo]: !prev[examNo]
+    }));
+  };
+
+  const enrolAll = () => {
+    const newEnrolments = {};
+    students.forEach(s => {
+      newEnrolments[s.examNo] = true;
+    });
+    setEnrolments(newEnrolments);
+  };
+
+  const clearAll = () => {
+    setEnrolments({});
+  };
+
+  const saveEnrolments = async () => {
+    if (!programme || !department || !batch || !academicYear || !semester || !subject) return;
+
+    setSaving(true);
+    const progKey = formatProgrammeKey(programme);
+    const deptKey = sanitizeKey(department);
+    const batchKey = sanitizeKey(batch);
+    const yearKey = sanitizeKey(academicYear);
+    const semNum = deriveSemesterNumber(semester);
+    const subjectKey = sanitizeKey(subject);
+
+    const enrolKey = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
+    
+    try {
+      await set(ref(rtdb, `course_enrolments/${enrolKey}`), enrolments);
+      setSuccessMessage("Enrolments saved successfully!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (error) {
+      console.error("Save error:", error);
+      alert("Failed to save enrolments.");
+    } finally {
+      setSaving(false);
     }
   };
+
+  const filteredStudents = students.filter(s => 
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    s.examNo.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const enrolledCount = Object.values(enrolments).filter(Boolean).length;
 
   return (
     <Layout title="Course Enrolment">
-      <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
-
-        {/* Filters/Search Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="relative col-span-2 md:col-span-3">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text"
-              placeholder="Search by student name or register number..."
-              className="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-xl focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/20 outline-none transition-all shadow-sm font-medium"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-zinc-100">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+              <Users size={28} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-zinc-800">Course Enrolment</h1>
+              <p className="text-zinc-500 text-sm">Assign students to specific subjects and electives</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowFilters(!showFilters)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${showFilters ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-600 text-white shadow-lg shadow-blue-200'}`}
+            >
+              <Filter size={18} />
+              {showFilters ? 'Hide Filters' : 'Show Filters'}
+            </button>
           </div>
         </div>
 
-        {/* Filters and Enrollment UI */}
-        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-zinc-100 bg-zinc-50/50 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-zinc-800 flex items-center gap-2">
-              <Filter className="text-[#120c7a]" />
-              Course Enrollment Filters
-            </h2>
-          </div>
-          
-          <div className="p-6">
-            {message.text && (
-              <div className={`mb-6 p-4 rounded-xl font-bold flex flex-col gap-1 border-l-4 ${message.type === 'error' ? 'bg-red-50 text-red-600 border-red-500' : 'bg-green-50 text-green-700 border-green-500'}`}>
-                {message.text}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Programme</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium" value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(''); setBatch(''); setAcademicYear(''); setSemester(''); setSubject(''); }}>
-                  <option value="">Select Programme</option>
-                  {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Department</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium disabled:opacity-50" value={department} onChange={e => { setDepartment(e.target.value); setBatch(''); setAcademicYear(''); setSemester(''); setSubject(''); }} disabled={!programme}>
-                  <option value="">Select Department</option>
-                  {programme && PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)]?.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
+        {/* Filters Card */}
+        {showFilters && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+              {/* Programme */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Programme</label>
+                <div className="relative">
+                  <select 
+                    value={programme}
+                    onChange={(e) => {
+                      setProgramme(e.target.value);
+                      setDepartment("");
+                      setBatch("");
+                    }}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium"
+                  >
+                    <option value="">Select</option>
+                    {Object.keys(deptMap).map(p => (
+                      <option key={p} value={p}>{formatProgDisplay(p)}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Batch</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium disabled:opacity-50" value={batch} onChange={e => { setBatch(e.target.value); setAcademicYear(''); setSemester(''); setSubject(''); }} disabled={!programme}>
-                  <option value="">Select Batch</option>
-                  {availableBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
-                </select>
+              {/* Department */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Department</label>
+                <div className="relative">
+                  <select 
+                    value={department}
+                    disabled={!programme}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">Select</option>
+                    {programme && deptMap[programme]?.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Academic Year</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium disabled:opacity-50" value={academicYear} onChange={e => { setAcademicYear(e.target.value); setSemester(''); setSubject(''); }}>
-                  <option value="">Select Academic Year</option>
-                  {academicYears.map(ay => <option key={ay} value={ay}>{ay}</option>)}
-                </select>
+              {/* Batch */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Batch</label>
+                <div className="relative">
+                  <select 
+                    value={batch}
+                    disabled={!programme}
+                    onChange={(e) => {
+                      setBatch(e.target.value);
+                      setAcademicYear("");
+                      setSemester("");
+                    }}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">Select</option>
+                    {batches.map(b => (
+                      <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Semester</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium disabled:opacity-50" value={semester} onChange={e => { setSemester(e.target.value); setSubject(''); }}>
-                  <option value="">Select Semester</option>
-                  {semesters.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+              {/* Academic Year */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Academic Year</label>
+                <div className="relative">
+                  <select 
+                    value={academicYear}
+                    disabled={!batch}
+                    onChange={(e) => {
+                      setAcademicYear(e.target.value);
+                      setSemester("");
+                    }}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">Select</option>
+                    {academicYearsAvailable.map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-700">Subject</label>
-                <select className="w-full appearance-none bg-slate-50/50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium disabled:opacity-50" value={subject} onChange={e => setSubject(e.target.value)}>
-                  <option value="">Select Subject</option>
-                  {subjects.map(s => <option key={s.value} value={s.value}>{s.text}</option>)}
-                </select>
+              {/* Semester */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Semester</label>
+                <div className="relative">
+                  <select 
+                    value={semester}
+                    disabled={!academicYear}
+                    onChange={(e) => setSemester(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">Select</option>
+                    {semestersAvailable.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              {/* Subject */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Subject</label>
+                <div className="relative">
+                  <select 
+                    value={subject}
+                    disabled={!semester}
+                    onChange={(e) => setSubject(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">Select Subject</option>
+                    {subjects.map(s => (
+                      <option key={s.id} value={s.id}>{s.id} - {s.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
             </div>
+          </div>
+        )}
 
-            {subject && (
-              <div className="mt-8 rounded-lg overflow-hidden border border-slate-200 shadow-sm">
-                <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
-                  <h2 className="text-white font-bold text-sm">Course Enrollment Table</h2>
-                  <div className="flex gap-2">
+        {/* Main Content Area */}
+        {subject ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column: Student List */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 overflow-hidden">
+                <div className="p-4 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                    <input 
+                      type="text"
+                      placeholder="Search students..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button 
-                      onClick={saveEnrollment} 
-                      className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                      onClick={enrolAll}
+                      className="px-3 py-1.5 text-xs font-bold text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-all"
                     >
-                      Save Enrollment
+                      Enrol All
+                    </button>
+                    <button 
+                      onClick={clearAll}
+                      className="px-3 py-1.5 text-xs font-bold text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-all"
+                    >
+                      Clear All
                     </button>
                   </div>
                 </div>
-                <div className="overflow-x-auto bg-white">
-                  <table className="w-full border-collapse">
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-[#f8fafc]">
-                        <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left w-48">Register Number</th>
-                        <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left">Student Name</th>
-                        <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Enroll</th>
+                      <tr className="bg-zinc-50/50 text-zinc-500 text-[10px] uppercase tracking-wider font-bold">
+                        <th className="px-6 py-3 w-16">No.</th>
+                        <th className="px-6 py-3">Exam No.</th>
+                        <th className="px-6 py-3">Student Name</th>
+                        <th className="px-6 py-3 text-center">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {students.map(s => {
-                        const isSearchMatch = !searchTerm || s.name.toLowerCase().includes(searchTerm.toLowerCase()) || s.reg.toLowerCase().includes(searchTerm.toLowerCase());
-                        if (!isSearchMatch) return null;
-                        
-                        return (
-                          <tr key={s.reg} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
-                            <td className="px-6 py-3 text-sm font-mono text-slate-600 tabular-nums border-r border-slate-50">{s.reg}</td>
-                            <td className="px-6 py-3 text-sm font-medium text-slate-800 border-r border-slate-50">{s.name}</td>
-                            <td className="px-6 py-3 text-center border-r border-slate-50">
-                              <input
-                                type="checkbox"
-                                checked={!!enrolled[s.reg]}
-                                onChange={e => toggleEnroll(s.reg, e.target.checked)}
-                                className="w-4 h-4 rounded border-slate-300 text-[#120c7a] focus:ring-[#120c7a] mx-auto block cursor-pointer"
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
+                    <tbody className="divide-y divide-zinc-100">
+                      {loading ? (
+                        <tr>
+                          <td colSpan="4" className="px-6 py-10 text-center">
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                              <span className="text-zinc-500 text-sm">Fetching student list...</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : filteredStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan="4" className="px-6 py-10 text-center text-zinc-400 italic">
+                            No students found matching your search.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredStudents.map((s, idx) => {
+                          const isEnrolled = !!enrolments[s.examNo];
+                          return (
+                            <tr 
+                              key={s.examNo} 
+                              className={`group transition-colors ${isEnrolled ? 'bg-blue-50/30' : 'hover:bg-zinc-50'}`}
+                            >
+                              <td className="px-6 py-4 text-sm text-zinc-400 font-mono">{idx + 1}</td>
+                              <td className="px-6 py-4 text-sm font-bold text-zinc-700">{s.examNo}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600">{s.name}</td>
+                              <td className="px-6 py-4 text-center">
+                                <button 
+                                  onClick={() => toggleEnrolment(s.examNo)}
+                                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${isEnrolled ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'}`}
+                                >
+                                  {isEnrolled ? <CheckCircle2 size={20} /> : <Users size={20} />}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
-            )}
+            </div>
+
+            {/* Right Column: Status & Save */}
+            <div className="space-y-6">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100 space-y-6 sticky top-6">
+                <div className="space-y-4">
+                  <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+                    <Users size={20} className="text-blue-600" />
+                    Enrolment Summary
+                  </h2>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase">Total Students</p>
+                      <p className="text-2xl font-black text-zinc-800">{students.length}</p>
+                    </div>
+                    <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                      <p className="text-[10px] font-bold text-blue-400 uppercase">Enrolled</p>
+                      <p className="text-2xl font-black text-blue-600">{enrolledCount}</p>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-zinc-50 rounded-xl border border-zinc-100 space-y-2">
+                    <div className="flex items-center gap-2 text-zinc-600">
+                      <BookOpen size={16} className="text-blue-500" />
+                      <span className="text-xs font-bold uppercase">Current Subject</span>
+                    </div>
+                    <p className="text-sm font-bold text-zinc-800 line-clamp-2">
+                      {subjects.find(s => s.id === subject)?.id} - {subjects.find(s => s.id === subject)?.name}
+                    </p>
+                    {subjects.find(s => s.id === subject)?.isElective && (
+                      <span className="inline-block px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded-lg border border-amber-200">ELECTIVE</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <button 
+                    onClick={saveEnrolments}
+                    disabled={saving || loading}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 rounded-xl text-white font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all disabled:opacity-50"
+                  >
+                    {saving ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Save size={18} />
+                        Save Enrolments
+                      </>
+                    )}
+                  </button>
+                  <p className="text-[10px] text-zinc-400 text-center">
+                    Enrolments are saved per subject within the context of the selected batch and academic year.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl border border-dashed border-zinc-200">
+            <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center text-zinc-300 mb-4">
+              <FileText size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-zinc-600">No Subject Selected</h3>
+            <p className="text-zinc-400 text-sm">Please use the filters above to select a subject and start enrolment.</p>
+          </div>
+        )}
+
+        {/* Success Toast */}
+        {showSuccess && (
+          <div className="fixed bottom-6 right-6 flex items-center gap-3 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 z-[1000]">
+            <div className="bg-green-500 p-1 rounded-full">
+              <CheckCircle2 size={18} />
+            </div>
+            <span className="font-semibold">{successMessage}</span>
+          </div>
+        )}
       </div>
     </Layout>
   );

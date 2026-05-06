@@ -6,5 +6,6 @@
   "storageBucket": "co-po-ck26.firebasestorage.app",
   "messagingSenderId": "468680079030",
   "appId": "1:468680079030:web:318111c1d22e2fbbbe9817",
-  "measurementId": "G-L9G2NRYMTY"
+  "measurementId": "G-L9G2NRYMTY",
+  "firestoreDatabaseId": "(default)"
 }

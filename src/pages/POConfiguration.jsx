@@ -55,9 +55,8 @@ const POConfiguration = () => {
     try {
       const { GoogleGenAI, Type } = await import('@google/genai');
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
       if (!apiKey) {
-        throw new Error("Gemini API Key is missing. Check your .env file.");
+        throw new Error("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your secrets.");
       }
       const ai = new GoogleGenAI({ apiKey });
 
@@ -66,7 +65,7 @@ Be highly efficient, precise, and concise to save tokens. Generate only the natu
 Statement: "${item.statement}"`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-pro",
+        model: "gemini-2.5-flash",
         contents: prompt,
         config: {
           systemInstruction: "You are an expert Outcome-Based Education (OBE) coordinator. Output only JSON containing an array of 'competencies'. Each competency must have a concise 'statement' (string) and 'pis' (array of crisp strings).",

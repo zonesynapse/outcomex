@@ -20,7 +20,7 @@ import { formatProgDisplay, formatProgrammeKey, getRecentBatches as getRecentBat
 
 export default function Curriculum() {
   const { departments, durations, addDepartment, removeDepartment, removeProgram, setDuration } = useDepartments();
-  const { regulations, batchRegulations, mapBatchToRegulation } = useRegulations();
+  const { regulations, batchRegulations, addRegulation, mapBatchToRegulation } = useRegulations();
   const { batchStatus, toggleBatchStatus } = useBatches(durations);
 
   const [user, setUser] = useState(null);
@@ -49,11 +49,16 @@ export default function Curriculum() {
   const [newDuration, setNewDuration] = useState(4);
   const [selectedProgram, setSelectedProgram] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
+  const [newRegulation, setNewRegulation] = useState("");
   const [editingDurations, setEditingDurations] = useState({});
   const [mappingProgram, setMappingProgram] = useState("");
   const [mappingBatch, setMappingBatch] = useState("");
   const [mappingRegulation, setMappingRegulation] = useState("");
-  const [semesterType, setSemesterType] = useState("Odd");
+
+  // Grade Config States
+  const [gradeReg, setGradeReg] = useState("");
+  const [gradeConfigs, setGradeConfigs] = useState({}); // { reg: [{grade, gradePoint, mark}] }
+  const [newGrade, setNewGrade] = useState({ grade: "", gradePoint: "", mark: "" });
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
@@ -68,24 +73,50 @@ export default function Curriculum() {
       setLoading(false);
     });
 
-    const settingsRef = ref(rtdb, 'settings/current_semester_type');
-    const unsubscribeSettings = onValue(settingsRef, (snapshot) => {
+    const gradeRef = ref(rtdb, 'grade_configs');
+    const unsubscribeData = onValue(gradeRef, (snapshot) => {
       if (snapshot.exists()) {
-        setSemesterType(snapshot.val());
+        setGradeConfigs(snapshot.val());
+      } else {
+        setGradeConfigs({});
       }
     });
 
     return () => {
       unsubscribeAuth();
-      unsubscribeSettings();
+      unsubscribeData();
     };
   }, []);
 
-  const handleSemesterTypeChange = async (type) => {
-    await set(ref(rtdb, 'settings/current_semester_type'), type);
-    setSuccessMessage(`Semester type set to ${type}!`);
+  const handleAddGrade = async () => {
+    if (!gradeReg || !newGrade.grade.trim() || !newGrade.gradePoint.trim()) return;
+    const currentGrades = gradeConfigs[sanitizeKey(gradeReg)] || [];
+    const gradePoint = Number(newGrade.gradePoint);
+    const mark = gradePoint * 10;
+    const updatedGrades = [...currentGrades, { 
+      grade: newGrade.grade.trim(), 
+      gradePoint: gradePoint,
+      mark: mark 
+    }];
+    await set(ref(rtdb, `grade_configs/${sanitizeKey(gradeReg)}`), updatedGrades);
+    setNewGrade({ grade: "", gradePoint: "", mark: "" });
+    setSuccessMessage("Grade added successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const handleRemoveGrade = async (reg, index) => {
+    const currentGrades = [...(gradeConfigs[sanitizeKey(reg)] || [])];
+    currentGrades.splice(index, 1);
+    await set(ref(rtdb, `grade_configs/${sanitizeKey(reg)}`), currentGrades.length > 0 ? currentGrades : null);
+    setSuccessMessage("Grade removed successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const sanitizeKey = (key) => {
+    if (!key) return '';
+    return String(key).replace(/[.#$[\]]/g, '_');
   };
 
   const getRecentBatches = (prog) => {
@@ -153,6 +184,15 @@ export default function Curriculum() {
     setNewDepartment("");
   };
 
+  const handleAddRegulation = async () => {
+    if (!newRegulation.trim()) return;
+    await addRegulation(newRegulation.trim());
+    setSuccessMessage("Regulation added successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+    setNewRegulation("");
+  };
+
   const handleMapRegulation = async () => {
     if (!mappingProgram || !mappingBatch || !mappingRegulation) return;
     const progKey = formatProgrammeKey(mappingProgram);
@@ -173,7 +213,7 @@ export default function Curriculum() {
 
   if (loading) {
     return (
-      <Layout title="Curriculum Configuration">
+      <Layout title="General Config">
         <div className="flex items-center justify-center min-h-[60vh]">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#120c7a]"></div>
         </div>
@@ -185,7 +225,7 @@ export default function Curriculum() {
 
   if (!isAdmin) {
     return (
-      <Layout title="Curriculum Configuration">
+      <Layout title="General Config">
         <div className="max-w-4xl mx-auto mt-10 p-8 bg-red-50 border border-red-200 rounded-2xl text-center">
           <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
           <h2 className="text-2xl font-bold text-red-800 mb-2">Access Denied</h2>
@@ -196,7 +236,7 @@ export default function Curriculum() {
   }
 
   return (
-    <Layout title="Curriculum Configuration">
+    <Layout title="General Config">
       <style>{`
         .bottom-space {
           margin-top: 40px;
@@ -230,46 +270,6 @@ export default function Curriculum() {
         }
       `}</style>
       <div className="container-fluid p-4">
-        {/* Academic Settings Section */}
-        <div className="max-w-4xl mx-auto mb-6">
-          <div className="bg-[#120c7a] p-4 rounded-2xl shadow-lg border border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-4 text-white">
-              <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                <Settings size={28} />
-              </div>
-              <div>
-                <h3 className="font-bold text-xl leading-tight">Academic Settings</h3>
-                <p className="text-sm text-white/70 font-medium">Configure global semester and academic parameters</p>
-              </div>
-            </div>
-            
-            <div className="flex bg-black/20 p-1.5 rounded-xl backdrop-blur-md border border-white/10">
-              <button
-                onClick={() => handleSemesterTypeChange("Odd")}
-                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all duration-300 ${
-                  semesterType === "Odd" 
-                    ? "bg-white text-[#120c7a] shadow-xl scale-105" 
-                    : "text-white/80 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                {semesterType === "Odd" && <CheckCircle2 size={16} />}
-                Odd Semester
-              </button>
-              <button
-                onClick={() => handleSemesterTypeChange("Even")}
-                className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all duration-300 ${
-                  semesterType === "Even" 
-                    ? "bg-white text-[#120c7a] shadow-xl scale-105" 
-                    : "text-white/80 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                {semesterType === "Even" && <CheckCircle2 size={16} />}
-                Even Semester
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Program & Regulation Configuration Card */}
         <div className="card shadow-sm border-0 rounded-3">
           <div className="card-body p-4 p-md-5">
@@ -413,6 +413,35 @@ export default function Curriculum() {
                     >
                       <Plus size={18} /> Add
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Add Regulation */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <h3 className="font-semibold text-lg mb-3">Add New Regulation</h3>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g., R2021, R2025" 
+                    value={newRegulation}
+                    onChange={(e) => setNewRegulation(e.target.value)}
+                  />
+                  <button 
+                    className="btn btn-primary flex items-center gap-2"
+                    style={{ backgroundColor: '#120c7a', border: 'none' }}
+                    onClick={handleAddRegulation}
+                  >
+                    <Plus size={18} /> Add
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <p className="text-sm text-slate-500 mb-1">Existing Regulations:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {regulations.map(reg => (
+                      <span key={reg} className="px-2 py-1 bg-white border rounded text-sm">{reg}</span>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -672,6 +701,101 @@ export default function Curriculum() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Grade Configuration Section */}
+        <div className="card shadow-sm border-0 rounded-3 mt-6">
+          <div className="card-body p-4 p-md-5">
+            <h2 className="card-title mb-4 font-bold text-2xl text-zinc-800 flex items-center gap-2">
+              <Settings className="text-blue-600" size={24} />
+              Grade to Mark Configuration
+            </h2>
+            <p className="text-sm text-slate-500 mb-4 italic">* Define grades and their corresponding marks for each regulation. These will be used in Mark Entry for University Exams.</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <h3 className="font-semibold text-lg mb-3">Add Grade Definition</h3>
+                <div className="flex flex-col gap-3">
+                  <select 
+                    className="form-select"
+                    value={gradeReg}
+                    onChange={(e) => setGradeReg(e.target.value)}
+                  >
+                    <option value="">Select Regulation</option>
+                    {regulations.map(reg => (
+                      <option key={reg} value={reg}>{reg}</option>
+                    ))}
+                  </select>
+                  
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="Grade (e.g., A+)" 
+                      value={newGrade.grade}
+                      onChange={(e) => setNewGrade({ ...newGrade, grade: e.target.value })}
+                    />
+                    <input 
+                      type="number" 
+                      className="form-control" 
+                      placeholder="Grade Point (e.g., 9)" 
+                      value={newGrade.gradePoint}
+                      onChange={(e) => {
+                        const gp = e.target.value;
+                        setNewGrade({ 
+                          ...newGrade, 
+                          gradePoint: gp, 
+                          mark: gp !== "" ? Number(gp) * 10 : "" 
+                        });
+                      }}
+                    />
+                    <input 
+                      type="number" 
+                      className="form-control bg-slate-100" 
+                      placeholder="Mark" 
+                      value={newGrade.mark}
+                      readOnly
+                    />
+                    <button 
+                      className="btn btn-primary flex items-center gap-2"
+                      style={{ backgroundColor: '#120c7a', border: 'none' }}
+                      onClick={handleAddGrade}
+                      disabled={!gradeReg}
+                    >
+                      <Plus size={18} /> Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <h3 className="font-semibold text-lg mb-3">Existing Grade Definitions</h3>
+                <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
+                  {Object.entries(gradeConfigs).length > 0 ? (
+                    Object.entries(gradeConfigs).map(([regKey, grades]) => (
+                      <div key={regKey} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
+                        <p className="text-xs font-bold text-[#120c7a] uppercase mb-2 border-b pb-1">{regKey}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {Array.isArray(grades) && grades.map((g, idx) => (
+                            <div key={idx} className="px-2 py-1 bg-slate-50 text-slate-700 border border-slate-100 rounded text-xs font-bold flex items-center gap-2">
+                              <span>{g.grade}: <span className="text-blue-600">{g.gradePoint} GP</span> | <span className="text-emerald-600">{g.mark} M</span></span>
+                              <Trash2 
+                                size={12} 
+                                className="cursor-pointer hover:text-red-500" 
+                                onClick={() => handleRemoveGrade(regKey, idx)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm italic text-slate-400 text-center py-4">No grades defined yet.</p>
+                  )}
                 </div>
               </div>
             </div>

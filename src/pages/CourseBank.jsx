@@ -19,8 +19,7 @@ export default function CreateCourse() {
   const [courseCode, setCourseCode] = useState("");
   const [courseName, setCourseName] = useState("");
   const [credits, setCredits] = useState(3);
-  const [periods, setPeriods] = useState(0); // New state for periods
-  const [courseType, setCourseType] = useState("");
+  const [courseType, setCourseType] = useState("Program Course");
   const [numCOs, setNumCOs] = useState(0);
   const [coDefs, setCoDefs] = useState([]);
   const [coContents, setCoContents] = useState([]);
@@ -31,43 +30,33 @@ export default function CreateCourse() {
   const [bloomsDomains, setBloomsDomains] = useState({});
   const [existingCourses, setExistingCourses] = useState([]); // merged list for dropdown
   const [selectedExistingCourseKey, setSelectedExistingCourseKey] = useState("");
-  const [courseTypeConfigs, setCourseTypeConfigs] = useState({});
-
-  useEffect(() => {
-    const ctRef = ref(rtdb, 'course_type_configs');
-    const unsubscribe = onValue(ctRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setCourseTypeConfigs(snapshot.val());
-      } else {
-        setCourseTypeConfigs({});
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const dynamicCourseTypes = useMemo(() => {
-    if (!regulation) return [];
-    return courseTypeConfigs[sanitizeKey(regulation)] || [];
-  }, [regulation, courseTypeConfigs]);
+  const [availableCourseTypes, setAvailableCourseTypes] = useState(["Program Course"]);
 
   const deptKey = department || "Overall";
   const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
 
-  // ensure arrays stay in sync when coDefs changes
-  useEffect(() => { // This useEffect should depend on numCOs or coDefs.length, not coDefs directly.
-    setCoContents((prev) => {
-      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
-      return next;
+  // Fetch course types based on regulation
+  useEffect(() => {
+    if (!regKey) {
+      setAvailableCourseTypes(["Program Course"]);
+      return;
+    }
+    const typesRef = ref(rtdb, `course_type_configs/${regKey}`);
+    const unsub = onValue(typesRef, (snap) => {
+      if (snap.exists()) {
+        setAvailableCourseTypes(snap.val());
+      } else {
+        setAvailableCourseTypes(["Program Course"]); // Default if none configured
+      }
     });
-    setCoDomains((prev) => {
-      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
-      return next;
-    });
-    setCoLevels((prev) => {
-      const next = Array.from({ length: coDefs.length }, (_, i) => prev[i] || "");
-      return next;
-    });
-  }, [coDefs.length]); // Changed dependency to coDefs.length
+    return () => unsub();
+  }, [regKey]);
+
+  useEffect(() => {
+    if (availableCourseTypes.length > 0 && !availableCourseTypes.includes(courseType)) {
+      setCourseType(availableCourseTypes[0]);
+    }
+  }, [availableCourseTypes]);
 
   // subscribe to Bloom's taxonomy from RTDB
   useEffect(() => {
@@ -145,7 +134,6 @@ export default function CreateCourse() {
         code: courseCode.trim(),
         name: courseName.trim(),
         credits: Number(credits) || 0,
-        periods: Number(periods) || 0, // Include periods in payload
         type: courseType,
         regulation,
         programme: progKey,
@@ -154,13 +142,13 @@ export default function CreateCourse() {
       };
 
       await set(ref(rtdb, `courses/${progKey}/${deptKey}/${sanitizeKey(regulation)}/${courseKey}`), payload);
+
       setMessage("Course saved successfully.");
       setSelectedExistingCourseKey(`${deptKey}:${courseKey}`);
       setShowCreate(false);
       setCourseCode("");
       setCourseName("");
       setCredits(3);
-      setPeriods(0); // Reset periods
       setNumCOs(0);
       setCoDefs([]);
       setCoContents([]);
@@ -218,7 +206,6 @@ export default function CreateCourse() {
               code: course?.code || key,
               name: course?.name || "",
               credits: course?.credits,
-              periods: course?.periods, // Include periods when fetching
               type: course?.type,
               co: Array.isArray(course?.co) ? course.co : [],
               _sourceDept: dept,
@@ -243,8 +230,7 @@ export default function CreateCourse() {
     setShowCreate(true);
     setCourseCode(match.code || "");
     setCourseName(match.name || "");
-    setCredits(match.credits ?? 3); // Use nullish coalescing for default
-    setPeriods(match.periods ?? 0); // Load periods
+    setCredits(match.credits ?? 3);
     setCourseType(match.type || "Program Course");
 
     const cos = Array.isArray(match.co) ? match.co : [];
@@ -266,17 +252,6 @@ export default function CreateCourse() {
 
   return (
     <Layout title="Course Bank">
-      <style>{`
-        input[type='number']::-webkit-outer-spin-button,
-        input[type='number']::-webkit-inner-spin-button {
-          -webkit-appearance: none;
-          margin: 0;
-        }
-        input[type='number'] {
-          -moz-appearance: textfield;
-          appearance: textfield;
-        }
-      `}</style>
       <div className="max-w-7xl mx-auto p-6 space-y-6">
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
@@ -367,7 +342,6 @@ export default function CreateCourse() {
                       setShowCreate(true);
                       setCourseCode("");
                       setCourseName("");
-                      setPeriods(0); // Reset periods
                       setCredits(3);
                       setCourseType("Program Course");
                       setNumCOs(0);
@@ -403,7 +377,7 @@ export default function CreateCourse() {
 
           {showCreate && selectedExistingCourseKey && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-zinc-600">Course Code</label>
                   <input
@@ -413,7 +387,7 @@ export default function CreateCourse() {
                     placeholder="e.g., CS301"
                   />
                 </div>
-                <div className="space-y-2 sm:col-span-3">
+                <div className="space-y-2 sm:col-span-2">
                   <label className="text-sm font-bold text-zinc-600">Course Name</label>
                   <input
                     className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
@@ -433,17 +407,6 @@ export default function CreateCourse() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-zinc-600">Periods</label>
-                  <input
-                    type="number"
-                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
-                    value={periods}
-                    onChange={(e) => setPeriods(e.target.value)}
-                    min={0}
-                    placeholder="e.g., 45"
-                  />
-                </div>
-                <div className="space-y-2">
                   <label className="text-sm font-bold text-zinc-600">Course Type</label>
                   <div className="relative">
                     <select
@@ -451,9 +414,8 @@ export default function CreateCourse() {
                       value={courseType}
                       onChange={(e) => setCourseType(e.target.value)}
                     >
-                      <option value="">--select--</option>
-                      {dynamicCourseTypes.map((type, idx) => (
-                        <option key={idx} value={type}>{type}</option>
+                      {availableCourseTypes.map((type) => (
+                        <option key={type} value={type}>{type}</option>
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />

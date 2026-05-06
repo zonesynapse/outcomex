@@ -1,20 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Save, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CIAConfig } from '../types';
 import { rtdb } from '../firebase';
 import { ref, set, push, onValue, remove } from 'firebase/database';
+
+interface CIAConfig {
+  program: string;
+  department: string;
+  regulation: string;
+  examName: string;
+  totalMarks: number;
+  isUniversity: boolean;
+  isIndirectAssessment: boolean;
+  isAssignment: boolean;
+  courseTypes: string[];
+  numSets?: number;
+  createdAt: string;
+  parts?: any[];
+}
+
+interface CIAConfigWithId extends CIAConfig {
+  id: string;
+}
 
 interface CIAConfigPageProps {
   program?: string;
   department?: string;
   regulation?: string;
-}
-
-// Local extension of type to include DB id
-interface CIAConfigWithId extends CIAConfig {
-  id: string;
-  courseTypes?: string[];
 }
 
 const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regulation }) => {
@@ -91,7 +103,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           isUniversity: true,
           isIndirectAssessment: true,
           isAssignment: false,
-          totalMarks: 0 // Hide total marks value potentially
+          totalMarks: 0 
         }));
       } else if (name === 'isUniversity' && !checked) {
         setFormData(prev => ({ ...prev, isUniversity: false, isIndirectAssessment: false }));
@@ -108,7 +120,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     setError(null);
     setSuccess(null);
 
-    const { examName, totalMarks, isUniversity, isIndirectAssessment, isAssignment } = formData;
+    const { examName, totalMarks, isUniversity, isIndirectAssessment } = formData;
 
     const needsTotalMarks = !isUniversity && !isIndirectAssessment;
     if (!program || !regulation || !examName) {
@@ -136,7 +148,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         totalMarks: Number(totalMarks),
         isUniversity,
         isIndirectAssessment,
-        isAssignment,
+        isAssignment: formData.isAssignment,
         courseTypes: formData.courseTypes,
         numSets: 1,
         createdAt: new Date().toISOString()
@@ -168,7 +180,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
 
   const filteredConfigs = configs.filter(config => {
     if (program && config.program !== program) return false;
-    // If a department filter is provided (non-empty), match it. If empty, show all for that regulation.
     if (department && (config.department || "") !== department) return false;
     if (regulation && config.regulation !== regulation) return false;
 
@@ -178,7 +189,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     return true;
   });
 
-  // Only show configs if all required filters are selected
   const hasRequiredFilters = !!(program && regulation);
   const displayConfigs = hasRequiredFilters ? filteredConfigs : [];
 
@@ -210,7 +220,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                         ...prev,
                         courseTypes: [...prev.courseTypes, val]
                       }));
-                      e.target.value = ""; // Reset dropdown after selection
+                      e.target.value = ""; 
                     }
                   }}
                 >
@@ -432,16 +442,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                           </span>
                         ))}
                       </div>
-                      {config.parts && config.parts.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {config.parts.map((part, idx) => (
-                            <span key={idx} className="px-2 py-1 bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded-md">
-                              {part.name}: {part.numberOfQuestions} Qs × {part.marksPerQuestion} M
-                              {part.hasInternalChoice && ' (Either/Or)'}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                     
                     {deleteConfirmId === config.id ? (

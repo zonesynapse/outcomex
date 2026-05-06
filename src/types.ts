@@ -9,7 +9,9 @@ export interface CIAConfig {
   id?: string;
   program: string;
   department: string;
-  regulation: string;
+  batch: string;
+  academicYear: string;
+  semester: string;
   examName: string;
   totalMarks: number;
   createdAt: string;

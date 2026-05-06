@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { onAuthStateChanged } from "firebase/auth";
 import { onValue, ref } from "firebase/database";
 import { BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2 } from "lucide-react";
 
@@ -282,7 +282,7 @@ export default function FacultyDashboard() {
                       </td>
                       <td className="p-4 text-center">
                         <button
-                          onClick={() => navigate(`/questionpaper?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                          onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
                           className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0e0960] transition-all"
                           title={qp.status === 'recorrected' ? 'Open for Recorrection' : 'Open in Question Paper Generator'}
                         >
@@ -320,7 +320,7 @@ export default function FacultyDashboard() {
                         {qp.subject} - {qp.exam_name || qp.qpaper_name}
                       </p>
                       <button
-                        onClick={() => navigate(`/questionpaper?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                        onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
                         className="px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold rounded-lg transition-all"
                       >
                         Go to Editor

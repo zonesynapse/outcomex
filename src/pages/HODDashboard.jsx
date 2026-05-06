@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { onAuthStateChanged } from "firebase/auth";
 import { onValue, ref, get, update } from "firebase/database";
 import { 
   Eye, 
@@ -9,7 +9,6 @@ import {
   User, 
   X, 
   FileText, 
-  Download,
   CheckCircle2,
   Edit2
 } from "lucide-react";
@@ -256,54 +255,6 @@ export default function HODDashboard() {
     }
   };
 
-  const handleDownloadQP = useCallback((qp) => {
-    try {
-      const content = renderQuestionPaper(qp);
-      const wordHTML = `
-<html xmlns:o='urn:schemas-microsoft-com:office:office'
-      xmlns:w='urn:schemas-microsoft-com:office:word'
-      xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-    <meta charset='utf-8'>
-    <title>Question Paper Review</title>
-    <style>
-        @page { size: A4; margin: 0.75in; }
-        body { font-family: Arial, sans-serif; font-size: 11px; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
-        th, td { border: 1px solid #333; padding: 4px; text-align: center; }
-        th { background-color: #f2f2f2; }
-        .logo-img { max-width: 100%; height: 70px !important; }
-    </style>
-</head>
-<body>
-    ${content}
-</body>
-</html>`;
-
-      const blob = new Blob(['\ufeff', wordHTML], { type: 'application/msword' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      const examName = qp.exam_name || (ciaConfigs[qp.qpaper_name]?.examName || qp.qpaper_name);
-      link.download = `${examName}_${qp.subject}_Review.doc`;
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        if (link.parentNode) link.parentNode.removeChild(link);
-      }, 1000);
-    } catch (err) {
-      console.error('Word export failed:', err);
-    }
-  }, [renderQuestionPaper, ciaConfigs]);
-
-  const getSemesterLabel = (semNum) => {
-    const labels = {
-      "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII", "9": "IX", "10": "X"
-    };
-    return labels[String(semNum)] || semNum;
-  };
-
   return (
     <Layout title="HOD Dashboard">
       {toast.show && (
@@ -429,11 +380,6 @@ export default function HODDashboard() {
                     <Edit2 size={16} />
                     Recorrect
                   </button>
-                  {/* Removed Download Word button as per request */}
-                  {/* <button 
-                    onClick={() => handleDownloadQP(selectedQP)}
-                    className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm"
-                  > <Download size={16} /> Download Word </button> */}
                   <button 
                     onClick={() => setShowQPModal(false)}
                     className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-all"

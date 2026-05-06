@@ -37,22 +37,6 @@
         },
         "updatedAt": { "type": "string", "format": "date-time" }
       }
-    },
-    "poActionsTaken": {
-      "title": "PO Action Taken",
-      "description": "Stores the action plan for POs/PSOs that are not attained.",
-      "type": "object",
-      "properties": {
-        "programme": { "type": "string" },
-        "department": { "type": "string" },
-        "batch": { "type": "string" },
-        "regulation": { "type": "string" },
-        "outcomeCode": { "type": "string" },
-        "action": { "type": "string" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["programme", "department", "batch", "regulation", "outcomeCode", "action"]
     }
   },
   "firestore": {
@@ -63,10 +47,6 @@
     "/students/{compositeKey}": {
       "schema": "students",
       "description": "Student list for a specific batch, programme, and department."
-    },
-    "/poActionsTaken/{actionId}": {
-      "schema": "poActionsTaken",
-      "description": "Action plans for non-attained outcomes."
     }
   }
 }

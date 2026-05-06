@@ -1,5 +1,5 @@
 {
-  "name": "Remix: edumate",
+  "name": "edumate",
   "description": "A system to configure Continuous Internal Assessments and generate question papers with marks validation.",
   "requestFramePermissions": []
 }

@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { auth, rtdb } from "../firebase";
 import { signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get, set, onValue, update } from "firebase/database";
+import { ref, get, set, onValue } from "firebase/database";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { formatProgDisplay } from "../lib/utils";
 import { 
@@ -10,7 +10,6 @@ import {
   Upload,
   FileText,
   BookOpen,
-  AlertCircle,
   Target,
   Settings2,
   Database,
@@ -24,9 +23,64 @@ import {
   Network,
   BarChart3,
   Calendar,
-  CalendarCheck2
+  Clock,
+  CheckCircle2,
+  ChevronDown,
+  Trash2
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
+
+// All possible menu items with their IDs
+const allPossibleItems = [
+  { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+  { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
+  { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
+  { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
+  { id: "curriculum", icon: BookOpen, label: "General Config", path: "/curriculum" },
+  { id: "blooms-taxonomy", icon: BrainCircuit, label: "Bloom's Taxonomy", path: "/blooms-taxonomy" },
+  { id: "hod-role-configuration", icon: Users, label: "Faculty Course Allocation", path: "/hod-role-configuration" },
+  { id: "po_and_pso_configuration", icon: Settings2, label: "PO's Configuration", path: "/po_and_pso_configuration" },
+  { id: "upload", icon: Upload, label: "Student Namelist and Curriculum", path: "/upload" },
+  { id: "cia-configuration", icon: Settings2, label: "CIA Configuration", path: "/cia-configuration" },
+  { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
+  { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
+  { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
+  { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
+  { id: "timetable", icon: Clock, label: "Time Table", path: "/tt" },
+  { id: "regulation-formation", icon: Settings2, label: "Regulation Formation", path: "/regulation-formation" },
+  { id: "co-po", icon: Network, label: "CO-PO Mapping", path: "/co-po" },
+  { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
+  { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
+  { id: "questionpaper", icon: BookOpen, label: "Question Paper Generator", path: "/question-paper-generator" },
+  { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" }
+];
+
+const modules = [
+  {
+    id: "obe",
+    label: "OBE",
+    icon: Target,
+    itemIds: ["co_configuration", "po_and_pso_configuration", "co-po", "po-attainment", "vision_and_mission", "blooms-taxonomy"]
+  },
+  {
+    id: "ia",
+    label: "IA",
+    icon: Network,
+    itemIds: ["questionpaper", "markk"]
+  },
+  {
+    id: "academics",
+    label: "Academics",
+    icon: BookOpen,
+    itemIds: ["academic-calendar", "timetable", "course-bank", "curriculum", "course-enrolment", "hod-role-configuration", "upload"]
+  },
+  {
+    id: "config",
+    label: "Config",
+    icon: Settings2,
+    itemIds: ["info-configuration", "regulation-formation", "admin-roles"]
+  }
+];
 
 export default function Layout({ children, title }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -37,17 +91,36 @@ export default function Layout({ children, title }) {
   const [rolePermissions, setRolePermissions] = useState(null);
   const [hasAssignments, setHasAssignments] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editData, setEditData] = useState({ programme: "", department: "" });
-  const [signatureFile, setSignatureFile] = useState(null);
-  const [signatureUrl, setSignatureUrl] = useState("");
-  const [uploadingSignature, setUploadingSignature] = useState(false);
-  const [signatureError, setSignatureError] = useState("");
-  const [signatureSuccess, setSignatureSuccess] = useState("");
-  const MAX_SIGNATURE_SIZE = 100 * 1024; // 100 KB
+  const [editData, setEditData] = useState({ programme: "", department: "", signatureUrl: "" });
   const { departments: allDepartments } = useDepartments();
   const profileRef = useRef(null);
+  const fileInputRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const [expandedModules, setExpandedModules] = useState({});
+
+  useEffect(() => {
+    // Automatically expand the module containing the active path
+    const activeModule = modules.find(m => 
+      m.itemIds.some(id => {
+        const item = allPossibleItems.find(i => i.id === id);
+        return item && location.pathname === item.path;
+      })
+    );
+    if (activeModule) {
+      setExpandedModules(prev => {
+        if (prev[activeModule.id]) return prev;
+        return { ...prev, [activeModule.id]: true };
+      });
+    }
+  }, [location.pathname]);
+
+  const toggleModule = (moduleId) => {
+    setExpandedModules(prev => ({
+      ...prev,
+      [moduleId]: !prev[moduleId]
+    }));
+  };
 
   useEffect(() => {
     let unsubscribeUser = () => {};
@@ -97,7 +170,6 @@ export default function Layout({ children, title }) {
                 }
               });
             }
-            setSignatureUrl(data.signatureUrl || "");
           }
         });
       } else {
@@ -106,7 +178,6 @@ export default function Layout({ children, title }) {
         setRolePermissions(null);
         setHasAssignments(false);
         unsubscribeUser();
-        setSignatureUrl("");
         unsubscribePerms();
       }
     });
@@ -144,82 +215,27 @@ export default function Layout({ children, title }) {
       await set(userRef, {
         ...userData,
         programme: editData.programme,
-        department: editData.department
+        department: editData.department,
+        signatureUrl: editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl || "")
       });
-      // No need to update signature here, it's handled separately
-      setUserData({ ...userData, programme: editData.programme, department: editData.department });
       setIsEditingProfile(false);
     } catch (error) {
       console.error("Update Profile Error:", error);
     }
   };
 
-  const handleSignatureFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > MAX_SIGNATURE_SIZE) {
-        setSignatureError("Signature file size must be less than 100KB.");
-        setSignatureFile(null);
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 102400) { // limit 100KB for base64 storage
+        alert("Signature image must be less than 100KB");
         return;
       }
-      if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) {
-        setSignatureError("Only PNG, JPG, or JPEG images are allowed for signature.");
-        setSignatureFile(null);
-        return;
-      }
-      setSignatureError("");
-      setSignatureFile(file);
-    } else {
-      setSignatureFile(null);
-    }
-  };
-
-  const handleSignatureUpload = async () => {
-    if (!user || !signatureFile) return;
-    setUploadingSignature(true);
-    setSignatureError("");
-    setSignatureSuccess("");
-
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const base64String = reader.result;
-        const userRef = ref(rtdb, `users/${user.uid}`);
-        await update(userRef, { signatureUrl: base64String });
-        
-        setSignatureUrl(base64String);
-        setUserData(prev => ({ ...prev, signatureUrl: base64String }));
-        setSignatureFile(null);
-        setSignatureSuccess("Signature uploaded successfully!");
-        alert("Signature uploaded successfully!");
-        setTimeout(() => setSignatureSuccess(""), 4000);
-      } catch (error) {
-        console.error("Error saving signature:", error);
-        setSignatureError("Failed to save signature. Please try again.");
-      } finally {
-        setUploadingSignature(false);
-      }
-    };
-    reader.readAsDataURL(signatureFile);
-  };
-
-  const handleSignatureRemove = async () => {
-    if (!user || !signatureUrl) return;
-    setUploadingSignature(true);
-    setSignatureError("");
-    setSignatureSuccess("");
-    try {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      await update(userRef, { signatureUrl: null });
-      setSignatureUrl("");
-      setUserData(prev => ({ ...prev, signatureUrl: null }));
-      setSignatureSuccess("Signature removed successfully!");
-      setTimeout(() => setSignatureSuccess(""), 4000);
-    } catch (error) {
-      console.error("Error removing signature:", error);
-      setSignatureError("Failed to remove signature. Please try again.");
-    } finally {
-      setUploadingSignature(false);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditData(prev => ({ ...prev, signatureUrl: reader.result }));
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -227,32 +243,6 @@ export default function Layout({ children, title }) {
   const isPrincipal = userRole === 'Principal';
   const isHOD = userRole === 'HOD';
   const isFaculty = userRole === 'Faculty';
-
-  // All possible menu items with their IDs
-  const allPossibleItems = [
-    { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-    { id: "faculty-dashboard", icon: BookOpen, label: "Faculty Dashboard", path: "/faculty-dashboard" },
-    { id: "hod-dashboard", icon: Users, label: "HOD Dashboard", path: "/hod-dashboard" },
-    { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
-    { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
-    { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
-    { id: "curriculum", icon: BookOpen, label: "Curriculum", path: "/curriculum" },
-    { id: "regulation-formation", icon: BookOpen, label: "Regulation Formation", path: "/regulation-formation" },
-    { id: "blooms-taxonomy", icon: BrainCircuit, label: "Bloom's Taxonomy", path: "/blooms-taxonomy" },
-    { id: "hod-role-configuration", icon: Users, label: "HOD Role Config", path: "/hod-role-configuration" },
-    { id: "po_and_pso_configuration", icon: Settings2, label: "PO's Configuration", path: "/po_and_pso_configuration" },
-    { id: "upload", icon: Upload, label: "Update Namelist", path: "/upload" },
-    { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
-    { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
-    { id: "co-po", icon: Network, label: "CO-PO Mapping", path: "/co-po" },
-    { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
-    { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
-    { id: "questionpaper", icon: BookOpen, label: "Question Papers", path: "/questionpaper" },
-    { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
-    { id: "attendance", icon: CalendarCheck2, label: "Attendance", path: "/attendance" },
-    { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" }
-    ,{ id: "timetable", icon: Calendar, label: "Timetable", path: "/tt" }
-  ];
 
   const menuItems = [];
 
@@ -266,7 +256,7 @@ export default function Layout({ children, title }) {
 
     // SAFETY: Ensure Admin always has access to core config pages even if dynamic perms are messed up
     if (isAdmin) {
-      const adminCoreIds = ["dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-bank"];
+      const adminCoreIds = ["dashboard", "admin-roles", "info-configuration", "curriculum", "blooms-taxonomy", "course-bank"];
       adminCoreIds.forEach(id => {
         if (!menuItems.some(i => i.id === id)) {
           const item = allPossibleItems.find(i => i.id === id);
@@ -279,7 +269,7 @@ export default function Layout({ children, title }) {
     // If they have certain "HOD" level logic that depends on 'hasAssignments'
     if (hasAssignments) {
         // Ensure standard faculty items are there if they have assignments
-        const facultyItems = ["co_configuration", "questionpaper", "markk", "course-bank", "attendance"];
+        const facultyItems = ["co_configuration", "questionpaper", "markk", "course-bank"];
         facultyItems.forEach(id => {
             if (!menuItems.some(i => i.id === id)) {
                 const item = allPossibleItems.find(i => i.id === id);
@@ -291,15 +281,14 @@ export default function Layout({ children, title }) {
     // Fallback to static items if permissions haven't loaded yet
     const fallbackIds = [];
     if (isAdmin) {
-      fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar");
-      fallbackIds.push("timetable");
+      fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "blooms-taxonomy", "course-enrolment", "course-bank");
     } else if (isPrincipal) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "hod-dashboard", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar", "timetable");
+      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "cia-configuration", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank");
     } else if (isHOD) {
-      fallbackIds.push("dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "timetable");
-      if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk", "attendance");
+      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "cia-configuration", "vision_and_mission", "co-po", "po-attainment", "course-bank");
+      if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk");
     } else if (isFaculty) {
-      fallbackIds.push("dashboard", "faculty-dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar", "timetable");
+      fallbackIds.push("dashboard", "co_configuration", "questionpaper", "markk", "course-bank");
     }
 
     allPossibleItems.forEach(item => {
@@ -319,24 +308,15 @@ export default function Layout({ children, title }) {
     }
   }
 
-  const [sidebarSearch, setSidebarSearch] = useState("");
+  // Group items into modules and identify global items
+  const moduleGroups = modules.map(m => ({
+    ...m,
+    items: uniqueMenuItems.filter(item => m.itemIds.includes(item.id))
+  })).filter(m => m.items.length > 0);
 
-  const displayedMenuItems = useMemo(() => {
-    const q = (sidebarSearch || "").trim().toLowerCase();
-    if (!q) return uniqueMenuItems;
-    const matches = [];
-    const others = [];
-    uniqueMenuItems.forEach(item => {
-      const label = (item.label || "").toLowerCase();
-      const idx = label.indexOf(q);
-      if (idx !== -1) {
-        matches.push({ item, idx });
-      } else others.push(item);
-    });
-    // sort matches by earliest match position, then alphabetically
-    matches.sort((a, b) => a.idx - b.idx || a.item.label.localeCompare(b.item.label));
-    return [...matches.map(m => m.item), ...others];
-  }, [sidebarSearch, uniqueMenuItems]);
+  const globalItems = uniqueMenuItems.filter(item => 
+    !modules.some(m => m.itemIds.includes(item.id))
+  );
 
   return (
     <div className="min-h-screen bg-[#f0f0fa] font-sans text-zinc-900">
@@ -427,7 +407,11 @@ export default function Layout({ children, title }) {
                   <button 
                     onClick={() => {
                       if (!isEditingProfile) {
-                        setEditData({ programme: userData?.programme || "", department: userData?.department || "" });
+                        setEditData({ 
+                          programme: userData?.programme || "", 
+                          department: userData?.department || "",
+                          signatureUrl: userData?.signatureUrl || ""
+                        });
                       }
                       setIsEditingProfile(!isEditingProfile);
                     }}
@@ -506,61 +490,62 @@ export default function Layout({ children, title }) {
                 </div>
 
                 <div className="pt-2 border-t border-zinc-100">
-                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Email Address</p>
-                  <p className="text-sm font-medium text-zinc-600 truncate">{userData?.email}</p>
-                </div>
-
-                {/* Digital Signature Section */}
-                <div className="pt-4 border-t border-zinc-100">
                   <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2">Digital Signature</p>
-                  {signatureUrl ? (
-                    <div className="flex items-center gap-3">
-                      <img src={signatureUrl} alt="Digital Signature" className="h-16 w-auto border border-zinc-200 rounded-lg p-1 bg-white" />
-                      <button
-                        onClick={handleSignatureRemove}
-                        disabled={uploadingSignature}
-                        className="px-3 py-1.5 bg-red-500 text-white text-[10px] font-bold rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+                  {isEditingProfile ? (
+                    <div className="space-y-2">
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                      />
+                      <div 
+                        onClick={() => fileInputRef.current.click()}
+                        className="border-2 border-dashed border-zinc-200 rounded-xl p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all group"
                       >
-                        {uploadingSignature ? 'Removing...' : 'Remove'}
-                      </button>
+                        {(editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl)) ? (
+                          <div className="relative group/sig">
+                            <img src={editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl)} alt="Signature Preview" className="h-12 object-contain" />
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/sig:opacity-100 transition-opacity rounded">
+                              <Upload size={14} className="text-white" />
+                            </div>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditData(prev => ({ ...prev, signatureUrl: "CLEAR" })); 
+                              }}
+                              className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors shadow-lg z-10"
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-zinc-400 group-hover:text-blue-500 flex flex-col items-center">
+                            <Upload size={20} />
+                            <span className="text-[10px] font-medium mt-1">Upload Signature</span>
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[8px] text-zinc-400 text-center italic">Max size: 100KB, PNG with transparent background recommended</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      <input
-                        type="file"
-                        accept="image/png, image/jpeg, image/jpg"
-                        onChange={handleSignatureFileChange}
-                        className="w-full text-[10px] text-zinc-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                      />
-                      {signatureFile && (
-                        <button
-                          onClick={handleSignatureUpload}
-                          disabled={uploadingSignature}
-                          className="w-full py-1.5 bg-blue-600 text-white text-[10px] font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          {uploadingSignature ? (
-                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            <Check size={12} />
-                          )}
-                          Upload Signature
-                        </button>
-                      )}
-                      {signatureError && (
-                        <div className="text-red-500 text-[10px] mt-1 flex items-center gap-1">
-                          <AlertCircle size={10} /> {signatureError}
+                    <div className="bg-white rounded-xl p-3 border border-zinc-100 flex items-center justify-center min-h-[60px] shadow-sm">
+                      {userData?.signatureUrl ? (
+                        <img src={userData.signatureUrl} alt="Signature" className="max-h-12 object-contain" />
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 opacity-40">
+                          <Edit size={16} className="text-zinc-400" />
+                          <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-tighter italic">Pending Upload</p>
                         </div>
                       )}
-                      {signatureSuccess && (
-                        <div className="text-green-600 text-[10px] mt-1 flex items-center gap-1 font-bold">
-                          <Check size={12} /> {signatureSuccess}
-                        </div>
-                      )}
-                      <p className="text-[9px] text-zinc-400 mt-1 leading-tight">
-                        Max size: 100KB. Formats: PNG, JPG, JPEG.
-                      </p>
                     </div>
                   )}
+                </div>
+
+                <div className="pt-2 border-t border-zinc-100">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Email Address</p>
+                  <p className="text-sm font-medium text-zinc-600 truncate">{userData?.email}</p>
                 </div>
               </div>
 
@@ -602,16 +587,9 @@ export default function Layout({ children, title }) {
             <X size={24} />
           </button>
         </div>
-        <div className="p-4">
-          <input
-            type="search"
-            placeholder="Search pages..."
-            value={sidebarSearch}
-            onChange={(e) => setSidebarSearch(e.target.value)}
-            className="w-full mb-3 px-3 py-2 rounded-lg text-sm font-medium outline-none bg-white/10 text-white placeholder-white/70"
-          />
-          <nav className="space-y-1">
-            {displayedMenuItems.map((item) => {
+        <nav className="p-4 space-y-2">
+          {/* Global Items */}
+          {globalItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <Link 
@@ -625,9 +603,46 @@ export default function Layout({ children, title }) {
                 {isActive && <ChevronRight size={14} className="opacity-50" />}
               </Link>
             );
-            })}
-          </nav>
-        </div>
+          })}
+
+          {/* Module Based Groups */}
+          {moduleGroups.map((module) => (
+            <div key={module.id} className="space-y-1">
+              <button
+                onClick={() => toggleModule(module.id)}
+                className={`flex items-center gap-3 w-full text-white px-4 py-3 rounded-xl transition-colors text-sm font-bold uppercase tracking-wider hover:bg-blue-700/50 ${expandedModules[module.id] ? 'bg-blue-800/40' : ''}`}
+              >
+                <module.icon size={18} className="text-white" />
+                <span className="flex-grow text-left">{module.label}</span>
+                {expandedModules[module.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              
+              {expandedModules[module.id] && (
+                <div className="ml-4 pl-4 border-l border-blue-400/20 space-y-1 animate-in slide-in-from-top-2 duration-200">
+                  {module.items.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <Link 
+                        key={item.label}
+                        to={item.path}
+                        className={`flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-colors text-[11px] font-bold sidebar-link ${
+                          isActive 
+                            ? 'bg-white/20 text-white shadow-sm' 
+                            : 'text-white hover:bg-white/10'
+                        }`}
+                        onClick={() => setIsSidebarOpen(false)}
+                      >
+                        <item.icon size={14} className="text-white" />
+                        <span className="flex-grow">{item.label}</span>
+                        {isActive && <div className="w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.8)]" />}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </nav>
       </aside>
 
       {/* Main Content */}

@@ -18,7 +18,6 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
 
 const sanitizeKey = (key) => {
@@ -30,7 +29,6 @@ export default function HODRoleConfig() {
   const { departments: deptMap, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
 
   const [currentUserData, setCurrentUserData] = useState(null);
   const [facultyList, setFacultyList] = useState([]);
@@ -121,13 +119,8 @@ export default function HODRoleConfig() {
     const sem1 = (yearIndex * 2) + 1;
     const sem2 = (yearIndex * 2) + 2;
     
-    const allSems = [String(sem1), String(sem2)];
-    return allSems.filter(numStr => {
-      const num = parseInt(numStr);
-      if (semesterType === "Odd") return num % 2 !== 0;
-      return num % 2 === 0;
-    });
-  }, [batch, academicYear, semesterType]);
+    return [String(sem1), String(sem2)];
+  }, [batch, academicYear]);
 
   // 4. Fetch Syllabus Data
   useEffect(() => {
@@ -263,17 +256,21 @@ export default function HODRoleConfig() {
       for (const subjectCode of allAssignedSubjects) {
         let courseRef = ref(rtdb, `courses/${progKey}/${sanitizeKey(syllabusDept)}/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
         let snap = await get(courseRef);
+        let isOverall = false;
 
         if (!snap.exists()) {
           courseRef = ref(rtdb, `courses/${progKey}/Overall/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
           snap = await get(courseRef);
+          isOverall = true;
         }
 
         if (snap.exists()) {
           const courseData = snap.val();
           if (courseData.co && Array.isArray(courseData.co)) {
             const coDict = {};
+            const newCoursesCO = [];
             let needsOutcomeCopy = false;
+            let hasExtraFieldsInCourseNode = false;
 
             courseData.co.forEach((c) => {
               if (c.description || c.domain || c.level) {
@@ -284,14 +281,26 @@ export default function HODRoleConfig() {
                 };
                 needsOutcomeCopy = true;
               }
+              newCoursesCO.push({
+                id: c.id,
+                content: c.content || ""
+              });
+              if (c.description !== undefined || c.domain !== undefined || c.level !== undefined) {
+                hasExtraFieldsInCourseNode = true;
+              }
             });
 
             if (needsOutcomeCopy) {
               const coKey = `${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
               const coOutcomesRef = ref(rtdb, `course_outcomes/${coKey}`);
               
-              // Copy CO descriptions, domains, and levels to course_outcomes node
+              // Only save if it doesn't already exist or overwrite it? The requirement implies moving it over explicitly.
               await set(coOutcomesRef, coDict);
+
+              // If it's not overall, we remove description/domain/level from courses node
+              if (!isOverall && hasExtraFieldsInCourseNode) {
+                await update(courseRef, { co: newCoursesCO });
+              }
             }
           }
         }
@@ -316,7 +325,7 @@ export default function HODRoleConfig() {
 
   if (loading) {
     return (
-      <Layout title="HOD Role Configuration">
+      <Layout title="Faculty Course Allocation">
         <div className="flex items-center justify-center min-h-[60vh]">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#120c7a]"></div>
         </div>
@@ -326,7 +335,7 @@ export default function HODRoleConfig() {
 
   if (currentUserData?.role !== "HOD" && currentUserData?.email !== 'cselab2022@gmail.com') {
     return (
-      <Layout title="HOD Role Configuration">
+      <Layout title="Faculty Course Allocation">
         <div className="max-w-4xl mx-auto mt-10 p-8 bg-red-50 border border-red-200 rounded-2xl text-center">
           <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
           <h2 className="text-2xl font-bold text-red-800 mb-2">Access Denied</h2>
@@ -337,7 +346,7 @@ export default function HODRoleConfig() {
   }
 
   return (
-    <Layout title="HOD Role Configuration">
+    <Layout title="Faculty Course Allocation">
       <div className="max-w-7xl mx-auto p-6 space-y-8">
         {toast.show && (
           <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 ${toast.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'}`}>
@@ -354,7 +363,7 @@ export default function HODRoleConfig() {
                 <Users size={28} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-zinc-800">HOD Role Configuration</h1>
+                <h1 className="text-2xl font-bold text-zinc-800">Faculty Course Allocation</h1>
                 <p className="text-zinc-500 text-sm">Assign subjects to faculty members in {currentUserData?.department}</p>
               </div>
             </div>
@@ -517,7 +526,7 @@ export default function HODRoleConfig() {
                                 <span className="font-bold">{code}</span>
                                 <span className="truncate max-w-[100px] text-blue-700">{sub?.name || 'Unknown'}</span>
                                 <button 
-                                  onClick={() => handleRemoveSubject(faculty.uid, code)} // Corrected to pass subjectCode
+                                  onClick={() => handleRemoveSubject(faculty.uid, code)}
                                   className="text-blue-300 hover:text-red-500 transition-colors"
                                 >
                                   <Trash2 size={12} />

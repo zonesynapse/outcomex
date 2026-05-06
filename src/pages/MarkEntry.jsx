@@ -16,7 +16,6 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
 
 const MARK_TYPES = ["Internal", "Assignment"];
@@ -36,7 +35,6 @@ export default function MarkEntry() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
   // Selection States
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
@@ -340,19 +338,12 @@ export default function MarkEntry() {
       .filter(Boolean);
 
     const uniqueSems = [...new Set(qpSems.map(s => String(s).trim()))];
-    const filteredUniqueSems = uniqueSems.filter(s => {
-      const numMatch = s.match(/\d+/);
-      if (!numMatch) return true;
-      const num = parseInt(numMatch[0]);
-      if (semesterType === "Odd") return num % 2 !== 0;
-      return num % 2 === 0;
-    });
 
-    const sems = filteredUniqueSems.map(s => `${s}${s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Semester`);
+    const sems = uniqueSems.map(s => `${s}${s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Semester`);
     
     setSemesters(sems);
     setSemester("");
-  }, [academicYear, batch, programme, department, allQPs, semesterType]);
+  }, [academicYear, batch, programme, department, allQPs]);
 
   // Filter Subjects based on assignments and QPs
   useEffect(() => {
@@ -481,10 +472,10 @@ export default function MarkEntry() {
       .filter(c => 
         (c.isUniversity || c.isIndirectAssessment) &&
         formatProgDisplay(c.program) === formatProgDisplay(programme) &&
-        (c.department === department || !c.department) &&
-        (!c.batch || c.batch === batch) &&
-        (!c.academicYear || c.academicYear === academicYear) &&
-        (!c.semester || String(c.semester) === needSem)
+        c.department === department &&
+        c.batch === batch &&
+        c.academicYear === academicYear &&
+        String(c.semester) === needSem
       )
       .map(c => {
         // Check if a QP exists for this university exam

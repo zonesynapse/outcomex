@@ -162,7 +162,6 @@ export default function TimetableSetup() {
   }, []);
 
   useEffect(() => {
-    // keep breaks array in sync with numBreaks
     const n = parseInt(numBreaks, 10) || 0;
     setBreaks(prev => {
       const b = [];
@@ -171,7 +170,6 @@ export default function TimetableSetup() {
       }
       return b;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numBreaks]);
 
   function addSubject() {
@@ -267,7 +265,6 @@ export default function TimetableSetup() {
     const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const filename = `${timetableName || 'timetable'}.csv`;
-    // create a temporary anchor to download the CSV without extra deps
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -294,7 +291,6 @@ export default function TimetableSetup() {
           input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
         `}</style>
 
-        {/* Main Configuration Card */}
         <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden">
           <div className="bg-[#120c7a] px-8 py-6 flex items-center gap-4">
             <div className="p-3 bg-white/10 rounded-2xl text-white">
@@ -379,7 +375,6 @@ export default function TimetableSetup() {
           </div>
         </div>
 
-        {/* Periods Calculation Preview */}
         <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden">
           <div className="bg-emerald-600 px-8 py-4 flex items-center gap-3">
             <Clock4 className="text-white" size={20} />
@@ -422,74 +417,6 @@ export default function TimetableSetup() {
           </div>
         </div>
 
-        {/* Subjects Selection (Commented out for future use) */}
-        {/*
-        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden">
-          <div className="bg-indigo-600 px-8 py-6 flex flex-wrap justify-between items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-white/10 rounded-2xl text-white">
-                <BookOpen size={24} />
-              </div>
-              <div>
-                <h2 className="text-white font-bold text-xl leading-tight">Subject Allocation</h2>
-                <p className="text-indigo-100 text-xs font-medium uppercase tracking-widest">Assign subjects and credits</p>
-              </div>
-            </div>
-            <button 
-              type="button" 
-              onClick={addSubject} 
-              className="flex items-center gap-2 px-6 py-2.5 bg-white text-indigo-600 rounded-2xl font-bold text-sm hover:bg-indigo-50 transition-all shadow-lg"
-            >
-              <PlusCircle size={20} /> Add Subject
-            </button>
-          </div>
-
-          <div className="p-8">
-            <div className="space-y-4" id="subjectContainer">
-              {subjects.map((s, idx) => (
-                <div key={idx} className="group grid grid-cols-1 md:grid-cols-6 lg:grid-cols-8 gap-4 p-6 bg-slate-50/50 border border-slate-100 rounded-3xl hover:bg-slate-50 hover:border-indigo-100 transition-all animate-in slide-in-from-left-2 duration-300">
-                  <div className="md:col-span-1 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Code</label>
-                    <input value={s.code} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, code: e.target.value } : p))} placeholder="CS301" className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-100" />
-                  </div>
-                  <div className="md:col-span-2 lg:col-span-2 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject Name</label>
-                    <input value={s.name} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, name: e.target.value } : p))} placeholder="Data Structures" className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-100" />
-                  </div>
-                  <div className="md:col-span-1 lg:col-span-2 space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Faculty</label>
-                    <input value={s.faculty} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, faculty: e.target.value } : p))} placeholder="Dr. John" className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-100" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Credits</label>
-                    <input type="number" value={s.credits} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, credits: e.target.value } : p))} placeholder="3" className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-100" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Hrs/Wk</label>
-                    <input type="number" value={s.periods} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, periods: e.target.value } : p))} placeholder="4" className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-100" />
-                  </div>
-                  <div className="flex items-end gap-3 pb-0.5">
-                    <label className="flex items-center gap-2 cursor-pointer select-none mb-1">
-                      <input type="checkbox" checked={s.is_lab} onChange={e => setSubjects(prev => prev.map((p, i) => i === idx ? { ...p, is_lab: e.target.checked } : p))} className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500" />
-                      <span className="text-[10px] font-black text-slate-500 uppercase">Lab</span>
-                    </label>
-                    <button type="button" onClick={() => removeSubject(idx)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all ml-auto opacity-0 group-hover:opacity-100">
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {subjects.length === 0 && (
-                <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-[2rem]">
-                   <p className="text-slate-400 italic">No subjects added. Click the button above to start.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        */}
-
-        {/* Footer Actions */}
         <div className="flex flex-col md:flex-row gap-4 justify-center items-center pb-10 border-b border-slate-200">
           <button 
             onClick={generateCSVAndDownload} 
@@ -508,7 +435,6 @@ export default function TimetableSetup() {
           </button>
         </div>
 
-        {/* Saved Template — Single Allocation Card */}
         {savedTemplates.length > 0 && (
           <div className="pt-4 pb-10">
             <h2 className="text-2xl font-black text-[#120c7a] mb-6">Saved Templates Allocation</h2>
@@ -575,7 +501,6 @@ export default function TimetableSetup() {
                       const payload = { ...template, programme: allocationProgramme, batch: allocationBatch, allocatedAt: new Date().toISOString() };
                       await set(ref(rtdb, path), payload);
                       showToast('Template allocated successfully!');
-                      // clear selections
                       setAllocationTemplateId("");
                       setAllocationProgramme("");
                       setAllocationBatch("");

@@ -17,7 +17,6 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { useSemesterType } from "../hooks/useSemesterType";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
 
 // Helper functions (adapted from TimetableSetup.jsx)
@@ -42,7 +41,6 @@ export default function Attendance() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
-  const semesterType = useSemesterType();
 
   const [currentUid, setCurrentUid] = useState(null);
   const [userRole, setUserRole] = useState(null);
@@ -106,14 +104,10 @@ export default function Attendance() {
         const sem1 = (index * 2) + 1;
         const sem2 = (index * 2) + 2;
         const allSems = [sem1, sem2];
-        const filteredSems = allSems.filter(num => {
-          if (semesterType === "Odd") return num % 2 !== 0;
-          return num % 2 === 0;
-        });
-        setSemesters(filteredSems.map(num => `${getOrdinal(num)} Semester`));
+        setSemesters(allSems.map(num => `${getOrdinal(num)} Semester`));
       } else setSemesters([]);
     } else setSemesters([]);
-  }, [batch, academicYear, semesterType]);
+  }, [batch, academicYear]);
 
   // New Logic: Fetch subjects based on Programme and Department assignments
   useEffect(() => {
@@ -148,8 +142,6 @@ export default function Attendance() {
       for (const b of Array.from(batchesToFetchSyllabus)) {
         const reg = getRegulationForBatch(progKey, b);
         // Fetch syllabus for all regulations associated with the batches found.
-        // This is a simplification; ideally, we'd fetch syllabus per batch-regulation pair.
-        // For now, assuming one regulation per batch for simplicity here, or fetching all.
         if (reg) {
           const syllabusKey = `${progKey}_${deptKey}_${sanitizeKey(reg)}`;
           const syllabusSnap = await get(ref(rtdb, `syllabus_data/${syllabusKey}`));
@@ -166,16 +158,15 @@ export default function Attendance() {
 
       setSubjectContexts(contexts);
       
-      // Instead of just unique subject codes, we need unique subject assignments (code + batch + ay + sem)
       const uniqueSubjectAssignments = [];
-      const seenAssignments = new Set(); // To track unique combinations of code, batch, ay, sem
+      const seenAssignments = new Set();
 
       contexts.forEach(ctx => {
         const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}`;
         if (!seenAssignments.has(assignmentIdentifier)) {
           uniqueSubjectAssignments.push({
             value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem }),
-            text: `${ctx.code} - ${namesMap[ctx.code] || ""}` // Removed batch, sem, ay from display text
+            text: `${ctx.code} - ${namesMap[ctx.code] || ""}`
           });
           seenAssignments.add(assignmentIdentifier);
         }
@@ -194,8 +185,8 @@ export default function Attendance() {
       setSemester("");
       return;
     }
-    setSubject(val); // Set subject state to the full stringified value
-    const selectedCtx = JSON.parse(val); // Parse the stringified context for other states
+    setSubject(val);
+    const selectedCtx = JSON.parse(val);
     setBatch(selectedCtx.batch);
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
@@ -265,17 +256,14 @@ export default function Attendance() {
             } else {
               setTimetableConfig(null);
               setAvailablePeriodsWithTiming([]);
-              console.warn(`Timetable template '${templateName}' not found.`);
             }
           } else {
             setTimetableConfig(null);
             setAvailablePeriodsWithTiming([]);
-            console.warn(`No timetable allocated for ${programme} / ${batch}.`);
           }
         } else {
           setTimetableConfig(null);
           setAvailablePeriodsWithTiming([]);
-          console.warn(`No timetable allocated for ${programme} / ${batch}.`);
         }
       } catch (err) {
         console.error("Error fetching timetable config:", err);
@@ -286,7 +274,6 @@ export default function Attendance() {
     fetchTimetableConfig();
   }, [programme, batch, computePeriodStart]);
 
-  // Fetch Attendance Records & Students
   useEffect(() => {
     if (!programme || !department || !batch || !academicYear || !semester || !subject) {
       setAttendanceData(null);
@@ -295,10 +282,10 @@ export default function Attendance() {
     }
 
     setLoading(true);
-    const selectedSubjectObj = JSON.parse(subject); // Parse the subject state to get the code
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
-    const attendancePath = `attendance/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}/${subject}`;
+    const selectedSubjectObj = JSON.parse(subject);
+    const attendancePath = `attendance/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}/${selectedSubjectObj.code}`;
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
     const studentListPath = `students/${compositeKey}`;
     
@@ -312,26 +299,25 @@ export default function Attendance() {
         const attData = attendanceSnap.val();
         const masterList = studentSnap.val() || {};
         setAttendanceData(attData);
-        const tHours = attData?._meta?.totalHours || "1"; // Default to "1"
+        const tHours = attData?._meta?.totalHours || "1";
         setTotalConducted(tHours);
         if (attData?._meta?.date) setAttendanceDate(attData._meta.date);
         if (attData?._meta?.period) setPeriod(attData._meta.period);
         
         const studentArray = Object.entries(masterList)
           .filter(([key]) => !key.startsWith('_'))
-          .map(([reg, name]) => { // Default to Present if no existing record
+          .map(([reg, name]) => {
             const hours = attData?.students?.[reg] !== undefined ? attData.students[reg] : (parseInt(tHours, 10) || 1);
             const totalHours = parseInt(tHours, 10) || 1;
             return {
               reg,
               name,
               hours,
-              status: attData?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P', // Default to 'P'
+              status: attData?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
               percentage: totalHours > 0 ? ((hours / totalHours) * 100).toFixed(2) : "0.00"
             };
           });
 
-        // Sort by order or reg no
         const order = masterList._order;
         if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
         else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
@@ -376,7 +362,7 @@ export default function Attendance() {
     setSaving(true);
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
-    const selectedSubjectObj = JSON.parse(subject); // Parse the subject state to get the code
+    const selectedSubjectObj = JSON.parse(subject);
     const path = `attendance/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}/${selectedSubjectObj.code}`;
     
     const studentsMap = {};
@@ -389,12 +375,11 @@ export default function Attendance() {
       });
       alert("Attendance records saved successfully!");
       
-      // Increment totalConducted and date for the next entry
       setTotalConducted(prev => String(parseInt(prev, 10) + 1));
       const nextDay = new Date(attendanceDate);
       nextDay.setDate(nextDay.getDate() + 1);
       setAttendanceDate(nextDay.toISOString().split('T')[0]);
-      setPeriod(""); // Reset period
+      setPeriod("");
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
   };
@@ -411,7 +396,6 @@ export default function Attendance() {
     <Layout title="Attendance Records">
       <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
         
-        {/* Modern Filter Card */}
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
             <div className="space-y-1.5">
@@ -458,13 +442,12 @@ export default function Attendance() {
             </div>
           </div>
 
-          {/* Date and Total Selection Row */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-6 pt-6 border-t border-slate-100">
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Date</label>
               <input 
                 type="date"
-                readOnly // Make date read-only
+                readOnly
                 value={attendanceDate} 
                 onChange={e => setAttendanceDate(e.target.value)} 
                 onClick={(e) => e.target.showPicker?.()}
@@ -501,7 +484,6 @@ export default function Attendance() {
           </div>
         </div>
 
-        {/* Attendance Table */}
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
           <div className="bg-[#120c7a] px-8 py-6 flex flex-wrap justify-between items-center gap-4">
             <div className="flex items-center gap-4">
