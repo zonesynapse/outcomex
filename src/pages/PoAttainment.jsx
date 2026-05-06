@@ -638,6 +638,19 @@ export default function PoAttainment() {
     });
   }, [poResults, psoResults, attainmentConfig, surveyScores]);
 
+  // Dynamic chart height
+  // Keep PO entries first (do not reverse) so chart X-axis starts with PO items
+  const chartDataDesktop = [...computedResults];
+  const chartData = isMobile ? computedResults : chartDataDesktop;
+  const chartHeight = Math.max(300, Math.min(1400, (chartData.length || 0) * 36));
+
+  // Responsive table classes: only enforce minimum widths on small screens
+  const tableClass = `w-full text-sm ${isMobile ? 'min-w-[600px]' : ''}`;
+  const headerSemesterClass = `border border-slate-300 p-4 bg-slate-100 ${isMobile ? 'min-w-[100px]' : ''} text-center`;
+  const headerSubjectClass = `border border-slate-300 p-4 bg-slate-100 ${isMobile ? 'min-w-[250px]' : ''} text-left`;
+  const outcomeThClass = `border border-slate-300 p-4 ${isMobile ? 'min-w-[80px]' : ''} hover:bg-slate-200 transition-colors cursor-help group relative text-center`;
+  const psoThClass = `border border-slate-300 p-4 ${isMobile ? 'min-w-[80px]' : ''} bg-blue-50 hover:bg-blue-100 transition-colors cursor-help group relative text-center`;
+
   const handleDownloadExcel = () => {
     const data = computedResults.map(r => {
       const isNotMapped = r.targetValue === 0;
@@ -722,7 +735,7 @@ export default function PoAttainment() {
           <div className="space-y-8">
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
               {/* Chart Card */}
-              <div className="lg:col-span-2 bg-white rounded-3xl shadow-xl p-8 border border-zinc-100 flex flex-col h-full">
+              <div className="lg:col-span-5 bg-white rounded-3xl shadow-xl p-8 border border-zinc-100 flex flex-col h-full">
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
@@ -754,24 +767,14 @@ export default function PoAttainment() {
                       </div>
 
                       <div className="h-full w-full min-h-[400px]">
-                        <ResponsiveContainer width="99.9%" height="100%">
+                        <ResponsiveContainer width="99.9%" height={chartHeight}>
                           <BarChart 
-                            layout={isMobile ? "horizontal" : "vertical"} 
-                            data={computedResults} 
-                            margin={{ top: 0, right: 30, left: isMobile ? 20 : 60, bottom: 20 }}
+                            data={chartData}
+                            margin={{ top: 20, right: 30, left: isMobile ? 20 : 40, bottom: isMobile ? 20 : 40 }}
                           >
-                            <CartesianGrid strokeDasharray="3 3" vertical={isMobile} horizontal={!isMobile} stroke="#f1f5f9" />
-                            {isMobile ? (
-                              <>
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                                <YAxis domain={[0, 3]} axisLine={false} tickLine={false} ticks={[0, 0.5, 1, 1.5, 2, 2.5, 3]} />
-                              </>
-                            ) : (
-                              <>
-                                <XAxis type="number" domain={[0, 3]} axisLine={false} tickLine={false} ticks={[0, 1, 2, 3]} />
-                                <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} width={60} />
-                              </>
-                            )}
+                            <CartesianGrid strokeDasharray="3 3" vertical={!isMobile} horizontal={isMobile} stroke="#f1f5f9" />
+                            <XAxis type="category" dataKey="name" axisLine={false} tickLine={false} interval={0} height={isMobile ? 40 : 40} />
+                            <YAxis type="number" domain={[0, 3]} axisLine={false} tickLine={false} ticks={[0, 1, 2, 3]} width={60} />
                             <Tooltip 
                               content={({ active, payload }) => {
                                 if (active && payload && payload.length) {
@@ -828,9 +831,9 @@ export default function PoAttainment() {
                             <Bar 
                               dataKey="finalAttainment" 
                               radius={isMobile ? [8, 8, 0, 0] : [0, 8, 8, 0]} 
-                              barSize={isMobile ? 40 : 30}
+                              barSize={isMobile ? 30 : 40}
                             >
-                              {computedResults.map((entry, index) => (
+                              {chartData.map((entry, index) => (
                                  <Cell 
                                    key={`cell-${index}`} 
                                    fill={entry.status === 'A' ? '#10b981' : '#ef4444'} 
@@ -851,7 +854,7 @@ export default function PoAttainment() {
               </div>
 
               {/* Stats Table Card */}
-              <div className="lg:col-span-3 bg-white rounded-3xl shadow-xl p-8 border border-zinc-100 flex flex-col h-full">
+              <div className="lg:col-span-5 bg-white rounded-3xl shadow-xl p-8 border border-zinc-100 flex flex-col h-full">
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl">
@@ -897,7 +900,7 @@ export default function PoAttainment() {
                    </div>
 
                    <div className="mt-8 border border-zinc-100 rounded-2xl overflow-x-auto">
-                     <table className="w-full text-sm min-w-[600px]">
+                     <table className={tableClass}>
                         <thead className="bg-zinc-50">
                           <tr>
                             <th className="px-6 py-4 text-left font-bold text-zinc-600">Program Outcome</th>
@@ -1025,13 +1028,13 @@ export default function PoAttainment() {
                     No subject mapping data found for this batch. Ensure CO-PO mappings are saved for subjects.
                   </div>
                 ) : (
-                  <table id="po-matrix-table-target" className="w-full border-collapse border border-slate-200 text-sm">
+                  <table id="po-matrix-table-target" className={`w-full border-collapse border border-slate-200`}>
                     <thead>
                       <tr className="bg-slate-100 border-b-2 border-slate-300">
-                        <th className="border border-slate-300 p-4 bg-slate-100 min-w-[100px] text-center">Semester</th>
-                        <th className="border border-slate-300 p-4 bg-slate-100 min-w-[250px] text-left">Subject</th>
+                        <th className={headerSemesterClass}>Semester</th>
+                        <th className={headerSubjectClass}>Subject</th>
                         {poList.map(po => (
-                          <th key={po} className="border border-slate-300 p-4 min-w-[80px] hover:bg-slate-200 transition-colors cursor-help group relative text-center">
+                          <th key={po} className={outcomeThClass}>
                             {po}
                             <div className="absolute hidden group-hover:block bg-zinc-800 text-white p-2 rounded-lg text-[10px] -bottom-12 left-1/2 -translate-x-1/2 w-48 z-20 shadow-xl font-normal text-center">
                               Program Outcome {po.replace('PO', '')}
@@ -1039,7 +1042,7 @@ export default function PoAttainment() {
                           </th>
                         ))}
                         {psoList.map((pso, idx) => (
-                          <th key={pso} className="border border-slate-300 p-4 min-w-[80px] bg-blue-50 hover:bg-blue-100 transition-colors cursor-help group relative text-center">
+                          <th key={pso} className={psoThClass}>
                             PSO{idx + 1}
                             <div className="absolute hidden group-hover:block bg-zinc-800 text-white p-2 rounded-lg text-[10px] -bottom-12 left-1/2 -translate-x-1/2 w-48 z-20 shadow-xl font-normal text-center">
                               Program Specific Outcome {idx + 1}
@@ -1160,13 +1163,13 @@ export default function PoAttainment() {
                     No subject attainment data found for this batch. Ensure CO-PO mappings are saved for subjects.
                   </div>
                 ) : (
-                  <table id="po-matrix-table-attainment" className="w-full border-collapse border border-slate-200 text-sm">
+                  <table id="po-matrix-table-attainment" className={`w-full border-collapse border border-slate-200`}>
                     <thead>
                       <tr className="bg-slate-100 border-b-2 border-slate-300">
-                        <th className="border border-slate-300 p-4 bg-slate-100 min-w-[100px] text-center">Semester</th>
-                        <th className="border border-slate-300 p-4 bg-slate-100 min-w-[250px] text-left">Subject</th>
+                        <th className={headerSemesterClass}>Semester</th>
+                        <th className={headerSubjectClass}>Subject</th>
                         {poList.map(po => (
-                          <th key={po} className="border border-slate-300 p-4 min-w-[80px] hover:bg-slate-200 transition-colors cursor-help group relative text-center">
+                          <th key={po} className={outcomeThClass}>
                             {po}
                             <div className="absolute hidden group-hover:block bg-zinc-800 text-white p-2 rounded-lg text-[10px] -bottom-12 left-1/2 -translate-x-1/2 w-48 z-20 shadow-xl font-normal text-center">
                               Program Outcome {po.replace('PO', '')}
@@ -1174,7 +1177,7 @@ export default function PoAttainment() {
                           </th>
                         ))}
                         {psoList.map((pso, idx) => (
-                          <th key={pso} className="border border-slate-300 p-4 min-w-[80px] bg-blue-50 hover:bg-blue-100 transition-colors cursor-help group relative text-center">
+                          <th key={pso} className={psoThClass}>
                             PSO{idx + 1}
                             <div className="absolute hidden group-hover:block bg-zinc-800 text-white p-2 rounded-lg text-[10px] -bottom-12 left-1/2 -translate-x-1/2 w-48 z-20 shadow-xl font-normal text-center">
                               Program Specific Outcome {idx + 1}
