@@ -107,7 +107,7 @@ export default function Auth() {
       await updateProfile(user, { displayName: fullDisplayName });
       
       // Save user profile to Realtime Database
-      const isDefaultAdmin = user.email === 'cselab2022@gmail.com';
+      const isDefaultAdmin = user.email === 'obe@ckcet.edu.in';
       try {
         await set(ref(rtdb, `users/${user.uid}`), {
           uid: user.uid,

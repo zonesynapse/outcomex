@@ -1617,15 +1617,43 @@ export default function QuestionPaperGenerator() {
     }
 
     return () => {
-      if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
+      // Comprehensive cleanup: destroy ALL CKEditor instances on unmount
+      if (window.CKEDITOR && window.CKEDITOR.instances) {
         try {
-          window.CKEDITOR.instances.questionEditor.destroy(true);
+          Object.keys(window.CKEDITOR.instances).forEach(instanceName => {
+            try {
+              const instance = window.CKEDITOR.instances[instanceName];
+              if (instance) {
+                instance.destroy(true);
+                delete window.CKEDITOR.instances[instanceName];
+              }
+            } catch (e) {
+              console.warn(`Error destroying CKEditor instance ${instanceName}:`, e);
+            }
+          });
         } catch (e) {
-          console.warn("Error destroying CKEditor instance:", e);
+          console.warn("Error during CKEditor cleanup:", e);
         }
       }
     };
   }, []);
+
+  // ✅ CRITICAL: Cleanup CKEditor instances when showing final preview or resetting
+  useEffect(() => {
+    // When closing preview or resetting, destroy the editor to prevent conflicts
+    return () => {
+      if (!showFinalPreview && window.CKEDITOR && window.CKEDITOR.instances) {
+        try {
+          if (window.CKEDITOR.instances.questionEditor) {
+            window.CKEDITOR.instances.questionEditor.destroy(true);
+            delete window.CKEDITOR.instances.questionEditor;
+          }
+        } catch (e) {
+          console.warn("Error destroying questionEditor on preview close:", e);
+        }
+      }
+    };
+  }, [showFinalPreview]);
 
   // Also try to initialize when assessmentType changes to Exam
   useEffect(() => {
@@ -1639,7 +1667,20 @@ export default function QuestionPaperGenerator() {
   }, [assessmentType]);
 
 const initEditor = useCallback(() => {
-  if (window.CKEDITOR && !window.CKEDITOR.instances.questionEditor) {
+  if (!window.CKEDITOR) return;
+  
+  try {
+    // ✅ CRITICAL: Destroy old instance if it exists before creating a new one
+    if (window.CKEDITOR.instances && window.CKEDITOR.instances.questionEditor) {
+      try {
+        window.CKEDITOR.instances.questionEditor.destroy(true);
+        delete window.CKEDITOR.instances.questionEditor;
+      } catch (e) {
+        console.warn('Failed to destroy previous CKEditor instance:', e);
+      }
+    }
+
+    // Remove textarea from DOM if it's been attached to multiple instances
     const element = document.getElementById('questionEditor');
     if (!element) return;
 
@@ -1687,6 +1728,23 @@ const initEditor = useCallback(() => {
           contents.setStyle('height', 'calc(297mm - 40mm)');
           contents.setStyle('overflow', 'auto');
         }
+
+        // ✅ Fix toolbar positioning
+        const toolbar = evt.editor.container.findOne('.cke_top');
+        if (toolbar) {
+          toolbar.setStyle('position', 'relative');
+          toolbar.setStyle('z-index', '11');
+          toolbar.setStyle('overflow', 'visible');
+        }
+
+        // ✅ Close any open panels when clicking on editor content
+        evt.editor.editable().attachListener(evt.editor.editable(), 'click', function() {
+          const panelElement = document.querySelector('.cke_panel_on');
+          if (panelElement && window.CKEDITOR && window.CKEDITOR.ui.panel) {
+            panelElement.style.display = 'none';
+            panelElement.classList.remove('cke_panel_on');
+          }
+        });
 
         window.CKEDITOR.addCss(
           'select{border:1px solid #d1d5db; border-radius:4px; padding:2px 4px; background-color:#f9fafb; font-size:11px; color:#374151; outline:none; cursor:pointer; transition:border-color 0.2s;}' +
@@ -1740,12 +1798,17 @@ const initEditor = useCallback(() => {
             evt.editor.fire('change');
           }
         }, null, null, 1);
+
+        // ✅ Ensure panels are properly hidden on blur
+        evt.editor.focusManager.blur(true);
       } catch (e) {
         console.warn('Failed to apply A4 styles to CKEditor instance', e);
       }
     });
+  } catch (e) {
+    console.error('initEditor error:', e);
   }
-}, []); // ✅ Fixed: removed extra closing brace
+}, []);
   const handleGenerateParts = () => {
     if (assessmentType !== 'Assignment') {
       if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
@@ -2307,6 +2370,8 @@ const initEditor = useCallback(() => {
 
     // Use stable composite key not including examDisplay
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
+    const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2329,6 +2394,9 @@ const initEditor = useCallback(() => {
       subject_name: subjectName,
       total_marks: overallTotal,
       co_weightage: co_weightage,
+      created_by: auth.currentUser?.uid || null,
+      updated_by: auth.currentUser?.uid || null,
+      updated_at: new Date().toISOString(),
       status: status,
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
@@ -2339,12 +2407,8 @@ const initEditor = useCallback(() => {
     try {
       if (editId && compositeKey) {
         await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
-      } else if (status === 'forwarded') { // For new papers being forwarded
-        await set(ref(rtdb, `generated_qps/${key}/${exam}`), payload); // Use exam ID as key for new forwarded papers
       } else {
-        // For new papers being saved as draft
-        // Use exam ID as key if not custom, otherwise fallback to 'Assignment'
-        const qpId = exam === 'custom' ? 'Assignment' : exam;
+        // For new papers (draft or forwarded) use qpId which includes set suffix
         await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
       }
       setSavedAssignmentConfig(assignmentConfig || []);
@@ -2641,6 +2705,9 @@ const initEditor = useCallback(() => {
       subject_name: subjectName,
       total_marks: overallTotal,
       co_weightage: co_weightage,
+      created_by: auth.currentUser?.uid || null,
+      updated_by: auth.currentUser?.uid || null,
+      updated_at: new Date().toISOString(),
       status: status,
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
@@ -2651,12 +2718,8 @@ const initEditor = useCallback(() => {
     try {
       if (editId && compositeKey) {
         await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
-      } else if (status === 'forwarded') { // For new papers being forwarded
-        await set(ref(rtdb, `generated_qps/${key}/${exam}`), payload); // Use exam ID as key for new forwarded papers
       } else {
-        // For new papers being saved as draft
-        // Use exam ID + Set as key if not custom
-        const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
+        // For new papers (draft or forwarded) use qpId which includes set suffix
         await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
       }
       if (assessmentType === 'Exam') {
@@ -3135,6 +3198,97 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           -moz-appearance: textfield;
           appearance: textfield;
         }
+
+        /* ✅ CKEditor UI Bug Fixes */
+        .cke_wrapper {
+          position: relative !important;
+          z-index: 10 !important;
+        }
+
+        .cke_top {
+          position: relative !important;
+          z-index: 11 !important;
+          overflow: visible !important;
+        }
+
+        .cke_toolbox {
+          overflow: visible !important;
+          z-index: 11 !important;
+        }
+
+        .cke_toolbar {
+          overflow: visible !important;
+          z-index: 11 !important;
+          position: relative !important;
+        }
+
+        /* ✅ Fix dropdown/panel positioning to appear below toolbar, not overlapping */
+        .cke_panel {
+          position: absolute !important;
+          z-index: 1200 !important;
+          overflow: visible !important;
+          top: auto !important;
+          left: auto !important;
+        }
+
+        .cke_combo_panel {
+          position: absolute !important;
+          z-index: 1200 !important;
+          overflow: visible !important;
+          background: white !important;
+          border: 1px solid #d1d5db !important;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        .cke_combo_panel .cke_panel_list {
+          overflow-y: auto !important;
+          max-height: 300px !important;
+        }
+
+        /* ✅ Ensure editor content is not obscured */
+        .cke_contents {
+          position: relative !important;
+          z-index: 1 !important;
+          clear: both !important;
+          overflow-y: auto !important;
+        }
+
+        /* ✅ Fix toolbar button states and prevent sticky dropdowns */
+        .cke_button__format_label,
+        .cke_button__fontsize_label,
+        .cke_button__style_label {
+          cursor: pointer !important;
+        }
+
+        .cke_combo_button {
+          z-index: 11 !important;
+          position: relative !important;
+        }
+
+        /* ✅ Prevent menu from sticking to top of editor */
+        .cke_panel {
+          display: none !important;
+          visibility: hidden !important;
+          opacity: 0 !important;
+          transition: opacity 0.2s !important;
+        }
+
+        .cke_panel.cke_panel_on {
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+
+        /* ✅ Ensure proper containment */
+        .cke_voice_label {
+          clip: rect(0, 0, 0, 0) !important;
+        }
+
+        /* ✅ Fix container overflow issues */
+        .cke {
+          position: relative !important;
+          overflow: visible !important;
+        }
       `}</style>
       {toast.show && (
         <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-[1000] px-8 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 ${toast.type === 'success' ? 'bg-green-100 border border-green-200 text-green-800' : 'bg-red-100 border border-red-200 text-red-800'}`}>
@@ -3344,6 +3498,18 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 showToast("Please fill in all required fields.", "error");
                 return;
               }
+              // ✅ CRITICAL: Clean up old CKEditor instances before generating new layout
+              if (window.CKEDITOR && window.CKEDITOR.instances) {
+                try {
+                  if (window.CKEDITOR.instances.questionEditor) {
+                    window.CKEDITOR.instances.questionEditor.destroy(true);
+                    delete window.CKEDITOR.instances.questionEditor;
+                  }
+                } catch (e) {
+                  console.warn("Error cleaning up CKEditor before generating layout:", e);
+                }
+              }
+              setShowFinalPreview(false);
               handleGenerateParts();
             }}
             className="group relative inline-flex items-center justify-center px-8 py-3 font-bold text-white transition-all duration-200 bg-[#120c7a] font-pj rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#120c7a] hover:bg-[#1a1494] shadow-lg shadow-blue-900/20"

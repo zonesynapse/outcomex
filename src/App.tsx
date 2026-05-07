@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Auth from "./pages/Auth";
-import DashboardRouter from "./pages/DashboardRouter";
+import Dashboard from "./pages/Dashboard";
 import VisionMission from "./pages/VisionMission";
 import InfoConfiguration from "./pages/InfoConfiguration";
 import AdminRoleConfig from "./pages/AdminRoleConfig";
@@ -23,6 +23,8 @@ import CourseEnrolment from "./pages/CourseEnrolment";
 import AcademicCalendar from "./pages/AcademicCalendar";
 import TimetableSetup from "./pages/TimetableSetup";
 import RegulationFormation from "./pages/RegulationFormation";
+import FacultyDashboard from "./pages/FacultyDashboard";
+import HODDashboard from "./pages/HODDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 export default function App() {
@@ -34,7 +36,9 @@ export default function App() {
         <Route path="/signup" element={<Auth />} />
 
         {/* Protected Routes */}
-        <Route path="/dashboard" element={<ProtectedRoute><DashboardRouter /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/faculty-dashboard" element={<ProtectedRoute><FacultyDashboard /></ProtectedRoute>} />
+        <Route path="/hod-dashboard" element={<ProtectedRoute><HODDashboard /></ProtectedRoute>} />
         <Route path="/course-bank" element={<ProtectedRoute><CourseBank /></ProtectedRoute>} />
         <Route path="/admin-roles" element={<ProtectedRoute><AdminRoleConfig /></ProtectedRoute>} />
         <Route path="/info-configuration" element={<ProtectedRoute><InfoConfiguration /></ProtectedRoute>} />

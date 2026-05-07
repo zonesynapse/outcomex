@@ -33,6 +33,8 @@ import { useDepartments } from "../hooks/useDepartments";
 // All possible menu items with their IDs
 const allPossibleItems = [
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+  { id: "faculty-dashboard", icon: LayoutDashboard, label: "Faculty Dashboard", path: "/faculty-dashboard" },
+  { id: "hod-dashboard", icon: LayoutDashboard, label: "HOD Dashboard", path: "/hod-dashboard" },
   { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
   { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
   { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
@@ -72,7 +74,7 @@ const modules = [
     id: "academics",
     label: "Academics",
     icon: BookOpen,
-    itemIds: ["academic-calendar", "timetable", "course-bank", "curriculum", "course-enrolment", "hod-role-configuration", "upload"]
+    itemIds: ["academic-calendar", "attendance", "timetable", "course-bank", "curriculum", "course-enrolment", "hod-role-configuration", "upload"]
   },
   {
     id: "config",
@@ -89,6 +91,7 @@ export default function Layout({ children, title }) {
   const [userData, setUserData] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [rolePermissions, setRolePermissions] = useState(null);
+  const [facultyPermissions, setFacultyPermissions] = useState(null);
   const [hasAssignments, setHasAssignments] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editData, setEditData] = useState({ programme: "", department: "", signatureUrl: "" });
@@ -125,6 +128,7 @@ export default function Layout({ children, title }) {
   useEffect(() => {
     let unsubscribeUser = () => {};
     let unsubscribePerms = () => {};
+    let unsubscribeFacultyPerms = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -155,7 +159,6 @@ export default function Layout({ children, title }) {
               }
             });
 
-            // If HOD, check if they have any subjects assigned to them
             if (data.role === 'HOD') {
               const assignmentsRef = ref(rtdb, 'subject_assignments');
               get(assignmentsRef).then(assignmentsSnap => {
@@ -167,18 +170,25 @@ export default function Layout({ children, title }) {
                     return Object.values(obj).some(val => typeof val === 'object' && checkAssignments(val));
                   };
                   setHasAssignments(checkAssignments(allAssignments));
+                } else {
+                  setHasAssignments(false);
                 }
-              });
+              }).catch(() => setHasAssignments(false));
+            } else {
+              setHasAssignments(false);
             }
+
           }
         });
       } else {
         setUserRole(null);
         setUserData(null);
         setRolePermissions(null);
+        setFacultyPermissions(null);
         setHasAssignments(false);
         unsubscribeUser();
         unsubscribePerms();
+        unsubscribeFacultyPerms();
       }
     });
 
@@ -186,8 +196,29 @@ export default function Layout({ children, title }) {
       unsubscribeAuth();
       unsubscribeUser();
       unsubscribePerms();
+      unsubscribeFacultyPerms();
     };
   }, []);
+
+  useEffect(() => {
+    let unsubscribe = () => {};
+
+    if (userRole === 'HOD' && hasAssignments) {
+      const facultyPermsRef = ref(rtdb, 'role_permissions/Faculty');
+      unsubscribe = onValue(facultyPermsRef, (permsSnap) => {
+        if (permsSnap.exists()) {
+          const permsData = permsSnap.val();
+          setFacultyPermissions(Array.isArray(permsData) ? permsData : (typeof permsData === 'object' && permsData !== null ? Object.values(permsData) : []));
+        } else {
+          setFacultyPermissions([]);
+        }
+      });
+    } else {
+      setFacultyPermissions(null);
+    }
+
+    return () => unsubscribe();
+  }, [userRole, hasAssignments]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -239,63 +270,26 @@ export default function Layout({ children, title }) {
     }
   };
 
-  const isAdmin = userRole === 'Admin' || user?.email === 'cselab2022@gmail.com';
-  const isPrincipal = userRole === 'Principal';
-  const isHOD = userRole === 'HOD';
-  const isFaculty = userRole === 'Faculty';
-
   const menuItems = [];
 
-  if (rolePermissions && rolePermissions.length > 0) {
+  const effectivePermissions = (() => {
+    if (rolePermissions === null) return null;
+    if (userRole === 'HOD' && hasAssignments) {
+      const merged = new Set([...(rolePermissions || []), ...(facultyPermissions || [])]);
+      return Array.from(merged);
+    }
+    return rolePermissions || [];
+  })();
+
+  if (effectivePermissions !== null) {
     // Dynamic items based on Admin configuration
     allPossibleItems.forEach(item => {
-      if (rolePermissions.includes(item.id)) {
+      if (effectivePermissions.includes(item.id)) {
         menuItems.push(item);
       }
     });
-
-    // SAFETY: Ensure Admin always has access to core config pages even if dynamic perms are messed up
-    if (isAdmin) {
-      const adminCoreIds = ["dashboard", "admin-roles", "info-configuration", "curriculum", "blooms-taxonomy", "course-bank"];
-      adminCoreIds.forEach(id => {
-        if (!menuItems.some(i => i.id === id)) {
-          const item = allPossibleItems.find(i => i.id === id);
-          if (item) menuItems.push(item);
-        }
-      });
-    }
-
-    // Special logic for Faculty/HOD/Principal co-doc access refinement
-    // If they have certain "HOD" level logic that depends on 'hasAssignments'
-    if (hasAssignments) {
-        // Ensure standard faculty items are there if they have assignments
-        const facultyItems = ["co_configuration", "questionpaper", "markk", "course-bank"];
-        facultyItems.forEach(id => {
-            if (!menuItems.some(i => i.id === id)) {
-                const item = allPossibleItems.find(i => i.id === id);
-                if (item) menuItems.push(item);
-            }
-        });
-    }
   } else {
-    // Fallback to static items if permissions haven't loaded yet
-    const fallbackIds = [];
-    if (isAdmin) {
-      fallbackIds.push("dashboard", "admin-roles", "info-configuration", "curriculum", "blooms-taxonomy", "course-enrolment", "course-bank");
-    } else if (isPrincipal) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "cia-configuration", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank");
-    } else if (isHOD) {
-      fallbackIds.push("dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "cia-configuration", "vision_and_mission", "co-po", "po-attainment", "course-bank");
-      if (hasAssignments) fallbackIds.push("co_configuration", "questionpaper", "markk");
-    } else if (isFaculty) {
-      fallbackIds.push("dashboard", "co_configuration", "questionpaper", "markk", "course-bank");
-    }
-
-    allPossibleItems.forEach(item => {
-      if (fallbackIds.includes(item.id)) {
-        menuItems.push(item);
-      }
-    });
+    // Permissions not loaded yet; keep sidebar empty until admin-defined permissions arrive.
   }
 
   // Deduplicate menu items by path

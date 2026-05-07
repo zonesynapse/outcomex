@@ -100,13 +100,8 @@ export default function AdminRoleConfig() {
         });
         setRolePermissions(formatted);
       } else {
-        // Initialize with default static permissions if none exist
-        setRolePermissions({
-          Admin: ["dashboard", "faculty-dashboard", "hod-dashboard", "admin-roles", "info-configuration", "curriculum", "regulation-formation", "blooms-taxonomy", "course-enrolment", "course-bank", "upload", "attendance", "academic-calendar"],
-          Principal: ["dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"],
-          HOD: ["dashboard", "hod-dashboard", "hod-role-configuration", "po_and_pso_configuration", "upload", "vision_and_mission", "co-po", "po-attainment", "course-bank", "attendance", "academic-calendar", "co_configuration", "questionpaper", "markk"], // Added co_configuration, questionpaper, markk for HOD
-          Faculty: ["dashboard", "faculty-dashboard", "co_configuration", "questionpaper", "markk", "course-bank", "attendance", "academic-calendar"]
-        });
+        // No built-in defaults: permissions are fully admin-managed.
+        setRolePermissions({});
       }
     });
 

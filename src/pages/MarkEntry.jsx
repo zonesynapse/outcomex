@@ -1542,7 +1542,6 @@ export default function MarkEntry() {
                 <tr className="bg-[#f8fafc]">
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left w-48">Register Number</th>
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left">Student Name</th>
-                  <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Enrolled</th>
                   {markType !== 'Assignment' && <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Absent</th>}
                   
                   {markType === 'Overall' ? (
@@ -1599,15 +1598,6 @@ export default function MarkEntry() {
                       <tr key={s.reg} className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${isAbsent ? 'bg-slate-50/50' : ''}`}>
                         <td className={`px-6 py-3 text-sm font-mono text-slate-600 tabular-nums border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.reg}</td>
                         <td className={`px-6 py-3 text-sm font-medium text-slate-800 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.name}</td>
-                        <td className="px-6 py-3 text-center border-r border-slate-50">
-                          <input
-                            type="checkbox"
-                            checked={!!enrolledRegs[s.reg]}
-                            onChange={(e) => toggleStudentEnrollment(s.reg, e.target.checked)}
-                            className="w-4 h-4 mx-auto"
-                          />
-                        </td>
-                        
                         {markType !== 'Assignment' && (
                           <td className="px-6 py-3 text-center border-r border-slate-50">
                             <input 

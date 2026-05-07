@@ -165,26 +165,28 @@ export default function HODDashboard() {
 
   const resolveExamDisplay = (qp) => {
     if (!qp) return "-";
-    // Prefer explicit exam_name if it looks like a human label
-    const examName = (qp.exam_name || "").toString().trim();
-    const qpaperName = (qp.qpaper_name || "").toString().trim();
+    const examName = (qp.exam_name || "").toString().trim(); // Human-readable name, e.g., "DCA-I"
+    const qpaperName = (qp.qpaper_name || "").toString().trim(); // The ID, e.g., "DCA-I" or "DCA-I_Set_1"
+    const qpSet = (qp.qp_set || "").toString().trim(); // The set information, e.g., "Set 1"
 
-    const looksLikePushKey = (s) => /[A-Za-z0-9_-]{16,}/.test(s);
+    let display = examName;
 
-    if (examName && !looksLikePushKey(examName)) return examName;
-
-    // If qpaper_name is an id present in ciaConfigs, return its examName
-    if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
-      return ciaConfigs[qpaperName].examName;
+    // If examName is empty, try to resolve from qpaper_name (which is the ID)
+    if (!display) {
+      // If qpaper_name is an id present in ciaConfigs, return its examName
+      if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
+        display = ciaConfigs[qpaperName].examName;
+      } else {
+        display = qpaperName; // Fallback to qpaper_name if no human name or config match
+      }
     }
 
-    // As a fallback, if examName maps in ciaConfigs, use that
-    if (examName && ciaConfigs && ciaConfigs[examName] && ciaConfigs[examName].examName) {
-      return ciaConfigs[examName].examName;
+    // Append set information if available and not "Set 1" (which is the default and can be omitted for brevity)
+    if (qpSet && qpSet !== "Set 1") {
+      display = `${display} (${qpSet})`;
     }
 
-    // Otherwise show whichever field exists (prefer qpaperName)
-    return qpaperName || examName || '-';
+    return display || '-';
   };
 
   const resolveForwardedByName = (uid) => {

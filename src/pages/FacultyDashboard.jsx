@@ -121,11 +121,40 @@ export default function FacultyDashboard() {
           });
         });
 
+        const norm = (v) => String(v || "").trim().toLowerCase();
+        const semNum = (v) => {
+          const m = String(v || "").match(/(\d+)/);
+          return m ? m[1] : "";
+        };
+
+        const isInAssignedContext = (qp) => {
+          return (assignedGroups || []).some((g) => {
+            const sameProgramme =
+              norm(g.progKey) === norm(qp.programme) ||
+              norm(formatProgDisplay(g.progKey)) === norm(formatProgDisplay(qp.programme));
+            const sameDepartment = norm(g.department) === norm(qp.department);
+            const sameBatch = norm(g.batch) === norm(qp.batch);
+            const sameAcademicYear = norm(g.academicYear) === norm(qp.academic_year);
+            const sameSemester = semNum(g.semester) === semNum(qp.semester);
+            const sameSubject = (g.codes || []).map(norm).includes(norm(qp.subject));
+
+            return sameProgramme && sameDepartment && sameBatch && sameAcademicYear && sameSemester && sameSubject;
+          });
+        };
+
         const pending = all
-          .filter((qp) => (qp?.status === "forwarded" || qp?.status === "recorrected") && qp?.forwarded_to === currentUid)
+          .filter((qp) => {
+            const status = String(qp?.status || "draft").toLowerCase();
+            const isReworkFromHod = (status === "forwarded" || status === "recorrected") && qp?.forwarded_to === currentUid;
+            const isForwardedByFaculty = status === "forwarded" && qp?.forwarded_by === currentUid;
+            const isSavedDraftOwned = status === "draft" && qp?.created_by === currentUid;
+            const isSavedDraftLegacy = status === "draft" && !qp?.created_by && isInAssignedContext(qp);
+            const isSavedDraft = isSavedDraftOwned || isSavedDraftLegacy;
+            return isReworkFromHod || isForwardedByFaculty || isSavedDraft;
+          })
           .sort((a, b) => {
-            const at = new Date(a.forwarded_at || a.saved_at || 0).getTime();
-            const bt = new Date(b.forwarded_at || b.saved_at || 0).getTime();
+            const at = new Date(a.updated_at || a.forwarded_at || a.saved_at || 0).getTime();
+            const bt = new Date(b.updated_at || b.forwarded_at || b.saved_at || 0).getTime();
             return bt - at;
           });
 
@@ -139,7 +168,7 @@ export default function FacultyDashboard() {
     );
 
     return () => unsub();
-  }, [currentUid]);
+  }, [currentUid, assignedGroups]);
 
   const assignedCount = useMemo(() => {
     return (assignedGroups || []).reduce((sum, g) => sum + (g.codes?.length || 0), 0);
@@ -227,10 +256,10 @@ export default function FacultyDashboard() {
           <div className="flex items-center justify-between gap-4 mb-6">
             <h2 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
               <div className="w-2 h-8 bg-purple-600 rounded-full"></div>
-              Pending HOD Approval
+              My Question Papers
             </h2>
             <div className="text-xs font-black bg-purple-100 text-purple-700 px-3 py-1 rounded-full uppercase tracking-widest">
-              {pendingQps.length} Pending
+              {pendingQps.length} Papers
             </div>
           </div>
 
@@ -241,7 +270,7 @@ export default function FacultyDashboard() {
             </div>
           ) : pendingQps.length === 0 ? (
             <div className="py-10 text-center text-slate-400 font-medium">
-              No forwarded papers waiting for approval.
+              No saved or forwarded papers found for your assigned subjects.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -276,9 +305,21 @@ export default function FacultyDashboard() {
                         <span className="px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold">{qp.semester}</span>
                       </td>
                       <td className="p-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase tracking-wider">
-                          <Clock size={12} /> Forwarded
-                        </span>
+                        {qp.status === 'draft' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-wider">
+                            <Clock size={12} /> Saved
+                          </span>
+                        )}
+                        {qp.status === 'forwarded' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase tracking-wider">
+                            <Clock size={12} /> Forwarded
+                          </span>
+                        )}
+                        {qp.status === 'recorrected' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider">
+                            <AlertCircle size={12} /> Recorrect
+                          </span>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         <button

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { rtdb } from "../firebase";
-import { ref, onValue, set } from "firebase/database";
+import { ref, onValue, set, get } from "firebase/database";
 
 export function useDepartments() {
   const [departments, setDepartments] = useState({});
@@ -51,10 +51,31 @@ export function useDepartments() {
     await set(ref(rtdb, `programme_durations/${programme}`), null);
   };
 
+  const renameProgram = async (oldProgramme, newProgramme) => {
+    if (!oldProgramme || !newProgramme || oldProgramme === newProgramme) return;
+
+    const currentDeptsSnap = await get(ref(rtdb, `programme_departments/${oldProgramme}`));
+    const currentDurationSnap = await get(ref(rtdb, `programme_durations/${oldProgramme}`));
+    const currentDepts = currentDeptsSnap.exists() ? currentDeptsSnap.val() : [];
+    const currentDuration = currentDurationSnap.exists() ? currentDurationSnap.val() : 4;
+
+    await set(ref(rtdb, `programme_departments/${newProgramme}`), currentDepts);
+    await set(ref(rtdb, `programme_durations/${newProgramme}`), currentDuration);
+    await set(ref(rtdb, `programme_departments/${oldProgramme}`), null);
+    await set(ref(rtdb, `programme_durations/${oldProgramme}`), null);
+  };
+
+  const renameDepartment = async (programme, oldDept, newDept) => {
+    if (!programme || !oldDept || !newDept || oldDept === newDept) return;
+    const currentDepts = departments[programme] || [];
+    const updatedDepts = currentDepts.map(d => (d === oldDept ? newDept : d));
+    await set(ref(rtdb, `programme_departments/${programme}`), updatedDepts);
+  };
+
   const setDuration = async (programme, duration) => {
     if (!programme) return;
     await set(ref(rtdb, `programme_durations/${programme}`), parseInt(duration) || 4);
   };
 
-  return { departments, durations, addDepartment, removeDepartment, removeProgram, setDuration, loading };
+  return { departments, durations, addDepartment, removeDepartment, removeProgram, renameProgram, renameDepartment, setDuration, loading };
 }

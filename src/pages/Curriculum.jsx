@@ -6,6 +6,7 @@ import {
   Trash2,
   CheckCircle2,
   Plus,
+  Edit2,
   Settings,
   AlertCircle
 } from "lucide-react";
@@ -19,7 +20,7 @@ import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatProgrammeKey, getRecentBatches as getRecentBatchesUtil, formatBatchDisplay } from "../lib/utils";
 
 export default function Curriculum() {
-  const { departments, durations, addDepartment, removeDepartment, removeProgram, setDuration } = useDepartments();
+  const { departments, durations, addDepartment, removeDepartment, removeProgram, renameProgram, renameDepartment, setDuration } = useDepartments();
   const { regulations, batchRegulations, addRegulation, mapBatchToRegulation } = useRegulations();
   const { batchStatus, toggleBatchStatus } = useBatches(durations);
 
@@ -54,6 +55,8 @@ export default function Curriculum() {
   const [mappingProgram, setMappingProgram] = useState("");
   const [mappingBatch, setMappingBatch] = useState("");
   const [mappingRegulation, setMappingRegulation] = useState("");
+  const [editProgramValue, setEditProgramValue] = useState({ key: "", value: "" });
+  const [editDepartmentValue, setEditDepartmentValue] = useState({ programme: "", oldValue: "", value: "" });
 
   // Grade Config States
   const [gradeReg, setGradeReg] = useState("");
@@ -211,6 +214,28 @@ export default function Curriculum() {
     setMappingRegulation("");
   };
 
+  const handleRenameProgram = async (oldKey) => {
+    const nextValue = editProgramValue.value.trim();
+    if (!oldKey || !nextValue) return;
+    const newKey = formatProgrammeKey(nextValue);
+    if (newKey === oldKey) return;
+    await renameProgram(oldKey, newKey);
+    setSuccessMessage("Program updated successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+    setEditProgramValue({ key: "", value: "" });
+  };
+
+  const handleRenameDepartment = async () => {
+    const nextValue = editDepartmentValue.value.trim();
+    if (!editDepartmentValue.programme || !editDepartmentValue.oldValue || !nextValue) return;
+    await renameDepartment(editDepartmentValue.programme, editDepartmentValue.oldValue, nextValue);
+    setSuccessMessage("Department updated successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+    setEditDepartmentValue({ programme: "", oldValue: "", value: "" });
+  };
+
   if (loading) {
     return (
       <Layout title="General Config">
@@ -238,6 +263,15 @@ export default function Curriculum() {
   return (
     <Layout title="General Config">
       <style>{`
+        .no-spinner::-webkit-outer-spin-button,
+        .no-spinner::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .no-spinner {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
         .bottom-space {
           margin-top: 40px;
         }
@@ -313,10 +347,18 @@ export default function Curriculum() {
                     {Object.keys(durations).map(prog => (
                       <div key={prog} className="px-2 py-1 bg-white border rounded text-sm flex items-center gap-2 shadow-sm">
                         <span className="font-bold text-[#120c7a]">{formatProgDisplay(prog)}</span>
+                        <button
+                          type="button"
+                          className="text-blue-600 hover:text-blue-800"
+                          onClick={() => setEditProgramValue({ key: prog, value: formatProgDisplay(prog) })}
+                          title="Edit Program"
+                        >
+                          <Edit2 size={12} />
+                        </button>
                         <div className="flex items-center gap-1 border-l pl-2">
                           <input 
                             type="number" 
-                            className="border-0 bg-transparent w-8 text-center text-xs font-bold focus:ring-0 p-0"
+                            className="no-spinner border-0 bg-transparent w-8 text-center text-xs font-bold focus:ring-0 p-0"
                             value={editingDurations[prog] !== undefined ? editingDurations[prog] : (durations[prog] || 4)}
                             onChange={(e) => setEditingDurations({ ...editingDurations, [prog]: e.target.value })}
                             onBlur={(e) => {
@@ -414,6 +456,40 @@ export default function Curriculum() {
                       <Plus size={18} /> Add
                     </button>
                   </div>
+
+                  {selectedProgram && departments[selectedProgram]?.length > 0 && (
+                    <div className="mt-2 p-3 bg-white border rounded-lg">
+                      <p className="text-xs font-bold text-slate-500 uppercase mb-2">Edit Existing Department</p>
+                      <div className="flex gap-2">
+                        <select
+                          className="form-select"
+                          value={editDepartmentValue.oldValue}
+                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, programme: selectedProgram, oldValue: e.target.value, value: e.target.value })}
+                        >
+                          <option value="">Select Department</option>
+                          {(departments[selectedProgram] || []).map((dept) => (
+                            <option key={dept} value={dept}>{dept}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="New Department Name"
+                          value={editDepartmentValue.value}
+                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, programme: selectedProgram, value: e.target.value })}
+                          disabled={!editDepartmentValue.oldValue}
+                        />
+                        <button
+                          className="btn btn-outline-primary"
+                          style={{ borderColor: '#120c7a', color: '#120c7a' }}
+                          onClick={handleRenameDepartment}
+                          disabled={!editDepartmentValue.oldValue || !editDepartmentValue.value.trim()}
+                        >
+                          Update
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -565,15 +641,33 @@ export default function Curriculum() {
                         return (
                         <tr key={progKey}>
                           <td className="px-3 py-3">
-                            <span className="font-bold text-[#120c7a]">{formatProgDisplay(progKey)}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-[#120c7a]">{formatProgDisplay(progKey)}</span>
+                                <button
+                                  type="button"
+                                  className="text-blue-600 hover:text-blue-800"
+                                  onClick={() => setEditProgramValue({ key: progKey, value: formatProgDisplay(progKey) })}
+                                  title="Edit Program"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                              </div>
                           </td>
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap gap-1">
                               {depts && depts.length > 0 ? (
-                                depts.map((dept, idx) => (
-                                  <span key={idx} className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold border border-slate-200">
-                                    {dept}
-                                  </span>
+                                  depts.map((dept, idx) => (
+                                    <span key={idx} className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold border border-slate-200 flex items-center gap-1">
+                                      {dept}
+                                      <button
+                                        type="button"
+                                        className="text-blue-600 hover:text-blue-800"
+                                        onClick={() => setEditDepartmentValue({ programme: progKey, oldValue: dept, value: dept })}
+                                        title="Edit Department"
+                                      >
+                                        <Edit2 size={10} />
+                                      </button>
+                                    </span>
                                 ))
                               ) : (
                                 <span className="text-xs italic text-slate-400">No departments</span>
@@ -852,6 +946,30 @@ export default function Curriculum() {
               <CheckCircle2 size={18} />
             </div>
             <span className="font-semibold">{successMessage}</span>
+          </div>
+        )}
+
+        {/* Inline Program Edit */}
+        {editProgramValue.key && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+              <div className="p-6">
+                <h3 className="text-xl font-bold text-zinc-800 mb-4">Edit Program</h3>
+                <input
+                  type="text"
+                  className="form-control mb-3"
+                  value={editProgramValue.value}
+                  onChange={(e) => setEditProgramValue(prev => ({ ...prev, value: e.target.value }))}
+                />
+                <p className="text-xs text-slate-500 mb-4">This will rename the program key and move its department/duration entries.</p>
+              </div>
+              <div className="bg-zinc-50 px-6 py-4 flex justify-end gap-3">
+                <button className="px-4 py-2 text-zinc-600 font-semibold hover:bg-zinc-100 rounded-xl" onClick={() => setEditProgramValue({ key: "", value: "" })}>Cancel</button>
+                <button className="px-5 py-2 bg-[#120c7a] text-white font-semibold rounded-xl" onClick={() => handleRenameProgram(editProgramValue.key)}>
+                  Save
+                </button>
+              </div>
+            </div>
           </div>
         )}
         {/* Modal UI */}
