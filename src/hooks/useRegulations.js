@@ -14,7 +14,7 @@ export function useRegulations() {
       if (data) {
         setRegulations(data);
       } else {
-        setRegulations(["R2017", "R2021"]); // defaults
+        setRegulations([]); // no defaults
       }
     });
 
