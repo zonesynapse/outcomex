@@ -132,20 +132,6 @@ export default function InfoConfiguration() {
     );
   }
 
-  const isAdmin = userData?.role === 'Admin' || user?.email === 'cselab2022@gmail.com';
-
-  if (!isAdmin) {
-    return (
-      <Layout title="Info Configuration">
-        <div className="max-w-4xl mx-auto mt-10 p-8 bg-red-50 border border-red-200 rounded-2xl text-center">
-          <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
-          <h2 className="text-2xl font-bold text-red-800 mb-2">Access Denied</h2>
-          <p className="text-red-600">This page is restricted to Administrators only.</p>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout title="Info Configuration">
       <style>{`

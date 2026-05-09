@@ -187,7 +187,7 @@ export default function QuestionPaper() {
         }
 
         // Admin can see all subjects
-        const adminEmail = "cselab2022@gmail.com";
+        const adminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL || "obe@ckcet.edu.in";
         if (currentUser.email === adminEmail) {
           setSubjects(fetchedSubjects);
           return;

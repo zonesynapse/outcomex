@@ -68,7 +68,7 @@ const modules = [
     id: "ia",
     label: "IA",
     icon: Network,
-    itemIds: ["questionpaper", "markk"]
+    itemIds: ["cia-configuration", "questionpaper", "markk"]
   },
   {
     id: "academics",
@@ -101,6 +101,7 @@ export default function Layout({ children, title }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedModules, setExpandedModules] = useState({});
+  const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
 
   useEffect(() => {
     // Automatically expand the module containing the active path
@@ -271,8 +272,15 @@ export default function Layout({ children, title }) {
   };
 
   const menuItems = [];
+  const isMasterAdmin =
+    !!user?.email &&
+    !!masterAdminEmail &&
+    user.email.toLowerCase() === masterAdminEmail.toLowerCase();
 
   const effectivePermissions = (() => {
+    if (isMasterAdmin) {
+      return allPossibleItems.map(item => item.id);
+    }
     if (rolePermissions === null) return null;
     if (userRole === 'HOD' && hasAssignments) {
       const merged = new Set([...(rolePermissions || []), ...(facultyPermissions || [])]);
@@ -313,8 +321,12 @@ export default function Layout({ children, title }) {
   );
 
   return (
-    <div className="min-h-screen bg-[#f0f0fa] font-sans text-zinc-900">
+    <div className="min-h-screen bg-[#f8f9fc] font-sans text-zinc-900">
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body { font-family: 'Inter', sans-serif; }
+
         .scrollbar-hide::-webkit-scrollbar {
           display: none;
         }
@@ -351,10 +363,20 @@ export default function Layout({ children, title }) {
           color: white;
           letter-spacing: 0.5px;
         }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #f1f1f1;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #ccc;
+          border-radius: 4px;
+        }
       `}</style>
 
       {/* Navbar */}
-      <nav className="bg-[#120c7a] h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-md no-print">
+      <nav className="bg-[#120c7a] h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-sm border-b border-white/10 no-print">
         <button 
           onClick={() => setIsSidebarOpen(true)}
           className="p-2 hover:bg-blue-600 rounded-lg text-white transition-colors"
@@ -374,7 +396,7 @@ export default function Layout({ children, title }) {
           </button>
           
           {isProfileOpen && (
-            <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-2xl py-0 z-50 border border-zinc-100 overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-2xl py-0 z-50 border border-zinc-100 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[calc(100vh-5rem)]">
               {/* Header */}
               <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-6 text-white">
                 <div className="flex items-center gap-4">
@@ -395,7 +417,7 @@ export default function Layout({ children, title }) {
               </div>
 
               {/* Details */}
-              <div className="p-4 space-y-4 bg-zinc-50/50">
+              <div className="p-4 space-y-4 bg-zinc-50/50 overflow-y-auto flex-1 custom-scrollbar">
                 <div className="flex justify-between items-center mb-1">
                   <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Academic Details</p>
                   <button 
@@ -594,7 +616,6 @@ export default function Layout({ children, title }) {
               >
                 <item.icon size={18} />
                 <span className="flex-grow">{item.label}</span>
-                {isActive && <ChevronRight size={14} className="opacity-50" />}
               </Link>
             );
           })}
@@ -619,16 +640,11 @@ export default function Layout({ children, title }) {
                       <Link 
                         key={item.label}
                         to={item.path}
-                        className={`flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-colors text-[11px] font-bold sidebar-link ${
-                          isActive 
-                            ? 'bg-white/20 text-white shadow-sm' 
-                            : 'text-white hover:bg-white/10'
-                        }`}
+                        className={`flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-colors text-[11px] font-bold sidebar-link ${isActive ? 'bg-white/20 text-white shadow-sm' : 'text-white hover:bg-white/10'}`}
                         onClick={() => setIsSidebarOpen(false)}
                       >
                         <item.icon size={14} className="text-white" />
                         <span className="flex-grow">{item.label}</span>
-                        {isActive && <div className="w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.8)]" />}
                       </Link>
                     );
                   })}

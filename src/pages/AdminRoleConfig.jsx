@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { rtdb, auth } from "../firebase";
-import { ref, onValue, update, remove, get, set } from "firebase/database";
+import { ref, onValue, update, remove, get, set, getDatabase } from "firebase/database";
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check } from "lucide-react";
 import Layout from "../components/Layout";
@@ -28,6 +28,9 @@ export default function AdminRoleConfig() {
   const [rolePermissions, setRolePermissions] = useState({});
   const [savingPermissions, setSavingPermissions] = useState(false);
 
+  const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
+  const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
+
   // All available system pages
   const ALL_PAGES = [
     { id: "dashboard", label: "Dashboard", path: "/dashboard" },
@@ -37,11 +40,12 @@ export default function AdminRoleConfig() {
     { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles" },
     { id: "info-configuration", label: "Info Configuration", path: "/info-configuration" },
     { id: "curriculum", label: "Curriculum", path: "/curriculum" },
-    { id: "regulation-formation", label: "Regulation Formation", path: "/regulation-formation" },
+    // { id: "regulation-formation", label: "Regulation Formation", path: "/regulation-formation" },
     { id: "blooms-taxonomy", label: "Bloom's Taxonomy", path: "/blooms-taxonomy" },
     { id: "hod-role-configuration", label: "Faculty Course Allocation", path: "/hod-role-configuration" },
     { id: "po_and_pso_configuration", label: "PO's Configuration", path: "/po_and_pso_configuration" },
     { id: "upload", label: "Update Namelist", path: "/upload" },
+    // { id: "cia-configuration", label: "CIA Configuration", path: "/cia-configuration" },
     { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment" },
     { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
     { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
@@ -267,7 +271,7 @@ export default function AdminRoleConfig() {
     );
   }
 
-  const isAdmin = userData?.role === 'Admin' || user?.email === 'cselab2022@gmail.com';
+  const isAdmin = userData?.role === 'Admin' || user?.email === defaultAdminEmail || user?.email === masterAdminEmail;
 
   if (!isAdmin) {
     return (
@@ -280,6 +284,17 @@ export default function AdminRoleConfig() {
       </Layout>
     );
   }
+
+  // Filter users based on login email
+  const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
+  const filteredUsers = (isMasterAdminLoggedIn
+    ? [...users]
+    : users.filter(u => u.email !== masterAdminEmail)
+  ).sort((a, b) => {
+    if (a.email === masterAdminEmail) return -1;
+    if (b.email === masterAdminEmail) return 1;
+    return 0;
+  });
 
   return (
     <Layout title="Admin Role Configuration">
@@ -327,19 +342,19 @@ export default function AdminRoleConfig() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {users.length === 0 ? (
+                  {filteredUsers.length === 0 ? (
                     <tr>
                       <td colSpan="7" className="px-6 py-8 text-center text-zinc-500">
                         No users found.
                       </td>
                     </tr>
                   ) : (
-                    users.map((user) => (
+                    filteredUsers.map((user) => (
                       <tr key={user.uid} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <div className="font-medium text-zinc-800">{user.displayName || user.facultyName}</div>
-                            {user.email === 'cselab2022@gmail.com' && (
+                            {user.email === masterAdminEmail && (
                               <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded border border-amber-200">MASTER</span>
                             )}
                           </div>

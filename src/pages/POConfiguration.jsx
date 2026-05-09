@@ -14,6 +14,8 @@ const POConfiguration = () => {
   const [regulation, setRegulation] = useState("");
   const [department, setDepartment] = useState("");
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState(null);
+  const [userData, setUserData] = useState(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -143,6 +145,17 @@ Statement: "${item.statement}"`;
   };
 
   // Fetch data when filters change
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const userRef = ref(rtdb, `users/${currentUser.uid}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) setUserData(snapshot.val());
+      }
+    });
+    return () => unsubscribeAuth();
+  }, []);
   useEffect(() => {
     const progKey = formatProgrammeKey(programme);
     if (programme && regulation && department) {

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { rtdb, auth } from "../firebase";
-import { ref, set, onValue, get } from "firebase/database";
+import { ref, set, onValue, get, update } from "firebase/database";
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   Trash2,
@@ -8,10 +8,12 @@ import {
   Plus,
   Edit2,
   Settings,
-  AlertCircle
+  AlertCircle,
+  X
 } from "lucide-react";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
+import CIAConfigPage from "../components/CIAConfigPage";
 
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
@@ -58,6 +60,15 @@ export default function Curriculum() {
   const [editProgramValue, setEditProgramValue] = useState({ key: "", value: "" });
   const [editDepartmentValue, setEditDepartmentValue] = useState({ programme: "", oldValue: "", value: "" });
 
+  // Regulation Config States (Moved from RegulationFormation)
+  const [configType, setConfigType] = useState("");
+  const [allCiaConfigs, setAllCiaConfigs] = useState({});
+  const [updatingSet, setUpdatingSet] = useState(null);
+  const [weightageConfigs, setWeightageConfigs] = useState({});
+  const [newCourseType, setNewCourseType] = useState("");
+  const [courseTypeConfigs, setCourseTypeConfigs] = useState({});
+  const [selectedConfigReg, setSelectedConfigReg] = useState("");
+
   // Grade Config States
   const [gradeReg, setGradeReg] = useState("");
   const [gradeConfigs, setGradeConfigs] = useState({}); // { reg: [{grade, gradePoint, mark}] }
@@ -90,6 +101,112 @@ export default function Curriculum() {
       unsubscribeData();
     };
   }, []);
+
+  useEffect(() => {
+    const ctRef = ref(rtdb, 'course_type_configs');
+    const unsubscribe = onValue(ctRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setCourseTypeConfigs(snapshot.val());
+      } else {
+        setCourseTypeConfigs({});
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const wRef = ref(rtdb, 'course_type_weightage');
+    const unsubscribe = onValue(wRef, (snapshot) => {
+      setWeightageConfigs(snapshot.val() || {});
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const ciaRef = ref(rtdb, 'cia_configs');
+    const unsubscribe = onValue(ciaRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setAllCiaConfigs(snapshot.val());
+      } else {
+        setAllCiaConfigs({});
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleUpdateNumSets = async (configId, num) => {
+    setUpdatingSet(configId);
+    try {
+      await update(ref(rtdb, `cia_configs/${configId}`), { numSets: parseInt(num) || 1 });
+      setSuccessMessage("Exam set count updated successfully!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+    setUpdatingSet(null);
+  };
+
+  const handleWeightageChange = (regKey, type, examId, value) => {
+    setWeightageConfigs(prev => ({
+      ...prev,
+      [regKey]: {
+        ...(prev[regKey] || {}),
+        [type]: {
+          ...(prev[regKey]?.[type] || {}),
+          [examId]: value === "" ? "" : parseInt(value)
+        }
+      }
+    }));
+  };
+
+  const handleSaveWeightage = async (regKey, type) => {
+    const data = weightageConfigs[regKey]?.[type] || {};
+    const total = Object.values(data).reduce((sum, v) => sum + (parseInt(v) || 0), 0);
+    
+    if (total !== 100) {
+      showAlert("Error", `Total weightage for "${type}" must be exactly 100%. Current: ${total}%`);
+      return;
+    }
+
+    try {
+      await set(ref(rtdb, `course_type_weightage/${regKey}/${type}`), data);
+      setSuccessMessage("Weightage updated successfully!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleAddCourseType = async () => {
+    if (!selectedConfigReg || !newCourseType.trim()) return;
+    const regKey = sanitizeKey(selectedConfigReg);
+    const currentTypes = courseTypeConfigs[regKey] || [];
+    
+    if (currentTypes.includes(newCourseType.trim())) {
+      showAlert("Error", "Course type already exists for this regulation.");
+      return;
+    }
+    
+    const updatedTypes = [...currentTypes, newCourseType.trim()];
+    await set(ref(rtdb, `course_type_configs/${regKey}`), updatedTypes);
+    setNewCourseType("");
+    setSuccessMessage("Course type added successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
+  const handleRemoveCourseType = async (regKey, index) => {
+    const typeToRemove = courseTypeConfigs[regKey][index];
+    const currentTypes = [...(courseTypeConfigs[regKey] || [])];
+    currentTypes.splice(index, 1);
+    await set(ref(rtdb, `course_type_configs/${regKey}`), currentTypes.length > 0 ? currentTypes : null);
+    
+    if (typeToRemove) {
+      await set(ref(rtdb, `course_type_weightage/${regKey}/${typeToRemove}`), null);
+    }
+    
+    setSuccessMessage("Course type removed successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
 
   const handleAddGrade = async () => {
     if (!gradeReg || !newGrade.grade.trim() || !newGrade.gradePoint.trim()) return;
@@ -246,24 +363,19 @@ export default function Curriculum() {
     );
   }
 
-  const isAdmin = userData?.role === 'Admin' || user?.email === 'cselab2022@gmail.com';
-
-  if (!isAdmin) {
-    return (
-      <Layout title="General Config">
-        <div className="max-w-4xl mx-auto mt-10 p-8 bg-red-50 border border-red-200 rounded-2xl text-center">
-          <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
-          <h2 className="text-2xl font-bold text-red-800 mb-2">Access Denied</h2>
-          <p className="text-red-600">This page is restricted to Administrators only.</p>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout title="General Config">
       <style>{`
         .no-spinner::-webkit-outer-spin-button,
+        input[type='number']::-webkit-outer-spin-button,
+        input[type='number']::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type='number'] {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
         .no-spinner::-webkit-inner-spin-button {
           -webkit-appearance: none;
           margin: 0;
@@ -495,7 +607,7 @@ export default function Curriculum() {
 
               {/* Add Regulation */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Add New Regulation</h3>
+                <h3 className="font-semibold text-lg mb-3">Add New & Configure Regulation</h3>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
@@ -515,11 +627,172 @@ export default function Curriculum() {
                 <div className="mt-3">
                   <p className="text-sm text-slate-500 mb-1">Existing Regulations:</p>
                   <div className="flex flex-wrap gap-2">
-                    {regulations.map(reg => (
-                      <span key={reg} className="px-2 py-1 bg-white border rounded text-sm">{reg}</span>
+                    {regulations.map((reg) => (
+                      <button 
+                        key={reg} 
+                        onClick={() => setSelectedConfigReg(reg === selectedConfigReg ? "" : reg)}
+                        className={`px-2 py-1 border rounded text-sm transition-all font-medium ${selectedConfigReg === reg ? 'bg-[#120c7a] text-white border-[#120c7a] shadow-sm' : 'bg-white text-slate-700 border-slate-200 hover:border-[#120c7a]'}`}
+                      >
+                        {reg}
+                      </button>
                     ))}
                   </div>
                 </div>
+
+                {selectedConfigReg && (
+                  <div className="mt-6 pt-6 border-t border-slate-200 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <h4 className="font-bold text-zinc-800 text-sm mb-4 flex items-center gap-2">
+                      <Settings size={16} className="text-[#120c7a]" />
+                      Configuration for {selectedConfigReg}
+                    </h4>
+                    
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3">
+                        <button 
+                          onClick={() => setConfigType("cia")} 
+                          className="p-3 bg-white border border-slate-200 rounded-2xl text-left hover:border-[#120c7a] hover:shadow-md transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="font-bold text-[#120c7a] text-xs">CIA Configuration</h5>
+                            <Settings size={14} className="text-slate-300 group-hover:text-[#120c7a]" />
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-medium">Define internal exams, marks, and assessment types.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => setConfigType("course_type")} 
+                          className="p-3 bg-white border border-slate-200 rounded-2xl text-left hover:border-[#120c7a] hover:shadow-md transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="font-bold text-[#120c7a] text-xs">Course Type & Weightage</h5>
+                            <Settings size={14} className="text-slate-300 group-hover:text-[#120c7a]" />
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-medium">Set mark split for Theory, Practical, or Integrated courses.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => setConfigType("exam_sets")} 
+                          className="p-3 bg-white border border-slate-200 rounded-2xl text-left hover:border-[#120c7a] hover:shadow-md transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="font-bold text-[#120c7a] text-xs">Exam Version Sets</h5>
+                            <Settings size={14} className="text-slate-300 group-hover:text-[#120c7a]" />
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-medium">Configure required QP sets for internal assessments.</p>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Regulation Configuration Modal */}
+                {selectedConfigReg && configType && (
+                  <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+                    <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-300 border border-slate-200">
+                      <div className="relative w-full shrink-0">
+                        <div className="absolute inset-x-0 top-0 h-full bg-[#120c7a] rounded-t-[2rem] z-0" />
+                        <div className="relative z-10 px-8 py-3 mx-4 flex justify-between items-center text-white">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <Settings size={18} className="text-blue-200" />
+                              <h3 className="text-lg font-bold tracking-tight">Configuring {selectedConfigReg}</h3>
+                            </div>
+                            <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest opacity-70">
+                              {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : 'Exam QP Versions'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <button onClick={() => setConfigType("")} className="p-2 hover:bg-white/10 rounded-full transition-all hover:rotate-90 duration-300">
+                              <X size={24} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50 custom-scrollbar">
+                        <>
+                          {configType === "cia" && (
+                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <CIAConfigPage program={""} department={""} regulation={selectedConfigReg} />
+                            </div>
+                          )}
+
+                          {configType === "course_type" && (
+                              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 max-w-md">
+                                  <h4 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">Add New Category</h4>
+                                  <div className="flex gap-2">
+                                    <input type="text" className="form-control" placeholder="e.g. Theory, Practical, Integrated" value={newCourseType} onChange={(e) => setNewCourseType(e.target.value)} />
+                                    <button className="btn btn-primary px-4 font-bold" style={{ backgroundColor: '#120c7a', border: 'none' }} onClick={handleAddCourseType}>Add</button>
+                                  </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                  {(courseTypeConfigs[sanitizeKey(selectedConfigReg)] || []).map((type, idx) => (
+                                    <div key={idx} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 space-y-4 flex flex-col">
+                                      <div className="flex justify-between items-center">
+                                        <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                        <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
+                                      </div>
+                                      <div className="flex-1 space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner">
+                                        <div className="flex justify-between items-center mb-2">
+                                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Assessment Weightage</span>
+                                          <button onClick={() => handleSaveWeightage(sanitizeKey(selectedConfigReg), type)} className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md hover:bg-blue-100">Save Split</button>
+                                        </div>
+                                        {Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg) && config.courseTypes?.includes(type)).map(([id, config]) => (
+                                          <div key={id} className="flex items-center justify-between gap-2 py-1.5 border-b border-slate-200 last:border-0">
+                                            <span className="text-xs font-medium text-slate-600">{config.examName}</span>
+                                            <div className="flex items-center gap-1.5">
+                                              <input type="number" className="w-14 px-2 py-1 bg-white border border-slate-200 rounded-lg text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-100" value={weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?.[id] ?? ""} onChange={(e) => handleWeightageChange(sanitizeKey(selectedConfigReg), type, id, e.target.value)} />
+                                              <span className="text-xs text-slate-400 font-bold">%</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                          {configType === "exam_sets" && (
+                            <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-50">
+                                  <tr className="text-slate-500 border-b border-slate-200">
+                                    <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px]">Assessment Name</th>
+                                    <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px] text-center">Number of Sets Required</th>
+                                </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {Object.entries(allCiaConfigs)
+                                    .filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg))
+                                    .map(([id, config]) => (
+                                    <tr key={id} className="hover:bg-blue-50/30 transition-colors">
+                                      <td className="px-8 py-4 font-bold text-slate-700">{config.examName}</td>
+                                      <td className="px-8 py-4 text-center">
+                                        <div className="flex items-center justify-center gap-3">
+                                          <input type="number" min="1" className="w-20 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500" value={config.numSets || 1} onChange={(e) => handleUpdateNumSets(id, e.target.value)} disabled={updatingSet === id} />
+                                          {updatingSet === id && <div className="w-4 h-4 border-2 border-[#120c7a] border-t-transparent rounded-full animate-spin" />}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  {Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg)).length === 0 && (
+                                    <tr>
+                                      <td colSpan={2} className="px-8 py-10 text-center text-slate-400 italic">No internal exams configured for this regulation.</td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      </div>
+                      <div className="px-8 py-4 bg-white border-t border-slate-100 flex justify-end shrink-0"><button onClick={() => setConfigType("")} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-all">Close</button></div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Map Regulation to Batch */}

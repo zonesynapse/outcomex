@@ -747,22 +747,6 @@ export default function CoPoMapping() {
     );
   };
 
-  if (userRole && userRole !== 'HOD' && userRole !== 'Principal') {
-    return (
-      <Layout title="Access Denied">
-        <div className="flex flex-col items-center justify-center min-h-[60vh] p-6 text-center">
-          <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-6">
-            <X className="text-red-600" size={40} />
-          </div>
-          <h1 className="text-2xl font-bold text-zinc-800 mb-2">Access Denied</h1>
-          <p className="text-zinc-500 max-w-md">
-            This page is only accessible to HODs and Principals. If you believe this is an error, please contact the administrator.
-          </p>
-        </div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout title="CO-PO Mapping">
       <div className="p-6 md:p-10 max-w-[98%] mx-auto">

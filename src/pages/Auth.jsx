@@ -36,6 +36,8 @@ export default function Auth() {
   const [regPassword, setRegPassword] = useState("");
   
   const { departments: PROGRAMME_DEPARTMENTS } = useDepartments();
+  const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
+  const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
   
   // UI States
   const [loading, setLoading] = useState(false);
@@ -69,7 +71,7 @@ export default function Auth() {
       const snapshot = await get(userRef);
       if (snapshot.exists()) {
         const userData = snapshot.val();
-        if (!userData.isApproved && user.email !== 'cselab2022@gmail.com') {
+        if (!userData.isApproved && user.email !== defaultAdminEmail && user.email !== masterAdminEmail) {
           await signOut(auth);
           setError("Your account is pending admin approval.");
           setLoading(false);
@@ -107,7 +109,7 @@ export default function Auth() {
       await updateProfile(user, { displayName: fullDisplayName });
       
       // Save user profile to Realtime Database
-      const isDefaultAdmin = user.email === 'obe@ckcet.edu.in';
+      const isDefaultAdmin = user.email === defaultAdminEmail || user.email === masterAdminEmail;
       try {
         await set(ref(rtdb, `users/${user.uid}`), {
           uid: user.uid,

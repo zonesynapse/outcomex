@@ -123,8 +123,8 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     const { examName, totalMarks, isUniversity, isIndirectAssessment } = formData;
 
     const needsTotalMarks = !isUniversity && !isIndirectAssessment;
-    if (!program || !regulation || !examName) {
-      setError("Please ensure Program, Regulation, and Exam Name are provided.");
+    if (!regulation || !examName) {
+      setError("Please ensure Regulation and Exam Name are provided.");
       return;
     }
 
@@ -141,7 +141,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     try {
       const newConfigRef = push(ref(rtdb, 'cia_configs'));
       await set(newConfigRef, {
-        program,
+        program: program || "",
         department: department || "",
         regulation,
         examName,

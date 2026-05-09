@@ -44,8 +44,6 @@ export default function AcademicCalendar() {
     }
   }, []);
 
-  const isAdmin = userRole === 'Admin' || userRole === 'HOD';
-
   // Fetch Data
   useEffect(() => {
     // Fetch Global Institutional Academic Calendar PDF
@@ -234,7 +232,7 @@ export default function AcademicCalendar() {
                   const dateDate = new Date(dayObj.date + 'T00:00:00');
                   const isSunday = dateDate.getDay() === 0;
                   const dayEvents = Object.values(events[dayObj.date] || {});
-                  
+
                   // Determine primary event type for background color
                   const hasHoliday = dayEvents.some(e => e.type === 'Holiday');
                   const hasExam = dayEvents.some(e => e.type === 'Exam');
@@ -267,7 +265,7 @@ export default function AcademicCalendar() {
                   return (
                     <motion.div 
                       key={dayObj.date}
-                      whileHover={{ y: -5, scale: 1.02 }}
+                      whileHover={{ y: -5, scale: 1.02 }} // Removed isAdmin check from here
                       onClick={() => { if (isAdmin) { setSelectedDate(dayObj.date); setShowEventModal(true); }}}
                       className={`min-h-[60px] md:min-h-[80px] relative p-2 rounded-2xl border transition-all cursor-pointer flex flex-col group ${bgClass}`}
                     >
