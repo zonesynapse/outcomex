@@ -1,15 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-html {
-  font-size: 15px;
-}
-
-body {
-  font-family: 'Inter', sans-serif;
-  line-height: 1.45;
-  letter-spacing: 0.01em;
-}
 
 /* Custom styles can be added here */
 .animate-in {
