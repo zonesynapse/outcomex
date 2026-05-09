@@ -19,6 +19,7 @@ export default function CreateCourse() {
   const [courseCode, setCourseCode] = useState("");
   const [courseName, setCourseName] = useState("");
   const [credits, setCredits] = useState(3);
+  const [periods, setPeriods] = useState({ l: 0, t: 0, p: 0 });
   const [courseType, setCourseType] = useState("Program Course");
   const [numCOs, setNumCOs] = useState(0);
   const [coDefs, setCoDefs] = useState([]);
@@ -34,6 +35,44 @@ export default function CreateCourse() {
 
   const deptKey = department || "Overall";
   const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
+
+  const [periodConfigs, setPeriodConfigs] = useState({});
+
+  useEffect(() => {
+    const pRef = ref(rtdb, 'period_configs');
+    const unsub = onValue(pRef, (snap) => {
+      setPeriodConfigs(snap.val() || {});
+    });
+    return () => unsub();
+  }, []);
+
+  const currentPeriodConfig = useMemo(() => {
+    const key = sanitizeKey(regulation);
+    return periodConfigs[key] || {
+      lecture: { allocate: 1, credit: 1, periods: 15 },
+      tutor: { allocate: 1, credit: 1, periods: 15 },
+      practical: { allocate: 1, credit: 0.5, periods: 15 }
+    };
+  }, [periodConfigs, regulation]);
+
+  const calculatedTotalPeriods = useMemo(() => {
+    const getP = (v, type) => {
+      const cfg = currentPeriodConfig[type];
+      return cfg?.allocate ? (Number(v) / cfg.allocate) * (Number(cfg.periods) || 0) : 0;
+    };
+    return getP(periods.l, 'lecture') + getP(periods.t, 'tutor') + getP(periods.p, 'practical');
+  }, [periods, currentPeriodConfig]);
+
+  // Auto-calculate credits
+  useEffect(() => {
+    if (!regulation || !showCreate) return;
+    const getC = (v, type) => {
+      const cfg = currentPeriodConfig[type];
+      return cfg?.allocate ? (Number(v) / cfg.allocate) * (Number(cfg.credit) || 0) : 0;
+    };
+    const total = getC(periods.l, 'lecture') + getC(periods.t, 'tutor') + getC(periods.p, 'practical');
+    setCredits(total);
+  }, [periods, currentPeriodConfig, regulation, showCreate]);
 
   // Fetch course types based on regulation
   useEffect(() => {
@@ -128,12 +167,18 @@ export default function CreateCourse() {
     }
     setSaving(true);
     try {
-      const progKey = programme; // already stored as programme key (e.g., B_E)
+      const progKey = sanitizeKey(programme);
+      const sanitizedDept = sanitizeKey(deptKey);
       const courseKey = sanitizeKey(courseCode.trim());
       const payload = {
         code: courseCode.trim(),
         name: courseName.trim(),
         credits: Number(credits) || 0,
+        periods: {
+          l: Number(periods.l) || 0,
+          t: Number(periods.t) || 0,
+          p: Number(periods.p) || 0
+        },
         type: courseType,
         regulation,
         programme: progKey,
@@ -141,7 +186,7 @@ export default function CreateCourse() {
         co: coDefs.map((c, i) => ({ id: `CO${i + 1}`, description: c || "", content: (coContents[i] || ""), domain: (coDomains[i] || ""), level: (coLevels[i] || "") }))
       };
 
-      await set(ref(rtdb, `courses/${progKey}/${deptKey}/${sanitizeKey(regulation)}/${courseKey}`), payload);
+      await set(ref(rtdb, `courses/${progKey}/${sanitizedDept}/${sanitizeKey(regulation)}/${courseKey}`), payload);
 
       setMessage("Course saved successfully.");
       setSelectedExistingCourseKey(`${deptKey}:${courseKey}`);
@@ -149,6 +194,7 @@ export default function CreateCourse() {
       setCourseCode("");
       setCourseName("");
       setCredits(3);
+      setPeriods({ l: 0, t: 0, p: 0 });
       setNumCOs(0);
       setCoDefs([]);
       setCoContents([]);
@@ -172,12 +218,14 @@ export default function CreateCourse() {
     }
 
     const baseRegKey = sanitizeKey(regulation);
+    const progKey = sanitizeKey(programme);
     const deptRefs = [];
     if (department) {
-      deptRefs.push({ dept: department, ref: ref(rtdb, `courses/${programme}/${department}/${baseRegKey}`) });
-      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${programme}/Overall/${baseRegKey}`) });
+      const sanitizedDept = sanitizeKey(department);
+      deptRefs.push({ dept: department, ref: ref(rtdb, `courses/${progKey}/${sanitizedDept}/${baseRegKey}`) });
+      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${progKey}/Overall/${baseRegKey}`) });
     } else {
-      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${programme}/Overall/${baseRegKey}`) });
+      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${progKey}/Overall/${baseRegKey}`) });
     }
 
     const unsubs = [];
@@ -207,6 +255,7 @@ export default function CreateCourse() {
               name: course?.name || "",
               credits: course?.credits,
               type: course?.type,
+              periods: course?.periods || { l: 0, t: 0, p: 0 },
               co: Array.isArray(course?.co) ? course.co : [],
               _sourceDept: dept,
             });
@@ -231,6 +280,7 @@ export default function CreateCourse() {
     setCourseCode(match.code || "");
     setCourseName(match.name || "");
     setCredits(match.credits ?? 3);
+    setPeriods(match.periods || { l: 0, t: 0, p: 0 });
     setCourseType(match.type || "Program Course");
 
     const cos = Array.isArray(match.co) ? match.co : [];
@@ -252,6 +302,17 @@ export default function CreateCourse() {
 
   return (
     <Layout title="Course Bank">
+      <style>{`
+        input[type='number']::-webkit-outer-spin-button,
+        input[type='number']::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type='number'] {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
+      `}</style>
       <div className="max-w-7xl mx-auto p-6 space-y-6">
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
@@ -356,7 +417,7 @@ export default function CreateCourse() {
                   disabled={!programme || !regulation}
                 >
                   <option value="">Select Course</option>
-                  <option value="__new__">+ New Course</option>
+                  <option value="__new__" className="text-blue-600 font-bold" style={{ color: '#2563eb', fontWeight: 'bold' }}>+ New Course</option>
                   {existingCourses.map((c) => (
                     <option
                       key={`${c._sourceDept}:${c.key}`}
@@ -397,16 +458,6 @@ export default function CreateCourse() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-zinc-600">Credits</label>
-                  <input
-                    type="number"
-                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
-                    value={credits}
-                    onChange={(e) => setCredits(e.target.value)}
-                    min={0}
-                  />
-                </div>
-                <div className="space-y-2">
                   <label className="text-sm font-bold text-zinc-600">Course Type</label>
                   <div className="relative">
                     <select
@@ -419,6 +470,45 @@ export default function CreateCourse() {
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Number of Periods (L-T-P)</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="relative">
+                      <input type="number" className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-2 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-bold text-center text-[#120c7a]" value={periods.l} onChange={(e) => setPeriods({ ...periods, l: e.target.value })} placeholder="L" />
+                      <span className="absolute -top-2 left-2 bg-white px-1 text-[9px] font-black text-zinc-400 uppercase tracking-tighter">L</span>
+                    </div>
+                    <div className="relative">
+                      <input type="number" className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-2 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-bold text-center text-[#120c7a]" value={periods.t} onChange={(e) => setPeriods({ ...periods, t: e.target.value })} placeholder="T" />
+                      <span className="absolute -top-2 left-2 bg-white px-1 text-[9px] font-black text-zinc-400 uppercase tracking-tighter">T</span>
+                    </div>
+                    <div className="relative">
+                      <input type="number" className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-2 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-bold text-center text-[#120c7a]" value={periods.p} onChange={(e) => setPeriods({ ...periods, p: e.target.value })} placeholder="P" />
+                      <span className="absolute -top-2 left-2 bg-white px-1 text-[9px] font-black text-zinc-400 uppercase tracking-tighter">P</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-600">Total Periods</label>
+                    <input
+                      type="number"
+                      readOnly
+                      className="w-full bg-blue-50/50 border border-zinc-200 rounded-lg px-4 py-2.5 outline-none font-black text-[#120c7a] cursor-not-allowed"
+                      value={calculatedTotalPeriods}
+                      placeholder="Total"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-600">Credits</label>
+                    <input
+                      type="number"
+                      readOnly
+                      className="w-full bg-blue-50/50 border border-zinc-200 rounded-lg px-4 py-2.5 outline-none font-black text-[#120c7a] cursor-not-allowed"
+                      value={credits}
+                      min={0}
+                    />
                   </div>
                 </div>
               </div>

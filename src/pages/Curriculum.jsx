@@ -67,6 +67,7 @@ export default function Curriculum() {
   const [weightageConfigs, setWeightageConfigs] = useState({});
   const [newCourseType, setNewCourseType] = useState("");
   const [courseTypeConfigs, setCourseTypeConfigs] = useState({});
+  const [periodConfigs, setPeriodConfigs] = useState({});
   const [selectedConfigReg, setSelectedConfigReg] = useState("");
 
   // Grade Config States
@@ -123,6 +124,14 @@ export default function Curriculum() {
   }, []);
 
   useEffect(() => {
+    const periodRef = ref(rtdb, 'period_configs');
+    const unsubscribe = onValue(periodRef, (snapshot) => {
+      setPeriodConfigs(snapshot.val() || {});
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const ciaRef = ref(rtdb, 'cia_configs');
     const unsubscribe = onValue(ciaRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -173,6 +182,65 @@ export default function Curriculum() {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) { console.error(err); }
+  };
+
+  const defaultPeriodConfig = {
+    lecture: { allocate: 1, credit: 1, periods: 15 },
+    tutor: { allocate: 1, credit: 1, periods: 15 },
+    practical: { allocate: 1, credit: 0.5, periods: 15 }
+  };
+
+  const normalizePeriodValue = (value, fallback) => {
+    const parsed = Number(value);
+    return value === "" || Number.isNaN(parsed) ? fallback : parsed;
+  };
+
+  const getPeriodConfig = (regulation) => {
+    const regKey = sanitizeKey(regulation);
+    const existing = periodConfigs[regKey] || {};
+
+    return {
+      lecture: {
+        allocate: normalizePeriodValue(existing.lecture?.allocate, defaultPeriodConfig.lecture.allocate),
+        credit: normalizePeriodValue(existing.lecture?.credit, defaultPeriodConfig.lecture.credit),
+        periods: normalizePeriodValue(existing.lecture?.periods, defaultPeriodConfig.lecture.periods)
+      },
+      tutor: {
+        allocate: normalizePeriodValue(existing.tutor?.allocate, defaultPeriodConfig.tutor.allocate),
+        credit: normalizePeriodValue(existing.tutor?.credit, defaultPeriodConfig.tutor.credit),
+        periods: normalizePeriodValue(existing.tutor?.periods, defaultPeriodConfig.tutor.periods)
+      },
+      practical: {
+        allocate: normalizePeriodValue(existing.practical?.allocate, defaultPeriodConfig.practical.allocate),
+        credit: normalizePeriodValue(existing.practical?.credit, defaultPeriodConfig.practical.credit),
+        periods: normalizePeriodValue(existing.practical?.periods, defaultPeriodConfig.practical.periods)
+      }
+    };
+  };
+
+  const handlePeriodChange = (type, field, value) => {
+    const regKey = sanitizeKey(selectedConfigReg);
+    setPeriodConfigs(prev => ({
+      ...prev,
+      [regKey]: {
+        ...(prev[regKey] || {}),
+        [type]: {
+          ...((prev[regKey] || {})[type] || {}),
+          [field]: value
+        }
+      }
+    }));
+  };
+
+  const handleSavePeriodConfig = async () => {
+    if (!selectedConfigReg) return;
+    const regKey = sanitizeKey(selectedConfigReg);
+    const config = getPeriodConfig(selectedConfigReg);
+
+    await set(ref(rtdb, `period_configs/${regKey}`), config);
+    setSuccessMessage("Period configuration saved successfully!");
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   const handleAddCourseType = async () => {
@@ -647,7 +715,7 @@ export default function Curriculum() {
                     </h4>
                     
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <button 
                           onClick={() => setConfigType("cia")} 
                           className="p-3 bg-white border border-slate-200 rounded-2xl text-left hover:border-[#120c7a] hover:shadow-md transition-all group"
@@ -668,6 +736,17 @@ export default function Curriculum() {
                             <Settings size={14} className="text-slate-300 group-hover:text-[#120c7a]" />
                           </div>
                           <p className="text-[10px] text-slate-400 font-medium">Set mark split for Theory, Practical, or Integrated courses.</p>
+                        </button>
+
+                        <button 
+                          onClick={() => setConfigType("period_config")} 
+                          className="p-3 bg-white border border-slate-200 rounded-2xl text-left hover:border-[#120c7a] hover:shadow-md transition-all group"
+                        >
+                          <div className="flex justify-between items-center mb-1">
+                            <h5 className="font-bold text-[#120c7a] text-xs">Period Configuration</h5>
+                            <Settings size={14} className="text-slate-300 group-hover:text-[#120c7a]" />
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-medium">Define credit and period count for Lecture, Tutor, and Practical.</p>
                         </button>
 
                         <button 
@@ -698,7 +777,7 @@ export default function Curriculum() {
                               <h3 className="text-lg font-bold tracking-tight">Configuring {selectedConfigReg}</h3>
                             </div>
                             <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest opacity-70">
-                              {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : 'Exam QP Versions'}
+                              {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : configType === 'period_config' ? 'Period Configuration' : 'Exam QP Versions'}
                             </p>
                           </div>
                           <div className="flex items-center gap-4">
@@ -785,6 +864,77 @@ export default function Curriculum() {
                                   )}
                                 </tbody>
                               </table>
+                            </div>
+                          )}
+
+                          {configType === "period_config" && (
+                            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 max-w-4xl">
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                  <div>
+                                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Period Credit Split</h4>
+                                    <p className="text-xs text-slate-500 mt-1">Set the credit and number of periods for each delivery type.</p>
+                                  </div>
+                                  <button
+                                    className="btn btn-primary px-4 font-bold"
+                                    style={{ backgroundColor: '#120c7a', border: 'none' }}
+                                    onClick={handleSavePeriodConfig}
+                                  >
+                                    Save Period Config
+                                  </button>
+                                </div>
+
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="text-left text-slate-500 border-b border-slate-200">
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Type</th>
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Allocate</th>
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Credit</th>
+                                        <th className="py-3 font-bold uppercase tracking-widest text-[10px]">Periods</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {[["lecture", "Lecture"], ["tutor", "Tutor"], ["practical", "Practical"]].map(([type, label]) => {
+                                        const config = getPeriodConfig(selectedConfigReg)[type];
+                                        return (
+                                          <tr key={type} className="border-b border-slate-100 last:border-0">
+                                            <td className="py-4 pr-4 font-bold text-slate-700">{label}</td>
+                                            <td className="py-4 pr-4">
+                                              <input
+                                                type="number"
+                                                min="1"
+                                                className="form-control max-w-[100px]"
+                                                value={config.allocate}
+                                                onChange={(e) => handlePeriodChange(type, "allocate", e.target.value)}
+                                              />
+                                            </td>
+                                            <td className="py-4 pr-4">
+                                              <input
+                                                type="number"
+                                                step="0.5"
+                                                min="0"
+                                                className="form-control max-w-[100px]"
+                                                value={config.credit}
+                                                onChange={(e) => handlePeriodChange(type, "credit", e.target.value)}
+                                              />
+                                            </td>
+                                            <td className="py-4">
+                                              <input
+                                                type="number"
+                                                min="1"
+                                                className="form-control max-w-[100px]"
+                                                value={config.periods}
+                                                onChange={(e) => handlePeriodChange(type, "periods", e.target.value)}
+                                              />
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </>
@@ -890,6 +1040,77 @@ export default function Curriculum() {
           </div>
         </div>
 
+
+                          {configType === "period_config" && (
+                            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 max-w-4xl">
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                  <div>
+                                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Period Credit Split</h4>
+                                    <p className="text-xs text-slate-500 mt-1">Set the credit and number of periods for each delivery type.</p>
+                                  </div>
+                                  <button
+                                    className="btn btn-primary px-4 font-bold"
+                                    style={{ backgroundColor: '#120c7a', border: 'none' }}
+                                    onClick={handleSavePeriodConfig}
+                                  >
+                                    Save Period Config
+                                  </button>
+                                </div>
+
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-sm">
+                                    <thead>
+                                      <tr className="text-left text-slate-500 border-b border-slate-200">
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Type</th>
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Allocate</th>
+                                        <th className="py-3 pr-4 font-bold uppercase tracking-widest text-[10px]">Credit</th>
+                                        <th className="py-3 font-bold uppercase tracking-widest text-[10px]">Periods</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {[["lecture", "Lecture"], ["tutor", "Tutor"], ["practical", "Practical"]].map(([type, label]) => {
+                                        const config = getPeriodConfig(selectedConfigReg)[type];
+                                        return (
+                                          <tr key={type} className="border-b border-slate-100 last:border-0">
+                                            <td className="py-4 pr-4 font-bold text-slate-700">{label}</td>
+                                            <td className="py-4 pr-4">
+                                              <input
+                                                type="number"
+                                                min="1"
+                                                className="form-control max-w-[100px]"
+                                                value={config.allocate}
+                                                onChange={(e) => handlePeriodChange(type, "allocate", e.target.value)}
+                                              />
+                                            </td>
+                                            <td className="py-4 pr-4">
+                                              <input
+                                                type="number"
+                                                step="0.5"
+                                                min="0"
+                                                className="form-control max-w-[100px]"
+                                                value={config.credit}
+                                                onChange={(e) => handlePeriodChange(type, "credit", e.target.value)}
+                                              />
+                                            </td>
+                                            <td className="py-4">
+                                              <input
+                                                type="number"
+                                                min="1"
+                                                className="form-control max-w-[100px]"
+                                                value={config.periods}
+                                                onChange={(e) => handlePeriodChange(type, "periods", e.target.value)}
+                                              />
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </div>
+                          )}
         {/* Side-by-Side Tables Section */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mt-6 mb-5">
           {/* Left: Program & Department Overview Table */}

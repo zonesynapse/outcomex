@@ -53,7 +53,7 @@ export default function Upload() {
     const regKey = sanitizeKey(regulation);
     
     const deptRefs = [
-      { dept: syllabusDept, ref: dbRef(rtdb, `courses/${progKey}/${syllabusDept}/${regKey}`) },
+      { dept: syllabusDept, ref: dbRef(rtdb, `courses/${progKey}/${sanitizeKey(syllabusDept)}/${regKey}`) },
       { dept: "Overall", ref: dbRef(rtdb, `courses/${progKey}/Overall/${regKey}`) }
     ];
 

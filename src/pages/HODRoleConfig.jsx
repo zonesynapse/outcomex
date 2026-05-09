@@ -12,6 +12,11 @@ import {
   Trash2,
   Search,
   Check,
+  Send,
+  Inbox,
+  ExternalLink,
+  X,
+  ArrowRight,
   User
 } from "lucide-react";
 import Layout from "../components/Layout";
@@ -32,9 +37,17 @@ export default function HODRoleConfig() {
 
   const [currentUserData, setCurrentUserData] = useState(null);
   const [facultyList, setFacultyList] = useState([]);
+  const [usersMap, setUsersMap] = useState({});
   const [syllabusData, setSyllabusData] = useState(null);
   const [assignments, setAssignments] = useState({});
   const [allAssignments, setAllAssignments] = useState({}); // Global assignments for department
+
+  // Request States
+  const [incomingRequests, setIncomingRequests] = useState([]);
+  const [sentRequests, setSentRequests] = useState([]);
+  const [fulfilledRequests, setFulfilledRequests] = useState([]);
+  const [requestModal, setRequestModal] = useState({ open: false, subject: null });
+  const [targetDept, setTargetDept] = useState("");
   
   // Filter States
   const [programme, setProgramme] = useState("");
@@ -47,6 +60,7 @@ export default function HODRoleConfig() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
+  const [activeTab, setActiveTab] = useState("allocation"); // "allocation" or "requests"
   const [searchTerm, setSearchTerm] = useState("");
 
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
@@ -85,12 +99,47 @@ export default function HODRoleConfig() {
       onValue(usersRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
+          setUsersMap(data);
           const filtered = Object.values(data).filter(
             u => u.department === currentUserData.department && u.isApproved && u.email !== masterAdminEmail
           );
           setFacultyList(filtered);
         }
       });
+    }
+  }, [currentUserData]);
+
+  // 2.1 Fetch Inter-Dept Requests
+  useEffect(() => {
+    if (currentUserData?.department) {
+      const deptKey = sanitizeKey(currentUserData.department);
+      
+      // Fetch Incoming
+      const incomingRef = ref(rtdb, `inter_dept_requests/incoming/${deptKey}`);
+      const unsubIncoming = onValue(incomingRef, (snapshot) => {
+        const data = snapshot.val();
+        setIncomingRequests(data ? Object.values(data).filter(r => r.status === 'pending') : []);
+      });
+
+      // Fetch Sent
+      const outgoingRef = ref(rtdb, `inter_dept_requests/outgoing/${deptKey}`);
+      const unsubOutgoing = onValue(outgoingRef, (snapshot) => {
+        const data = snapshot.val();
+        setSentRequests(data ? Object.values(data) : []);
+      });
+
+      // Fetch Fulfilled (Requests I handled)
+      const fulfilledRef = ref(rtdb, `inter_dept_requests/fulfilled/${deptKey}`);
+      const unsubFulfilled = onValue(fulfilledRef, (snapshot) => {
+        const data = snapshot.val();
+        setFulfilledRequests(data ? Object.values(data) : []);
+      });
+
+      return () => {
+        unsubIncoming();
+        unsubOutgoing();
+        unsubFulfilled();
+      };
     }
   }, [currentUserData]);
 
@@ -236,6 +285,130 @@ export default function HODRoleConfig() {
     setAssignments(newAssignments);
   };
 
+  const handleSendRequest = async () => {
+    if (!targetDept || !requestModal.subject) return;
+    
+    setSaving(true);
+    try {
+      const reqId = Date.now().toString();
+      const payload = {
+        id: reqId,
+        fromDept: currentUserData.department,
+        toDept: targetDept,
+        subjectCode: requestModal.subject.code,
+        subjectName: requestModal.subject.name,
+        programme,
+        batch,
+        academicYear,
+        semester,
+        status: 'pending',
+        requestedAt: Date.now()
+      };
+
+      await set(ref(rtdb, `inter_dept_requests/incoming/${sanitizeKey(targetDept)}/${reqId}`), payload);
+      await set(ref(rtdb, `inter_dept_requests/outgoing/${sanitizeKey(currentUserData.department)}/${reqId}`), payload);
+      
+      showToast("Request sent to other HOD successfully!");
+      setRequestModal({ open: false, subject: null });
+      setTargetDept("");
+    } catch (err) {
+      showToast("Failed to send request", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleProcessRequest = async (request, facultyUid, action) => {
+    setSaving(true);
+    try {
+      const updates = {};
+      const status = action === 'accept' ? 'accepted' : 'rejected';
+      const fromKey = sanitizeKey(request.fromDept);
+      const toKey = sanitizeKey(request.toDept);
+
+      if (action === 'accept') {
+        const progKey = formatProgrammeKey(request.programme);
+        const assignPath = `subject_assignments/${progKey}/${fromKey}/${sanitizeKey(request.batch)}/${sanitizeKey(request.academicYear)}/${request.semester}/${facultyUid}`;
+        
+        // Add subject to faculty assignments
+        const snap = await get(ref(rtdb, assignPath));
+        const current = snap.val() || [];
+        updates[assignPath] = [...new Set([...current, request.subjectCode])];
+      }
+
+      const statusUpdate = { 
+        ...request, 
+        status, 
+        allocatedFacultyUid: facultyUid || null,
+        processedAt: Date.now() 
+      };
+
+      updates[`inter_dept_requests/incoming/${toKey}/${request.id}`] = null; // Remove from active inbox
+      updates[`inter_dept_requests/outgoing/${fromKey}/${request.id}`] = statusUpdate;
+      
+      // Log in a history node for the fulfiller
+      updates[`inter_dept_requests/fulfilled/${toKey}/${request.id}`] = statusUpdate;
+
+      await update(ref(rtdb), updates);
+      showToast(`Request ${status} successfully!`);
+    } catch (err) {
+      showToast("Error processing request", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdateFulfilledRequest = async (request, newFacultyUid) => {
+    if (!newFacultyUid || newFacultyUid === request.allocatedFacultyUid) return;
+
+    setSaving(true);
+    try {
+      const updates = {};
+      const fromKey = sanitizeKey(request.fromDept);
+      const toKey = sanitizeKey(request.toDept);
+      const progKey = formatProgrammeKey(request.programme);
+      const batchKey = sanitizeKey(request.batch);
+      const ayKey = sanitizeKey(request.academicYear);
+      const sem = request.semester;
+
+      // 1. Remove subject from old faculty's assignments
+      if (request.allocatedFacultyUid) {
+        const oldAssignPath = `subject_assignments/${progKey}/${fromKey}/${batchKey}/${ayKey}/${sem}/${request.allocatedFacultyUid}`;
+        const oldSnap = await get(ref(rtdb, oldAssignPath));
+        const oldSubs = Array.isArray(oldSnap.val()) ? oldSnap.val() : [];
+        updates[oldAssignPath] = oldSubs.filter(code => code !== request.subjectCode);
+      }
+
+      // 2. Add subject to new faculty's assignments
+      const newAssignPath = `subject_assignments/${progKey}/${fromKey}/${batchKey}/${ayKey}/${sem}/${newFacultyUid}`;
+      const newSnap = await get(ref(rtdb, newAssignPath));
+      const newSubs = Array.isArray(newSnap.val()) ? newSnap.val() : [];
+      updates[newAssignPath] = [...new Set([...newSubs, request.subjectCode])];
+
+      const statusUpdate = { 
+        ...request, 
+        allocatedFacultyUid: newFacultyUid,
+        processedAt: Date.now() 
+      };
+
+      updates[`inter_dept_requests/outgoing/${fromKey}/${request.id}`] = statusUpdate;
+      updates[`inter_dept_requests/fulfilled/${toKey}/${request.id}`] = statusUpdate;
+
+      await update(ref(rtdb), updates);
+      showToast("Assigned faculty updated successfully!");
+    } catch (err) {
+      showToast("Error updating faculty", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const allOtherDepts = useMemo(() => {
+    const depts = [];
+    Object.values(deptMap).forEach(list => depts.push(...list));
+    return [...new Set(depts)].filter(d => d !== currentUserData?.department);
+  }, [deptMap, currentUserData]);
+
   const handleSaveAssignments = async () => {
     if (!programme || !batch || !academicYear || !semester || !syllabusDept) {
       showToast("Please select all filters before saving", "error");
@@ -356,22 +529,189 @@ export default function HODRoleConfig() {
               <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg">
                 <Users size={28} />
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-zinc-800">Faculty Course Allocation</h1>
-                <p className="text-zinc-500 text-sm">Assign subjects to faculty members in {currentUserData?.department}</p>
+              <div className="space-y-1">
+                <h1 className="text-2xl font-black text-zinc-800 tracking-tight">Faculty Course Allocation</h1>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded uppercase tracking-widest border border-blue-100">{currentUserData?.department}</span>
+                  <p className="text-zinc-400 text-xs font-medium">Internal & Inter-Departmental Management</p>
+                </div>
               </div>
             </div>
-            <button
-              onClick={handleSaveAssignments}
-              disabled={saving}
-              className="flex items-center justify-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg shadow-green-900/20 transition-all disabled:opacity-50"
-            >
-              {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={20} />}
-              Allocate
-            </button>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200 self-center">
+                <button 
+                  onClick={() => setActiveTab("allocation")}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${activeTab === "allocation" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+                >
+                  <Users size={14} /> Allocation
+                </button>
+                <button 
+                  onClick={() => setActiveTab("requests")}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${activeTab === "requests" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+                >
+                  <Inbox size={14} /> Requests 
+                  {incomingRequests.length > 0 && <span className="bg-red-500 text-white text-[8px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">{incomingRequests.length}</span>}
+                </button>
+              </div>
+              {activeTab === "allocation" && (
+                <button
+                  onClick={handleSaveAssignments}
+                  disabled={saving}
+                  className="flex items-center justify-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-lg shadow-green-900/20 transition-all disabled:opacity-50"
+                >
+                  {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={20} />}
+                  Save Changes
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
+        {activeTab === "requests" ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {/* Incoming Section */}
+            <div className="space-y-8">
+              <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Inbox className="text-blue-600" size={20} />
+                <h2 className="text-lg font-bold text-zinc-800">Incoming Faculty Requests</h2>
+              </div>
+              <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden min-h-[200px]">
+                {incomingRequests.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-[200px] text-zinc-400">
+                    <CheckCircle2 size={40} className="mb-2 opacity-20" />
+                    <p className="text-sm font-medium">No pending requests.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-zinc-100">
+                    {incomingRequests.map(req => (
+                      <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-4">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">{req.fromDept} is requesting</p>
+                            <h3 className="font-bold text-zinc-800">{req.subjectCode} - {req.subjectName}</h3>
+                            <p className="text-xs text-zinc-500 font-medium mt-1">{req.programme} • {req.batch} • Sem {req.semester}</p>
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded">Pending</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <label className="text-[10px] font-bold text-zinc-400 uppercase w-full">Select Faculty to Fulfill:</label>
+                          <div className="flex w-full gap-2">
+                            <select className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs font-bold text-zinc-700 outline-none" id={`fulfill-${req.id}`}>
+                              <option value="">Choose Faculty...</option>
+                              {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
+                            </select>
+                            <button 
+                              onClick={() => {
+                                const uid = document.getElementById(`fulfill-${req.id}`).value;
+                                if (uid) handleProcessRequest(req, uid, 'accept');
+                                else showToast("Please select a faculty member", "error");
+                              }}
+                              className="px-4 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-all shadow-md shadow-green-900/10"
+                            >
+                              Assign
+                            </button>
+                            <button 
+                              onClick={() => handleProcessRequest(req, null, 'reject')}
+                              className="px-4 py-2 bg-zinc-100 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-200 transition-all"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              </div>
+
+              {/* Fulfilled Section (History & Management) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="text-emerald-600" size={20} />
+                  <h2 className="text-lg font-bold text-zinc-800">Fulfilled & Allocated</h2>
+                </div>
+                <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+                  {fulfilledRequests.length === 0 ? (
+                    <div className="p-10 text-center text-zinc-400 text-sm font-medium italic">
+                      No fulfilled requests yet.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-zinc-100">
+                      {fulfilledRequests.map(req => (
+                        <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-3">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Provided to {req.fromDept}</p>
+                              <h3 className="font-bold text-zinc-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
+                              <p className="text-[10px] text-zinc-400 font-medium">{req.batch} • Sem {req.semester}</p>
+                            </div>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{req.status}</span>
+                          </div>
+                          
+                          {req.status === 'accepted' && (
+                            <div className="flex items-center gap-3">
+                              <div className="flex-1">
+                                <select 
+                                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-[11px] font-bold text-zinc-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all" 
+                                  value={req.allocatedFacultyUid || ""}
+                                  onChange={(e) => handleUpdateFulfilledRequest(req, e.target.value)}
+                                  disabled={saving}
+                                >
+                                  {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
+                                </select>
+                              </div>
+                              <span className="text-[9px] font-black text-zinc-400 uppercase whitespace-nowrap">Change Faculty</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Sent Section */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <ExternalLink className="text-[#120c7a]" size={18} />
+                <h2 className="text-sm font-black text-slate-700 uppercase tracking-wider">My Sent Requests</h2>
+              </div>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[300px]">
+                {sentRequests.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-[300px] text-zinc-400">
+                    <Send size={40} className="mb-2 opacity-20" />
+                    <p className="text-xs font-bold uppercase tracking-tighter opacity-40">No outgoing requests</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {sentRequests.map(req => (
+                      <div key={req.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                        <div className="space-y-1">
+                          <h3 className="font-bold text-slate-800 text-sm leading-tight">{req.subjectCode}</h3>
+                          <p className="text-[10px] font-black text-blue-600 uppercase tracking-tight">Requested to: {req.toDept}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                            req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 
+                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                          }`}>
+                            {req.status}
+                          </span>
+                          {req.status === 'accepted' && <p className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">Assigned: <span className="text-emerald-600 font-black">{usersMap[req.allocatedFacultyUid]?.facultyName || 'Done'}</span></p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Filters Section */}
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -602,9 +942,20 @@ export default function HODRoleConfig() {
                   </div>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                     {availableSubjects.map(sub => {
-                      const allocatedFacultyUid = Object.keys(assignments).find(uid => assignments[uid].includes(sub.code));
-                      const allocatedFaculty = facultyList.find(f => f.uid === allocatedFacultyUid);
-                      const isAllocated = !!allocatedFaculty;
+                      const allocatedFacultyUid = Object.keys(assignments).find(uid => assignments[uid]?.includes(sub.code));
+                      const allocatedFaculty = allocatedFacultyUid ? usersMap[allocatedFacultyUid] : null;
+                      const isAllocated = !!allocatedFacultyUid;
+
+                      // Check if a request for this subject has been sent and is pending
+                      const pendingSentRequest = sentRequests.find(req => 
+                        req.subjectCode === sub.code && 
+                        req.programme === programme && // Ensure it's for the current context
+                        req.batch === batch &&
+                        req.academicYear === academicYear &&
+                        req.semester === semester &&
+                        req.status === 'pending'
+                      );
+                      const hasPendingSentRequest = !!pendingSentRequest;
 
                       return (
                         <div 
@@ -612,7 +963,7 @@ export default function HODRoleConfig() {
                           className={`p-3 border rounded-xl space-y-1 transition-all ${
                             isAllocated 
                               ? "bg-emerald-50 border-emerald-200 shadow-sm" 
-                              : "bg-zinc-50 border-zinc-100"
+                              : (hasPendingSentRequest ? "bg-amber-50 border-amber-100 shadow-sm" : "bg-zinc-50 border-zinc-100")
                           }`}
                         >
                           <div className="flex items-center justify-between">
@@ -624,22 +975,34 @@ export default function HODRoleConfig() {
                                 <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[8px] font-bold uppercase tracking-tight">
                                   <Check size={8} /> Allocated
                                 </span>
-                              ) : (
-                                <span className="px-1.5 py-0.5 bg-zinc-200 text-zinc-500 rounded text-[8px] font-bold uppercase tracking-tight">
-                                  Pending
+                              ) : hasPendingSentRequest ? (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-bold uppercase tracking-tight">
+                                  <Send size={8} /> Request Sent
                                 </span>
+                              ) : ( // Default "Pending" state
+                                <div className="flex items-center gap-2">
+                                  <span className="px-1.5 py-0.5 bg-zinc-200 text-zinc-500 rounded text-[8px] font-bold uppercase tracking-tight">
+                                    Pending
+                                  </span>
+                                  <button 
+                                    onClick={() => setRequestModal({ open: true, subject: sub })}
+                                    className="px-1.5 py-0.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[8px] font-black uppercase tracking-tight transition-colors border border-blue-100"
+                                  >
+                                    Request External
+                                  </button>
+                                </div>
                               )}
                             </div>
                             <span className="text-[10px] font-bold text-zinc-400">{sub.credits} Credits</span>
                           </div>
-                          <p className={`text-xs font-medium leading-relaxed ${isAllocated ? "text-emerald-900" : "text-zinc-700"}`}>
+                          <p className={`text-xs font-medium leading-relaxed ${isAllocated ? "text-emerald-900" : (hasPendingSentRequest ? "text-amber-900" : "text-zinc-700")}`}>
                             {sub.name}
                           </p>
                           {isAllocated && (
                             <div className="pt-1.5 flex items-center gap-1.5 border-t border-emerald-100/50 mt-1.5">
                               <User size={10} className="text-emerald-500" />
                               <span className="text-[10px] font-bold text-emerald-600 truncate">
-                                {allocatedFaculty.facultyName}
+                                {allocatedFaculty?.facultyName || allocatedFaculty?.displayName || 'Assigned'}
                               </span>
                             </div>
                           )}
@@ -652,6 +1015,56 @@ export default function HODRoleConfig() {
             </div>
           </div>
         </div>
+        </>
+        )}
+
+        {/* Request Modal */}
+        {requestModal.open && (
+          <div className="fixed inset-0 bg-zinc-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 transition-all duration-300">
+            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-zinc-100">
+              <div className="bg-[#120c7a] p-6 text-white flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-bold">External Faculty Request</h3>
+                  <p className="text-blue-100 text-xs mt-1 opacity-80">Request support for {requestModal.subject?.code}</p>
+                </div>
+                <button onClick={() => setRequestModal({ open: false, subject: null })} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-8 space-y-6">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subject to Allocate</p>
+                   <h4 className="font-bold text-zinc-800">{requestModal.subject?.name}</h4>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Department HOD</label>
+                  <div className="relative">
+                    <select 
+                      value={targetDept}
+                      onChange={(e) => setTargetDept(e.target.value)}
+                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700"
+                    >
+                      <option value="">Choose Department...</option>
+                      {allOtherDepts.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  </div>
+                  <p className="text-[10px] text-zinc-400 italic pl-1">The request will be sent to the HOD of this department.</p>
+                </div>
+
+                <button 
+                  onClick={handleSendRequest}
+                  disabled={!targetDept || saving}
+                  className="w-full py-4 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
+                >
+                  {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
+                  Send Request
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );
