@@ -64,6 +64,7 @@ export default function Dashboard() {
   const [loadingQPs, setLoadingQPs] = useState(false);
   const [selectedQP, setSelectedQP] = useState(null);
   const [showQPModal, setShowQPModal] = useState(false);
+  const [showLogTemplateModal, setShowLogTemplateModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [modal, setModal] = useState({ show: false, type: 'alert', title: '', message: '', onConfirm: null });
@@ -1042,6 +1043,23 @@ export default function Dashboard() {
     return consolidationChildren.find(c => c.key === consolidationView) || null;
   }, [consolidationChildren, consolidationView]);
 
+  const selectedInternalAssessment = useMemo(() => {
+    if (module !== "consolidation") return null;
+    if (!selectedConsolidationChild) return null;
+    if (consolidationView === "final") return null;
+    if (selectedConsolidationChild.isUniversity) return null;
+    if (selectedConsolidationChild.isIndirect) return null;
+    return selectedConsolidationChild;
+  }, [module, selectedConsolidationChild, consolidationView]);
+
+  const selectedInternalAssessmentDate = useMemo(() => {
+    const rawDate = selectedInternalAssessment?.data?._meta?.updated_at || selectedInternalAssessment?.data?._meta?.saved_at;
+    if (!rawDate) return "";
+    const d = new Date(rawDate);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-GB");
+  }, [selectedInternalAssessment]);
+
   const indirectCoAverages = useMemo(() => {
     const isIndirectView = !!selectedConsolidationChild?.isIndirect;
     if (!isIndirectView || !consolidationData?.studentTotals) return null;
@@ -1063,6 +1081,72 @@ export default function Dashboard() {
 
     return { totalStudents, averages };
   }, [selectedConsolidationChild, consolidationData, students]);
+
+  const logAnalysisResults = useMemo(() => {
+    if (!consolidationData || !students.length) return null;
+    
+    const cutoff = Number(mappingCutoff) || 50;
+    const totalStudents = students.length;
+    
+    const coKeys = Object.keys(consolidationData.maxMarks || {}).filter(k => /^CO\d+/i.test(k));
+    const totalMaxMarks = coKeys.reduce((sum, co) => sum + (Number(consolidationData.maxMarks[co]) || 0), 0);
+
+    let presentCount = 0;
+    let absentCount = 0;
+    let passedCount = 0;
+    let failedCount = 0;
+
+    const ranges = {
+      r0_24: { count: 0, regs: [] },
+      r25_49: { count: 0, regs: [] },
+      r50_59: { count: 0, regs: [] },
+      r60_74: { count: 0, regs: [] },
+      r75_90: { count: 0, regs: [] },
+      r91_100: { count: 0, regs: [] }
+    };
+    const absenteesList = [];
+
+    students.forEach(s => {
+      const sdata = consolidationData.studentTotals[s.reg];
+      const isPresent = sdata && coKeys.some(k => typeof sdata[k] === 'number');
+      
+      if (!isPresent) {
+        absentCount++;
+        absenteesList.push({ reg: s.reg, name: s.name });
+      } else {
+        presentCount++;
+        const studentTotalMarks = coKeys.reduce((sum, co) => sum + (Number(sdata[co]) || 0), 0);
+        const percentage = totalMaxMarks > 0 ? (studentTotalMarks / totalMaxMarks) * 100 : 0;
+        
+        if (percentage >= cutoff) {
+          passedCount++;
+        } else {
+          failedCount++;
+        }
+
+        // Categorize into ranges
+        if (percentage < 25) { ranges.r0_24.count++; ranges.r0_24.regs.push(s.reg); }
+        else if (percentage < 50) { ranges.r25_49.count++; ranges.r25_49.regs.push(s.reg); }
+        else if (percentage < 60) { ranges.r50_59.count++; ranges.r50_59.regs.push(s.reg); }
+        else if (percentage < 75) { ranges.r60_74.count++; ranges.r60_74.regs.push(s.reg); }
+        else if (percentage <= 90) { ranges.r75_90.count++; ranges.r75_90.regs.push(s.reg); }
+        else { ranges.r91_100.count++; ranges.r91_100.regs.push(s.reg); }
+      }
+    });
+
+    const passPercentage = totalStudents > 0 ? ((passedCount / totalStudents) * 100).toFixed(2) : "0";
+
+    return {
+      total: totalStudents,
+      present: presentCount,
+      absent: absentCount,
+      passed: passedCount,
+      failed: failedCount,
+      passPercentage,
+      ranges,
+      absentees: absenteesList
+    };
+  }, [consolidationData, students, mappingCutoff]);
 
   // Download consolidation as CSV (Excel can open CSV)
   const downloadConsolidationCSV = () => {
@@ -1154,8 +1238,65 @@ export default function Dashboard() {
     }
   };
 
+  const logTableStyle = {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "10px",
+    border: "1.5px solid #000"
+  };
+
+  const logCellStyle = {
+    border: "1px solid #000",
+    padding: "4px"
+  };
+
+  const printLogTemplate = () => {
+    try {
+      const contentEl = document.getElementById('log-print-content');
+      const content = contentEl ? contentEl.innerHTML : null;
+      if (!content) {
+        showAlert('Print error', 'Nothing to print');
+        return;
+      }
+
+      const win = window.open('', '_blank');
+      const styles = `
+        <style>
+          @page { size: A4; margin: 10mm; }
+          html,body { margin:0; padding:0; font-family: Arial, sans-serif; color: #111; }
+          table { border-collapse: collapse; width: 100%; }
+          td, th { border: 1px solid #000; padding: 4px; font-size: 10px; }
+        </style>
+      `;
+
+      win.document.write('<!doctype html><html><head><title>Internal Assessment Log</title>' + styles + '</head><body>' + content + '</body></html>');
+      win.document.close();
+      win.focus();
+      setTimeout(() => { try { win.print(); win.close(); } catch (e) { console.error(e); } }, 500);
+    } catch (err) {
+      console.error(err);
+      showAlert('Print error', 'Unable to print the log template.');
+    }
+  };
+
   return (
     <Layout title="Dashboard">
+      <style>{`
+        @media print {
+          @page { size: A4; margin: 0; }
+          body * { visibility: hidden; }
+          #log-report-print-area, #log-report-print-area * { visibility: visible; }
+          #log-report-print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 210mm;
+            box-shadow: none !important;
+          }
+          .no-print { display: none !important; }
+          .fixed, .overflow-y-auto { position: static !important; overflow: visible !important; }
+        }
+      `}</style>
       {/* Main Content */}
       <div className="p-6 md:p-10 max-w-6xl mx-auto">
         {/* Selection Card */}
@@ -1378,7 +1519,18 @@ export default function Dashboard() {
             {/* Consolidation View Selector */}
             {(module === "consolidation" || module === "log-report") && extraSubject && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">{module === "log-report" ? "Assessment" : "Consolidation View"}</label>
+                <div className="flex items-center justify-between gap-2 ml-1">
+                  <label className="text-sm font-bold text-zinc-600">{module === "log-report" ? "Assessment" : "Consolidation View"}</label>
+                  {selectedInternalAssessment && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLogTemplateModal(true)}
+                      className="bg-[#120c7a] hover:bg-[#1a1298] text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm"
+                    >
+                      Generate Log
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <select
                     value={consolidationView}
@@ -2050,6 +2202,156 @@ export default function Dashboard() {
               <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/50">
                 <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
                   <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showLogTemplateModal && selectedInternalAssessment && (
+          <div className="fixed inset-0 bg-black/60 z-[120] flex items-center justify-center p-4 backdrop-blur-md">
+            <div className="bg-white rounded-3xl w-full max-w-5xl h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
+              <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center shrink-0 no-print">
+                <div className="flex items-center gap-3">
+                  <div className="bg-blue-100 p-2 rounded-xl text-blue-600">
+                    <FileText size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-zinc-800 leading-tight">Internal Assessment Log Template</h3>
+                    <p className="text-xs text-zinc-500">{selectedInternalAssessment.label || "Internal Assessment"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={printLogTemplate}
+                    className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm"
+                  >
+                    <Download size={16} />
+                    Export PDF
+                  </button>
+                  <button
+                    onClick={() => setShowLogTemplateModal(false)}
+                    className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-all"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/60">
+                <div id="log-print-content" className="bg-white shadow-lg mx-auto" style={{ width: "210mm", minHeight: "297mm", padding: "16mm 14mm", color: "#111", fontFamily: "Arial, sans-serif" }}>
+                  <div style={{ position: "relative", minHeight: "calc(297mm - 32mm)" }}>
+                  <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, marginBottom: "12px", letterSpacing: "0.2px" }}>
+                    PARTICULARS OF RESULT ANALYSIS FOR IA-I / IA-II MODEL
+                  </div>
+
+                  <div style={{ fontSize: "11px", marginBottom: "6px" }}>
+                    <strong>Subject Code & Name:</strong> {extraSubject || "________________"}
+                  </div>
+                  <div style={{ fontSize: "11px", marginBottom: "8px" }}>
+                    <strong>Minimum Pass Percentage:</strong> {mappingCutoff || "_____"}
+                  </div>
+
+                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>Date of Exam</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. of Students</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Present</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Absent</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Passed</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Failed</th>
+                        <th style={{ ...logCellStyle, textAlign: "left" }}>Pass %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ ...logCellStyle, height: "28px" }}>{selectedInternalAssessmentDate}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.total || ""}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.present || ""}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.absent || ""}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.passed || ""}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.failed || ""}</td>
+                        <td style={logCellStyle}>{logAnalysisResults?.passPercentage || ""}%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>RESULT ANALYSIS</div>
+                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...logCellStyle, width: "18%" }}>Range</th>
+                        <th style={logCellStyle}>0% to 24%</th>
+                        <th style={logCellStyle}>25% to 49%</th>
+                        <th style={logCellStyle}>50% to 59%</th>
+                        <th style={logCellStyle}>60% to 74%</th>
+                        <th style={logCellStyle}>75% to 90%</th>
+                        <th style={logCellStyle}>91% to 100%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={logCellStyle}>Total No. of Students</td>
+                        <td style={{ ...logCellStyle, height: "26px", textAlign: "center" }}>{logAnalysisResults?.ranges?.r0_24?.count || ""}</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r25_49?.count || ""}</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r50_59?.count || ""}</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r60_74?.count || ""}</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r75_90?.count || ""}</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r91_100?.count || ""}</td>
+                      </tr>
+                      <tr>
+                        <td style={logCellStyle}>Reg No. of Students</td>
+                        <td style={{ ...logCellStyle, height: "56px", fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r0_24?.regs.join(', ') || ""}</td>
+                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r25_49?.regs.join(', ') || ""}</td>
+                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r50_59?.regs.join(', ') || ""}</td>
+                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r60_74?.regs.join(', ') || ""}</td>
+                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r75_90?.regs.join(', ') || ""}</td>
+                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r91_100?.regs.join(', ') || ""}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>DETAILS OF ABSENTEES</div>
+                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...logCellStyle, width: "12%" }}>S.No</th>
+                        <th style={{ ...logCellStyle, width: "33%" }}>Reg.No. of Student</th>
+                        <th style={logCellStyle}>Name of Student</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(logAnalysisResults?.absentees || []).map((s, idx) => (
+                        <tr key={s.reg || idx}>
+                          <td style={{ ...logCellStyle, height: "22px", textAlign: "center" }}>{idx + 1}</td>
+                          <td style={logCellStyle}>{s.reg}</td>
+                          <td style={logCellStyle}>{s.name}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <table style={{ ...logTableStyle, marginTop: "18px", position: 'absolute', bottom: '16mm', left: 0, right: 0, width: '100%', tableLayout: 'fixed' }}>
+                    <tbody>
+                      <tr>
+                        <td style={{ ...logCellStyle, height: "34px", width: "33.33%", textAlign: "center" }}></td>
+                        <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
+                        <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
+                      </tr>
+                      <tr>
+                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Faculty Member</td>
+                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the HOD</td>
+                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Principal</td>
+                      </tr>
+                      <tr>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  </div>
                 </div>
               </div>
             </div>

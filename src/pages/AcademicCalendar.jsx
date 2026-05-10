@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { rtdb, auth } from "../firebase";
-import { ref, onValue, set, get, push, remove } from "firebase/database";
+import { ref, onValue, set, get, push, remove, update } from "firebase/database";
+import { onAuthStateChanged } from "firebase/auth";
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -28,20 +29,25 @@ export default function AcademicCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState({});
   const [officialDoc, setOfficialDoc] = useState(null);
+  const [ciaConfigs, setCiaConfigs] = useState([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   
   // Form State
-  const [newEvent, setNewEvent] = useState({ title: "", type: "Holiday", description: "", time: "" });
+  const [newEvent, setNewEvent] = useState({ title: "", type: "Holiday", description: "", time: "", fromDate: "", toDate: "", ciaId: "" });
   const [userRole, setUserRole] = useState(null);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (user) {
-      get(ref(rtdb, `users/${user.uid}`)).then(snap => {
-        if (snap.exists()) setUserRole(snap.val().role);
-      });
-    }
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        get(ref(rtdb, `users/${user.uid}`)).then(snap => {
+          if (snap.exists()) setUserRole(snap.val().role);
+        });
+      } else {
+        setUserRole(null);
+      }
+    });
+    return () => unsubscribeAuth();
   }, []);
 
   // Fetch Data
@@ -54,8 +60,23 @@ export default function AcademicCalendar() {
     const eventsRef = ref(rtdb, `academic_calendar_events`);
     const unsubEvents = onValue(eventsRef, (snap) => setEvents(snap.val() || {}));
     
-    return () => { unsubDoc(); unsubEvents(); };
+    // Fetch CIA Configs for linking
+    const ciaRef = ref(rtdb, 'cia_configs');
+    const unsubCia = onValue(ciaRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        setCiaConfigs(Object.entries(data).map(([id, val]) => ({ id, ...val })));
+      }
+    });
+    
+    return () => { unsubDoc(); unsubEvents(); unsubCia(); };
   }, []);
+
+  useEffect(() => {
+    if (showEventModal && selectedDate) {
+      setNewEvent(prev => ({ ...prev, fromDate: selectedDate, toDate: selectedDate }));
+    }
+  }, [showEventModal, selectedDate]);
 
   // Calendar Helper Functions
   const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
@@ -82,15 +103,56 @@ export default function AcademicCalendar() {
   const monthName = currentDate.toLocaleString('default', { month: 'long' });
   const year = currentDate.getFullYear();
 
+  const isAdmin = userRole === 'Admin';
+  const canManage = userRole === 'Admin' || userRole === 'HOD';
+
   const handleAddEvent = async () => {
-    if (!newEvent.title || !selectedDate) return;
-    const path = `academic_calendar_events/${selectedDate}`;
+    if (!newEvent.title || !newEvent.fromDate || !newEvent.toDate) return;
     
-    const newEventRef = push(ref(rtdb, path));
-    await set(newEventRef, { ...newEvent, id: newEventRef.key, createdAt: new Date().toISOString() });
+    const start = new Date(newEvent.fromDate);
+    const end = new Date(newEvent.toDate);
     
+    if (end < start) {
+      alert("End date cannot be before start date.");
+      return;
+    }
+
+    const updates = {};
+    const dateCursor = new Date(start);
+    
+    // Add event entry for each day in range
+    while (dateCursor <= end) {
+      const dateStr = dateCursor.toISOString().split('T')[0];
+      const eventRef = push(ref(rtdb, `academic_calendar_events/${dateStr}`));
+      
+      updates[`academic_calendar_events/${dateStr}/${eventRef.key}`] = {
+        ...newEvent,
+        id: eventRef.key,
+        eventDate: dateStr,
+        createdAt: new Date().toISOString()
+      };
+      
+      dateCursor.setDate(dateCursor.getDate() + 1);
+    }
+
+    // If linked to a CIA, update the CIA configuration dates in Curriculum
+    if (newEvent.type === 'Exam' && newEvent.ciaId) {
+      updates[`cia_configs/${newEvent.ciaId}/startDate`] = newEvent.fromDate;
+      updates[`cia_configs/${newEvent.ciaId}/endDate`] = newEvent.toDate;
+      if (newEvent.time) updates[`cia_configs/${newEvent.ciaId}/examTime`] = newEvent.time;
+      
+      // Also set the main examDate used by generators
+      updates[`cia_configs/${newEvent.ciaId}/examDate`] = newEvent.fromDate;
+    }
+
+    try {
+      await update(ref(rtdb), updates);
+    } catch (err) {
+      console.error("Save error:", err);
+    }
+
     setShowEventModal(false);
-    setNewEvent({ title: "", type: "Holiday", description: "", time: "" });
+    setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: "", toDate: "", ciaId: "" });
   };
 
   const handleDeleteEvent = async (date, eventId) => {
@@ -266,7 +328,10 @@ export default function AcademicCalendar() {
                     <motion.div 
                       key={dayObj.date}
                       whileHover={{ y: -5, scale: 1.02 }} // Removed isAdmin check from here
-                      onClick={() => { if (isAdmin) { setSelectedDate(dayObj.date); setShowEventModal(true); }}}
+                      onClick={() => { 
+                        setSelectedDate(dayObj.date); 
+                        setShowEventModal(true); 
+                      }}
                       className={`min-h-[60px] md:min-h-[80px] relative p-2 rounded-2xl border transition-all cursor-pointer flex flex-col group ${bgClass}`}
                     >
                       <span className={`text-xs md:text-base font-black ${textClass} group-hover:scale-110 transition-transform`}>
@@ -312,7 +377,12 @@ export default function AcademicCalendar() {
                 <div className="bg-[#120c7a] p-8 text-white flex justify-between items-center">
                   <div>
                     <h3 className="text-2xl font-black">Manage Events</h3>
-                    <p className="text-blue-100 text-sm opacity-80">{selectedDate}</p>
+                    <p className="text-blue-100 text-sm opacity-80">
+                      {newEvent.fromDate === newEvent.toDate 
+                        ? newEvent.fromDate 
+                        : `${newEvent.fromDate} to ${newEvent.toDate}`
+                      }
+                    </p>
                   </div>
                   <button onClick={() => setShowEventModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                     <X size={28} />
@@ -331,29 +401,72 @@ export default function AcademicCalendar() {
                             <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{ev.type}</p>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => handleDeleteEvent(selectedDate, ev.id)}
-                          className="p-2 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        {isAdmin && (
+                          <button 
+                            onClick={() => handleDeleteEvent(selectedDate, ev.id)}
+                            className="p-2 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
 
                   {/* New Event Form */}
-                  <div className="space-y-4 pt-6 border-t border-zinc-100">
-                    <div className="grid grid-cols-2 gap-4">
+                  {canManage && (
+                    <div className="space-y-4 pt-6 border-t border-zinc-100">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">From Date</label>
+                        <input 
+                          type="date" 
+                          value={newEvent.fromDate}
+                          onChange={e => setNewEvent({...newEvent, fromDate: e.target.value})}
+                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">To Date</label>
+                        <input 
+                          type="date" 
+                          value={newEvent.toDate}
+                          onChange={e => setNewEvent({...newEvent, toDate: e.target.value})}
+                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Event Title</label>
                         <input 
                           type="text" 
                           value={newEvent.title}
-                          onChange={e => setNewEvent({...newEvent, title: e.target.value})}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setNewEvent(prev => {
+                              const update = { ...prev, title: val };
+                              // If CIA is selected, we keep the linked title but allow manual override
+                              return update;
+                            });
+                          }}
                           className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
                           placeholder="Independence Day"
                         />
                       </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Time (Optional)</label>
+                        <input 
+                          type="time" 
+                          value={newEvent.time}
+                          onChange={e => setNewEvent({...newEvent, time: e.target.value})}
+                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Type</label>
                         <select 
@@ -364,16 +477,32 @@ export default function AcademicCalendar() {
                           {Object.keys(EVENT_TYPES).map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
+                      
+                      {newEvent.type === 'Exam' && (
+                        <div className="space-y-1 animate-in fade-in zoom-in-95">
+                          <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest ml-1">Link to CIA (Curriculum)</label>
+                          <select 
+                            value={newEvent.ciaId}
+                            onChange={e => {
+                              const id = e.target.value;
+                              const config = ciaConfigs.find(c => c.id === id);
+                              setNewEvent(prev => ({
+                                ...prev, 
+                                ciaId: id, 
+                                title: config ? `${config.examName} (${config.program})` : prev.title
+                              }));
+                            }}
+                            className="w-full bg-blue-50 border-none rounded-2xl px-4 py-3 font-bold text-blue-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          >
+                            <option value="">-- Select CIA --</option>
+                            {ciaConfigs.map(c => (
+                              <option key={c.id} value={c.id}>{c.examName} - {c.program} ({c.regulation})</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Description (Optional)</label>
-                        <textarea 
-                          value={newEvent.description}
-                          onChange={e => setNewEvent({...newEvent, description: e.target.value})}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                          rows={2}
-                        />
-                    </div>
+                    
                     <button 
                       onClick={handleAddEvent}
                       className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
@@ -381,6 +510,7 @@ export default function AcademicCalendar() {
                       Add to Calendar
                     </button>
                   </div>
+                  )}
                 </div>
               </motion.div>
             </div>
