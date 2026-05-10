@@ -323,9 +323,10 @@ export default function Layout({ children, title }) {
   return (
     <div className="min-h-screen bg-[#f8f9fc] font-sans text-zinc-900">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap');
         
         body { font-family: 'Inter', sans-serif; }
+        .page-title { font-family: 'Inter', sans-serif; }
 
         .scrollbar-hide::-webkit-scrollbar {
           display: none;
@@ -383,7 +384,7 @@ export default function Layout({ children, title }) {
         >
           <Menu size={24} />
         </button>
-        <h1 className="flex-grow text-center text-white text-xl font-bold tracking-wide">{title}</h1>
+        <h3 className="flex-grow text-center text-white text-xl font-bold tracking-tight page-title uppercase">{title}</h3>
         
         <div className="relative" ref={profileRef}>
           <button 

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import Layout from "../components/Layout";
-import { rtdb } from "../firebase";
-import { ref, onValue, set } from "firebase/database";
+import { rtdb, auth } from "../firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { ref, onValue, set, get } from "firebase/database";
 import { Trash2, Save, ChevronDown, CheckCircle2 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
@@ -456,7 +457,7 @@ Statement: "${item.statement}"`;
         {/* Framework Selection */}
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
-            <h2 className="text-white font-bold text-sm">OBE Framework Selection</h2>
+            <h4 className="text-white font-bold text-sm">OBE Framework Selection</h4>
           </div>
           <div className="p-8">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -522,7 +523,7 @@ Statement: "${item.statement}"`;
         {/* Attainment & Survey Configuration */}
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
-            <h2 className="text-white font-bold text-sm">Attainment & Survey Configuration</h2>
+            <h4 className="text-white font-bold text-sm">Attainment & Survey Configuration</h4>
           </div>
           <div className="p-8 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -608,12 +609,12 @@ Statement: "${item.statement}"`;
         {/* PO / PSO Configuration */}
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
-            <h2 className="text-white font-bold text-sm">PO / PSO Configuration</h2>
+            <h4 className="text-white font-bold text-sm">PO / PSO Configuration</h4>
           </div>
           <div className="p-6 space-y-8">
             {/* PO Statements */}
             <div className="space-y-4">
-              <h3 className="text-md font-bold text-zinc-800">PO Statements</h3>
+              <h5 className="text-md font-bold text-zinc-800">PO Statements</h5>
               
               <div className="space-y-6">
                 {poData.map((po, poIdx) => (
@@ -731,7 +732,7 @@ Statement: "${item.statement}"`;
 
             {/* PSO Statements */}
             <div className="space-y-4">
-              <h3 className="text-md font-bold text-zinc-800">PSO Statements</h3>
+              <h5 className="text-md font-bold text-zinc-800">PSO Statements</h5>
               
               <div className="space-y-6">
                 {psoData.map((pso, psoIdx) => (

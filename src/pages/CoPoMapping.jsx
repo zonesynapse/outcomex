@@ -874,7 +874,7 @@ export default function CoPoMapping() {
         {/* Table Section */}
         <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100">
           <div className="bg-[#120c7a] px-6 py-3 flex justify-between items-center">
-            <h2 className="text-white font-bold text-sm">CO-PO Mapping Table</h2>
+            <h4 className="text-white font-bold text-sm">CO-PO Mapping Table</h4>
             <div className="flex gap-2">
               <button 
                 onClick={handleDownloadExcel}

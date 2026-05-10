@@ -267,10 +267,10 @@ export default function HODDashboard() {
       <div className="container mx-auto p-6 max-w-7xl">
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
           <div className="flex items-center justify-between gap-4 mb-6">
-            <h2 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
+            <h4 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
               <div className="w-2 h-8 bg-blue-600 rounded-full"></div>
               Forwarded Question Papers (Tasks)
-            </h2>
+            </h4>
             <div className="text-xs font-black bg-blue-100 text-blue-700 px-3 py-1 rounded-full uppercase tracking-widest">
               {taskCount} Task(s)
             </div>

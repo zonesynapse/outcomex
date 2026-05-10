@@ -47,7 +47,7 @@ export default function HODRoleConfig() {
   const [sentRequests, setSentRequests] = useState([]);
   const [fulfilledRequests, setFulfilledRequests] = useState([]);
   const [requestModal, setRequestModal] = useState({ open: false, subject: null });
-  const [targetDept, setTargetDept] = useState("");
+  const [targetDept, setTargetDept] = useState(""); // Department to send request to
   
   // Filter States
   const [programme, setProgramme] = useState("");
@@ -101,7 +101,7 @@ export default function HODRoleConfig() {
         if (data) {
           setUsersMap(data);
           const filtered = Object.values(data).filter(
-            u => u.department === currentUserData.department && u.isApproved && u.email !== masterAdminEmail
+            u => u.department === currentUserData.department && u.isApproved && u.email !== masterAdminEmail && u.email !== defaultAdminEmail
           );
           setFacultyList(filtered);
         }
@@ -530,7 +530,7 @@ export default function HODRoleConfig() {
                 <Users size={28} />
               </div>
               <div className="space-y-1">
-                <h1 className="text-2xl font-black text-zinc-800 tracking-tight">Faculty Course Allocation</h1>
+                <h4 className="text-2xl font-black text-zinc-800 tracking-tight">Faculty Course Allocation</h4>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded uppercase tracking-widest border border-blue-100">{currentUserData?.department}</span>
                   <p className="text-zinc-400 text-xs font-medium">Internal & Inter-Departmental Management</p>
@@ -568,19 +568,19 @@ export default function HODRoleConfig() {
         </div>
 
         {activeTab === "requests" ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
             {/* Incoming Section */}
-            <div className="space-y-8">
+            <div className="space-y-6">
               <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <Inbox className="text-blue-600" size={20} />
-                <h2 className="text-lg font-bold text-zinc-800">Incoming Faculty Requests</h2>
+                <Inbox className="text-[#120c7a]" size={18} />
+                <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">Incoming Requests</h5>
               </div>
-              <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden min-h-[200px]">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[200px]">
                 {incomingRequests.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-[200px] text-zinc-400">
+                  <div className="flex flex-col items-center justify-center h-[200px] text-slate-400">
                     <CheckCircle2 size={40} className="mb-2 opacity-20" />
-                    <p className="text-sm font-medium">No pending requests.</p>
+                    <p className="text-xs font-bold uppercase tracking-tighter opacity-40">No pending requests</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-zinc-100">
@@ -588,17 +588,16 @@ export default function HODRoleConfig() {
                       <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-4">
                         <div className="flex justify-between items-start">
                           <div>
-                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">{req.fromDept} is requesting</p>
-                            <h3 className="font-bold text-zinc-800">{req.subjectCode} - {req.subjectName}</h3>
-                            <p className="text-xs text-zinc-500 font-medium mt-1">{req.programme} • {req.batch} • Sem {req.semester}</p>
+                            <p className="text-[9px] font-black text-blue-600 uppercase tracking-[0.1em] mb-1">{req.fromDept}</p>
+                            <h3 className="font-bold text-slate-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
+                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.programme} • {req.batch} • Sem {req.semester}</p>
                           </div>
-                          <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded">Pending</span>
+                          <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase">Pending</span>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <label className="text-[10px] font-bold text-zinc-400 uppercase w-full">Select Faculty to Fulfill:</label>
-                          <div className="flex w-full gap-2">
-                            <select className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs font-bold text-zinc-700 outline-none" id={`fulfill-${req.id}`}>
-                              <option value="">Choose Faculty...</option>
+                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50">
+                          <div className="flex w-full gap-2 items-center">
+                            <select className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all" id={`fulfill-${req.id}`}>
+                              <option value="">Select Faculty to Fulfill...</option>
                               {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
                             </select>
                             <button 
@@ -607,13 +606,13 @@ export default function HODRoleConfig() {
                                 if (uid) handleProcessRequest(req, uid, 'accept');
                                 else showToast("Please select a faculty member", "error");
                               }}
-                              className="px-4 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-all shadow-md shadow-green-900/10"
+                              className="px-3 py-1.5 bg-[#120c7a] text-white rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-blue-800 transition-all"
                             >
                               Assign
                             </button>
                             <button 
                               onClick={() => handleProcessRequest(req, null, 'reject')}
-                              className="px-4 py-2 bg-zinc-100 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-200 transition-all"
+                              className="px-3 py-1.5 bg-slate-50 text-slate-400 rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-red-50 hover:text-red-500 transition-all"
                             >
                               Reject
                             </button>
@@ -629,32 +628,32 @@ export default function HODRoleConfig() {
               {/* Fulfilled Section (History & Management) */}
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="text-emerald-600" size={20} />
-                  <h2 className="text-lg font-bold text-zinc-800">Fulfilled & Allocated</h2>
+                  <CheckCircle2 className="text-emerald-600" size={18} />
+                  <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">Fulfilled & Allocated</h5>
                 </div>
-                <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                   {fulfilledRequests.length === 0 ? (
-                    <div className="p-10 text-center text-zinc-400 text-sm font-medium italic">
-                      No fulfilled requests yet.
+                    <div className="p-10 text-center text-slate-400 text-xs font-bold uppercase tracking-tighter opacity-40 italic">
+                      No fulfilled requests
                     </div>
                   ) : (
-                    <div className="divide-y divide-zinc-100">
+                    <div className="divide-y divide-slate-100">
                       {fulfilledRequests.map(req => (
-                        <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-3">
+                        <div key={req.id} className="p-4 hover:bg-slate-50/50 transition-colors space-y-2">
                           <div className="flex justify-between items-start">
                             <div>
-                              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Provided to {req.fromDept}</p>
-                              <h3 className="font-bold text-zinc-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
-                              <p className="text-[10px] text-zinc-400 font-medium">{req.batch} • Sem {req.semester}</p>
+                              <p className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.1em] mb-1">Fulfilled for {req.fromDept}</p>
+                              <h6 className="font-bold text-slate-800 text-sm leading-tight">{req.subjectCode} - {req.subjectName}</h6>
+                              <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
                             </div>
-                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{req.status}</span>
+                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{req.status}</span>
                           </div>
                           
                           {req.status === 'accepted' && (
                             <div className="flex items-center gap-3">
                               <div className="flex-1">
                                 <select 
-                                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-[11px] font-bold text-zinc-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all" 
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
                                   value={req.allocatedFacultyUid || ""}
                                   onChange={(e) => handleUpdateFulfilledRequest(req, e.target.value)}
                                   disabled={saving}
@@ -662,7 +661,7 @@ export default function HODRoleConfig() {
                                   {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
                                 </select>
                               </div>
-                              <span className="text-[9px] font-black text-zinc-400 uppercase whitespace-nowrap">Change Faculty</span>
+                              <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest whitespace-nowrap">Change Faculty</span>
                             </div>
                           )}
                         </div>
@@ -676,12 +675,12 @@ export default function HODRoleConfig() {
             {/* Sent Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <ExternalLink className="text-[#120c7a]" size={18} />
-                <h2 className="text-sm font-black text-slate-700 uppercase tracking-wider">My Sent Requests</h2>
+                <ExternalLink className="text-[#120c7a]" size={18} /> {/* Changed icon color to match theme */}
+                <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">My Sent Requests</h5>
               </div>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[300px]">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[200px]">
                 {sentRequests.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-[300px] text-zinc-400">
+                  <div className="flex flex-col items-center justify-center h-[200px] text-slate-400">
                     <Send size={40} className="mb-2 opacity-20" />
                     <p className="text-xs font-bold uppercase tracking-tighter opacity-40">No outgoing requests</p>
                   </div>
@@ -695,9 +694,9 @@ export default function HODRoleConfig() {
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
                         </div>
                         <div className="flex flex-col items-end">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
-                            req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 
-                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${ // Adjusted padding and font size
+                            req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' :
+                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600' // Consistent color palette
                           }`}>
                             {req.status}
                           </span>
@@ -783,10 +782,10 @@ export default function HODRoleConfig() {
           {/* Faculty List */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+              <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
                 <Users size={20} className="text-[#120c7a]" />
                 Faculty Members
-              </h2>
+              </h3>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
                 <input 
@@ -804,7 +803,7 @@ export default function HODRoleConfig() {
                 <div key={faculty.uid} className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5 space-y-4 hover:border-[#120c7a]/30 transition-all">
                   <div className="flex items-start justify-between">
                     <div>
-                      <h3 className="font-bold text-zinc-800">{faculty.displayName || faculty.facultyName}</h3>
+                      <h5 className="font-bold text-zinc-800">{faculty.displayName || faculty.facultyName}</h5>
                       <p className="text-xs text-zinc-500 font-medium">{faculty.facultyId} • {faculty.designation}</p>
                     </div>
                     {faculty.uid === auth.currentUser?.uid && (
@@ -912,10 +911,10 @@ export default function HODRoleConfig() {
 
           {/* Syllabus Info */}
           <div className="space-y-4">
-            <h2 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+            <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
               <BookOpen size={20} className="text-[#120c7a]" />
               Syllabus Overview
-            </h2>
+            </h3>
             <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-6">
               {!semester ? (
                 <div className="text-center py-10 space-y-3">
@@ -1021,17 +1020,17 @@ export default function HODRoleConfig() {
         {/* Request Modal */}
         {requestModal.open && (
           <div className="fixed inset-0 bg-zinc-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 transition-all duration-300">
-            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-zinc-100">
-              <div className="bg-[#120c7a] p-6 text-white flex justify-between items-center">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-zinc-100">
+              <div className="bg-[#120c7a] p-5 text-white flex justify-between items-center">
                 <div>
-                  <h3 className="text-xl font-bold">External Faculty Request</h3>
-                  <p className="text-blue-100 text-xs mt-1 opacity-80">Request support for {requestModal.subject?.code}</p>
+                  <h3 className="text-lg font-bold">External Faculty Request</h3>
+                  <p className="text-blue-100 text-[10px] mt-1 opacity-80">Request support for {requestModal.subject?.code}</p>
                 </div>
                 <button onClick={() => setRequestModal({ open: false, subject: null })} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                   <X size={20} />
                 </button>
               </div>
-              <div className="p-8 space-y-6">
+              <div className="p-6 space-y-5">
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subject to Allocate</p>
                    <h4 className="font-bold text-zinc-800">{requestModal.subject?.name}</h4>
@@ -1043,7 +1042,7 @@ export default function HODRoleConfig() {
                     <select 
                       value={targetDept}
                       onChange={(e) => setTargetDept(e.target.value)}
-                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700"
+                      className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700"
                     >
                       <option value="">Choose Department...</option>
                       {allOtherDepts.map(d => <option key={d} value={d}>{d}</option>)}
@@ -1056,7 +1055,7 @@ export default function HODRoleConfig() {
                 <button 
                   onClick={handleSendRequest}
                   disabled={!targetDept || saving}
-                  className="w-full py-4 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
+                  className="w-full py-3 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
                 >
                   {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
                   Send Request

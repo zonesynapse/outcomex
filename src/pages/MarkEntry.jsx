@@ -1493,7 +1493,7 @@ export default function MarkEntry() {
             </div>
           )}
           <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
-            <h2 className="text-white font-bold text-sm">Mark Entry Table</h2>
+            <h4 className="text-white font-bold text-sm">Mark Entry Table</h4>
             <div className="flex gap-2">
               {isIndirectAssessment && (
                 <div className="flex items-center gap-3">

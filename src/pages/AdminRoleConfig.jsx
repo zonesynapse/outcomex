@@ -302,10 +302,10 @@ export default function AdminRoleConfig() {
         <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg">
-              <Shield size={28} />
+              <Shield size={25} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-zinc-800">Role & Access Configuration</h1>
+              <h3 className="text-2xl font-bold text-zinc-800">Role & Access Configuration</h3>
               <p className="text-zinc-500 text-sm">Manage user roles and dynamic page permissions</p>
             </div>
           </div>

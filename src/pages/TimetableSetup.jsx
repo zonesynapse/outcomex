@@ -297,7 +297,7 @@ export default function TimetableSetup() {
               <Calendar size={24} />
             </div>
             <div>
-              <h2 className="text-white font-bold text-xl leading-tight">Class Parameters</h2>
+              <h4 className="text-white font-bold text-xl leading-tight">Class Parameters</h4>
               <p className="text-blue-200 text-xs font-medium uppercase tracking-widest">Define your daily schedule structure</p>
             </div>
           </div>
@@ -378,7 +378,7 @@ export default function TimetableSetup() {
         <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden">
           <div className="bg-emerald-600 px-8 py-4 flex items-center gap-3">
             <Clock4 className="text-white" size={20} />
-            <h2 className="text-white font-bold text-lg">Period Times</h2>
+            <h4 className="text-white font-bold text-lg">Period Times</h4>
           </div>
           <div className="p-8">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -437,7 +437,7 @@ export default function TimetableSetup() {
 
         {savedTemplates.length > 0 && (
           <div className="pt-4 pb-10">
-            <h2 className="text-2xl font-black text-[#120c7a] mb-6">Saved Templates Allocation</h2>
+            <h4 className="text-2xl font-black text-[#120c7a] mb-6">Saved Templates Allocation</h4>
 
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 max-w-3xl">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">

@@ -229,7 +229,7 @@ export default function CourseEnrolment() {
               <Users size={28} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-zinc-800">Course Enrolment</h1>
+              <h3 className="text-2xl font-bold text-zinc-800">Course Enrolment</h3>
               <p className="text-zinc-500 text-sm">Assign students to specific subjects and electives</p>
             </div>
           </div>

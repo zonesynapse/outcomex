@@ -158,7 +158,7 @@ export default function BloomsTaxonomy() {
                 <BrainCircuit size={32} />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-zinc-800">Taxonomy Domains</h1>
+                <h3 className="text-2xl font-bold text-zinc-800">Taxonomy Domains</h3>
                 <p className="text-zinc-500 text-sm mt-1">Configure Bloom&apos;s Taxonomy domains and their cognitive levels</p>
               </div>
             </div>
@@ -195,7 +195,7 @@ export default function BloomsTaxonomy() {
               <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-300">
                 <Layers size={40} />
               </div>
-              <h3 className="text-xl font-bold text-zinc-800">No Domains Configured</h3>
+              <h5 className="text-xl font-bold text-zinc-800">No Domains Configured</h5>
               <p className="text-zinc-500 mt-2 max-w-md mx-auto">Start by adding a taxonomy domain like &quot;Cognitive Domain&quot; or &quot;Affective Domain&quot; above.</p>
             </div>
           ) : (
@@ -211,7 +211,7 @@ export default function BloomsTaxonomy() {
                       <Layers size={20} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-zinc-800">{domain.name}</h3>
+                      <h5 className="text-lg font-bold text-zinc-800">{domain.name}</h5>
                       <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                         {Array.isArray(domain.levels) ? domain.levels.length : 0} Levels Defined
                       </p>

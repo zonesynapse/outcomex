@@ -180,10 +180,10 @@ export default function FacultyDashboard() {
         {/* Assigned subjects */}
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
           <div className="flex items-center justify-between gap-4 mb-6">
-            <h2 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
+            <h4 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
               <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
               Assigned Subjects
-            </h2>
+            </h4>
             <div className="text-xs font-black bg-blue-100 text-[#120c7a] px-3 py-1 rounded-full uppercase tracking-widest">
               {assignedCount} Total
             </div>
@@ -254,10 +254,10 @@ export default function FacultyDashboard() {
         {/* Pending approvals */}
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
           <div className="flex items-center justify-between gap-4 mb-6">
-            <h2 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
+            <h4 className="text-2xl font-bold text-[#120c7a] flex items-center gap-3">
               <div className="w-2 h-8 bg-purple-600 rounded-full"></div>
               My Question Papers
-            </h2>
+            </h4>
             <div className="text-xs font-black bg-purple-100 text-purple-700 px-3 py-1 rounded-full uppercase tracking-widest">
               {pendingQps.length} Papers
             </div>

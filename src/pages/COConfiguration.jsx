@@ -801,7 +801,7 @@ Return an exhaustive list of all plausible mappings.`;
         {/* Filter Card */}
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
-            <h2 className="text-white font-bold text-sm">CO - Configuration Parameters</h2>
+            <h4 className="text-white font-bold text-sm">CO - Configuration Parameters</h4>
           </div>
           <div className="p-8">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -888,7 +888,7 @@ Return an exhaustive list of all plausible mappings.`;
         {/* CO Configuration Card */}
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
-            <h2 className="text-white font-bold text-sm">CO - Configuration</h2>
+            <h4 className="text-white font-bold text-sm">CO - Configuration</h4>
             {regulation && subject && !isCourseBankSubject && (
               <button 
                 onClick={handleLoadExisting}
@@ -907,7 +907,7 @@ Return an exhaustive list of all plausible mappings.`;
                       <span className="w-8 h-8 flex items-center justify-center bg-[#120c7a] text-white rounded-lg font-bold text-xs shadow-sm">
                         {co.code}
                       </span>
-                      <h3 className="text-sm font-bold text-zinc-700">Course Outcome Details</h3>
+                      <h5 className="text-sm font-bold text-zinc-700">Course Outcome Details</h5>
                     </div>
                     <button 
                       onClick={() => handleRemoveCO(idx)} 

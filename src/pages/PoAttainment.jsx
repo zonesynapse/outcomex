@@ -1002,7 +1002,7 @@ export default function PoAttainment() {
               <div className="bg-[#120c7a] px-8 py-4 flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <Calculator className="text-white opacity-80" size={20} />
-                  <h2 className="text-white font-bold text-lg">PO Calculation Matrix (Targets) - Batch {formatBatchDisplay(batch)}</h2>
+                  <h4 className="text-white font-bold text-lg">PO Calculation Matrix (Targets) - Batch {formatBatchDisplay(batch)}</h4>
                 </div>
                 <button 
                   onClick={() => {
@@ -1142,7 +1142,7 @@ export default function PoAttainment() {
               <div className="bg-[#120c7a] px-8 py-4 flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <FileText className="text-white opacity-80" size={20} />
-                  <h2 className="text-white font-bold text-lg">PO Attainment Matrix - Batch {formatBatchDisplay(batch)}</h2>
+                  <h4 className="text-white font-bold text-lg">PO Attainment Matrix - Batch {formatBatchDisplay(batch)}</h4>
                 </div>
                 <button 
                   onClick={handleDownloadMatrixExcel}

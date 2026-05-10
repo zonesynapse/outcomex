@@ -3883,10 +3883,10 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               )}
             </div>
           )}
-          <h2 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">
+          <h4 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">
             <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
             Enter Questions
-          </h2>
+          </h4>
 
           
           {showQbEditor && (

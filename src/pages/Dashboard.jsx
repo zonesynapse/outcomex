@@ -550,7 +550,7 @@ export default function Dashboard() {
 
   // Fetch Students when filters change
   useEffect(() => {
-    if ((module === "students" || module === "consolidation") && programme && department && batch) {
+    if ((module === "students" || module === "consolidation" || module === "log-report") && programme && department && batch) {
       const progKey = formatProgrammeKey(programme);
       const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
       const studentRef = ref(rtdb, `students/${compositeKey}`);
@@ -588,7 +588,7 @@ export default function Dashboard() {
 
   // Fetch Syllabus when filters change
   useEffect(() => {
-    if ((module === "syllabus" || module === "consolidation") && programme && department && batch && semester) {
+    if ((module === "syllabus" || module === "consolidation" || module === "log-report") && programme && department && batch && semester) {
       const progKey = formatProgrammeKey(programme);
       const regulation = getRegulationForBatch(progKey, batch);
       if (!regulation) return; // Wait until regulation is loaded
@@ -647,7 +647,7 @@ export default function Dashboard() {
 
   // Fetch Consolidation Data
   useEffect(() => {
-    if (module === "consolidation" && programme && department && batch && academicYear && semester && extraSubject && students.length > 0) {
+    if ((module === "consolidation" || module === "log-report") && programme && department && batch && academicYear && semester && extraSubject && students.length > 0) {
       const subjectKeyParts = [batch, programme, department, extraSubject, academicYear, semester].map(sanitizeKey);
       const subjectKey = subjectKeyParts.join('_');
       const attainmentRef = ref(rtdb, `co_attainment/${subjectKey}`);
@@ -745,7 +745,7 @@ export default function Dashboard() {
   // Fetch mapping_summary for final attainment computation
   useEffect(() => {
     const fetchMappingData = async () => {
-      if (!(module === 'consolidation' && programme && batch && department && academicYear && semester && extraSubject)) return;
+      if (!((module === 'consolidation' || module === 'log-report') && programme && batch && department && academicYear && semester && extraSubject)) return;
       const progKey = formatProgrammeKey(programme);
       const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(getRegulationForBatch(progKey, batch))}_${sanitizeKey(extraSubject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
       try {
@@ -1242,9 +1242,9 @@ export default function Dashboard() {
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (e.target.value === "students") setLoadingStudents(true);
-                    if (e.target.value === "syllabus" || e.target.value === "consolidation") setLoadingSyllabus(true);
+                    if (e.target.value === "syllabus" || e.target.value === "consolidation" || e.target.value === "log-report") setLoadingSyllabus(true);
                     if (e.target.value === "question-paper-generator") setLoadingQPs(true);
-                    if (e.target.value === "consolidation") setLoadingConsolidation(true);
+                    if (e.target.value === "consolidation" || e.target.value === "log-report") setLoadingConsolidation(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
@@ -1254,6 +1254,7 @@ export default function Dashboard() {
                   <option value="question-paper-generator">Question Paper Generator</option>
                   <option value="timetable">Time Table</option>
                   <option value="consolidation">Consolidation</option>
+                  <option value="log-report">Log Report</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
               </div>
@@ -1348,7 +1349,7 @@ export default function Dashboard() {
             )}
 
             {/* Subject (Consolidation only) */}
-            {module === "consolidation" && (
+            {(module === "consolidation" || module === "log-report") && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
                 <div className="relative">
@@ -1375,9 +1376,9 @@ export default function Dashboard() {
             )}
 
             {/* Consolidation View Selector */}
-            {module === "consolidation" && extraSubject && (
+            {(module === "consolidation" || module === "log-report") && extraSubject && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">Consolidation View</label>
+                <label className="text-sm font-bold text-zinc-600 ml-1">{module === "log-report" ? "Assessment" : "Consolidation View"}</label>
                 <div className="relative">
                   <select
                     value={consolidationView}
@@ -1786,7 +1787,7 @@ export default function Dashboard() {
         )}
 
         {/* Consolidation Section */}
-        {module === "consolidation" && programme && department && batch && semester && extraSubject && (
+        {(module === "consolidation" || module === "log-report") && programme && department && batch && semester && extraSubject && (
           <div className="space-y-6">
             {/* CO Max Marks Summary */}
             <div className="bg-white rounded-3xl shadow-xl p-6 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1892,7 +1893,7 @@ export default function Dashboard() {
             </div>
 
             {/* Attainment Summary Section */}
-            {module === 'consolidation' && consolidationData && consolidationView === 'final' && (
+            {(module === 'consolidation' || module === 'log-report') && consolidationData && consolidationView === 'final' && (
               <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 mt-8">
                 <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex items-center gap-3">
                   <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white">
@@ -1957,7 +1958,7 @@ export default function Dashboard() {
             )}
 
             {/* Final Overall Attainment Summary (Combined Direct + Indirect) */}
-            {module === 'consolidation' && finalOverallAttainment && consolidationView === 'final' && (
+            {(module === 'consolidation' || module === 'log-report') && finalOverallAttainment && consolidationView === 'final' && (
               <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-400 mt-8">
                 <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex items-center gap-3">
                   <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center text-white">

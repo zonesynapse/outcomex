@@ -487,12 +487,12 @@ export default function Curriculum() {
         {/* Program & Regulation Configuration Card */}
         <div className="card shadow-sm border-0 rounded-3">
           <div className="card-body p-4 p-md-5">
-            <h2 className="card-title mb-4 font-bold text-2xl text-zinc-800">Program & Regulation Configuration</h2>
+            <h4 className="card-title mb-4 font-bold text-2xl text-zinc-800">Program & Regulation Configuration</h4>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* Add Program */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Add New Program</h3>
+                <h5 className="font-semibold text-lg mb-3">Add New Program</h5>
                 <div className="flex flex-col gap-2">
                   <div className="flex gap-2">
                     <input 
@@ -579,7 +579,7 @@ export default function Curriculum() {
 
               {/* Add Department */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Add New Department</h3>
+                <h5 className="font-semibold text-lg mb-3">Add New Department</h5>
                 <div className="flex flex-col gap-2">
                   <select 
                     className="form-select"
@@ -675,7 +675,7 @@ export default function Curriculum() {
 
               {/* Add Regulation */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Add New & Configure Regulation</h3>
+                <h5 className="font-semibold text-lg mb-3">Add New & Configure Regulation</h5>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
@@ -947,7 +947,7 @@ export default function Curriculum() {
 
               {/* Map Regulation to Batch */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Map Regulation to Batch</h3>
+                <h5 className="font-semibold text-lg mb-3">Map Regulation to Batch</h5>
                 <div className="flex flex-col gap-3">
                   <select 
                     className="form-select"
@@ -1117,10 +1117,10 @@ export default function Curriculum() {
           <div className="xl:col-span-5">
             <div className="card shadow-sm border-0 rounded-3 h-full">
               <div className="card-body p-4">
-                <h2 className="card-title mb-4 font-bold text-xl text-zinc-800 flex items-center gap-2">
+                <h4 className="card-title mb-4 font-bold text-xl text-zinc-800 flex items-center gap-2">
                   <i className="bi bi-diagram-3 text-blue-600"></i>
                   Program & Departments
-                </h2>
+                </h4>
                 <div className="table-responsive">
                   <table className="table table-hover align-middle border-top">
                     <thead className="bg-slate-50">
@@ -1188,10 +1188,10 @@ export default function Curriculum() {
           <div className="xl:col-span-7">
             <div className="card shadow-sm border-0 rounded-3 h-full">
               <div className="card-body p-4">
-                <h2 className="card-title mb-4 font-bold text-xl text-zinc-800 flex items-center gap-2">
+                <h4 className="card-title mb-4 font-bold text-xl text-zinc-800 flex items-center gap-2">
                   <i className="bi bi-link-45deg text-blue-600"></i>
                   Batch-Regulation Mappings
-                </h2>
+                </h4>
                 <div className="table-responsive">
                   <table className="table table-hover align-middle border-top">
                     <thead className="bg-slate-50">
@@ -1298,15 +1298,15 @@ export default function Curriculum() {
         {/* Grade Configuration Section */}
         <div className="card shadow-sm border-0 rounded-3 mt-6">
           <div className="card-body p-4 p-md-5">
-            <h2 className="card-title mb-4 font-bold text-2xl text-zinc-800 flex items-center gap-2">
+            <h4 className="card-title mb-4 font-bold text-2xl text-zinc-800 flex items-center gap-2">
               <Settings className="text-blue-600" size={24} />
               Grade to Mark Configuration
-            </h2>
+            </h4>
             <p className="text-sm text-slate-500 mb-4 italic">* Define grades and their corresponding marks for each regulation. These will be used in Mark Entry for University Exams.</p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Add Grade Definition</h3>
+                <h5 className="font-semibold text-lg mb-3">Add Grade Definition</h5>
                 <div className="flex flex-col gap-3">
                   <select 
                     className="form-select"
@@ -1361,7 +1361,7 @@ export default function Curriculum() {
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <h3 className="font-semibold text-lg mb-3">Existing Grade Definitions</h3>
+                <h5 className="font-semibold text-lg mb-3">Existing Grade Definitions</h5>
                 <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
                   {Object.entries(gradeConfigs).length > 0 ? (
                     Object.entries(gradeConfigs).map(([regKey, grades]) => (
@@ -1393,18 +1393,18 @@ export default function Curriculum() {
         {/* Batch Visibility Management Section */}
         <div className="card shadow-sm border-0 rounded-3 mt-6 mb-5">
           <div className="card-body p-4 p-md-5">
-            <h2 className="card-title mb-4 font-bold text-2xl text-zinc-800 flex items-center gap-2">
+            <h4 className="card-title mb-4 font-bold text-2xl text-zinc-800 flex items-center gap-2">
               <i className="bi bi-eye text-blue-600"></i>
               Batch Visibility Management
-            </h2>
+            </h4>
             <p className="text-sm text-slate-500 mb-4 italic">* Toggle off batches to hide them from user dropdowns. New batches are auto-created and cannot be deleted.</p>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {Object.keys(durations).map(progKey => (
                 <div key={progKey} className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <h3 className="font-bold text-lg text-[#120c7a] mb-3 border-b pb-2">
+                  <h5 className="font-bold text-lg text-[#120c7a] mb-3 border-b pb-2">
                     {formatProgDisplay(progKey)}
-                  </h3>
+                  </h5>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {Object.entries(batchStatus[progKey] || {})
                       .sort((a, b) => b[0].localeCompare(a[0]))
@@ -1448,7 +1448,7 @@ export default function Curriculum() {
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
               <div className="p-6">
-                <h3 className="text-xl font-bold text-zinc-800 mb-4">Edit Program</h3>
+                <h5 className="text-xl font-bold text-zinc-800 mb-4">Edit Program</h5>
                 <input
                   type="text"
                   className="form-control mb-3"
@@ -1471,7 +1471,7 @@ export default function Curriculum() {
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
               <div className="p-6">
-                <h3 className="text-xl font-bold text-zinc-800 mb-2">{modal.title}</h3>
+                <h5 className="text-xl font-bold text-zinc-800 mb-2">{modal.title}</h5>
                 <p className="text-zinc-600">{modal.message}</p>
               </div>
               <div className="bg-zinc-50 px-6 py-4 flex justify-end gap-3">
