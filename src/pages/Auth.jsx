@@ -16,6 +16,36 @@ import { useDepartments } from "../hooks/useDepartments";
 
 import { formatProgDisplay } from "../lib/utils";
 
+// Utility functions for input validation and sanitization
+const isValidEmail = (email) => {
+  // RFC 5322 simplified email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) return false;
+  if (email.length > 254) return false; // RFC 5321
+  const [local] = email.split('@');
+  if (local.length > 64) return false; // RFC 5321
+  return true;
+};
+
+const sanitizeText = (text, maxLength = 100) => {
+  if (!text || typeof text !== 'string') return '';
+  // Remove leading/trailing whitespace
+  let clean = text.trim();
+  // Limit length
+  clean = clean.substring(0, maxLength);
+  // Remove HTML/special characters that could be used for injection
+  clean = clean.replace(/[<>\"'`]/g, '');
+  return clean;
+};
+
+const sanitizeFacultyId = (id) => {
+  if (!id || typeof id !== 'string') return '';
+  // Allow alphanumeric and hyphens only
+  let clean = id.trim().substring(0, 50);
+  clean = clean.replace(/[^a-zA-Z0-9-]/g, '');
+  return clean;
+};
+
 export default function Auth() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -60,13 +90,29 @@ export default function Auth() {
     e.preventDefault();
     setError("");
     setMessage("");
+    
+    // Validate email format
+    const trimmedEmail = loginEmail.trim();
+    if (!isValidEmail(trimmedEmail)) {
+      setError("Please enter a valid email address.");
+      setLoading(false);
+      return;
+    }
+    
+    // Validate password length
+    if (!loginPassword || loginPassword.length < 6) {
+      setError("Please enter a valid password.");
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
       await setPersistence(auth, browserLocalPersistence);
-      const userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, loginPassword);
       const user = userCredential.user;
 
-      // Check approval status
+      // Check approval status (server-side validation on RTDB)
       const userRef = ref(rtdb, `users/${user.uid}`);
       const snapshot = await get(userRef);
       if (snapshot.exists()) {
@@ -97,27 +143,80 @@ export default function Auth() {
   const handleSignup = async (e) => {
     e.preventDefault();
     setError("");
+    
+    // Validate all required fields
+    if (!regFacultyName.trim()) {
+      setError("Faculty name is required.");
+      return;
+    }
+    if (!regFacultyId.trim()) {
+      setError("Faculty ID is required.");
+      return;
+    }
+    if (!regDateOfJoining) {
+      setError("Date of joining is required.");
+      return;
+    }
+    if (!regProgramme) {
+      setError("Programme is required.");
+      return;
+    }
+    if (!regDepartment) {
+      setError("Department is required.");
+      return;
+    }
+    if (!regDesignation) {
+      setError("Designation is required.");
+      return;
+    }
+    
+    // Validate email format
+    const trimmedEmail = regEmail.trim();
+    if (!isValidEmail(trimmedEmail)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    
+    // Validate password
     if (regPassword.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
     }
+    if (regPassword.length > 128) {
+      setError("Password is too long.");
+      return;
+    }
+    
+    // Sanitize text inputs to prevent injection attacks
+    const sanitizedFacultyName = sanitizeText(regFacultyName, 100);
+    const sanitizedFacultyId = sanitizeFacultyId(regFacultyId);
+    
+    if (!sanitizedFacultyName) {
+      setError("Faculty name contains invalid characters.");
+      return;
+    }
+    if (!sanitizedFacultyId) {
+      setError("Faculty ID contains invalid characters.");
+      return;
+    }
+    
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
+      const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, regPassword);
       const user = userCredential.user;
-      const fullDisplayName = `${regTitle} ${regFacultyName}`;
+      const fullDisplayName = `${regTitle} ${sanitizedFacultyName}`;
       await updateProfile(user, { displayName: fullDisplayName });
       
-      // Save user profile to Realtime Database
+      // Save user profile to Realtime Database (sanitized data)
       const isDefaultAdmin = user.email === defaultAdminEmail || user.email === masterAdminEmail;
       try {
         await set(ref(rtdb, `users/${user.uid}`), {
           uid: user.uid,
           email: user.email,
           title: regTitle,
-          facultyName: regFacultyName,
+          facultyName: sanitizedFacultyName,
           displayName: fullDisplayName,
-          facultyId: regFacultyId,
+          facultyId: sanitizedFacultyId,
           dateOfJoining: regDateOfJoining,
           programme: regProgramme,
           department: regDepartment,
@@ -154,13 +253,13 @@ export default function Auth() {
   };
 
   const handleForgotPassword = async () => {
-    if (!loginEmail) {
+    const trimmedEmail = loginEmail.trim();
+    if (!trimmedEmail) {
       setError("Please enter your email address in the email field first.");
       return;
     }
     
-    const emailRegex = /\S+@\S+\.\S+/;
-    if (!emailRegex.test(loginEmail)) {
+    if (!isValidEmail(trimmedEmail)) {
       setError("Please enter a valid email address.");
       return;
     }
@@ -169,9 +268,8 @@ export default function Auth() {
     setMessage("");
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, loginEmail);
+      await sendPasswordResetEmail(auth, trimmedEmail);
       setMessage("Password reset email sent! Please check your inbox and spam folder.");
-      // Clear error if any
       setError("");
     } catch (err) {
       console.error("Password Reset Error:", err);
@@ -186,7 +284,6 @@ export default function Auth() {
       } else {
         setError(err.message || "Failed to send reset email. Please try again.");
       }
-      // Clear message if any
       setMessage("");
     } finally {
       setLoading(false);
@@ -229,6 +326,7 @@ export default function Auth() {
               <input
                 type="email"
                 placeholder="Email"
+                maxLength="254"
                 className="w-full py-3.5 pl-5 pr-12 bg-[#eee] rounded-lg border-none outline-none text-base font-medium text-zinc-800 placeholder:text-zinc-400 placeholder:font-normal focus:ring-2 focus:ring-[#120c7a]"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
@@ -241,6 +339,7 @@ export default function Auth() {
               <input
                 type="password"
                 placeholder="Password"
+                maxLength="128"
                 className="w-full py-3.5 pl-5 pr-12 bg-[#eee] rounded-lg border-none outline-none text-base font-medium text-zinc-800 placeholder:text-zinc-400 placeholder:font-normal focus:ring-2 focus:ring-[#120c7a]"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
@@ -291,6 +390,7 @@ export default function Auth() {
                 <input
                   type="text"
                   placeholder="Faculty Name"
+                  maxLength="100"
                   className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
                   value={regFacultyName}
                   onChange={(e) => setRegFacultyName(e.target.value)}
@@ -304,6 +404,7 @@ export default function Auth() {
                 <input
                   type="text"
                   placeholder="Faculty ID"
+                  maxLength="50"
                   className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
                   value={regFacultyId}
                   onChange={(e) => setRegFacultyId(e.target.value)}
@@ -377,6 +478,7 @@ export default function Auth() {
               <input
                 type="email"
                 placeholder="Email"
+                maxLength="254"
                 className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
                 value={regEmail}
                 onChange={(e) => setRegEmail(e.target.value)}
@@ -388,6 +490,7 @@ export default function Auth() {
               <input
                 type="password"
                 placeholder="Password"
+                maxLength="128"
                 className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
                 value={regPassword}
                 onChange={(e) => setRegPassword(e.target.value)}

@@ -43,13 +43,13 @@ const allPossibleItems = [
   { id: "hod-role-configuration", icon: Users, label: "Faculty Course Allocation", path: "/hod-role-configuration" },
   { id: "po_and_pso_configuration", icon: Settings2, label: "PO's Configuration", path: "/po_and_pso_configuration" },
   { id: "upload", icon: Upload, label: "Student Namelist and Curriculum", path: "/upload" },
-  { id: "cia-configuration", icon: Settings2, label: "CIA Configuration", path: "/cia-configuration" },
+  // { id: "cia-configuration", icon: Settings2, label: "CIA Configuration", path: "/cia-configuration" },
   { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
   { id: "timetable", icon: Clock, label: "Time Table", path: "/tt" },
-  { id: "regulation-formation", icon: Settings2, label: "Regulation Formation", path: "/regulation-formation" },
+  // { id: "regulation-formation", icon: Settings2, label: "Regulation Formation", path: "/regulation-formation" },
   { id: "co-po", icon: Network, label: "CO-PO Mapping", path: "/co-po" },
   { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
   { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
@@ -68,19 +68,20 @@ const modules = [
     id: "ia",
     label: "IA",
     icon: Network,
-    itemIds: ["cia-configuration", "questionpaper", "markk"]
+    itemIds: ["questionpaper", "markk"]
   },
   {
     id: "academics",
     label: "Academics",
     icon: BookOpen,
-    itemIds: ["academic-calendar", "attendance", "timetable", "course-bank", "curriculum", "course-enrolment", "hod-role-configuration", "upload"]
+    itemIds: ["academic-calendar", "attendance", "timetable", "course-bank", "course-enrolment", "hod-role-configuration", "upload"]
   },
   {
     id: "config",
     label: "Config",
     icon: Settings2,
-    itemIds: ["info-configuration", "regulation-formation", "admin-roles"]
+    // itemIds: ["info-configuration", "regulation-formation", "admin-roles", "curriculum"]
+    itemIds: ["info-configuration", "admin-roles", "curriculum"]
   }
 ];
 
@@ -244,10 +245,9 @@ export default function Layout({ children, title }) {
     if (!user) return;
     try {
       const userRef = ref(rtdb, `users/${user.uid}`);
+      // Programme and Department are admin-managed. Only update signature here.
       await set(userRef, {
         ...userData,
-        programme: editData.programme,
-        department: editData.department,
         signatureUrl: editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl || "")
       });
       setIsEditingProfile(false);
@@ -453,40 +453,15 @@ export default function Layout({ children, title }) {
                       <div className="col-span-2 space-y-2">
                         <div className="space-y-1">
                           <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Programme</p>
-                          <select 
-                            className="w-full text-xs p-1.5 border rounded-lg outline-none focus:ring-1 focus:ring-blue-500"
-                            value={editData.programme}
-                            onChange={(e) => setEditData({ ...editData, programme: e.target.value, department: "" })}
-                          >
-                            <option value="">Select Programme</option>
-                            {Object.keys(allDepartments).map(prog => (
-                              <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
-                            ))}
-                          </select>
+                          <p className="text-sm font-semibold text-zinc-700">{formatProgDisplay(userData?.programme) || 'N/A'}</p>
                         </div>
                         <div className="space-y-1">
                           <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Department</p>
-                          <select 
-                            className="w-full text-xs p-1.5 border rounded-lg outline-none focus:ring-1 focus:ring-blue-500"
-                            value={editData.department}
-                            onChange={(e) => setEditData({ ...editData, department: e.target.value })}
-                            disabled={!editData.programme}
-                          >
-                            <option value="">Select Department</option>
-                            {editData.programme && allDepartments[editData.programme]?.map(dept => (
-                              <option key={dept} value={dept}>{dept}</option>
-                            ))}
-                          </select>
+                          <p className="text-sm font-semibold text-zinc-700">{userData?.department || 'N/A'}</p>
                         </div>
-                        <button 
-                          onClick={handleUpdateProfile}
-                          className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Check size={14} /> Save Changes
-                        </button>
                       </div>
                     </>
-                  ) : (
+                  ) : ( 
                     <>
                       <div className="space-y-1">
                         <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Programme</p>
@@ -545,6 +520,13 @@ export default function Layout({ children, title }) {
                         )}
                       </div>
                       <p className="text-[8px] text-zinc-400 text-center italic">Max size: 100KB, PNG with transparent background recommended</p>
+
+                      <button 
+                        onClick={handleUpdateProfile}
+                        className="w-full py-2 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Check size={14} /> Save Changes
+                      </button>
                     </div>
                   ) : (
                     <div className="bg-white rounded-xl p-3 border border-zinc-100 flex items-center justify-center min-h-[60px] shadow-sm">

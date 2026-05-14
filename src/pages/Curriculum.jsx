@@ -774,7 +774,7 @@ export default function Curriculum() {
                           <div>
                             <div className="flex items-center gap-2">
                               <Settings size={18} className="text-blue-200" />
-                              <h3 className="text-lg font-bold tracking-tight">Configuring {selectedConfigReg}</h3>
+                              <h4 className="text-lg font-bold tracking-tight">Configuring {selectedConfigReg}</h4>
                             </div>
                             <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest opacity-70">
                               {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : configType === 'period_config' ? 'Period Configuration' : 'Exam QP Versions'}

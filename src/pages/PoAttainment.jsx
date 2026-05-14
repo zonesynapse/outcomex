@@ -556,9 +556,12 @@ export default function PoAttainment() {
         setPoResults(poResultsArray);
         setPsoResults(psoResultsArray);
 
-        // Build Attainment matrixData
+        // Build Attainment matrixData (only include subjects that have mapping or attainment data for this batch)
         const semesterGroupsAtt = {};
         Object.entries(subjectOutcomes).forEach(([subCode, outcomes]) => {
+           const hasMapping = subjectMappingOutcomes[subCode] && Object.keys(subjectMappingOutcomes[subCode]).length > 0;
+           const hasOutcome = outcomes && Object.keys(outcomes).length > 0;
+           if (!hasMapping && !hasOutcome) return; // skip subjects not mapped to this batch and with no attainment
            const sem = subToSem[subCode] || "Unknown";
            if (!semesterGroupsAtt[sem]) semesterGroupsAtt[sem] = { semester: sem, subjects: [] };
            const subMeta = subMetadata[subCode];
@@ -576,9 +579,10 @@ export default function PoAttainment() {
         });
         setMatrixData(sortedSemestersAtt);
 
-        // Build Target matrixData
+        // Build Target matrixData (only include subjects that have mapping entries for this batch)
         const semesterGroupsTarget = {};
         Object.entries(subjectMappingOutcomes).forEach(([subCode, outcomes]) => {
+           if (!outcomes || Object.keys(outcomes).length === 0) return; // skip unmapped subjects
            const sem = subToSem[subCode] || "Unknown";
            if (!semesterGroupsTarget[sem]) semesterGroupsTarget[sem] = { semester: sem, subjects: [] };
            const subMeta = subMetadata[subCode];

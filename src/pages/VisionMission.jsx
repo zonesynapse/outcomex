@@ -166,6 +166,51 @@ export default function VisionMission() {
     }));
   };
 
+  const autoMap = () => {
+    const stopwords = new Set(['the','and','or','of','in','on','with','for','to','a','an','by','is','are','be','this','that','as','at','from','which','it']);
+    const tokenize = (text) => (String(text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).filter(w => !stopwords.has(w)));
+
+    const visibleMissions = missions.map(m => m.trim()).filter(m => m !== '');
+    const visiblePeos = peos.map(p => p.trim()).filter(p => p !== '');
+
+    const newMapping = {};
+
+    visiblePeos.forEach((peo, pIdx) => {
+      const pWords = new Set(tokenize(peo));
+      visibleMissions.forEach((mission, mIdx) => {
+        const mWords = tokenize(mission);
+        if (mWords.length === 0) return;
+        const intersection = mWords.filter(w => pWords.has(w)).length;
+        const score = intersection / Math.max(1, mWords.length);
+        let val = '-';
+        if (score >= 0.6) val = '3';
+        else if (score >= 0.3) val = '2';
+        else if (score >= 0.1) val = '1';
+        const pKey = String(pIdx);
+        const mKey = String(mIdx);
+        newMapping[pKey] = {
+          ...(newMapping[pKey] || {}),
+          [mKey]: val
+        };
+      });
+    });
+
+    // Merge with existing mapping to preserve manual edits, then set
+    setMapping(prev => {
+      const merged = { ...prev };
+      Object.keys(newMapping).forEach(p => {
+        merged[p] = {
+          ...(merged[p] || {}),
+          ...newMapping[p]
+        };
+      });
+      return merged;
+    });
+    setSuccessMessage('Auto-mapping applied');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2500);
+  };
+
   return (
     <Layout title="Vision and Mission">
       <style>{`
@@ -406,6 +451,14 @@ export default function VisionMission() {
                   style={{ backgroundColor: '#120c7a', border: 'none' }}
                 >
                   Add PEO
+                </button>
+                <button
+                  type="button"
+                  className="btn px-4 py-2 rounded-lg font-bold"
+                  onClick={autoMap}
+                  style={{ backgroundColor: '#120c7a', border: 'none', color: 'white' }}
+                >
+                  Auto-map (AI)
                 </button>
                 <button 
                   type="submit" 

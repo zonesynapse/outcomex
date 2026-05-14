@@ -1395,7 +1395,6 @@ export default function Dashboard() {
                   <option value="question-paper-generator">Question Paper Generator</option>
                   <option value="timetable">Time Table</option>
                   <option value="consolidation">Consolidation</option>
-                  <option value="log-report">Log Report</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
               </div>
@@ -1519,18 +1518,7 @@ export default function Dashboard() {
             {/* Consolidation View Selector */}
             {(module === "consolidation" || module === "log-report") && extraSubject && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2 ml-1">
-                  <label className="text-sm font-bold text-zinc-600">{module === "log-report" ? "Assessment" : "Consolidation View"}</label>
-                  {selectedInternalAssessment && (
-                    <button
-                      type="button"
-                      onClick={() => setShowLogTemplateModal(true)}
-                      className="bg-[#120c7a] hover:bg-[#1a1298] text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm"
-                    >
-                      Generate Log
-                    </button>
-                  )}
-                </div>
+                <label className="text-sm font-bold text-zinc-600 ml-1">{module === "log-report" ? "Assessment" : "Consolidation View"}</label>
                 <div className="relative">
                   <select
                     value={consolidationView}
@@ -1972,6 +1960,15 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
+                  {selectedInternalAssessment && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLogTemplateModal(true)}
+                      className="bg-[#120c7a] hover:bg-[#1a1298] text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm"
+                    >
+                      Generate Log
+                    </button>
+                  )}
                   <button
                     onClick={downloadConsolidationCSV}
                     className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg text-sm font-bold transition-all flex items-center gap-2"

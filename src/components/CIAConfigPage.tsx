@@ -189,7 +189,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     return true;
   });
 
-  const hasRequiredFilters = !!(program && regulation);
+  const hasRequiredFilters = !!regulation;
   const displayConfigs = hasRequiredFilters ? filteredConfigs : [];
 
   return (
@@ -201,10 +201,10 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           animate={{ opacity: 1, y: 0 }}
           className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-sm border border-slate-200"
         >
-          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+          <h4 className="text-xl font-semibold mb-6 flex items-center gap-2">
             <Plus className="w-5 h-5 text-[#120c7a]" />
             New Configuration
-          </h2>
+          </h4>
           
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
@@ -349,12 +349,12 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         {/* Configurations List */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-semibold flex items-center gap-2">
+            <h4 className="text-xl font-semibold flex items-center gap-2">
               Existing Configurations
               <span className="text-sm font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                 {displayConfigs.length}
               </span>
-            </h2>
+            </h4>
 
             {availableCourseTypes.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -386,7 +386,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                 </div>
               ) : !hasRequiredFilters ? (
                 <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-                  <p className="text-slate-500">Select programme, department, and regulation to view existing configurations.</p>
+                  <p className="text-slate-500">Select a regulation to view existing configurations.</p>
                 </div>
               ) : displayConfigs.length === 0 ? (
                 <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-300">

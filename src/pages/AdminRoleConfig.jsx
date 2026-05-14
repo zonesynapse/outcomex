@@ -5,6 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check } from "lucide-react";
 import Layout from "../components/Layout";
 import { formatProgDisplay } from "../lib/utils";
+import { useDepartments } from "../hooks/useDepartments";
 
 export default function AdminRoleConfig() {
   const [users, setUsers] = useState([]);
@@ -27,6 +28,7 @@ export default function AdminRoleConfig() {
   const [activeTab, setActiveTab] = useState("users"); // "users" or "permissions"
   const [rolePermissions, setRolePermissions] = useState({});
   const [savingPermissions, setSavingPermissions] = useState(false);
+  const { departments: allDepartments } = useDepartments();
 
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
   const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
@@ -255,6 +257,27 @@ export default function AdminRoleConfig() {
     }
   };
 
+  // Admin user programme/department management
+  const handleProgramChange = async (uid, newProgramme) => {
+    try {
+      await update(ref(rtdb, `users/${uid}`), { programme: newProgramme || null, department: "" });
+      showNotification("Programme updated");
+    } catch (err) {
+      console.error("Error updating programme:", err);
+      showNotification("Failed to update programme.");
+    }
+  };
+
+  const handleDepartmentChange = async (uid, newDepartment) => {
+    try {
+      await update(ref(rtdb, `users/${uid}`), { department: newDepartment || null });
+      showNotification("Department updated");
+    } catch (err) {
+      console.error("Error updating department:", err);
+      showNotification("Failed to update department.");
+    }
+  };
+
   const showNotification = (message) => {
     setToastMessage(message);
     setShowToast(true);
@@ -335,6 +358,7 @@ export default function AdminRoleConfig() {
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Faculty Name</th>
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Email</th>
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Designation</th>
+                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Programme</th>
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Department</th>
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Role</th>
                     <th className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center whitespace-nowrap">Status</th>
@@ -363,7 +387,29 @@ export default function AdminRoleConfig() {
                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{user.email}</td>
                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap font-medium">{user.designation || 'N/A'}</td>
                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
-                          {user.programme && user.department ? `${formatProgDisplay(user.programme)} - ${user.department}` : 'N/A'}
+                          <select
+                            value={user.programme || ""}
+                            onChange={(e) => handleProgramChange(user.uid, e.target.value)}
+                            className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
+                          >
+                            <option value="">Select Programme</option>
+                            {Object.keys(allDepartments).map(prog => (
+                              <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
+                          <select
+                            value={user.department || ""}
+                            onChange={(e) => handleDepartmentChange(user.uid, e.target.value)}
+                            disabled={!user.programme}
+                            className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
+                          >
+                            <option value="">Select Department</option>
+                            {user.programme && allDepartments[user.programme]?.map(dept => (
+                              <option key={dept} value={dept}>{dept}</option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <select

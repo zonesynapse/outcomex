@@ -527,17 +527,26 @@ export default function QuestionPaperGenerator() {
     
     const semNum = deriveSemesterNumber(selectedSemester);
     const courseType = subjectCourseDetails?.type;
+    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
+    const norm = (v) => String(v || '').trim().toLowerCase();
+    const selectedProg = norm(formatProgrammeKey(program));
+    const selectedDept = norm(department);
+    const selectedBatch = norm(batch);
+    const selectedAy = norm(academicYear);
+    const selectedReg = norm(regulation);
     
     return ciaConfigs.filter(config => 
-      formatProgDisplay(config.program) === formatProgDisplay(program) &&
-      (config.department === department || !config.department) &&
-      (!config.batch || config.batch === batch) &&
-      (!config.academicYear || config.academicYear === academicYear) &&
+      // Accept both programme-bound configs and regulation-level global configs.
+      (!norm(config.program) || norm(formatProgrammeKey(config.program)) === selectedProg) &&
+      (!norm(config.department) || norm(config.department) === selectedDept) &&
+      (!norm(config.batch) || norm(config.batch) === selectedBatch) &&
+      (!norm(config.academicYear) || norm(config.academicYear) === selectedAy) &&
       (!config.semester || String(config.semester) === semNum) &&
+      (!norm(config.regulation) || norm(config.regulation) === selectedReg) &&
       (assessmentType === 'Assignment' ? config.isAssignment : !config.isAssignment) &&
       (!courseType || !config.courseTypes || config.courseTypes.includes(courseType))
     );
-  }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject]);
+  }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
 
   const assignmentMarksMeta = useMemo(() => {
     const total = parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
