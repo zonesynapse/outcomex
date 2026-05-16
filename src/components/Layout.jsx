@@ -45,6 +45,7 @@ const allPossibleItems = [
   { id: "upload", icon: Upload, label: "Student Namelist and Curriculum", path: "/upload" },
   // { id: "cia-configuration", icon: Settings2, label: "CIA Configuration", path: "/cia-configuration" },
   { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
+  { id: "admission-enquiries", icon: Users, label: "Admission Enquiries", path: "/admissions/enquiries" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
@@ -69,6 +70,12 @@ const modules = [
     label: "IA",
     icon: Network,
     itemIds: ["questionpaper", "markk"]
+  },
+  {
+    id: "admission",
+    label: "Admission",
+    icon: Users,
+    itemIds: ["admission-enquiries"]
   },
   {
     id: "academics",

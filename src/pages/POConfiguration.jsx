@@ -739,7 +739,7 @@ Statement: "${item.statement}"`;
                   <div key={psoIdx} className="p-4 border border-zinc-200 rounded space-y-4">
                     <div className="space-y-1">
                       <div className="flex justify-between items-center">
-                        <label className="text-sm font-bold text-zinc-700">PSO Statement - {psoIdx + 1}</label>
+                        <label className="text-sm font-bold text-zinc-700">PSO Statement - {poData.length + psoIdx + 1}</label>
                         <button
                           onClick={() => handleGenerateCompsAndPIsWithAI('PSO', psoIdx)}
                           disabled={isGeneratingAI.active}
@@ -777,7 +777,7 @@ Statement: "${item.statement}"`;
                       {pso.competencies.map((comp, compIdx) => (
                         <div key={compIdx} className="p-4 bg-zinc-50 border border-zinc-200 rounded space-y-3">
                           <div className="space-y-1">
-                            <label className="text-sm font-bold text-zinc-700">Competency {psoIdx + 1}.{compIdx + 1}</label>
+                            <label className="text-sm font-bold text-zinc-700">Competency {poData.length + psoIdx + 1}.{compIdx + 1}</label>
                             <div className="relative">
                               <textarea
                                 className="w-full bg-white border border-zinc-300 rounded-lg px-3 py-2 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-blue-100 transition-all pr-10"
@@ -807,7 +807,7 @@ Statement: "${item.statement}"`;
                             </div>
                             {comp.pis.map((pi, piIdx) => (
                               <div key={piIdx} className="p-3 bg-blue-50/50 border border-blue-100 rounded-lg space-y-1">
-                                <label className="text-sm font-bold text-blue-900">PI {psoIdx + 1}.{compIdx + 1}.{piIdx + 1}</label>
+                                <label className="text-sm font-bold text-blue-900">PI {poData.length + psoIdx + 1}.{compIdx + 1}.{piIdx + 1}</label>
                                 <div className="relative">
                                   <textarea
                                     className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-blue-100 transition-all pr-10"

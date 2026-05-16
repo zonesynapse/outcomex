@@ -173,6 +173,27 @@ export default function QuestionPaperGenerator() {
     setQbQNo(String(next));
   }, [qpQuestions]);
 
+  // Added Effect: Sync qbMarks with partsConfig when qbQNo changes
+  useEffect(() => {
+    if (!qbQNo || isEditingQbRef.current || assessmentType !== 'Exam' || !partsConfig.length) return;
+
+    const numMatch = qbQNo.match(/\d+/);
+    if (!numMatch) return;
+    const num = parseInt(numMatch[0], 10);
+
+    let currentTotal = 0;
+    for (const part of partsConfig) {
+      const count = parseInt(part.numQuestions, 10) || 0;
+      const start = currentTotal + 1;
+      const end = currentTotal + count;
+      if (num >= start && num <= end) {
+        setQbMarks(part.marksPerQuestion);
+        break;
+      }
+      currentTotal += count;
+    }
+  }, [qbQNo, partsConfig, assessmentType]);
+
   // If editor-generated table provides Q.No list, prefer that for the dropdown
   useEffect(() => {
     if (qbAvailableQNos && qbAvailableQNos.length) {
@@ -305,6 +326,13 @@ export default function QuestionPaperGenerator() {
     setQbPI('');
     setQbCO('');
     setQbMarks(2);
+
+    // Clear the rich text editor content after inserting the question
+    try {
+      const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+      if (inst && typeof inst.setData === 'function') inst.setData('');
+    } catch (_err) { /* ignore */ }
+
     // reset domain to first available or empty
     const keys = Object.keys(bloomsDomains || {});
     setQbKLDomain(keys.length ? keys[0] : '');
@@ -910,7 +938,7 @@ export default function QuestionPaperGenerator() {
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; height:80px; width:100%; border:1px solid #000;">
   <tbody>
     <tr>
-      <td style="height:70px; text-align:center; width:100%"><img alt="logo" class="logo-img" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="height:60px; max-width:100%; width:754px;" /></td>
+      <td style="height:70px; text-align:center; width:100%"><img alt="logo" class="logo-img" src="/logo.png" style="height:60px; max-width:100%; width:754px;" /></td>
     </tr>
   </tbody>
 </table>
@@ -1110,7 +1138,9 @@ export default function QuestionPaperGenerator() {
 
     let coRows = '';
     if (cos && cos.length > 0) {
-      coRows = cos.map((co) => {
+      coRows = cos
+        .filter((co) => activeSet.has(co.code))
+        .map((co) => {
         const tick = activeSet.has(co.code) ? '✓' : '';
         const w = weightMap && Object.prototype.hasOwnProperty.call(weightMap, co.code) ? weightMap[co.code] : '';
         
@@ -1153,16 +1183,14 @@ export default function QuestionPaperGenerator() {
         </div>
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px;">
   <tr>
-    <td style="height: 60px; width: 25%;"></td>
-    <td style="height: 60px; width: 25%;"></td>
-    <td style="height: 60px; width: 25%;"></td>
-    <td style="height: 60px; width: 25%;"></td>
+    <td style="height: 60px; width: 33.33%;"></td>
+    <td style="height: 60px; width: 33.33%;"></td>
+    <td style="height: 60px; width: 33.33%;"></td>
   </tr>
   <tr>
     <td style="text-align: center; padding: 6px;">Subject Faculty Signature</td>
     <td style="text-align: center; padding: 6px;">Academic Coordinator Signature</td>
     <td style="text-align: center; padding: 6px;">HOD Signature</td>
-    <td style="text-align: center; padding: 6px;">Academic Coordinator Signature</td>
   </tr>
 </table>
     `;
@@ -2098,7 +2126,7 @@ const initEditor = useCallback(() => {
               qno: `${counter}(a)`,
               sub: 'a',
               either_or: true,
-              marks,
+              marks: qa?.marks || marks, // Use marks from qpQuestions if available, else part marks
               question: qa?.question || '',
               co: qa?.co || '',
               kl: qa?.kl || '',
@@ -2108,7 +2136,7 @@ const initEditor = useCallback(() => {
               qno: `${counter}(b)`,
               sub: 'b',
               either_or: true,
-              marks,
+              marks: qb?.marks || marks, // Use marks from qpQuestions if available, else part marks
               question: qb?.question || '',
               co: qb?.co || '',
               kl: qb?.kl || '',
@@ -2120,7 +2148,7 @@ const initEditor = useCallback(() => {
               qno: `${counter}`,
               sub: '',
               either_or: false,
-              marks,
+              marks: q?.marks || marks, // Use marks from qpQuestions if available, else part marks
               question: q?.question || '',
               co: q?.co || '',
               kl: q?.kl || '',
@@ -2668,14 +2696,10 @@ const initEditor = useCallback(() => {
     }
 
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
-
-    const sanitizeKey = (key) => {
-      if (!key) return '';
-      return String(key).replace(/[.#$[\]]/g, '_');
-    };
-
     // Use stable composite key not including examDisplay
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
+    const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -3914,7 +3938,14 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                   <div className="relative">
                     <select 
                       value={qbQNo} 
-                      onChange={e => setQbQNo(e.target.value)} 
+                      onChange={e => {
+                        setQbQNo(e.target.value);
+                        // Reset editor content when manually switching question numbers
+                        try {
+                          const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+                          if (inst && typeof inst.setData === 'function') inst.setData('');
+                        } catch (_err) { /* ignore */ }
+                      }}
                       className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                     >
                       {qbAvailableQNos && qbAvailableQNos.length > 0 ? (
