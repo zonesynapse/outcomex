@@ -1034,7 +1034,29 @@ export default function MarkEntry() {
         ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
           coMaxMarks[co] = maxVal;
         });
+      } else {
+        // Fallback for regular internal exams: derive max marks from qpParts structure
+        const derived = {};
+        qpParts.forEach(part => {
+          const marks = Number(part.marks_per_question || 0);
+          if (marks <= 0) return;
+          const groups = {};
+          (part.questions || []).forEach(q => {
+            const base = String(q.qno).replace(/\(?[ab]\)?$/i, '').trim();
+            if (!groups[base]) groups[base] = new Set();
+            if (q.co) groups[base].add(String(q.co).trim().toUpperCase());
+          });
+          Object.values(groups).forEach(coSet => {
+            coSet.forEach(co => {
+              derived[co] = (derived[co] || 0) + marks;
+            });
+          });
+        });
+        coMaxMarks = derived;
       }
+
+      // Ensure keys exist for common COs to prevent dashboard rendering issues
+      ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { if (!(co in coMaxMarks)) coMaxMarks[co] = 0; });
 
       // Build per-student CO totals from the enrichedMarksData we just saved
       const studentsCo = {};

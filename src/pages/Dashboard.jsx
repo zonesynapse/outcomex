@@ -723,7 +723,7 @@ export default function Dashboard() {
           if (!consolidationView || consolidationView === 'latest') {
             const latestInternal = children.find(c => !c.isUniversity) || children[0];
             if (latestInternal) {
-              setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || {} });
+              setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } });
               // Set consolidation view to the actual exam key so dropdown shows the exam name instead of a 'Latest' placeholder
               setConsolidationView(latestInternal.key);
             }
@@ -787,7 +787,7 @@ export default function Dashboard() {
     const computeForView = (view) => {
       if (view === 'latest' || view === undefined) {
         const chosen = consolidationChildren.find(c => !c.isUniversity) || consolidationChildren[0];
-        return { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || {} };
+        return { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } };
       }
 
       if (view === 'overall') {
@@ -917,7 +917,7 @@ export default function Dashboard() {
 
       // view is examKey
       const pick = consolidationChildren.find(c => c.key === view);
-      if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || {} };
+      if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } };
       return null;
     };
 
@@ -1088,7 +1088,14 @@ export default function Dashboard() {
     const cutoff = Number(mappingCutoff) || 50;
     const totalStudents = students.length;
     
-    const coKeys = Object.keys(consolidationData.maxMarks || {}).filter(k => /^CO\d+/i.test(k));
+    let coKeys = Object.keys(consolidationData.maxMarks || {}).filter(k => /^CO\d+/i.test(k));
+    
+    // Fallback if maxMarks is empty: check first student for CO keys to avoid marking everyone as absent
+    if (coKeys.length === 0 && Object.keys(consolidationData.studentTotals).length > 0) {
+      const firstReg = Object.keys(consolidationData.studentTotals)[0];
+      coKeys = Object.keys(consolidationData.studentTotals[firstReg]).filter(k => /^CO\d+/i.test(k));
+    }
+
     const totalMaxMarks = coKeys.reduce((sum, co) => sum + (Number(consolidationData.maxMarks[co]) || 0), 0);
 
     let presentCount = 0;
