@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, set, onValue, push, remove, get } from "firebase/database";
+import { db, auth, rtdb } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, onSnapshot, addDoc, deleteDoc, getDoc, updateDoc } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
+import { ref, get, onValue } from "firebase/database";
 import { 
   Plus, 
   Trash2, 
@@ -64,9 +65,7 @@ export default function BloomsTaxonomy() {
     }
 
     try {
-      const bloomsRef = ref(rtdb, "blooms_taxonomy");
-      const newDomainRef = push(bloomsRef);
-      await set(newDomainRef, {
+      await addDoc(collection(db, "blooms_taxonomy"), { // Use addDoc for Firestore
         name: newDomainName.trim(),
         levels: []
       });
@@ -81,7 +80,7 @@ export default function BloomsTaxonomy() {
   const handleDeleteDomain = async () => {
     if (!confirmDelete.domainId) return;
     try {
-      await remove(ref(rtdb, `blooms_taxonomy/${confirmDelete.domainId}`));
+      await deleteDoc(doc(db, "blooms_taxonomy", confirmDelete.domainId)); // Use deleteDoc for Firestore
       showToastMsg("Domain deleted successfully");
       setConfirmDelete({ show: false, domainId: null, domainName: "" });
     } catch (error) {
@@ -96,8 +95,8 @@ export default function BloomsTaxonomy() {
     
     levels.push({ name: "", code: "" });
     
-    try {
-      await set(ref(rtdb, `blooms_taxonomy/${domainId}/levels`), levels);
+    try { // Update the document with the new levels array
+      await updateDoc(doc(db, "blooms_taxonomy", domainId), { levels: levels }); // Use updateDoc for Firestore
     } catch (error) {
       console.error("Error adding level:", error);
       showToastMsg("Failed to add level", "error");
@@ -108,8 +107,8 @@ export default function BloomsTaxonomy() {
     const levels = [...domains[domainId].levels];
     levels[levelIndex] = { ...levels[levelIndex], [field]: value };
     
-    try {
-      await set(ref(rtdb, `blooms_taxonomy/${domainId}/levels`), levels);
+    try { // Update the document with the new levels array
+      await updateDoc(doc(db, "blooms_taxonomy", domainId), { levels: levels }); // Use updateDoc for Firestore
     } catch (error) {
       console.error("Error updating level:", error);
     }
@@ -122,8 +121,8 @@ export default function BloomsTaxonomy() {
     const levels = [...domain.levels];
     levels.splice(levelIndex, 1);
     
-    try {
-      await set(ref(rtdb, `blooms_taxonomy/${domainId}/levels`), levels);
+    try { // Update the document with the new levels array
+      await updateDoc(doc(db, "blooms_taxonomy", domainId), { levels: levels }); // Use updateDoc for Firestore
       showToastMsg("Level removed");
     } catch (error) {
       console.error("Error deleting level:", error);

@@ -9,8 +9,8 @@ import {
   browserLocalPersistence,
   signOut
 } from "firebase/auth";
-import { ref, set, get } from "firebase/database";
-import { auth, rtdb } from "../firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 import { Loader2, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -44,6 +44,17 @@ const sanitizeFacultyId = (id) => {
   let clean = id.trim().substring(0, 50);
   clean = clean.replace(/[^a-zA-Z0-9-]/g, '');
   return clean;
+};
+
+// Helper to remove undefined values from an object before sending to Firestore
+const removeUndefined = (obj) => {
+  const newObj = {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) {
+      newObj[key] = obj[key];
+    }
+  }
+  return newObj;
 };
 
 export default function Auth() {
@@ -100,7 +111,7 @@ export default function Auth() {
     }
     
     // Validate password length
-    if (!loginPassword || loginPassword.length < 6) {
+    if (!loginPassword || loginPassword.length < 6) { // Firebase minimum password length is 6
       setError("Please enter a valid password.");
       setLoading(false);
       return;
@@ -112,17 +123,24 @@ export default function Auth() {
       const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, loginPassword);
       const user = userCredential.user;
 
-      // Check approval status (server-side validation on RTDB)
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      const snapshot = await get(userRef);
-      if (snapshot.exists()) {
-        const userData = snapshot.val();
-        if (!userData.isApproved && user.email !== defaultAdminEmail && user.email !== masterAdminEmail) {
+      // Firestore-ல் பயனர் விவரங்கள் இருக்கிறதா என்று சரிபார்க்கவும்
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        if (!userData.isApproved && 
+            user.email?.toLowerCase() !== defaultAdminEmail?.toLowerCase() && 
+            user.email?.toLowerCase() !== masterAdminEmail?.toLowerCase()) {
           await signOut(auth);
           setError("Your account is pending admin approval.");
           setLoading(false);
           return;
         }
+      } else {
+        // விவரங்கள் இல்லை என்றால் பதிவு முழுமையடையவில்லை என்று அர்த்தம்
+        await signOut(auth);
+        setError("User profile not found. Please register again.");
+        setLoading(false);
+        return;
       }
 
       setIsNavigating(true);
@@ -178,7 +196,7 @@ export default function Auth() {
     }
     
     // Validate password
-    if (regPassword.length < 8) {
+    if (regPassword.length < 6) { // Align with Firebase minimum password length
       setError("Password must be at least 8 characters.");
       return;
     }
@@ -207,10 +225,10 @@ export default function Auth() {
       const fullDisplayName = `${regTitle} ${sanitizedFacultyName}`;
       await updateProfile(user, { displayName: fullDisplayName });
       
-      // Save user profile to Realtime Database (sanitized data)
+      // Save user profile to Firestore (sanitized data)
       const isDefaultAdmin = user.email === defaultAdminEmail || user.email === masterAdminEmail;
       try {
-        await set(ref(rtdb, `users/${user.uid}`), {
+        const userDataToSave = removeUndefined({
           uid: user.uid,
           email: user.email,
           title: regTitle,
@@ -225,15 +243,27 @@ export default function Auth() {
           isApproved: isDefaultAdmin ? true : false,
           createdAt: new Date().toISOString()
         });
-      } catch (rtdbErr) {
-        console.error("Failed to save profile to RTDB:", rtdbErr);
+        
+        // Firestore-ல் சேமித்தல்
+        await setDoc(doc(db, "users", user.uid), userDataToSave, { merge: true });
+        
+      } catch (fsErr) {
+        console.error("Failed to save profile to Firestore:", fsErr);
+        
+        // Firestore-ல் சேமிக்க முடியவில்லை என்றால் Auth பயனரை நீக்கிவிடுவது நல்லது 
+        // அப்போதுதான் அவர்கள் மீண்டும் அதே மின்னஞ்சலில் பதிவு செய்ய முடியும்.
+        try { await user.delete(); } catch (delErr) { console.error(delErr); }
+        
+        setError("Failed to save profile. " + (fsErr.code === 'permission-denied' ? "Permission denied. Check Firestore Rules." : "Please contact admin."));
+        setLoading(false);
+        return;
       }
       
       if (!isDefaultAdmin) {
-        await signOut(auth);
         setMessage("Registration successful! Please wait for admin approval to login.");
         setIsActive(false); // Switch to login tab
         setLoading(false);
+        await signOut(auth);
         return;
       }
 

@@ -50,6 +50,7 @@ export default function AdminRoleConfig() {
     // { id: "cia-configuration", label: "CIA Configuration", path: "/cia-configuration" },
     { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment" },
     { id: "admission-enquiries", label: "Admission Enquiries", path: "/admissions/enquiries" },
+    { id: "seat-management", label: "Seat Management", path: "/admissions/seats" },
     { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
     { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
     { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment" },

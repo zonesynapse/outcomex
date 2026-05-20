@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, set, get } from "firebase/database";
+import { db, auth } from "../firebase"; // Import db for Firestore
+import { doc, setDoc, onSnapshot, getDoc } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   Trash2,
@@ -46,9 +46,9 @@ export default function InfoConfiguration() {
       setLoading(false);
     });
 
-    const infoRef = ref(rtdb, `info_configuration`);
-    const unsubscribeData = onValue(infoRef, (snapshot) => {
-      const data = snapshot.val();
+    const infoRef = doc(db, 'info_configuration', 'current'); // Firestore doc reference
+    const unsubscribeData = onSnapshot(infoRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = snapshot.data(); // Use .data() for Firestore documents
       if (data) {
         setCollegeName(data.collegeName || "");
         setVisions(data.vision || [""]);
@@ -75,9 +75,9 @@ export default function InfoConfiguration() {
       return;
     }
 
-    const infoRef = ref(rtdb, `info_configuration`);
+    const infoRef = doc(db, 'info_configuration', 'current'); // Firestore doc reference
     try {
-      await set(infoRef, {
+      await setDoc(infoRef, { // Use setDoc for Firestore
         collegeName: collegeName.trim(),
         vision: visions.filter(v => v.trim() !== ""),
         mission: missions.filter(m => m.trim() !== "")

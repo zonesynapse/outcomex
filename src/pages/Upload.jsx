@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { rtdb, storage } from "../firebase";
-import { ref as dbRef, set, get, onValue } from "firebase/database";
+import { db, storage } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore"; // Firestore imports
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import Papa from "papaparse";
 import { Download, CheckCircle2, Trash2, Check } from "lucide-react";
@@ -49,14 +49,14 @@ export default function Upload() {
       return;
     }
 
-    const progKey = formatProgrammeKey(syllabusProgramme);
-    const regKey = sanitizeKey(regulation);
-    
-    const deptRefs = [
-      { dept: syllabusDept, ref: dbRef(rtdb, `courses/${progKey}/${sanitizeKey(syllabusDept)}/${regKey}`) },
-      { dept: "Overall", ref: dbRef(rtdb, `courses/${progKey}/Overall/${regKey}`) }
-    ];
+    const progKey = formatProgrammeKey(syllabusProgramme); // Ensure progKey is sanitized
+    const regKey = sanitizeKey(regulation); // Ensure regKey is sanitized
 
+    const deptRefs = [
+      { dept: syllabusDept, ref: collection(db, 'courses', progKey, sanitizeKey(syllabusDept), regKey) }, // Firestore subcollection path
+      { dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', regKey) } // Firestore subcollection path
+    ];
+    
     const unsubs = [];
     const combined = new Map();
 
@@ -70,12 +70,13 @@ export default function Upload() {
     };
 
     deptRefs.forEach(({ dept, ref: refPath }) => {
-      const unsub = onValue(refPath, (snap) => {
+      const unsub = onSnapshot(refPath, (snap) => { // Use onSnapshot for real-time updates
         for (const [k, v] of combined.entries()) {
            if (v._sourceDept === dept) combined.delete(k);
         }
-        if (snap.exists()) {
-          const data = snap.val();
+        if (snap.exists) { // For QuerySnapshot, use .exists
+          const data = {}; // Convert QuerySnapshot to object
+          snap.forEach(d => { data[d.id] = d.data(); });
           Object.entries(data).forEach(([key, course]) => {
             combined.set(`${dept}:${key}`, {
               key,
@@ -174,13 +175,13 @@ export default function Upload() {
       if (uploadType === "syllabus" && syllabusProgramme && syllabusDept !== "select" && regulation) {
         setFetchingSyllabus(true);
         const progKey = formatProgrammeKey(syllabusProgramme);
-        const syllabusKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}`;
-        const syllabusRef = dbRef(rtdb, `syllabus_data/${syllabusKey}`);
+        const syllabusDocId = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}`;
+        const syllabusRef = doc(db, 'syllabus_data', syllabusDocId); // Firestore doc reference
         
-        try {
-          const snapshot = await get(syllabusRef);
+        try { // Use getDoc for Firestore
+          const snapshot = await getDoc(syllabusRef);
           if (snapshot.exists()) {
-            const data = snapshot.val();
+            const data = snapshot.data(); // Use .data() for Firestore documents
             setIsUpdating(true);
             if (data.semesters) {
               const totalSems = syllabusDuration * 2;
@@ -358,12 +359,12 @@ export default function Upload() {
             }
 
             const progKey = formatProgrammeKey(programme);
-            const key = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-            const studentsRef = dbRef(rtdb, `students/${key}`);
+            const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+            const studentsRef = doc(db, 'students', studentDocId); // Firestore doc reference
 
             const payload = {
               _meta: {
-                batch,
+                batch, // Include batch in _meta
                 programme_name: programme,
                 department,
                 count: Object.keys(studentsMap).length
@@ -371,7 +372,7 @@ export default function Upload() {
               ...studentsMap
             };
 
-            await set(studentsRef, payload);
+            await setDoc(studentsRef, payload); // Use setDoc for Firestore
             setSuccessMessage(`Saved ${Object.keys(studentsMap).length} students to database.`);
             setShowSuccess(true);
             setTimeout(() => setShowSuccess(false), 3000);
@@ -404,11 +405,11 @@ export default function Upload() {
         }
 
         const progKey = formatProgrammeKey(syllabusProgramme);
-        const syllabusKey = `${progKey}_${sanitizeKey(deptVal)}_${sanitizeKey(regulation)}`;
-        const syllabusRef = dbRef(rtdb, `syllabus_data/${syllabusKey}`);
+        const syllabusDocId = `${progKey}_${sanitizeKey(deptVal)}_${sanitizeKey(regulation)}`;
+        const syllabusRef = doc(db, 'syllabus_data', syllabusDocId); // Firestore doc reference
         
-        const existingSnapshot = await get(syllabusRef);
-        const existingData = existingSnapshot.exists() ? existingSnapshot.val() : null;
+        const existingSnapshot = await getDoc(syllabusRef); // Use getDoc for Firestore
+        const existingData = existingSnapshot.exists() ? existingSnapshot.data() : null; // Use .data() for Firestore documents
         
         await set(syllabusRef, {
           programme: syllabusProgramme,

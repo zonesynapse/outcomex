@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { rtdb } from "../firebase";
-import { ref, onValue, set } from "firebase/database";
+import { db } from "../firebase"; // Import db for Firestore
+import { doc, setDoc, onSnapshot } from "firebase/firestore"; // Firestore imports
 import { 
   Trash2,
   CheckCircle2
@@ -31,10 +31,10 @@ export default function VisionMission() {
   const fetchVisionMission = (prog, dept) => {
     if (!prog || !dept) return;
     const progKey = formatProgrammeKey(prog);
-    const sanitizedDept = String(dept).replace(/[.#$[\]]/g, '_');
-    const deptRef = ref(rtdb, `vision_mission/${progKey}/${sanitizedDept}`);
-    onValue(deptRef, (snapshot) => {
-      const data = snapshot.val();
+    const sanitizedDept = sanitizeKey(dept); // Use sanitizeKey for department
+    const deptRef = doc(db, 'vision_mission', progKey, sanitizedDept); // Firestore subcollection path
+    onSnapshot(deptRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = snapshot.data(); // Use .data() for Firestore documents
       if (data) {
         setVisions(data.vision || [""]);
         setMissions(data.mission || [""]);
@@ -59,10 +59,10 @@ export default function VisionMission() {
     }
 
     const progKey = formatProgrammeKey(programme);
-    const sanitizedDept = String(department).replace(/[.#$[\]]/g, '_');
-    const deptRef = ref(rtdb, `vision_mission/${progKey}/${sanitizedDept}`);
+    const sanitizedDept = sanitizeKey(department); // Use sanitizeKey for department
+    const deptRef = doc(db, 'vision_mission', progKey, sanitizedDept); // Firestore subcollection path
     try {
-      await set(deptRef, {
+      await setDoc(deptRef, { // Use setDoc for Firestore
         vision: visions.filter(v => v.trim() !== ""),
         mission: missions.filter(m => m.trim() !== ""),
         peo: peos.filter(p => p.trim() !== ""),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { onValue, ref, get, update } from "firebase/database";
+import { doc, collection, getDoc, onSnapshot, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { 
   Eye, 
   Loader2, 
@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 import Layout from "../components/Layout";
-import { auth, rtdb } from "../firebase";
+import { auth, db } from "../firebase"; // Import db for Firestore
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
 import { sanitizeKey, formatProgrammeKey } from "../lib/utils";
@@ -47,10 +47,12 @@ export default function HODDashboard() {
 
   // Fetch CIA Configs for exam name mapping
   useEffect(() => {
-    const ciaRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(ciaRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setCiaConfigs(snapshot.val());
+    const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
+    const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
+      if (snapshot.exists) { // For QuerySnapshot, use .exists
+        const data = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(d => { data[d.id] = d.data(); });
+        setCiaConfigs(data);
       }
     });
     return () => unsubscribe();
@@ -60,10 +62,10 @@ export default function HODDashboard() {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUid(user?.uid || null);
       if (user) {
-        const userRef = ref(rtdb, `users/${user.uid}`);
-        get(userRef).then(snap => {
+        const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+        getDoc(userRef).then(snap => { // Use getDoc for Firestore
           if (snap.exists()) {
-            setCurrentHodSignature(snap.val().signatureUrl || '');
+            setCurrentHodSignature(snap.data().signatureUrl || ''); // Use .data() for Firestore documents
           }
         });
       } else {
@@ -74,11 +76,13 @@ export default function HODDashboard() {
   }, []);
 
   useEffect(() => {
-    const usersRef = ref(rtdb, "users");
-    const unsub = onValue(
+    const usersRef = collection(db, "users"); // Firestore collection reference
+    const unsub = onSnapshot( // Use onSnapshot for real-time updates
       usersRef,
-      (snapshot) => {
-        setUsersMap(snapshot.val() || {});
+      (snapshot) => { // For QuerySnapshot
+        const data = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(doc => { data[doc.id] = doc.data(); });
+        setUsersMap(data || {});
       },
       () => setUsersMap({})
     );
@@ -93,11 +97,11 @@ export default function HODDashboard() {
     }
 
     setTasksLoading(true);
-    const qpRef = ref(rtdb, "generated_qps");
-    const unsub = onValue(
+    const qpRef = collection(db, "generated_qps"); // Firestore collection reference
+    const unsub = onSnapshot( // Use onSnapshot for real-time updates
       qpRef,
-      (snapshot) => {
-        const data = snapshot.val() || {};
+      (snapshot) => { // For QuerySnapshot
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         const all = [];
         Object.entries(data).forEach(([compositeKey, versions]) => {
           Object.entries(versions || {}).forEach(([id, qp]) => {
@@ -138,16 +142,16 @@ export default function HODDashboard() {
       }
 
       // 1. Fetch COs
-      const progKey = formatProgrammeKey(selectedQP.programme);
-      const regulation = getRegulationForBatch(progKey, selectedQP.batch);
+      const progKey = formatProgrammeKey(selectedQP.programme); // Ensure progKey is sanitized
+      const regulation = getRegulationForBatch(progKey, selectedQP.batch); // Ensure regulation is available
       if (regulation) {
-        const coKey = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(selectedQP.subject)}_${sanitizeKey(selectedQP.academic_year)}`;
-        const coSnap = await get(ref(rtdb, `course_outcomes/${coKey}`));
+        const coDocId = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(selectedQP.subject)}_${sanitizeKey(selectedQP.academic_year)}`;
+        const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId)); // Firestore doc reference
         if (coSnap.exists()) {
-          const data = coSnap.val();
+          const data = coSnap.data(); // Use .data() for Firestore documents
           const loadedCOs = Object.entries(data)
             .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
-            .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+            .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
           setModalCourseOutcomes(loadedCOs);
         }
       }
@@ -155,8 +159,8 @@ export default function HODDashboard() {
       // 2. Fetch Signatures
       if (selectedQP.forwarded_by) {
         const userRef = ref(rtdb, `users/${selectedQP.forwarded_by}`);
-        const snap = await get(userRef);
-        if (snap.exists()) setFacultySignatureForQP(snap.val().signatureUrl || '');
+        const snap = await getDoc(doc(db, 'users', selectedQP.forwarded_by)); // Firestore doc reference
+        if (snap.exists()) setFacultySignatureForQP(snap.data().signatureUrl || ''); // Use .data() for Firestore documents
       }
       setSelectedQPHodSignature(selectedQP.hod_signature_url || '');
     };
@@ -213,8 +217,8 @@ export default function HODDashboard() {
     }
 
     try {
-      const qpRef = ref(rtdb, `generated_qps/${selectedQP.compositeKey}/${selectedQP.id}`);
-      await update(qpRef, {
+      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id); // Firestore subcollection path
+      await updateDoc(qpRef, { // Use updateDoc for Firestore
         status: 'recorrected',
         forwarded_to: selectedQP.forwarded_by, // Send back to original faculty
         forwarded_by: null, // Clear HOD's forwarding
@@ -240,8 +244,8 @@ export default function HODDashboard() {
     }
 
     try {
-      const qpRef = ref(rtdb, `generated_qps/${selectedQP.compositeKey}/${selectedQP.id}`);
-      await update(qpRef, {
+      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id); // Firestore subcollection path
+      await updateDoc(qpRef, { // Use updateDoc for Firestore
         status: 'approved_by_hod',
         hod_signature_url: currentHodSignature,
         approved_at: new Date().toISOString(),

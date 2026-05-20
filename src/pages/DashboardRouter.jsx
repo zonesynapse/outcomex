@@ -1,47 +1,41 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { onValue, ref } from "firebase/database";
-
-import { auth, rtdb } from "../firebase";
-import Dashboard from "./Dashboard";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 import FacultyDashboard from "./FacultyDashboard";
 import HODDashboard from "./HODDashboard";
+import Dashboard from "./Dashboard";
 
 export default function DashboardRouter() {
   const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let unsubscribeUser = () => {};
-
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      unsubscribeUser();
-
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setRole(null);
         setLoading(false);
         return;
       }
 
-      setLoading(true);
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      unsubscribeUser = onValue(
-        userRef,
-        (snapshot) => {
-          setRole(snapshot.val()?.role || null);
-          setLoading(false);
-        },
-        () => {
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists()) {
+          setRole(userSnap.data()?.role || null);
+        } else {
           setRole(null);
-          setLoading(false);
         }
-      );
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        setRole(null);
+      } finally {
+        setLoading(false);
+      }
     });
 
-    return () => {
-      unsubscribeAuth();
-      unsubscribeUser();
-    };
+    return () => unsubscribeAuth();
   }, []);
 
   if (loading) {

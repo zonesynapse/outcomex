@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, set, get, onValue } from "firebase/database";
+import { db, auth, rtdb } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore"; // Firestore imports
+import { ref, get } from "firebase/database";
 import { 
   ChevronDown, 
   Save, 
@@ -54,16 +55,17 @@ export default function MarkEntry() {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      get(userRef).then(snapshot => {
+      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+      getDoc(userRef).then(snapshot => { // Use getDoc for Firestore
         if (snapshot.exists()) {
-          const userData = snapshot.val();
+          const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
-            const assignmentsRef = ref(rtdb, 'subject_assignments');
-            onValue(assignmentsRef, (assignSnap) => {
+            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
+            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
               if (assignSnap.exists()) {
-                const data = assignSnap.val();
+                const data = {}; // Convert QuerySnapshot to object
+                assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
                 const depts = new Set();
                 Object.entries(data).forEach(([progKey, deptData]) => {
@@ -209,10 +211,11 @@ export default function MarkEntry() {
   useEffect(() => {
     const fetchConfigs = async () => {
       try {
-        const configsRef = ref(rtdb, 'cia_configs');
-        const snapshot = await get(configsRef);
-        if (snapshot.exists()) {
-          const data = snapshot.val();
+        const configsRef = collection(db, 'cia_configs'); // Firestore collection reference
+        const snapshot = await getDocs(configsRef); // Use getDocs for collection
+        if (snapshot.exists) { // For QuerySnapshot, use .exists
+          const data = {}; // Convert QuerySnapshot to object
+          snapshot.forEach(doc => { data[doc.id] = doc.data(); });
           const configsArray = Object.keys(data).map(key => ({
             id: key,
             ...data[key]
@@ -238,10 +241,11 @@ export default function MarkEntry() {
   // Fetch all generated QPs once to use for filtering
   useEffect(() => {
     const fetchAllQPs = async () => {
-      try {
-        const qpRef = ref(rtdb, 'generated_qps');
-        const snapshot = await get(qpRef);
-        const root = snapshot.val() || {};
+      try { // Firestore collection reference
+        const qpRef = collection(db, 'generated_qps');
+        const snapshot = await getDocs(qpRef); // Use getDocs for collection
+        const root = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(doc => { root[doc.id] = doc.data(); });
         const list = [];
         for (const groupingKey in root) {
           const entries = root[groupingKey];
@@ -404,10 +408,10 @@ export default function MarkEntry() {
         const uniqueCodes = [...new Set(filteredAssignedCodes)];
         
         // Fetch syllabus names
-        const regulation = getRegulationForBatch(progKey, batch);
-        const syllabusKey = `${progKey}_${deptKey}_${sanitizeKey(regulation)}`;
-        const syllabusSnap = await get(ref(rtdb, `syllabus_data/${syllabusKey}`));
-        const syllabusData = syllabusSnap.val();
+        const regulation = getRegulationForBatch(progKey, batch); // Ensure regulation is available
+        const syllabusDocId = `${progKey}_${deptKey}_${sanitizeKey(regulation)}`;
+        const syllabusSnap = await getDoc(doc(db, 'syllabus_data', syllabusDocId)); // Firestore doc reference
+        const syllabusData = syllabusSnap.data(); // Use .data() for Firestore documents
         const syllabusMap = {};
         if (syllabusData && syllabusData.semesters && syllabusData.semesters[needSem]) {
           syllabusData.semesters[needSem].forEach(s => {
@@ -555,10 +559,10 @@ export default function MarkEntry() {
       setLoading(true);
       try {
         const qpRef = ref(rtdb, 'generated_qps');
-        const snapshot = await get(qpRef);
-        const root = snapshot.val() || {};
+        const snapshot = await getDocs(collection(db, 'generated_qps')); // Use getDocs for collection
+        const root = {}; snapshot.forEach(doc => { root[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         
-        const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
+        const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-'); // Normalize string for comparison
         const needDept = norm(department);
         const needAy = norm(academicYear);
         const needSub = norm(subject);
@@ -579,7 +583,7 @@ export default function MarkEntry() {
             const recSem = String(rec.semester || '').trim();
             const recType = rec.assessment_type || 'Exam';
 
-            if (recSub === needSub && 
+            if (recSub === needSub &&
                 recAy === needAy && 
                 recDept === needDept && 
                 recExam === targetExam && 
@@ -595,7 +599,7 @@ export default function MarkEntry() {
           setQpParts(Array.isArray(match.parts) ? match.parts : []);
           setAssignmentConfig(Array.isArray(match.assignment_config) ? match.assignment_config : []);
           setQpMeta({ 
-            qpaper_name: match.qpaper_name, 
+            qpaper_name: match.qpaper_name, // Use qpaper_name from the matched QP
             semester: match.semester,
             co_weightage: match.co_weightage || {}
           });
@@ -619,11 +623,11 @@ export default function MarkEntry() {
     if (programme && batch) {
       const progKey = formatProgrammeKey(programme);
       const regulation = getRegulationForBatch(progKey, batch);
-      if (regulation) {
-        const gradeRef = ref(rtdb, `grade_configs/${sanitizeKey(regulation)}`);
-        onValue(gradeRef, (snapshot) => {
+      if (regulation) { // Ensure regulation is available
+        const gradeRef = doc(db, 'grade_configs', sanitizeKey(regulation)); // Firestore doc reference
+        onSnapshot(gradeRef, (snapshot) => { // Use onSnapshot for real-time updates
           if (snapshot.exists()) {
-            setGradeConfigs(snapshot.val());
+            setGradeConfigs(snapshot.data()); // Use .data() for Firestore documents
           } else {
             setGradeConfigs([]);
           }
@@ -645,10 +649,10 @@ export default function MarkEntry() {
       try {
         // 1. Fetch Students
         const progKey = formatProgrammeKey(programme);
-        const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-        const studentRef = ref(rtdb, `students/${compositeKey}`);
-        const studentSnapshot = await get(studentRef);
-        const studentData = studentSnapshot.val();
+        const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+        const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
+        const studentSnapshot = await getDoc(studentRef); // Use getDoc for Firestore
+        const studentData = studentSnapshot.data(); // Use .data() for Firestore documents
         
         let studentList = [];
         if (studentData) {
@@ -667,11 +671,11 @@ export default function MarkEntry() {
 
         // Check course enrollments for this subject and semester
         if (subject) {
-          const enrollPath = `course_enrollments/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${deriveSemesterNumber(semester)}/${subject}`;
-          const enrollSnap = await get(ref(rtdb, enrollPath));
+          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${subject}`;
+          const enrollSnap = await getDoc(doc(db, 'course_enrollments', enrollDocId)); // Firestore doc reference
           const enrolled = {};
           if (enrollSnap.exists()) {
-            const obj = enrollSnap.val();
+            const obj = enrollSnap.data(); // Use .data() for Firestore documents
             Object.keys(obj).forEach(k => { enrolled[k] = true; });
             // Filter students to only enrolled ones
             studentList = studentList.filter(s => enrolled[s.reg]);
@@ -753,10 +757,10 @@ export default function MarkEntry() {
       showToastMsg('Select programme/department/batch/AY/semester/subject first', 'error');
       return;
     }
-    try {
-      const progKey = formatProgrammeKey(programme);
-      const enrollPath = `course_enrollments/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${deriveSemesterNumber(semester)}/${subject}/${reg}`;
-      await set(ref(rtdb, enrollPath), checked ? true : null);
+    try { // Firestore subcollection path
+      const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
+      const enrollRef = doc(db, 'course_enrollments', progKey, sanitizeKey(department), sanitizeKey(batch), sanitizeKey(academicYear), deriveSemesterNumber(semester), subject, reg);
+      await setDoc(enrollRef, { enrolled: checked }, { merge: true }); // Use setDoc for Firestore
       setEnrolledRegs(prev => ({ ...prev, [reg]: !!checked }));
       showToastMsg('Enrollment updated', 'success');
     } catch (err) {
@@ -904,7 +908,7 @@ export default function MarkEntry() {
   const handleSave = async () => {
     if (!batch || !programme || !department || !subject || !exam || !academicYear || !semester) return;
 
-    const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
+    const marksDocId = [batch, programme, department, subject, exam, academicYear, semester, markType]
       .filter(Boolean)
       .map(sanitizeKey)
       .join('_');
@@ -1014,13 +1018,13 @@ export default function MarkEntry() {
     }
 
     try {
-      await set(ref(rtdb, `marks/${marksKey}`), payload);
+      await setDoc(doc(db, 'marks', marksDocId), payload); // Use setDoc for Firestore
       
       // Calculate and update CO attainment for this specific exam only
-      const subjectKeyParts = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey);
-      const subjectKey = subjectKeyParts.join('_');
-      const examKey = sanitizeKey(exam || (meta.qpaper_meta?.qpaper_name || 'exam'));
+      const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_');
+      const examDocId = sanitizeKey(exam || (meta.qpaper_meta?.qpaper_name || 'exam'));
 
+      // Determine CO max marks for this exam
       // co weightage for this exam
       let coMaxMarks = {};
       if (meta.qpaper_meta?.co_weightage && Object.keys(meta.qpaper_meta.co_weightage).length > 0) {
@@ -1072,7 +1076,7 @@ export default function MarkEntry() {
       });
 
       // Write per-exam attainment under subjectKey / examKey
-      await set(ref(rtdb, `co_attainment/${subjectKey}/${examKey}`), {
+      await setDoc(doc(db, 'co_attainment', coAttainmentDocId, 'exams', examDocId), { // Firestore subcollection path
         _meta: {
           batch, programme, department, subject, academicYear, semester,
           exam: exam, updated_at: new Date().toISOString()

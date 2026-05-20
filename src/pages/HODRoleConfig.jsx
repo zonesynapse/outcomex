@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, update, get, set } from "firebase/database";
+import { db, auth } from "../firebase";
+import { doc, collection, onSnapshot, updateDoc, getDoc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import { 
   Users, 
   BookOpen, 
@@ -40,14 +40,14 @@ export default function HODRoleConfig() {
   const [usersMap, setUsersMap] = useState({});
   const [syllabusData, setSyllabusData] = useState(null);
   const [assignments, setAssignments] = useState({});
-  const [allAssignments, setAllAssignments] = useState({}); // Global assignments for department
+  const [allAssignments, setAllAssignments] = useState({});
 
   // Request States
   const [incomingRequests, setIncomingRequests] = useState([]);
   const [sentRequests, setSentRequests] = useState([]);
   const [fulfilledRequests, setFulfilledRequests] = useState([]);
   const [requestModal, setRequestModal] = useState({ open: false, subject: null });
-  const [targetDept, setTargetDept] = useState(""); // Department to send request to
+  const [targetDept, setTargetDept] = useState("");
   
   // Filter States
   const [programme, setProgramme] = useState("");
@@ -60,7 +60,7 @@ export default function HODRoleConfig() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
-  const [activeTab, setActiveTab] = useState("allocation"); // "allocation" or "requests"
+  const [activeTab, setActiveTab] = useState("allocation");
   const [searchTerm, setSearchTerm] = useState("");
 
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
@@ -75,10 +75,10 @@ export default function HODRoleConfig() {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      onValue(userRef, (snapshot) => {
+      const userRef = doc(db, 'users', user.uid);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
         if (snapshot.exists()) {
-          const data = snapshot.val();
+          const data = snapshot.data();
           setCurrentUserData(data);
           if (data.department) {
             setSyllabusDept(data.department);
@@ -89,23 +89,26 @@ export default function HODRoleConfig() {
         }
         setLoading(false);
       });
+      return () => unsubscribe();
     }
   }, []);
 
   // 2. Fetch Faculty List (Same Department)
   useEffect(() => {
     if (currentUserData?.department) {
-      const usersRef = ref(rtdb, "users");
-      onValue(usersRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          setUsersMap(data);
-          const filtered = Object.values(data).filter(
-            u => u.department === currentUserData.department && u.isApproved && u.email !== masterAdminEmail && u.email !== defaultAdminEmail
-          );
-          setFacultyList(filtered);
-        }
+      const usersRef = collection(db, "users");
+      const unsubscribe = onSnapshot(usersRef, (snapshot) => {
+        const data = {};
+        snapshot.forEach(doc => { 
+          data[doc.id] = doc.data(); 
+        });
+        setUsersMap(data);
+        const filtered = Object.values(data).filter(
+          u => u.department === currentUserData.department && u.isApproved && u.email !== masterAdminEmail && u.email !== defaultAdminEmail
+        );
+        setFacultyList(filtered);
       });
+      return () => unsubscribe();
     }
   }, [currentUserData]);
 
@@ -113,26 +116,35 @@ export default function HODRoleConfig() {
   useEffect(() => {
     if (currentUserData?.department) {
       const deptKey = sanitizeKey(currentUserData.department);
-      
+
       // Fetch Incoming
-      const incomingRef = ref(rtdb, `inter_dept_requests/incoming/${deptKey}`);
-      const unsubIncoming = onValue(incomingRef, (snapshot) => {
-        const data = snapshot.val();
-        setIncomingRequests(data ? Object.values(data).filter(r => r.status === 'pending') : []);
+      const incomingRef = collection(db, 'inter_dept_requests', 'incoming', deptKey, 'requests');
+      const unsubIncoming = onSnapshot(incomingRef, (snapshot) => {
+        const requests = [];
+        snapshot.forEach(doc => { 
+          requests.push(doc.data()); 
+        });
+        setIncomingRequests(requests.filter(r => r.status === 'pending'));
       });
 
       // Fetch Sent
-      const outgoingRef = ref(rtdb, `inter_dept_requests/outgoing/${deptKey}`);
-      const unsubOutgoing = onValue(outgoingRef, (snapshot) => {
-        const data = snapshot.val();
-        setSentRequests(data ? Object.values(data) : []);
+      const outgoingRef = collection(db, 'inter_dept_requests', 'outgoing', deptKey, 'requests');
+      const unsubOutgoing = onSnapshot(outgoingRef, (snapshot) => {
+        const requests = [];
+        snapshot.forEach(doc => { 
+          requests.push(doc.data()); 
+        });
+        setSentRequests(requests);
       });
-
+      
       // Fetch Fulfilled (Requests I handled)
-      const fulfilledRef = ref(rtdb, `inter_dept_requests/fulfilled/${deptKey}`);
-      const unsubFulfilled = onValue(fulfilledRef, (snapshot) => {
-        const data = snapshot.val();
-        setFulfilledRequests(data ? Object.values(data) : []);
+      const fulfilledRef = collection(db, 'inter_dept_requests', 'fulfilled', deptKey, 'requests');
+      const unsubFulfilled = onSnapshot(fulfilledRef, (snapshot) => {
+        const requests = [];
+        snapshot.forEach(doc => { 
+          requests.push(doc.data()); 
+        });
+        setFulfilledRequests(requests);
       });
 
       return () => {
@@ -170,7 +182,6 @@ export default function HODRoleConfig() {
     
     if (yearIndex < 0) return [];
     
-    // Each year has 2 semesters
     const sem1 = (yearIndex * 2) + 1;
     const sem2 = (yearIndex * 2) + 2;
     
@@ -181,12 +192,17 @@ export default function HODRoleConfig() {
   useEffect(() => {
     if (programme && syllabusDept && regulation) {
       const progKey = formatProgrammeKey(programme);
-      const syllabusKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}`;
-      const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
+      const syllabusDocId = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}`;
+      const syllabusRef = doc(db, 'syllabus_data', syllabusDocId);
       
-      onValue(syllabusRef, (snapshot) => {
-        setSyllabusData(snapshot.val());
+      const unsubscribe = onSnapshot(syllabusRef, (snapshot) => {
+        if (snapshot.exists()) {
+          setSyllabusData(snapshot.data());
+        } else {
+          setSyllabusData(null);
+        }
       });
+      return () => unsubscribe();
     } else {
       setSyllabusData(null);
     }
@@ -196,12 +212,16 @@ export default function HODRoleConfig() {
   useEffect(() => {
     if (programme && syllabusDept && batch && academicYear && semester) {
       const progKey = formatProgrammeKey(programme);
-      const assignmentPath = `subject_assignments/${progKey}/${sanitizeKey(syllabusDept)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semester}`;
-      const assignmentRef = ref(rtdb, assignmentPath);
+      const assignmentRef = doc(db, 'subject_assignments', progKey, sanitizeKey(syllabusDept), sanitizeKey(batch), sanitizeKey(academicYear), semester);
       
-      onValue(assignmentRef, (snapshot) => {
-        setAssignments(snapshot.val() || {});
+      const unsubscribe = onSnapshot(assignmentRef, (snapshot) => {
+        if (snapshot.exists()) {
+          setAssignments(snapshot.data());
+        } else {
+          setAssignments({});
+        }
       });
+      return () => unsubscribe();
     } else {
       setAssignments({});
     }
@@ -209,17 +229,19 @@ export default function HODRoleConfig() {
   
   // 5.1 Fetch All Assignments Globally (All Departments)
   useEffect(() => {
-    const assignmentsRef = ref(rtdb, "subject_assignments");
-    const unsubscribe = onValue(assignmentsRef, (snapshot) => {
-      const data = snapshot.val() || {};
+    const assignmentsRef = collection(db, "subject_assignments");
+    const unsubscribe = onSnapshot(assignmentsRef, (snapshot) => {
       const globalAssignments = {}; // facultyUid -> Array of assignment objects
 
-      Object.entries(data).forEach(([progKey, depts]) => {
-        Object.entries(depts).forEach(([deptKey, batches]) => {
-          Object.entries(batches).forEach(([b, ays]) => {
-            Object.entries(ays).forEach(([ay, sems]) => {
-              Object.entries(sems).forEach(([sem, facultyAssignments]) => {
-                Object.entries(facultyAssignments).forEach(([facultyUid, codes]) => {
+      snapshot.forEach((doc) => {
+        const progKey = doc.id;
+        const deptsData = doc.data();
+        
+        Object.entries(deptsData).forEach(([deptKey, batchesData]) => {
+          Object.entries(batchesData).forEach(([batchKey, ayData]) => {
+            Object.entries(ayData).forEach(([ayKey, semData]) => {
+              Object.entries(semData).forEach(([semKey, facultyData]) => {
+                Object.entries(facultyData).forEach(([facultyUid, codes]) => {
                   if (Array.isArray(codes)) {
                     if (!globalAssignments[facultyUid]) globalAssignments[facultyUid] = [];
                     codes.forEach(code => {
@@ -227,10 +249,10 @@ export default function HODRoleConfig() {
                         code,
                         progKey,
                         dept: deptKey,
-                        batch: b,
-                        academicYear: ay,
-                        semester: sem,
-                        key: `${progKey}_${deptKey}_${b}_${ay}_${sem}_${code}`
+                        batch: batchKey,
+                        academicYear: ayKey,
+                        semester: semKey,
+                        key: `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semKey}_${code}`
                       });
                     });
                   }
@@ -240,6 +262,7 @@ export default function HODRoleConfig() {
           });
         });
       });
+      
       setAllAssignments(globalAssignments);
     });
     return () => unsubscribe();
@@ -255,7 +278,7 @@ export default function HODRoleConfig() {
     if (!subjectCode) return;
     
     // Check if subject is already assigned to ANYONE
-    const assignedTo = Object.entries(assignments).find(([ , subs]) => subs.includes(subjectCode));
+    const assignedTo = Object.entries(assignments).find(([, subs]) => subs.includes(subjectCode));
     
     if (assignedTo) {
       const [uid] = assignedTo;
@@ -290,9 +313,9 @@ export default function HODRoleConfig() {
     
     setSaving(true);
     try {
-      const reqId = Date.now().toString();
+      const requestId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const payload = {
-        id: reqId,
+        id: requestId,
         fromDept: currentUserData.department,
         toDept: targetDept,
         subjectCode: requestModal.subject.code,
@@ -305,13 +328,14 @@ export default function HODRoleConfig() {
         requestedAt: Date.now()
       };
 
-      await set(ref(rtdb, `inter_dept_requests/incoming/${sanitizeKey(targetDept)}/${reqId}`), payload);
-      await set(ref(rtdb, `inter_dept_requests/outgoing/${sanitizeKey(currentUserData.department)}/${reqId}`), payload);
+      await setDoc(doc(db, 'inter_dept_requests', 'incoming', sanitizeKey(targetDept), 'requests', requestId), payload);
+      await setDoc(doc(db, 'inter_dept_requests', 'outgoing', sanitizeKey(currentUserData.department), 'requests', requestId), payload);
       
       showToast("Request sent to other HOD successfully!");
       setRequestModal({ open: false, subject: null });
       setTargetDept("");
     } catch (err) {
+      console.error("Error sending request:", err);
       showToast("Failed to send request", "error");
     } finally {
       setSaving(false);
@@ -321,19 +345,18 @@ export default function HODRoleConfig() {
   const handleProcessRequest = async (request, facultyUid, action) => {
     setSaving(true);
     try {
-      const updates = {};
       const status = action === 'accept' ? 'accepted' : 'rejected';
       const fromKey = sanitizeKey(request.fromDept);
       const toKey = sanitizeKey(request.toDept);
 
+      const batch = writeBatch(db);
+
       if (action === 'accept') {
         const progKey = formatProgrammeKey(request.programme);
-        const assignPath = `subject_assignments/${progKey}/${fromKey}/${sanitizeKey(request.batch)}/${sanitizeKey(request.academicYear)}/${request.semester}/${facultyUid}`;
-        
-        // Add subject to faculty assignments
-        const snap = await get(ref(rtdb, assignPath));
-        const current = snap.val() || [];
-        updates[assignPath] = [...new Set([...current, request.subjectCode])];
+        const assignRef = doc(db, 'subject_assignments', progKey, fromKey, sanitizeKey(request.batch), sanitizeKey(request.academicYear), request.semester);
+        const snap = await getDoc(assignRef);
+        const current = snap.exists() ? (snap.data()[facultyUid] || []) : [];
+        batch.update(assignRef, { [facultyUid]: [...new Set([...current, request.subjectCode])] });
       }
 
       const statusUpdate = { 
@@ -343,15 +366,14 @@ export default function HODRoleConfig() {
         processedAt: Date.now() 
       };
 
-      updates[`inter_dept_requests/incoming/${toKey}/${request.id}`] = null; // Remove from active inbox
-      updates[`inter_dept_requests/outgoing/${fromKey}/${request.id}`] = statusUpdate;
-      
-      // Log in a history node for the fulfiller
-      updates[`inter_dept_requests/fulfilled/${toKey}/${request.id}`] = statusUpdate;
+      batch.delete(doc(db, 'inter_dept_requests', 'incoming', toKey, 'requests', request.id));
+      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, 'requests', request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, 'requests', request.id), statusUpdate);
 
-      await update(ref(rtdb), updates);
+      await batch.commit();
       showToast(`Request ${status} successfully!`);
     } catch (err) {
+      console.error("Error processing request:", err);
       showToast("Error processing request", "error");
     } finally {
       setSaving(false);
@@ -363,7 +385,6 @@ export default function HODRoleConfig() {
 
     setSaving(true);
     try {
-      const updates = {};
       const fromKey = sanitizeKey(request.fromDept);
       const toKey = sanitizeKey(request.toDept);
       const progKey = formatProgrammeKey(request.programme);
@@ -371,32 +392,35 @@ export default function HODRoleConfig() {
       const ayKey = sanitizeKey(request.academicYear);
       const sem = request.semester;
 
+      const batch = writeBatch(db);
+
       // 1. Remove subject from old faculty's assignments
       if (request.allocatedFacultyUid) {
-        const oldAssignPath = `subject_assignments/${progKey}/${fromKey}/${batchKey}/${ayKey}/${sem}/${request.allocatedFacultyUid}`;
-        const oldSnap = await get(ref(rtdb, oldAssignPath));
-        const oldSubs = Array.isArray(oldSnap.val()) ? oldSnap.val() : [];
-        updates[oldAssignPath] = oldSubs.filter(code => code !== request.subjectCode);
+        const oldAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
+        const oldSnap = await getDoc(oldAssignRef);
+        const oldSubs = oldSnap.exists() ? (oldSnap.data()[request.allocatedFacultyUid] || []) : [];
+        batch.update(oldAssignRef, { [request.allocatedFacultyUid]: oldSubs.filter(code => code !== request.subjectCode) });
       }
 
       // 2. Add subject to new faculty's assignments
-      const newAssignPath = `subject_assignments/${progKey}/${fromKey}/${batchKey}/${ayKey}/${sem}/${newFacultyUid}`;
-      const newSnap = await get(ref(rtdb, newAssignPath));
-      const newSubs = Array.isArray(newSnap.val()) ? newSnap.val() : [];
-      updates[newAssignPath] = [...new Set([...newSubs, request.subjectCode])];
-
+      const newAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
+      const newSnap = await getDoc(newAssignRef);
+      const newSubs = newSnap.exists() ? (newSnap.data()[newFacultyUid] || []) : [];
+      batch.update(newAssignRef, { [newFacultyUid]: [...new Set([...newSubs, request.subjectCode])] });
+      
       const statusUpdate = { 
         ...request, 
         allocatedFacultyUid: newFacultyUid,
         processedAt: Date.now() 
       };
 
-      updates[`inter_dept_requests/outgoing/${fromKey}/${request.id}`] = statusUpdate;
-      updates[`inter_dept_requests/fulfilled/${toKey}/${request.id}`] = statusUpdate;
-
-      await update(ref(rtdb), updates);
+      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, 'requests', request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, 'requests', request.id), statusUpdate);
+      
+      await batch.commit();
       showToast("Assigned faculty updated successfully!");
     } catch (err) {
+      console.error("Error updating faculty:", err);
       showToast("Error updating faculty", "error");
     } finally {
       setSaving(false);
@@ -418,8 +442,7 @@ export default function HODRoleConfig() {
     setSaving(true);
     try {
       const progKey = formatProgrammeKey(programme);
-      const assignmentPath = `subject_assignments/${progKey}/${sanitizeKey(syllabusDept)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semester}`;
-      const assignmentRef = ref(rtdb, assignmentPath);
+      const assignmentRef = doc(db, 'subject_assignments', progKey, sanitizeKey(syllabusDept), sanitizeKey(batch), sanitizeKey(academicYear), semester);
       
       const updates = {};
       const allAssignedSubjects = new Set();
@@ -431,20 +454,22 @@ export default function HODRoleConfig() {
         }
       });
 
+      await setDoc(assignmentRef, updates, { merge: true });
+      
       // Process newly assigned subjects' COs
       for (const subjectCode of allAssignedSubjects) {
-        let courseRef = ref(rtdb, `courses/${progKey}/${sanitizeKey(syllabusDept)}/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
-        let snap = await get(courseRef);
+        let courseRef = doc(db, 'courses', progKey, sanitizeKey(syllabusDept), sanitizeKey(regulation), sanitizeKey(subjectCode));
+        let snap = await getDoc(courseRef);
         let isOverall = false;
 
         if (!snap.exists()) {
-          courseRef = ref(rtdb, `courses/${progKey}/Overall/${sanitizeKey(regulation)}/${sanitizeKey(subjectCode)}`);
-          snap = await get(courseRef);
+          courseRef = doc(db, 'courses', progKey, 'Overall', sanitizeKey(regulation), sanitizeKey(subjectCode));
+          snap = await getDoc(courseRef);
           isOverall = true;
         }
 
         if (snap.exists()) {
-          const courseData = snap.val();
+          const courseData = snap.data();
           if (courseData.co && Array.isArray(courseData.co)) {
             const coDict = {};
             const newCoursesCO = [];
@@ -470,22 +495,19 @@ export default function HODRoleConfig() {
             });
 
             if (needsOutcomeCopy) {
-              const coKey = `${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
-              const coOutcomesRef = ref(rtdb, `course_outcomes/${coKey}`);
+              const coDocId = `${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
+              const coOutcomesRef = doc(db, 'course_outcomes', coDocId);
               
-              // Only save if it doesn't already exist or overwrite it? The requirement implies moving it over explicitly.
-              await set(coOutcomesRef, coDict);
+              await setDoc(coOutcomesRef, coDict);
 
-              // If it's not overall, we remove description/domain/level from courses node
               if (!isOverall && hasExtraFieldsInCourseNode) {
-                await update(courseRef, { co: newCoursesCO });
+                await updateDoc(courseRef, { co: newCoursesCO });
               }
             }
           }
         }
       }
       
-      await update(assignmentRef, updates);
       showToast("Assignments saved successfully!");
     } catch (error) {
       console.error("Save Error:", error);
@@ -498,8 +520,8 @@ export default function HODRoleConfig() {
   const isFiltersSelected = programme && batch && academicYear && semester;
 
   const filteredFaculty = facultyList.filter(f => 
-    f.facultyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    f.facultyId.toLowerCase().includes(searchTerm.toLowerCase())
+    f.facultyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    f.facultyId?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -596,13 +618,17 @@ export default function HODRoleConfig() {
                         </div>
                         <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50">
                           <div className="flex w-full gap-2 items-center">
-                            <select className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all" id={`fulfill-${req.id}`}>
+                            <select 
+                              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+                              id={`fulfill-${req.id}`}
+                            >
                               <option value="">Select Faculty to Fulfill...</option>
                               {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
                             </select>
                             <button 
                               onClick={() => {
-                                const uid = document.getElementById(`fulfill-${req.id}`).value;
+                                const selectElement = document.getElementById(`fulfill-${req.id}`);
+                                const uid = selectElement?.value;
                                 if (uid) handleProcessRequest(req, uid, 'accept');
                                 else showToast("Please select a faculty member", "error");
                               }}
@@ -658,6 +684,7 @@ export default function HODRoleConfig() {
                                   onChange={(e) => handleUpdateFulfilledRequest(req, e.target.value)}
                                   disabled={saving}
                                 >
+                                  <option value="">Select Faculty</option>
                                   {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
                                 </select>
                               </div>
@@ -675,7 +702,7 @@ export default function HODRoleConfig() {
             {/* Sent Section */}
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <ExternalLink className="text-[#120c7a]" size={18} /> {/* Changed icon color to match theme */}
+                <ExternalLink className="text-[#120c7a]" size={18} />
                 <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">My Sent Requests</h5>
               </div>
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[200px]">
@@ -694,9 +721,9 @@ export default function HODRoleConfig() {
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
                         </div>
                         <div className="flex flex-col items-end">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${ // Adjusted padding and font size
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
                             req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' :
-                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600' // Consistent color palette
+                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
                           }`}>
                             {req.status}
                           </span>
@@ -945,10 +972,9 @@ export default function HODRoleConfig() {
                       const allocatedFaculty = allocatedFacultyUid ? usersMap[allocatedFacultyUid] : null;
                       const isAllocated = !!allocatedFacultyUid;
 
-                      // Check if a request for this subject has been sent and is pending
                       const pendingSentRequest = sentRequests.find(req => 
                         req.subjectCode === sub.code && 
-                        req.programme === programme && // Ensure it's for the current context
+                        req.programme === programme &&
                         req.batch === batch &&
                         req.academicYear === academicYear &&
                         req.semester === semester &&
@@ -978,7 +1004,7 @@ export default function HODRoleConfig() {
                                 <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-bold uppercase tracking-tight">
                                   <Send size={8} /> Request Sent
                                 </span>
-                              ) : ( // Default "Pending" state
+                              ) : (
                                 <div className="flex items-center gap-2">
                                   <span className="px-1.5 py-0.5 bg-zinc-200 text-zinc-500 rounded text-[8px] font-bold uppercase tracking-tight">
                                     Pending

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { auth, rtdb } from "../firebase";
+import { auth, db } from "../firebase";
 import { signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get, set, onValue } from "firebase/database";
+import { doc, getDoc, setDoc, onSnapshot, collection, getDocs } from "firebase/firestore";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { formatProgDisplay } from "../lib/utils";
 import { 
@@ -46,6 +46,7 @@ const allPossibleItems = [
   // { id: "cia-configuration", icon: Settings2, label: "CIA Configuration", path: "/cia-configuration" },
   { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
   { id: "admission-enquiries", icon: Users, label: "Admission Enquiries", path: "/admissions/enquiries" },
+  { id: "seat-management", icon: Settings2, label: "Seat Management", path: "/admissions/seats" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
@@ -75,7 +76,7 @@ const modules = [
     id: "admission",
     label: "Admission",
     icon: Users,
-    itemIds: ["admission-enquiries"]
+    itemIds: ["admission-enquiries", "seat-management"]
   },
   {
     id: "academics",
@@ -142,22 +143,25 @@ export default function Layout({ children, title }) {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Use onValue for real-time user data updates (including role changes)
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        unsubscribeUser = onValue(userRef, (snapshot) => {
+        // Use onSnapshot for real-time user data updates (including role changes)
+        const userRef = doc(db, "users", currentUser.uid);
+        unsubscribeUser = onSnapshot(userRef, (snapshot) => {
           if (snapshot.exists()) {
-            const data = snapshot.val();
+            const data = snapshot.data();
             setUserData(data);
             setUserRole(data.role);
 
-            // Use onValue for real-time permission updates
-            const permsRef = ref(rtdb, `role_permissions/${data.role}`);
+            // Use onSnapshot for real-time permission updates
+            const permsRef = doc(db, "role_permissions", data.role);
             unsubscribePerms(); // Unsubscribe from previous role permissions if any
-            unsubscribePerms = onValue(permsRef, (permsSnap) => {
+            unsubscribePerms = onSnapshot(permsRef, (permsSnap) => {
               if (permsSnap.exists()) {
-                const permsData = permsSnap.val();
+                const permsData = permsSnap.data();
                 let permsArray = [];
-                if (Array.isArray(permsData)) {
+                // Check for 'value' key if migration script wrapped a list
+                if (permsData.value && Array.isArray(permsData.value)) {
+                  permsArray = permsData.value;
+                } else if (Array.isArray(permsData)) {
                   permsArray = permsData;
                 } else if (typeof permsData === 'object' && permsData !== null) {
                   permsArray = Object.values(permsData);
@@ -169,10 +173,11 @@ export default function Layout({ children, title }) {
             });
 
             if (data.role === 'HOD') {
-              const assignmentsRef = ref(rtdb, 'subject_assignments');
-              get(assignmentsRef).then(assignmentsSnap => {
-                if (assignmentsSnap.exists()) {
-                  const allAssignments = assignmentsSnap.val();
+              const assignmentsRef = collection(db, 'subject_assignments');
+              getDocs(assignmentsRef).then(assignmentsSnap => {
+                if (!assignmentsSnap.empty) {
+                  const allAssignments = {};
+                  assignmentsSnap.forEach(doc => { allAssignments[doc.id] = doc.data(); });
                   const checkAssignments = (obj) => {
                     if (!obj || typeof obj !== 'object') return false;
                     if (obj[currentUser.uid]) return true;
@@ -213,11 +218,12 @@ export default function Layout({ children, title }) {
     let unsubscribe = () => {};
 
     if (userRole === 'HOD' && hasAssignments) {
-      const facultyPermsRef = ref(rtdb, 'role_permissions/Faculty');
-      unsubscribe = onValue(facultyPermsRef, (permsSnap) => {
+      const facultyPermsRef = doc(db, 'role_permissions', 'Faculty');
+      unsubscribe = onSnapshot(facultyPermsRef, (permsSnap) => {
         if (permsSnap.exists()) {
-          const permsData = permsSnap.val();
-          setFacultyPermissions(Array.isArray(permsData) ? permsData : (typeof permsData === 'object' && permsData !== null ? Object.values(permsData) : []));
+          const permsData = permsSnap.data();
+          const perms = permsData.value || permsData;
+          setFacultyPermissions(Array.isArray(perms) ? perms : (typeof perms === 'object' && perms !== null ? Object.values(perms) : []));
         } else {
           setFacultyPermissions([]);
         }
@@ -251,13 +257,12 @@ export default function Layout({ children, title }) {
   const handleUpdateProfile = async () => {
     if (!user) return;
     try {
-      const userRef = ref(rtdb, `users/${user.uid}`);
+      const userRef = doc(db, "users", user.uid);
       // Programme and Department are admin-managed. Only update signature here.
-      await set(userRef, {
-        ...userData,
+      await setDoc(userRef, {
         signatureUrl: editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl || "")
-      });
-      setIsEditingProfile(false);
+      }, { merge: true });
+      setIsEditingProfile(false); // Close editing mode after successful update
     } catch (error) {
       console.error("Update Profile Error:", error);
     }

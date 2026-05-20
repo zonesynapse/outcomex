@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import Layout from "../components/Layout";
-import { rtdb, auth } from "../firebase";
+import { db, auth } from "../firebase"; // `db` is already Firestore
 import { onAuthStateChanged } from "firebase/auth";
-import { ref, onValue, set, get } from "firebase/database";
+import { doc, setDoc, getDoc, onSnapshot } from "firebase/firestore"; // Firestore imports
 import { Trash2, Save, ChevronDown, CheckCircle2 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
@@ -149,23 +149,22 @@ Statement: "${item.statement}"`;
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      if (currentUser) {
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const snapshot = await get(userRef);
+      if (currentUser) { // Use Firestore to get user data
+        const userRef = doc(db, 'users', currentUser.uid);
+        const snapshot = await getDoc(userRef);
         if (snapshot.exists()) setUserData(snapshot.val());
       }
     });
     return () => unsubscribeAuth();
   }, []);
   useEffect(() => {
-    const progKey = formatProgrammeKey(programme);
+    const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
     if (programme && regulation && department) {
-      const compositeKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
-      const dbPath = `po_pso/${compositeKey}`;
-      const dataRef = ref(rtdb, dbPath);
+      const compositeKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`; // This is the document ID
+      const dataRef = doc(db, 'po_pso', compositeKey); // Reference to a document in 'po_pso' collection
       
-      const unsubscribe = onValue(dataRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(dataRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         if (data) {
           setPoData(data.po_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
           setPsoData(data.pso_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
@@ -234,7 +233,7 @@ Statement: "${item.statement}"`;
     const formattedPsoData = recalculateValues(psoData, poData.length);
 
     try {
-      await set(ref(rtdb, dbPath), {
+      await setDoc(doc(db, 'po_pso', compositeKey), { // Use setDoc for Firestore
         programme_name: programme,
         regulation,
         department,

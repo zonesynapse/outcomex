@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { rtdb } from "../firebase";
-import { ref, onValue, set, get } from "firebase/database";
+import { db } from "../firebase"; // Import db for Firestore
+import { doc, setDoc, getDoc } from "firebase/firestore"; // Firestore imports
 import { 
   Users, 
   Search, 
@@ -98,9 +98,9 @@ export default function CourseEnrolment() {
       if (!semNum) return;
 
       try {
-        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
-        const snapshot = await get(syllabusRef);
-        const data = snapshot.val();
+        const syllabusRef = doc(db, 'syllabus_data', syllabusKey); // Firestore doc reference
+        const snapshot = await getDoc(syllabusRef); // Use getDoc for Firestore
+        const data = snapshot.data(); // Use .data() for Firestore documents
         
         if (data && data.semesters && data.semesters[semNum]) {
           const fetchedSubjects = data.semesters[semNum]
@@ -110,7 +110,7 @@ export default function CourseEnrolment() {
               name: sub.name,
               isElective: true
             }));
-          setSubjects(fetchedSubjects);
+          setSubjects(fetchedSubjects); // Set subjects for the dropdown
         } else {
           setSubjects([]);
         }
@@ -141,20 +141,20 @@ export default function CourseEnrolment() {
       const subjectKey = sanitizeKey(subject);
 
       // Path for Student List
-      const listKey = `${batchKey}_${progKey}_${deptKey}`;
-      const studentsRef = ref(rtdb, `students/${listKey}`);
+      const studentListDocId = `${batchKey}_${progKey}_${deptKey}`;
+      const studentsRef = doc(db, 'students', studentListDocId); // Firestore doc reference
 
       // Path for Enrolments
-      const enrolKey = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
-      const enrolmentsRef = ref(rtdb, `course_enrolments/${enrolKey}`);
+      const enrolmentDocId = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
+      const enrolmentsRef = doc(db, 'course_enrolments', enrolmentDocId); // Firestore doc reference
 
       // Sequential fetching
-      get(studentsRef).then(studentSnap => {
-        const studentData = studentSnap.val() || {};
+      getDoc(studentsRef).then(studentSnap => { // Use getDoc for Firestore
+        const studentData = studentSnap.data() || {}; // Use .data() for Firestore documents
         const studentsList = Object.entries(studentData)
           .filter(([key]) => key !== '_meta')
           .map(([examNo, name]) => ({ examNo, name }));
-        
+
         setStudents(studentsList.sort((a,b) => a.examNo.localeCompare(b.examNo)));
 
         get(enrolmentsRef).then(enrolSnap => {

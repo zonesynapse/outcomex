@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, set, get } from "firebase/database";
+import { db, auth } from "../firebase"; // Import db for Firestore
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { 
   ChevronDown, 
   Plus, 
@@ -76,10 +76,11 @@ export default function Dashboard() {
 
   // Fetch CIA Configs for exam name mapping
   useEffect(() => {
-    const ciaRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(ciaRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setCiaConfigs(snapshot.val());
+    const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
+    const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
+      if (snapshot.exists) { // For QuerySnapshot, use .exists
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
+        setCiaConfigs(data);
       }
     }, (error) => {
       console.error("CIA Configs Fetch Error:", error);
@@ -90,17 +91,17 @@ export default function Dashboard() {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      onValue(userRef, (snapshot) => {
+      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+      onSnapshot(userRef, (snapshot) => { // Use onSnapshot for real-time updates
         if (snapshot.exists()) {
-          const userData = snapshot.val();
+          const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
 
           if (userData.role === 'Faculty') {
-            const assignmentsRef = ref(rtdb, 'subject_assignments');
-            onValue(assignmentsRef, (assignSnap) => {
+            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
+            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
               if (assignSnap.exists()) {
-                const data = assignSnap.val();
+                const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); }); // Convert QuerySnapshot to object
                 const progs = new Set();
                 const depts = new Set();
 
@@ -553,11 +554,11 @@ export default function Dashboard() {
   useEffect(() => {
     if ((module === "students" || module === "consolidation" || module === "log-report") && programme && department && batch) {
       const progKey = formatProgrammeKey(programme);
-      const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-      const studentRef = ref(rtdb, `students/${compositeKey}`);
+      const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+      const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
       
-      const unsubscribe = onValue(studentRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(studentRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         if (data) {
           // Filter out metadata keys and convert to array
           const studentList = Object.entries(data)
@@ -592,12 +593,12 @@ export default function Dashboard() {
     if ((module === "syllabus" || module === "consolidation" || module === "log-report") && programme && department && batch && semester) {
       const progKey = formatProgrammeKey(programme);
       const regulation = getRegulationForBatch(progKey, batch);
-      if (!regulation) return; // Wait until regulation is loaded
-      const syllabusKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}`;
-      const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
+      if (!regulation) return; // Wait until regulation is loaded // Ensure regulation is available
+      const syllabusDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}`;
+      const syllabusRef = doc(db, 'syllabus_data', syllabusDocId); // Firestore doc reference
 
-      const unsubscribe = onValue(syllabusRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(syllabusRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         if (data) {
           setSyllabusData(data);
         } else {
@@ -616,10 +617,10 @@ export default function Dashboard() {
   // Fetch Question Papers when filters change
   useEffect(() => {
     if (module === "question-paper-generator" && programme && department) {
-      const qpRef = ref(rtdb, `generated_qps`);
+      const qpRef = collection(db, 'generated_qps'); // Firestore collection reference
       
-      const unsubscribe = onValue(qpRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(qpRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         if (data) {
           const allQPs = [];
           Object.entries(data).forEach(([key, versions]) => {
@@ -650,11 +651,11 @@ export default function Dashboard() {
   useEffect(() => {
     if ((module === "consolidation" || module === "log-report") && programme && department && batch && academicYear && semester && extraSubject && students.length > 0) {
       const subjectKeyParts = [batch, programme, department, extraSubject, academicYear, semester].map(sanitizeKey);
-      const subjectKey = subjectKeyParts.join('_');
-      const attainmentRef = ref(rtdb, `co_attainment/${subjectKey}`);
+      const coAttainmentDocId = subjectKeyParts.join('_');
+      const attainmentRef = doc(db, 'co_attainment', coAttainmentDocId); // Firestore doc reference
       
-      const unsubscribe = onValue(attainmentRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(attainmentRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         if (!data) {
           setConsolidationChildren([]);
           setConsolidationData(null);
@@ -663,8 +664,9 @@ export default function Dashboard() {
         }
 
         // If data already contains students/co_max_marks at root (legacy format), use it
-        if (data.co_max_marks || data.students) {
-          setConsolidationChildren([{ key: '_legacy', data, isUniversity: !!data._meta?.is_university, label: data._meta?.exam || 'Legacy' }]);
+        if (data.co_max_marks || data.students) { // This is a single document with direct data
+          const isUniversity = !!data._meta?.is_university; // Check if it's a university exam
+          setConsolidationChildren([{ key: '_legacy', data, isUniversity, label: data._meta?.exam || 'Legacy' }]); // Add to children list
           setConsolidationData({
             studentTotals: data.students || {},
             maxMarks: data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 }
@@ -673,7 +675,8 @@ export default function Dashboard() {
           return;
         }
 
-        // Otherwise assume per-exam children exist: pick the most recent exam entry
+        // Otherwise assume per-exam children exist as subcollections or map within the document
+        // This part needs careful handling for Firestore structure. Assuming 'exams' subcollection.
         try {
           const entries = Object.entries(data).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v }));
           if (entries.length === 0) {
@@ -748,11 +751,11 @@ export default function Dashboard() {
     const fetchMappingData = async () => {
       if (!((module === 'consolidation' || module === 'log-report') && programme && batch && department && academicYear && semester && extraSubject)) return;
       const progKey = formatProgrammeKey(programme);
-      const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(getRegulationForBatch(progKey, batch))}_${sanitizeKey(extraSubject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(getRegulationForBatch(progKey, batch))}_${sanitizeKey(extraSubject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
       try {
-        const snap = await get(ref(rtdb, `mapping_summary/${mappingKey}`));
+        const snap = await getDoc(doc(db, 'mapping_summary', mappingDocId)); // Firestore doc reference
         if (snap.exists()) {
-          const data = snap.val();
+          const data = snap.data(); // Use .data() for Firestore documents
           if (data.percentageSplit) {
             setMappingPercentageSplit({ internal: Number(data.percentageSplit.internal || 100), university: Number(data.percentageSplit.university || 0) });
           } else {
@@ -1212,10 +1215,10 @@ export default function Dashboard() {
   const handleSaveStudents = async () => {
     if (!batch || !programme || !department) return;
     
-    const progKey = formatProgrammeKey(programme);
-    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-    const studentPath = `students/${compositeKey}`;
-    
+    const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
+    const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+    const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
+
     const dataToSave = {
       _meta: {
         batch: batch,
@@ -1234,7 +1237,7 @@ export default function Dashboard() {
     });
 
     try {
-      await set(ref(rtdb, studentPath), dataToSave);
+      await setDoc(studentRef, dataToSave); // Use setDoc for Firestore
       setIsEditing(false);
       setSuccessMessage("Student list saved successfully!");
       setShowSuccess(true);

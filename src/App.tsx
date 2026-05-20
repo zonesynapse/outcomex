@@ -26,6 +26,7 @@ import RegulationFormation from "./pages/RegulationFormation";
 import FacultyDashboard from "./pages/FacultyDashboard";
 import HODDashboard from "./pages/HODDashboard";
 import AdmissionEnquiries from "./pages/AdmissionEnquiries.js";
+import SeatManagement from "./pages/SeatManagement";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 export default function App() {
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
         <Route path="/course-enrolment" element={<ProtectedRoute><CourseEnrolment /></ProtectedRoute>} />
         <Route path="/admissions/enquiries" element={<ProtectedRoute><AdmissionEnquiries /></ProtectedRoute>} />
+        <Route path="/admissions/seats" element={<ProtectedRoute><SeatManagement /></ProtectedRoute>} />
         <Route path="/academic-calendar" element={<ProtectedRoute><AcademicCalendar /></ProtectedRoute>} />
         <Route path="/tt" element={<ProtectedRoute><TimetableSetup /></ProtectedRoute>} />
         <Route path="/regulation-formation" element={<ProtectedRoute><RegulationFormation /></ProtectedRoute>} />

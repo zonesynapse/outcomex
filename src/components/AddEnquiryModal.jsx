@@ -5,6 +5,7 @@ import {
   calculateCutoffFromMarks,
   createEmptyEnquiryForm
 } from "../services/enquiryService";
+import { getCommunitiesRealtime } from "../services/configService";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey } from "../lib/utils";
@@ -14,7 +15,6 @@ const ENQUIRY_FOR_OPTIONS = ["BE / B.Tech", "LE / ME", "MBA", "Transfer Course"]
 const EXAM_OPTIONS = ["+2", "Diploma", "UG"];
 const QUOTA_OPTIONS = ["MQ", "Counseling", "FG"];
 const MEDIUM_OPTIONS = ["English", "Tamil", "English / Tamil"];
-const COMMUNITY_OPTIONS = ["OC", "BC", "MBC", "SC", "ST", "Other"];
 const ELIGIBILITY_OPTIONS = ["Eligible", "Not Eligible"];
 const TITLE_OPTIONS = ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."];
 const GENDER_OPTIONS = ["Male", "Female", "Others"];
@@ -47,7 +47,15 @@ export default function AddEnquiryModal({
   const { departments: allDepartments, durations } = useDepartments();
   const [form, setForm] = useState(createEmptyEnquiryForm());
   const [errors, setErrors] = useState({});
+  const [communityOptions, setCommunityOptions] = useState([]);
   const { getActiveBatches } = useBatches(durations);
+
+  useEffect(() => {
+    const unsub = getCommunitiesRealtime((data) => {
+      setCommunityOptions((data || []).map(c => c.name));
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -642,7 +650,7 @@ export default function AddEnquiryModal({
                   <Field label="Community" required error={errors.community} readOnly={readOnly}>
                     <select value={form.community} onChange={(event) => handleChange("community", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
                       <option value="">Select community</option>
-                      {COMMUNITY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                      {communityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
                   </Field>
                   <Field label="Mother Tongue" error={errors.motherTongue} readOnly={readOnly}><input value={form.motherTongue} onChange={(event) => handleChange("motherTongue", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Mother tongue" readOnly={readOnly} /></Field>
@@ -803,7 +811,7 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select community</option>
-                  {COMMUNITY_OPTIONS.map((option) => (
+                  {communityOptions.map((option) => (
                     <option key={option} value={option}>{option}</option>
                   ))}
                 </select>

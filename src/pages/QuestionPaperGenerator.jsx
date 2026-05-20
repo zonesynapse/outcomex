@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X } from 'lucide-react';
 import Layout from '../components/Layout';
-import { auth, rtdb } from '../firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { ref, get, set, onValue } from 'firebase/database';
+import { auth, db, rtdb } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
+import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc } from 'firebase/firestore'; // Firestore imports
+import { ref, get, onValue } from 'firebase/database';
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
@@ -48,6 +49,7 @@ export default function QuestionPaperGenerator() {
   const [poList, setPoList] = useState([]);
   const [savedExamParts, setSavedExamParts] = useState([]);
   const [ciaConfigs, setCiaConfigs] = useState([]);
+  const [ciaConfigsMap, setCiaConfigsMap] = useState({}); // Map for quick lookup
   const [userRole, setUserRole] = useState(null);
   const [assignedProgs, setAssignedProgs] = useState([]);
   const [assignedDepts, setAssignedDepts] = useState([]);
@@ -395,17 +397,17 @@ export default function QuestionPaperGenerator() {
   // Fetch current user's signature URL
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setCurrentUserId(user.uid);
-        const userRef = ref(rtdb, `users/${user.uid}`);
-        const snapshot = await get(userRef);
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-          setCurrentUserSignatureUrl(userData.signatureUrl || '');
-        }
-      } else {
+      if (!user) {
         setCurrentUserId(null);
         setCurrentUserSignatureUrl('');
+        return;
+      }
+      setCurrentUserId(user.uid);
+      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+      const snapshot = await getDoc(userRef); // Use getDoc for Firestore
+      if (snapshot.exists()) {
+        const userData = snapshot.data(); // Use .data() for Firestore documents
+        setCurrentUserSignatureUrl(userData.signatureUrl || '');
       }
     });
     return () => unsubscribe();
@@ -414,16 +416,17 @@ export default function QuestionPaperGenerator() {
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) return;
-    const userRef = ref(rtdb, `users/${user.uid}`);
-    get(userRef).then(snapshot => {
+    const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+    getDoc(userRef).then(snapshot => { // Use getDoc for Firestore
       if (snapshot.exists()) {
-        const userData = snapshot.val();
+        const userData = snapshot.data(); // Use .data() for Firestore documents
         setUserRole(userData.role);
         if (userData.role === 'Faculty') {
-          const assignmentsRef = ref(rtdb, 'subject_assignments');
-          const unsubscribe = onValue(assignmentsRef, (assignSnap) => {
+          const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
+          const unsubscribe = onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
             if (assignSnap.exists()) {
-              const data = assignSnap.val();
+              const data = {}; // Convert QuerySnapshot to object
+              assignSnap.forEach(d => { data[d.id] = d.data(); });
               const progs = new Set();
               const depts = new Set();
               Object.entries(data).forEach(([progKey, deptData]) => {
@@ -504,9 +507,10 @@ export default function QuestionPaperGenerator() {
 
   // Load Bloom's taxonomy domains for KL Domain dropdown
   useEffect(() => {
-    const bloomsRef = ref(rtdb, 'blooms_taxonomy');
-    const unsub = onValue(bloomsRef, (snapshot) => {
-      const data = snapshot.exists() ? snapshot.val() : {};
+    const bloomsRef = collection(db, 'blooms_taxonomy'); // Firestore collection reference
+    const unsub = onSnapshot(bloomsRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = {}; // Convert QuerySnapshot to object
+      snapshot.forEach(doc => { data[doc.id] = doc.data(); });
       setBloomsDomains(data || {});
       // If no domain selected yet, pick first domain available
       if (!qbKLDomain) {
@@ -536,12 +540,12 @@ export default function QuestionPaperGenerator() {
       const subjectKey = sanitizeKey(subject);
 
       let courseData = null;
-      try {
-        let courseRef = ref(rtdb, `courses/${progKey}/${deptKey}/${regKey}/${subjectKey}`);
-        let snap = await get(courseRef);
+      try { // Firestore subcollection path
+        let courseRef = doc(db, 'courses', progKey, deptKey, regKey, subjectKey);
+        let snap = await getDoc(courseRef); // Use getDoc for Firestore
         if (!snap.exists()) { // Fallback to Overall if not found in specific department
-          courseRef = ref(rtdb, `courses/${progKey}/Overall/${regKey}/${subjectKey}`);
-          snap = await get(courseRef);
+          courseRef = doc(db, 'courses', progKey, 'Overall', regKey, subjectKey);
+          snap = await getDoc(courseRef); // Use getDoc for Firestore
         }
         if (snap.exists()) courseData = snap.val();
       } catch (error) { console.error("Error fetching course details for AI:", error); }
@@ -580,7 +584,7 @@ export default function QuestionPaperGenerator() {
     const total = parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
     const used = (assignmentConfig?.[0]?.mappings || []).reduce((sum, m) => sum + (parseInt(m?.marks, 10) || 0), 0);
     const remaining = Math.max(total - used, 0);
-    const exceeded = Math.max(used - total, 0);
+    const exceeded = Math.max(used - total, 0); // Not used, but good to keep
     return { total, used, remaining, exceeded, balanced: used === total };
   }, [assignmentConfig]);
 
@@ -1217,22 +1221,22 @@ export default function QuestionPaperGenerator() {
       return;
     }
 
-    const coKey = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
-    const coRef = ref(rtdb, `course_outcomes/${coKey}`);
+    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
+    const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
 
-    const poPsoKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
-    const poPsoRef = ref(rtdb, `po_pso/${poPsoKey}`);
+    const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
+    const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
 
-    const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}`;
-    const mappingRef = ref(rtdb, `mapping_summary/${mappingKey}`);
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}`;
+    const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
-    const unsubscribePoPso = onValue(poPsoRef, (snap) => {
-      const data = snap.val() || {};
+    const unsubscribePoPso = onSnapshot(poPsoRef, (snap) => { // Use onSnapshot for real-time updates
+      const data = snap.data() || {}; // Use .data() for Firestore documents
       setPoList(data.po_statements || []);
     });
 
-    const unsubscribeCO = onValue(coRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribeCO = onSnapshot(coRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = snapshot.data(); // Use .data() for Firestore documents
       if (data) {
         const loadedCOs = Object.entries(data)
           .map(([code, val]) => ({ 
@@ -1254,8 +1258,8 @@ export default function QuestionPaperGenerator() {
       }
     });
 
-    const unsubscribeMapping = onValue(mappingRef, (snapshot) => {
-      const mappingData = snapshot.val();
+    const unsubscribeMapping = onSnapshot(mappingRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const mappingData = snapshot.data(); // Use .data() for Firestore documents
       if (mappingData && mappingData.summary) {
         setPoSummaryMapping(mappingData.summary || {});
         const newMapping = {};
@@ -1312,19 +1316,19 @@ export default function QuestionPaperGenerator() {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) return;
 
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
-    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam); // Use ciaConfigsMap for direct lookup
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    const docId = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
 
     const checkExisting = async () => {
       try {
-        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
-        const qpRef = ref(rtdb, `generated_qps/${key}/${existingQpId}`);
-        const snapshot = await get(qpRef);
+        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`; // This is the document ID
+        const qpRef = doc(db, 'generated_qps', docId, 'versions', existingQpId); // Firestore subcollection path
+        const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
         if (snapshot.exists()) {
-          const qp = snapshot.val();
+          const qp = snapshot.data(); // Use .data() for Firestore documents
 
           if (qp && !hasLoadedRef.current) {
             hasLoadedRef.current = true;
@@ -1368,12 +1372,12 @@ export default function QuestionPaperGenerator() {
 
             // Fetch COs explicitly for loading
             const progKey = formatProgrammeKey(qp.programme);
-            const regulation = getRegulationForBatch(progKey, qp.batch);
+            const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
             if (!regulation) return;
-            const coKey = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
-            const coRef = ref(rtdb, `course_outcomes/${coKey}`);
-            const coSnapshot = await get(coRef);
-            const coData = coSnapshot.val();
+            const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+            const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
+            const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
+            const coData = coSnapshot.data(); // Use .data() for Firestore documents
             let fetchedCOs = [];
             if (coData) {
               fetchedCOs = Object.entries(coData)
@@ -1409,10 +1413,10 @@ export default function QuestionPaperGenerator() {
       if (!editId || !compositeKey || hasLoadedRef.current) return;
 
       try {
-        hasLoadedRef.current = true;
-        const qpRef = ref(rtdb, `generated_qps/${compositeKey}/${editId}`);
-        const snapshot = await get(qpRef);
-        const qp = snapshot.val();
+        hasLoadedRef.current = true; // Mark as loaded
+        const qpRef = doc(db, 'generated_qps', compositeKey, 'versions', editId); // Firestore subcollection path
+        const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
+        const qp = snapshot.data(); // Use .data() for Firestore documents
 
         if (qp) {
           setAssessmentType(qp.assessment_type || 'Exam');
@@ -1463,12 +1467,12 @@ export default function QuestionPaperGenerator() {
 
           // Fetch COs explicitly for loading
           const progKey = formatProgrammeKey(qp.programme);
-          const regulation = getRegulationForBatch(progKey, qp.batch);
+          const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
           if (!regulation) return;
-          const coKey = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
-          const coRef = ref(rtdb, `course_outcomes/${coKey}`);
-          const coSnapshot = await get(coRef);
-          const coData = coSnapshot.val();
+          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+          const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
+          const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
+          const coData = coSnapshot.data(); // Use .data() for Firestore documents
           let fetchedCOs = [];
           if (coData) {
             fetchedCOs = Object.entries(coData)
@@ -1590,16 +1594,15 @@ export default function QuestionPaperGenerator() {
           return;
         }
 
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const userSnap = await get(userRef);
-        const userRole = userSnap.exists() ? userSnap.val().role : null;
+        const userRef = doc(db, 'users', currentUser.uid); // Firestore doc reference
+        const userSnap = await getDoc(userRef); // Use getDoc for Firestore
+        const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentPath = `subject_assignments/${progKey}/${deptKey}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}`;
-        const assignmentRef = ref(rtdb, assignmentPath);
-        const assignmentSnap = await get(assignmentRef);
+        const assignmentRef = doc(db, 'subject_assignments', progKey, deptKey, sanitizeKey(batch), sanitizeKey(academicYear), semNum); // Firestore subcollection path
+        const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
         
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.val();
+          const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
           
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             // Show all subjects that have at least one allocation to ANY faculty
@@ -2443,10 +2446,10 @@ const initEditor = useCallback(() => {
 
     try {
       if (editId && compositeKey) {
-        await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
+        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload); // Firestore subcollection path
       } else {
-        // For new papers (draft or forwarded) use qpId which includes set suffix
-        await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
+        // For new papers (draft or forwarded) use qpDocId which includes set suffix
+        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload); // Firestore subcollection path
       }
       setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
@@ -2698,10 +2701,10 @@ const initEditor = useCallback(() => {
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use stable composite key not including examDisplay
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
-    // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
-    const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
+    // Use qpDocId that includes set suffix so multiple sets do not overwrite each other when forwarded. This is the document ID.
+    const qpDocId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
 
-    const selectedSub = subjects.find(s => s.value === subject);
+    const selectedSub = subjects.find(s => s.value === subject); // Find subject from available subjects
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
 
     // Extract CO weightage from summary table
@@ -2750,10 +2753,10 @@ const initEditor = useCallback(() => {
 
     try {
       if (editId && compositeKey) {
-        await set(ref(rtdb, `generated_qps/${compositeKey}/${editId}`), payload);
+        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload); // Firestore subcollection path
       } else {
-        // For new papers (draft or forwarded) use qpId which includes set suffix
-        await set(ref(rtdb, `generated_qps/${key}/${qpId}`), payload);
+        // For new papers (draft or forwarded) use qpDocId which includes set suffix
+        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload); // Firestore subcollection path
       }
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);
@@ -2844,10 +2847,10 @@ const initEditor = useCallback(() => {
     // 2. Find HOD for the selected department
     let hodUid = null;
     try {
-        const usersRef = ref(rtdb, 'users');
-        const usersSnapshot = await get(usersRef);
+        const usersRef = collection(db, 'users'); // Firestore collection reference
+        const usersSnapshot = await getDocs(usersRef); // Use getDocs for collection
         if (usersSnapshot.exists()) {
-            const allUsers = usersSnapshot.val();
+            const allUsers = {}; usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); }); // Convert QuerySnapshot to object
             const hods = Object.values(allUsers).filter(
                 user => user.role === 'HOD' && user.department === department && user.isApproved
             );

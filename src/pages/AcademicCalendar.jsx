@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, set, get, push, remove, update } from "firebase/database";
+import { db, auth } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, getDoc, onSnapshot, addDoc, deleteDoc, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   Calendar as CalendarIcon, 
@@ -40,8 +40,8 @@ export default function AcademicCalendar() {
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
-        get(ref(rtdb, `users/${user.uid}`)).then(snap => {
-          if (snap.exists()) setUserRole(snap.val().role);
+        getDoc(doc(db, 'users', user.uid)).then(snap => { // Firestore doc reference
+          if (snap.exists()) setUserRole(snap.data().role); // Use .data() for Firestore documents
         });
       } else {
         setUserRole(null);
@@ -49,22 +49,30 @@ export default function AcademicCalendar() {
     });
     return () => unsubscribeAuth();
   }, []);
-
   // Fetch Data
   useEffect(() => {
     // Fetch Global Institutional Academic Calendar PDF
-    const docRef = ref(rtdb, `institutional_academic_calendar/current`);
-    const unsubDoc = onValue(docRef, (snap) => setOfficialDoc(snap.val()));
+    const docRef = doc(db, 'institutional_academic_calendar', 'current'); // Firestore doc reference
+    const unsubDoc = onSnapshot(docRef, (snap) => { // Use onSnapshot for real-time updates
+      if (snap.exists()) {
+        setOfficialDoc(snap.data()); // Use .data() for Firestore documents
+      } else setOfficialDoc(null);
+    });
 
     // Fetch Global Digital Events
-    const eventsRef = ref(rtdb, `academic_calendar_events`);
-    const unsubEvents = onValue(eventsRef, (snap) => setEvents(snap.val() || {}));
+    const eventsRef = collection(db, 'academic_calendar_events'); // Firestore collection reference
+    const unsubEvents = onSnapshot(eventsRef, (snap) => { // Use onSnapshot for real-time updates
+      const data = {}; // Convert QuerySnapshot to object
+      snap.forEach(doc => { data[doc.id] = doc.data(); });
+      setEvents(data || {});
+    });
     
     // Fetch CIA Configs for linking
-    const ciaRef = ref(rtdb, 'cia_configs');
-    const unsubCia = onValue(ciaRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.val();
+    const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
+    const unsubCia = onSnapshot(ciaRef, (snap) => { // Use onSnapshot for real-time updates
+      if (snap.exists) { // For QuerySnapshot, use .exists
+        const data = {}; // Convert QuerySnapshot to object
+        snap.forEach(doc => { data[doc.id] = doc.data(); });
         setCiaConfigs(Object.entries(data).map(([id, val]) => ({ id, ...val })));
       }
     });
@@ -123,30 +131,32 @@ export default function AcademicCalendar() {
     // Add event entry for each day in range
     while (dateCursor <= end) {
       const dateStr = dateCursor.toISOString().split('T')[0];
-      const eventRef = push(ref(rtdb, `academic_calendar_events/${dateStr}`));
+      const eventsCollectionRef = collection(db, 'academic_calendar_events', dateStr, 'events'); // Firestore subcollection path
       
-      updates[`academic_calendar_events/${dateStr}/${eventRef.key}`] = {
+      // Use addDoc to create a new document with an auto-generated ID
+      await addDoc(eventsCollectionRef, {
         ...newEvent,
-        id: eventRef.key,
         eventDate: dateStr,
         createdAt: new Date().toISOString()
-      };
+      });
       
       dateCursor.setDate(dateCursor.getDate() + 1);
     }
 
     // If linked to a CIA, update the CIA configuration dates in Curriculum
     if (newEvent.type === 'Exam' && newEvent.ciaId) {
-      updates[`cia_configs/${newEvent.ciaId}/startDate`] = newEvent.fromDate;
-      updates[`cia_configs/${newEvent.ciaId}/endDate`] = newEvent.toDate;
-      if (newEvent.time) updates[`cia_configs/${newEvent.ciaId}/examTime`] = newEvent.time;
+      const ciaDocRef = doc(db, 'cia_configs', newEvent.ciaId); // Firestore doc reference
+      await updateDoc(ciaDocRef, { // Use updateDoc for Firestore
+        startDate: newEvent.fromDate,
+        endDate: newEvent.toDate,
+        ...(newEvent.time && { examTime: newEvent.time }),
+        examDate: newEvent.fromDate // Also set the main examDate used by generators
+      });
       
-      // Also set the main examDate used by generators
-      updates[`cia_configs/${newEvent.ciaId}/examDate`] = newEvent.fromDate;
     }
 
     try {
-      await update(ref(rtdb), updates);
+      // No need for a single update call if we're using addDoc for events and updateDoc for CIA
     } catch (err) {
       console.error("Save error:", err);
     }
@@ -156,7 +166,7 @@ export default function AcademicCalendar() {
   };
 
   const handleDeleteEvent = async (date, eventId) => {
-    await remove(ref(rtdb, `academic_calendar_events/${date}/${eventId}`));
+    await deleteDoc(doc(db, 'academic_calendar_events', date, 'events', eventId)); // Firestore subcollection path
   };
 
   const EVENT_TYPES = {

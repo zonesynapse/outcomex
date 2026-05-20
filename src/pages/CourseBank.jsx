@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
-import { rtdb } from "../firebase";
-import { ref, set, onValue } from "firebase/database";
+import { db } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, onSnapshot, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { sanitizeKey, formatProgDisplay } from "../lib/utils";
 import { ChevronDown, Trash2 } from "lucide-react";
 
@@ -37,11 +37,12 @@ export default function CreateCourse() {
   const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
 
   const [periodConfigs, setPeriodConfigs] = useState({});
-
   useEffect(() => {
-    const pRef = ref(rtdb, 'period_configs');
-    const unsub = onValue(pRef, (snap) => {
-      setPeriodConfigs(snap.val() || {});
+    const pRef = collection(db, 'period_configs'); // Firestore collection reference
+    const unsub = onSnapshot(pRef, (snap) => { // Use onSnapshot for real-time updates
+      const data = {}; // Convert QuerySnapshot to object
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setPeriodConfigs(data);
     });
     return () => unsub();
   }, []);
@@ -80,10 +81,10 @@ export default function CreateCourse() {
       setAvailableCourseTypes(["Program Course"]);
       return;
     }
-    const typesRef = ref(rtdb, `course_type_configs/${regKey}`);
-    const unsub = onValue(typesRef, (snap) => {
+    const typesRef = doc(db, 'course_type_configs', regKey); // Firestore doc reference
+    const unsub = onSnapshot(typesRef, (snap) => { // Use onSnapshot for real-time updates
       if (snap.exists()) {
-        setAvailableCourseTypes(snap.val());
+        setAvailableCourseTypes(snap.data()); // Use .data() for Firestore documents
       } else {
         setAvailableCourseTypes(["Program Course"]); // Default if none configured
       }
@@ -99,10 +100,13 @@ export default function CreateCourse() {
 
   // subscribe to Bloom's taxonomy from RTDB
   useEffect(() => {
-    const bloomsRef = ref(rtdb, 'blooms_taxonomy');
-    const unsub = onValue(bloomsRef, (snap) => {
-      if (snap.exists()) setBloomsDomains(snap.val());
-      else setBloomsDomains({});
+    const bloomsRef = collection(db, 'blooms_taxonomy'); // Firestore collection reference
+    const unsub = onSnapshot(bloomsRef, (snap) => { // Use onSnapshot for real-time updates
+      if (snap.exists()) { // For QuerySnapshot, use .exists
+        const data = {}; snap.forEach(d => { data[d.id] = d.data(); }); setBloomsDomains(data); // Convert QuerySnapshot to object
+      } else {
+        setBloomsDomains({});
+      }
     });
     return () => unsub();
   }, []);
@@ -186,7 +190,7 @@ export default function CreateCourse() {
         co: coDefs.map((c, i) => ({ id: `CO${i + 1}`, description: c || "", content: (coContents[i] || ""), domain: (coDomains[i] || ""), level: (coLevels[i] || "") }))
       };
 
-      await set(ref(rtdb, `courses/${progKey}/${sanitizedDept}/${sanitizeKey(regulation)}/${courseKey}`), payload);
+      await setDoc(doc(db, 'courses', progKey, sanitizedDept, sanitizeKey(regulation), courseKey), payload); // Firestore subcollection path
 
       setMessage("Course saved successfully.");
       setSelectedExistingCourseKey(`${deptKey}:${courseKey}`);
@@ -221,13 +225,13 @@ export default function CreateCourse() {
     const progKey = sanitizeKey(programme);
     const deptRefs = [];
     if (department) {
-      const sanitizedDept = sanitizeKey(department);
-      deptRefs.push({ dept: department, ref: ref(rtdb, `courses/${progKey}/${sanitizedDept}/${baseRegKey}`) });
-      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${progKey}/Overall/${baseRegKey}`) });
+      const sanitizedDept = sanitizeKey(department); // Ensure department is sanitized
+      deptRefs.push({ dept: department, ref: collection(db, 'courses', progKey, sanitizedDept, baseRegKey) }); // Firestore subcollection path
+      deptRefs.push({ dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', baseRegKey) }); // Firestore subcollection path
     } else {
-      deptRefs.push({ dept: "Overall", ref: ref(rtdb, `courses/${progKey}/Overall/${baseRegKey}`) });
+      deptRefs.push({ dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', baseRegKey) }); // Firestore subcollection path
     }
-
+    
     const unsubs = [];
     const combined = new Map();
 
@@ -241,13 +245,14 @@ export default function CreateCourse() {
     };
 
     deptRefs.forEach(({ dept, ref: deptRef }) => {
-      const unsub = onValue(deptRef, (snap) => {
+      const unsub = onSnapshot(deptRef, (snap) => { // Use onSnapshot for real-time updates
         // Remove any previously added items from this dept
         for (const [k, v] of combined.entries()) {
           if (v._sourceDept === dept) combined.delete(k);
         }
-        if (snap.exists()) {
-          const data = snap.val();
+        if (snap.exists) { // For QuerySnapshot, use .exists
+          const data = {}; // Convert QuerySnapshot to object
+          snap.forEach(d => { data[d.id] = d.data(); });
           Object.entries(data).forEach(([key, course]) => {
             combined.set(`${dept}:${key}`, {
               key,

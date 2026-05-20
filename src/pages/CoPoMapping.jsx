@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { auth, rtdb } from "../firebase";
-import { ref, get, onValue, set, remove, serverTimestamp } from "firebase/database";
+import { auth, db, rtdb } from "../firebase"; // Import db for Firestore
+import { doc, getDoc } from "firebase/firestore"; // Firestore imports
+import { ref, get, set, remove, onValue, serverTimestamp } from "firebase/database";
 import { 
   ChevronDown, 
   Download, 
@@ -47,39 +48,45 @@ export default function CoPoMapping() {
   const [assignedDepts, setAssignedDepts] = useState([]);
 
   useEffect(() => {
+    let unsubscribeAssignments = null;
+
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      get(userRef).then(snapshot => {
+      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+      getDoc(userRef).then(snapshot => { // Use getDoc for Firestore
         if (snapshot.exists()) {
-          const userData = snapshot.val();
+          const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
             const assignmentsRef = ref(rtdb, 'subject_assignments');
-            onValue(assignmentsRef, (assignSnap) => {
-              if (assignSnap.exists()) {
-                const data = assignSnap.val();
-                const progs = new Set();
-                const depts = new Set();
-                Object.entries(data).forEach(([progKey, deptData]) => {
-                  Object.entries(deptData).forEach(([deptKey, batchData]) => {
-                    if (JSON.stringify(batchData).includes(user.uid)) {
-                      progs.add(progKey);
-                      depts.add(deptKey);
-                    }
-                  });
+            const unsubscribe = onValue(assignmentsRef, (assignSnap) => {
+              const data = assignSnap.val() || {};
+              const progs = new Set();
+              const depts = new Set();
+
+              Object.entries(data).forEach(([progKey, deptData]) => {
+                Object.entries(deptData || {}).forEach(([deptKey, batchData]) => {
+                  if (JSON.stringify(batchData).includes(user.uid)) {
+                    progs.add(progKey);
+                    depts.add(deptKey);
+                  }
                 });
-                setAssignedProgs(Array.from(progs));
-                setAssignedDepts(Array.from(depts));
-              } else {
-                setAssignedProgs([]);
-                setAssignedDepts([]);
-              }
+              });
+
+              setAssignedProgs(Array.from(progs));
+              setAssignedDepts(Array.from(depts));
             });
+            unsubscribeAssignments = unsubscribe;
           }
         }
       });
     }
+
+    return () => {
+      if (unsubscribeAssignments) {
+        unsubscribeAssignments();
+      }
+    };
   }, []);
 
   const [poList, setPoList] = useState([]);
@@ -134,11 +141,11 @@ export default function CoPoMapping() {
     const batchKey = sanitizeKey(batch);
     const regKey = sanitizeKey(regulation);
     
-    const actionsRef = ref(rtdb, `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}`);
+    const actionsRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey); // Firestore subcollection path
 
-    const unsubscribe = onValue(actionsRef, (snapshot) => {
+    const unsubscribe = onSnapshot(actionsRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (snapshot.exists()) {
-        setActionsTaken(snapshot.val());
+        setActionsTaken(snapshot.data()); // Use .data() for Firestore documents
       } else {
         setActionsTaken({});
       }
@@ -161,9 +168,9 @@ export default function CoPoMapping() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
-      
+
       const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${selectedOutcome.code}`;
-      
+
       await set(ref(rtdb, actionPath), {
         batch,
         programme,
@@ -174,7 +181,7 @@ export default function CoPoMapping() {
         updatedAt: serverTimestamp(),
         updatedBy: auth.currentUser?.uid
       });
-      setIsActionModalOpen(false);
+      setIsActionModalOpen(false); // Close modal after saving
     } catch (error) {
       console.error("Error saving action taken:", error);
       alert("Failed to save action plan. Please try again.");
@@ -190,7 +197,7 @@ export default function CoPoMapping() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
-      
+
       const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${outcomeCode}`;
       await remove(ref(rtdb, actionPath));
     } catch (error) {
@@ -283,16 +290,15 @@ export default function CoPoMapping() {
           return;
         }
 
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const userSnap = await get(userRef);
-        const userRole = userSnap.exists() ? userSnap.val().role : null;
+        const userRef = doc(db, 'users', currentUser.uid); // Firestore doc reference
+        const userSnap = await getDoc(userRef); // Use getDoc for Firestore
+        const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentPath = `subject_assignments/${progKey}/${deptKey}/${sanitizeKey(batch)}/${sanitizeKey(academicYear || '')}/${semNum}`;
-        const assignmentRef = ref(rtdb, assignmentPath);
-        const assignmentSnap = await get(assignmentRef);
+        const assignmentRef = doc(db, 'subject_assignments', progKey, deptKey, sanitizeKey(batch), sanitizeKey(academicYear || ''), semNum); // Firestore subcollection path
+        const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
         
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.val();
+          const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
           
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             // Show all subjects that have at least one allocation to ANY faculty
@@ -375,10 +381,10 @@ export default function CoPoMapping() {
         setCoList(cos);
         
         // Fetch Summary
-        if (summaryKey) {
-          const summaryRef = ref(rtdb, `mapping_summary/${summaryKey}`);
-          const summarySnap = await get(summaryRef);
-          const summaryData = summarySnap.val() || {};
+        if (summaryKey) { // summaryKey is the document ID
+          const summaryRef = doc(db, 'mapping_summary', summaryKey); // Firestore doc reference
+          const summarySnap = await getDoc(summaryRef); // Use getDoc for Firestore
+          const summaryData = summarySnap.data() || {}; // Use .data() for Firestore documents
           
           setSummary(summaryData.summary || {});
           if (summaryData.cutoff !== undefined) setMappingCutoff(summaryData.cutoff);
@@ -413,10 +419,10 @@ export default function CoPoMapping() {
 
       setLoadingFinal(true);
       try {
-        const subjectKeyParts = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey);
-        const subjectKey = subjectKeyParts.join('_');
-        const snap = await get(ref(rtdb, `co_attainment/${subjectKey}`));
-        const data = snap.val();
+        const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_');
+        const coAttainmentRef = doc(db, 'co_attainment', coAttainmentDocId); // Firestore doc reference
+        const snap = await getDoc(coAttainmentRef); // Use getDoc for Firestore
+        const data = snap.data(); // Use .data() for Firestore documents
         if (!data) {
           setFinalOverallAtt({});
           setLoadingFinal(false);
@@ -439,8 +445,9 @@ export default function CoPoMapping() {
             (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
           );
           children = [{ key: '_legacy', data, isUniversity, isIndirect, label: m.exam || 'Legacy' }];
-        } else {
-          const entries = Object.entries(data).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v }));
+        } else { // Assuming coAttData contains sub-documents for each exam
+          // In Firestore, if coAttData is a document, and its fields are exam IDs, then we need to iterate its fields.
+          const entries = Object.entries(coAttData).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v })); // This assumes coAttData is an object of exam documents
           children = entries.map(e => {
             const m = e.data._meta || {};
             let label = m.exam || m.qpaper_name || e.key;

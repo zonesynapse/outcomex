@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, set, get, update } from "firebase/database";
+import { db, auth } from "../firebase"; // Import db for Firestore
+import { doc, collection, onSnapshot, setDoc, getDoc, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { Trash2, Save, Plus, ChevronDown, CheckCircle2, Download } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
@@ -27,16 +27,17 @@ const COConfiguration = () => {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      onValue(userRef, (snapshot) => {
+      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
+      onSnapshot(userRef, (snapshot) => { // Use onSnapshot for real-time updates
         if (snapshot.exists()) {
-          const userData = snapshot.val();
+          const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
-            const assignmentsRef = ref(rtdb, 'subject_assignments');
-            onValue(assignmentsRef, (assignSnap) => {
+            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
+            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
               if (assignSnap.exists()) {
-                const data = assignSnap.val();
+                const data = {}; // Convert QuerySnapshot to object
+                assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
                 const depts = new Set();
                 Object.entries(data).forEach(([progKey, deptData]) => {
@@ -264,10 +265,12 @@ Return an exhaustive list of all plausible mappings.`;
   };
 
   useEffect(() => {
-    const bloomsRef = ref(rtdb, "blooms_taxonomy");
-    const unsubscribe = onValue(bloomsRef, (snapshot) => {
+    const bloomsRef = collection(db, "blooms_taxonomy"); // Firestore collection reference
+    const unsubscribe = onSnapshot(bloomsRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (snapshot.exists()) {
-        setBloomsTaxonomy(snapshot.val());
+        const data = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(doc => { data[doc.id] = doc.data(); });
+        setBloomsTaxonomy(data);
       } else {
         setBloomsTaxonomy({});
       }
@@ -410,45 +413,45 @@ Return an exhaustive list of all plausible mappings.`;
       const progKey = formatProgrammeKey(programme);
       
       // Path for COs
-      const coKey = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
-      const coRef = ref(rtdb, `course_outcomes/${coKey}`);
+      const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
+      const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
       
       // Path for PO/PSO (using the key format from POConfiguration)
-      const poPsoKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
-      const poPsoRef = ref(rtdb, `po_pso/${poPsoKey}`);
+      const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
+      const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
 
       // Path for saved mapping
-      const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
-      const mappingRef = ref(rtdb, `mapping_summary/${mappingKey}`);
+      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+      const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
-      const courseRef = ref(rtdb, `courses/${progKey}/${sanitizeKey(department)}/${sanitizeKey(regulation)}/${sanitizeKey(subject)}`);
-      const overallCourseRef = ref(rtdb, `courses/${progKey}/Overall/${sanitizeKey(regulation)}/${sanitizeKey(subject)}`);
+      const courseRef = doc(db, 'courses', progKey, sanitizeKey(department), sanitizeKey(regulation), sanitizeKey(subject)); // Firestore subcollection path
+      const overallCourseRef = doc(db, 'courses', progKey, 'Overall', sanitizeKey(regulation), sanitizeKey(subject)); // Firestore subcollection path
 
       setLoading(true);
 
       const checkCourseBank = async () => {
         try {
-          const snap = await get(courseRef);
+          const snap = await getDoc(courseRef); // Use getDoc for Firestore
           if (snap.exists()) {
-             setIsCourseBankSubject(true);
-             return;
+            setIsCourseBankSubject(true);
+            return;
           }
-          const overallSnap = await get(overallCourseRef);
+          const overallSnap = await getDoc(overallCourseRef); // Use getDoc for Firestore
           if (overallSnap.exists()) {
             setIsCourseBankSubject(true);
           } else {
             setIsCourseBankSubject(false);
           }
         } catch (e) {
-          setIsCourseBankSubject(false);
+          setIsCourseBankSubject(false); // Ensure state is reset on error
         }
       };
 
       checkCourseBank();
 
       // Fetch COs
-      onValue(coRef, (snapshot) => {
-        const data = snapshot.val();
+      onSnapshot(coRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         if (data) {
           const loadedCOs = Object.entries(data)
             .map(([code, val]) => {
@@ -470,13 +473,13 @@ Return an exhaustive list of all plausible mappings.`;
       });
 
       // Fetch PO/PSO
-      onValue(poPsoRef, (snapshot) => {
-        setPoPsoData(snapshot.val());
+      onSnapshot(poPsoRef, (snapshot) => { // Use onSnapshot for real-time updates
+        setPoPsoData(snapshot.data()); // Use .data() for Firestore documents
       });
 
       // Fetch Mapping
-      onValue(mappingRef, (snapshot) => {
-        const data = snapshot.val();
+      onSnapshot(mappingRef, (snapshot) => { // Use onSnapshot for real-time updates
+        const data = snapshot.data(); // Use .data() for Firestore documents
         
         // Reset to defaults first
         setMapping({});
@@ -555,7 +558,7 @@ Return an exhaustive list of all plausible mappings.`;
       showAlert("Validation Error", "Please select all filters");
       return;
     }
-    const coKey = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
+    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
     const coDict = {};
     coData.forEach(co => {
       if (co.description.trim()) {
@@ -568,7 +571,7 @@ Return an exhaustive list of all plausible mappings.`;
     });
 
     try {
-      await set(ref(rtdb, `course_outcomes/${coKey}`), coDict);
+      await setDoc(doc(db, 'course_outcomes', coDocId), coDict); // Use setDoc for Firestore
       setSuccessMessage("Course Outcomes saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -592,7 +595,7 @@ Return an exhaustive list of all plausible mappings.`;
     }
 
     const progKey = formatProgrammeKey(programme);
-    const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
     
     const summary = {};
     
@@ -649,7 +652,7 @@ Return an exhaustive list of all plausible mappings.`;
     });
 
     try {
-      await set(ref(rtdb, `mapping_summary/${mappingKey}`), {
+      await setDoc(doc(db, 'mapping_summary', mappingDocId), { // Use setDoc for Firestore
         summary,
         thresholds,
         cutoff: cutoff === "" ? "" : Number(cutoff),
@@ -680,10 +683,10 @@ Return an exhaustive list of all plausible mappings.`;
     }
 
     const progKey = formatProgrammeKey(programme);
-    const mappingKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
 
     try {
-      await update(ref(rtdb, `mapping_summary/${mappingKey}`), {
+      await updateDoc(doc(db, 'mapping_summary', mappingDocId), { // Use updateDoc for Firestore
         thresholds,
         cutoff: cutoff === "" ? "" : Number(cutoff),
         percentageSplit: {

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { onValue, ref } from "firebase/database";
+import { doc, collection, onSnapshot } from "firebase/firestore"; // Firestore imports
 import { BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2 } from "lucide-react";
 
 import Layout from "../components/Layout";
-import { auth, rtdb } from "../firebase";
+import { auth, db } from "../firebase"; // Import db for Firestore
 import { formatProgDisplay } from "../lib/utils";
 
 export default function FacultyDashboard() {
@@ -33,11 +33,11 @@ export default function FacultyDashboard() {
     }
 
     setAssignmentsLoading(true);
-    const assignmentsRef = ref(rtdb, "subject_assignments");
-    const unsub = onValue(
+    const assignmentsRef = collection(db, "subject_assignments"); // Firestore collection reference
+    const unsub = onSnapshot( // Use onSnapshot for real-time updates
       assignmentsRef,
-      (snapshot) => {
-        const data = snapshot.val() || {};
+      (snapshot) => { // For QuerySnapshot
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         const groups = {};
 
         Object.entries(data).forEach(([progKey, depts]) => {
@@ -109,11 +109,11 @@ export default function FacultyDashboard() {
     }
 
     setPendingLoading(true);
-    const qpRef = ref(rtdb, "generated_qps");
-    const unsub = onValue(
+    const qpRef = collection(db, "generated_qps"); // Firestore collection reference
+    const unsub = onSnapshot( // Use onSnapshot for real-time updates
       qpRef,
-      (snapshot) => {
-        const data = snapshot.val() || {};
+      (snapshot) => { // For QuerySnapshot
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         const all = [];
         Object.entries(data).forEach(([compositeKey, versions]) => {
           Object.entries(versions || {}).forEach(([id, qp]) => {

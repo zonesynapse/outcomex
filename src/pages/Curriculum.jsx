@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, set, onValue, get, update } from "firebase/database";
+import { db, auth } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, onSnapshot, getDoc, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   Trash2,
@@ -88,10 +88,12 @@ export default function Curriculum() {
       setLoading(false);
     });
 
-    const gradeRef = ref(rtdb, 'grade_configs');
-    const unsubscribeData = onValue(gradeRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setGradeConfigs(snapshot.val());
+    const gradeRef = collection(db, 'grade_configs'); // Firestore collection reference
+    const unsubscribeData = onSnapshot(gradeRef, (snapshot) => { // Use onSnapshot for real-time updates
+      if (snapshot.exists) { // For QuerySnapshot, use .exists
+        const data = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(doc => { data[doc.id] = doc.data(); });
+        setGradeConfigs(data);
       } else {
         setGradeConfigs({});
       }
@@ -104,38 +106,39 @@ export default function Curriculum() {
   }, []);
 
   useEffect(() => {
-    const ctRef = ref(rtdb, 'course_type_configs');
-    const unsubscribe = onValue(ctRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setCourseTypeConfigs(snapshot.val());
+    const ctRef = collection(db, 'course_type_configs'); // Firestore collection reference
+    const unsubscribe = onSnapshot(ctRef, (snapshot) => { // Use onSnapshot for real-time updates
+      if (snapshot.exists) { // For QuerySnapshot, use .exists
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setCourseTypeConfigs(data); // Convert QuerySnapshot to object
       } else {
         setCourseTypeConfigs({});
       }
     });
     return () => unsubscribe();
   }, []);
-
   useEffect(() => {
-    const wRef = ref(rtdb, 'course_type_weightage');
-    const unsubscribe = onValue(wRef, (snapshot) => {
-      setWeightageConfigs(snapshot.val() || {});
+    const wRef = collection(db, 'course_type_weightage'); // Firestore collection reference
+    const unsubscribe = onSnapshot(wRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setWeightageConfigs(data || {}); // Convert QuerySnapshot to object
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    const periodRef = ref(rtdb, 'period_configs');
-    const unsubscribe = onValue(periodRef, (snapshot) => {
-      setPeriodConfigs(snapshot.val() || {});
+    const periodRef = collection(db, 'period_configs'); // Firestore collection reference
+    const unsubscribe = onSnapshot(periodRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setPeriodConfigs(data || {}); // Convert QuerySnapshot to object
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    const ciaRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(ciaRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setAllCiaConfigs(snapshot.val());
+    const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
+    const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
+      if (snapshot.exists) { // For QuerySnapshot, use .exists
+        const data = {}; // Convert QuerySnapshot to object
+        snapshot.forEach(doc => { data[doc.id] = doc.data(); });
+        setAllCiaConfigs(data);
       } else {
         setAllCiaConfigs({});
       }
@@ -146,7 +149,7 @@ export default function Curriculum() {
   const handleUpdateNumSets = async (configId, num) => {
     setUpdatingSet(configId);
     try {
-      await update(ref(rtdb, `cia_configs/${configId}`), { numSets: parseInt(num) || 1 });
+      await updateDoc(doc(db, 'cia_configs', configId), { numSets: parseInt(num, 10) || 1 }); // Use updateDoc for Firestore
       setSuccessMessage("Exam set count updated successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -177,7 +180,7 @@ export default function Curriculum() {
     }
 
     try {
-      await set(ref(rtdb, `course_type_weightage/${regKey}/${type}`), data);
+      await setDoc(doc(db, 'course_type_weightage', regKey, type), data); // Firestore subcollection path
       setSuccessMessage("Weightage updated successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -236,8 +239,8 @@ export default function Curriculum() {
     if (!selectedConfigReg) return;
     const regKey = sanitizeKey(selectedConfigReg);
     const config = getPeriodConfig(selectedConfigReg);
-
-    await set(ref(rtdb, `period_configs/${regKey}`), config);
+    
+    await setDoc(doc(db, 'period_configs', regKey), config); // Use setDoc for Firestore
     setSuccessMessage("Period configuration saved successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -252,9 +255,8 @@ export default function Curriculum() {
       showAlert("Error", "Course type already exists for this regulation.");
       return;
     }
-    
-    const updatedTypes = [...currentTypes, newCourseType.trim()];
-    await set(ref(rtdb, `course_type_configs/${regKey}`), updatedTypes);
+    const updatedTypes = [...currentTypes, newCourseType.trim()]; // Add new course type
+    await setDoc(doc(db, 'course_type_configs', regKey), updatedTypes); // Use setDoc for Firestore
     setNewCourseType("");
     setSuccessMessage("Course type added successfully!");
     setShowSuccess(true);
@@ -264,11 +266,11 @@ export default function Curriculum() {
   const handleRemoveCourseType = async (regKey, index) => {
     const typeToRemove = courseTypeConfigs[regKey][index];
     const currentTypes = [...(courseTypeConfigs[regKey] || [])];
-    currentTypes.splice(index, 1);
-    await set(ref(rtdb, `course_type_configs/${regKey}`), currentTypes.length > 0 ? currentTypes : null);
+    currentTypes.splice(index, 1); // Remove the type
+    await setDoc(doc(db, 'course_type_configs', regKey), currentTypes.length > 0 ? currentTypes : null); // Update doc
     
-    if (typeToRemove) {
-      await set(ref(rtdb, `course_type_weightage/${regKey}/${typeToRemove}`), null);
+    if (typeToRemove) { // Also remove its weightage config
+      await deleteDoc(doc(db, 'course_type_weightage', regKey, typeToRemove)); // Delete doc
     }
     
     setSuccessMessage("Course type removed successfully!");
@@ -286,7 +288,7 @@ export default function Curriculum() {
       gradePoint: gradePoint,
       mark: mark 
     }];
-    await set(ref(rtdb, `grade_configs/${sanitizeKey(gradeReg)}`), updatedGrades);
+    await setDoc(doc(db, 'grade_configs', sanitizeKey(gradeReg)), updatedGrades); // Use setDoc for Firestore
     setNewGrade({ grade: "", gradePoint: "", mark: "" });
     setSuccessMessage("Grade added successfully!");
     setShowSuccess(true);
@@ -296,7 +298,7 @@ export default function Curriculum() {
   const handleRemoveGrade = async (reg, index) => {
     const currentGrades = [...(gradeConfigs[sanitizeKey(reg)] || [])];
     currentGrades.splice(index, 1);
-    await set(ref(rtdb, `grade_configs/${sanitizeKey(reg)}`), currentGrades.length > 0 ? currentGrades : null);
+    await setDoc(doc(db, 'grade_configs', sanitizeKey(reg)), currentGrades.length > 0 ? currentGrades : null); // Use setDoc for Firestore
     setSuccessMessage("Grade removed successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -352,8 +354,8 @@ export default function Curriculum() {
     if (!newProgram.trim()) return;
     const progKey = formatProgrammeKey(newProgram.trim());
     if (!departments[progKey]) {
-      await set(ref(rtdb, `programme_departments/${progKey}`), []);
-      await set(ref(rtdb, `programme_durations/${progKey}`), parseInt(newDuration) || 4);
+      await setDoc(doc(db, 'programme_departments', progKey), { departments: [] }); // Use setDoc for Firestore
+      await setDoc(doc(db, 'programme_durations', progKey), { duration: parseInt(newDuration, 10) || 4 }); // Use setDoc for Firestore
       setSuccessMessage("Program added successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -384,7 +386,7 @@ export default function Curriculum() {
   const handleMapRegulation = async () => {
     if (!mappingProgram || !mappingBatch || !mappingRegulation) return;
     const progKey = formatProgrammeKey(mappingProgram);
-    await mapBatchToRegulation(progKey, mappingBatch, mappingRegulation);
+    await mapBatchToRegulation(progKey, mappingBatch, mappingRegulation); // This function is in useRegulations hook, which should be updated separately if needed.
     setSuccessMessage("Regulation mapping updated successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -403,7 +405,7 @@ export default function Curriculum() {
     const nextValue = editProgramValue.value.trim();
     if (!oldKey || !nextValue) return;
     const newKey = formatProgrammeKey(nextValue);
-    if (newKey === oldKey) return;
+    if (newKey === oldKey) return; // No change needed
     await renameProgram(oldKey, newKey);
     setSuccessMessage("Program updated successfully!");
     setShowSuccess(true);
@@ -414,7 +416,7 @@ export default function Curriculum() {
   const handleRenameDepartment = async () => {
     const nextValue = editDepartmentValue.value.trim();
     if (!editDepartmentValue.programme || !editDepartmentValue.oldValue || !nextValue) return;
-    await renameDepartment(editDepartmentValue.programme, editDepartmentValue.oldValue, nextValue);
+    await renameDepartment(editDepartmentValue.programme, editDepartmentValue.oldValue, nextValue); // This function is in useDepartments hook, which should be updated separately if needed.
     setSuccessMessage("Department updated successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -1001,7 +1003,7 @@ export default function Curriculum() {
                                     `Unmap batch ${b} from ${mappingRegulation}?`,
                                     async () => {
                                       const progKey = formatProgrammeKey(mappingProgram);
-                                      await set(ref(rtdb, `batch_regulations/${progKey}/${b}`), null);
+                                      await updateDoc(doc(db, 'batch_regulations', progKey), { [b]: null }); // Update doc for Firestore
                                     }
                                   );
                                 }}
@@ -1259,14 +1261,9 @@ export default function Curriculum() {
                                     "Delete All Mappings",
                                     `Are you sure you want to remove all batch mappings for ${mapping.regulation} in ${formatProgDisplay(mapping.progKey)}?`,
                                     async () => {
-                                      const updates = {};
-                                      mapping.batches.forEach(b => {
-                                        updates[b] = null;
-                                      });
-                                      await set(ref(rtdb, `batch_regulations/${mapping.progKey}`), {
-                                        ...(batchRegulations[mapping.progKey] || {}),
-                                        ...updates
-                                      });
+                                      // To delete all mappings for a program, we can set the document to an empty object or delete it.
+                                      // If we want to remove specific batches, we update the document.
+                                      await deleteDoc(doc(db, 'batch_regulations', mapping.progKey)); // Delete the document for the program
                                       setSuccessMessage("All mappings removed successfully!");
                                       setShowSuccess(true);
                                       setTimeout(() => setShowSuccess(false), 3000);

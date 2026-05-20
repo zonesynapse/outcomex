@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { rtdb } from "../firebase";
-import { ref, set, get, onValue } from "firebase/database";
+import { db } from "../firebase"; // Import db for Firestore
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore"; // Firestore imports
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
@@ -58,8 +58,8 @@ function TemplateAllocationCard({ template, showToast }) {
     }
     setAllocating(true);
     try {
-      const progKey = formatProgrammeKey(programme);
-      const path = `timetables/${progKey}/${sanitizeKey(batch)}/data`;
+      const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
+      const timetableDocRef = doc(db, 'timetables', progKey, sanitizeKey(batch), 'data'); // Firestore subcollection path
       
       const payload = {
         ...template,
@@ -67,8 +67,7 @@ function TemplateAllocationCard({ template, showToast }) {
         batch,
         allocatedAt: new Date().toISOString()
       };
-      
-      await set(ref(rtdb, path), payload);
+      await setDoc(timetableDocRef, payload); // Use setDoc for Firestore
       showToast("Timetable allocated to batch successfully!");
       setProgramme('');
       setBatch('');
@@ -212,8 +211,8 @@ export default function TimetableSetup() {
       return;
     }
     setSaving(true);
-    try {
-      const path = `timetable_templates/${sanitizeKey(timetableName)}`;
+    try { // Firestore doc reference
+      const templateRef = doc(db, 'timetable_templates', sanitizeKey(timetableName));
       
       const payload = {
         timetableName,
@@ -229,8 +228,7 @@ export default function TimetableSetup() {
         subjects,
         updatedAt: new Date().toISOString()
       };
-      
-      await set(ref(rtdb, path), payload);
+      await setDoc(templateRef, payload); // Use setDoc for Firestore
       showToast("Timetable template saved successfully!");
     } catch (err) {
       console.error(err);
@@ -495,11 +493,11 @@ export default function TimetableSetup() {
                     setAllocationLoading(true);
                     try {
                       const template = savedTemplates.find(t => t.id === allocationTemplateId);
-                      if (!template) throw new Error('Template not found');
-                      const progKey = formatProgrammeKey(allocationProgramme);
-                      const path = `timetables/${progKey}/${sanitizeKey(allocationBatch)}/data`;
-                      const payload = { ...template, programme: allocationProgramme, batch: allocationBatch, allocatedAt: new Date().toISOString() };
-                      await set(ref(rtdb, path), payload);
+                      if (!template) throw new Error('Template not found'); // Template must exist
+                      const progKey = formatProgrammeKey(allocationProgramme); // Ensure progKey is sanitized
+                      const timetableDocRef = doc(db, 'timetables', progKey, sanitizeKey(allocationBatch), 'data'); // Firestore subcollection path
+                      const payload = { ...template, programme: allocationProgramme, batch: allocationBatch, allocatedAt: new Date().toISOString() }; // Payload for Firestore
+                      await setDoc(timetableDocRef, payload); // Use setDoc for Firestore
                       showToast('Template allocated successfully!');
                       setAllocationTemplateId("");
                       setAllocationProgramme("");
