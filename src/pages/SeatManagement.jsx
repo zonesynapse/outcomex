@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { doc, onSnapshot } from "firebase/firestore";
@@ -7,6 +7,7 @@ import {
   saveSeatConfiguration,
 } from "../services/seatService";
 import { getEnquiriesRealtime } from "../services/enquiryService";
+import { getScholarshipsRealtime, addScholarship, deleteScholarship } from "../services/scholarshipService";
 import {
   getCommunitiesRealtime,
   saveCommunity,
@@ -41,6 +42,11 @@ export default function SeatManagement() {
   const [showAddCommunityModal, setShowAddCommunityModal] = useState(false);
   const [newCommunityInput, setNewCommunityInput] = useState("");
 
+  const [showAddScholarshipModal, setShowAddScholarshipModal] = useState(false);
+  const [newScholarshipInput, setNewScholarshipInput] = useState("");
+  const [scholarshipQuota, setScholarshipQuota] = useState("");
+  const [scholarships, setScholarships] = useState([]);
+
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferDept, setTransferDept] = useState("");
   const [sourceQuota, setSourceQuota] = useState("");
@@ -48,6 +54,11 @@ export default function SeatManagement() {
   const [destQuota, setDestQuota] = useState("");
   const [destCommunity, setDestCommunity] = useState("");
   const [transferCount, setTransferCount] = useState("");
+
+  const isEditingRef = useRef(isEditing);
+  useEffect(() => {
+    isEditingRef.current = isEditing;
+  }, [isEditing]);
 
   useEffect(() => {
     // Fetch current user data for role check
@@ -86,7 +97,7 @@ export default function SeatManagement() {
         });
 
         setSeatConfigs(normalizedData);
-        if (!isEditing) {
+        if (!isEditingRef.current) {
           setEditFormData(normalizedData);
         }
       },
@@ -113,13 +124,20 @@ export default function SeatManagement() {
       (err) => console.error(err),
     );
 
+    // 4. Fetch scholarships
+    const unsubscribeScholarships = getScholarshipsRealtime(
+      (data) => setScholarships(data || []),
+      (err) => console.error(err),
+    );
+
     return () => {
       unsubscribeConfigs();
       unsubscribeEnquiries();
       unsubscribeCommunities();
+      unsubscribeScholarships();
       unsubscribeUser();
     };
-  }, [isEditing]);
+  }, []);
 
   const isAdmin = userData?.role === 'Admin' || 
                  auth.currentUser?.email === import.meta.env.VITE_MASTER_ADMIN_EMAIL;
@@ -574,8 +592,7 @@ export default function SeatManagement() {
           <h3 className="text-lg font-bold text-zinc-800 tracking-tight">
             Department Overview
           </h3>
-          {(isEditing ? Object.keys(editFormData) : departments).length ===
-          0 ? (
+          {departments.length === 0 ? (
             <div className="text-center p-12 bg-white rounded-3xl border-2 border-dashed border-zinc-200 shadow-sm">
               <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="text-zinc-400" size={24} />
@@ -591,8 +608,7 @@ export default function SeatManagement() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
-              {(isEditing ? Object.keys(editFormData) : departments).map(
-                (dept) => {
+              {departments.map((dept) => {
                   const config =
                     (isEditing ? editFormData[dept] : seatConfigs[dept]) || {};
                   const total = calculateTotalIntake(config);
@@ -687,7 +703,10 @@ export default function SeatManagement() {
             <div className="flex flex-wrap items-center gap-3">
             {!isEditing && isAdmin ? (
                 <button
-                  onClick={() => setIsEditing(true)}
+                  onClick={() => {
+                    setIsEditing(true);
+                    setEditFormData(seatConfigs);
+                  }}
                   className="flex items-center gap-2 bg-[#120c7a] hover:bg-[#1a148a] shadow-sm hover:shadow-md text-white px-4 py-2 rounded-xl transition-all font-medium text-xs lg:text-sm"
                 >
                   <Edit size={14} />{" "}
@@ -709,11 +728,21 @@ export default function SeatManagement() {
                     <Plus size={14} />{" "}
                     <span className="whitespace-nowrap">Add Community</span>
                   </button>
+                  <button
+                    onClick={() => setShowAddScholarshipModal(true)}
+                    className="flex justify-center items-center gap-1.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 px-3 py-1.5 rounded-lg transition-colors font-medium text-xs border border-zinc-200/50"
+                  >
+                    <Plus size={14} />{" "}
+                    <span className="whitespace-nowrap">Add Scholarship</span>
+                  </button>
 
                   <div className="w-[1px] h-6 bg-zinc-200 hidden sm:block mx-1"></div>
 
                   <button
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => {
+                      setIsEditing(false);
+                      setEditFormData(seatConfigs);
+                    }}
                     className="flex justify-center items-center gap-1.5 bg-white hover:bg-zinc-50 text-zinc-600 px-3 py-1.5 rounded-lg transition-colors font-medium text-xs border border-zinc-200 shadow-sm"
                   >
                     <X size={14} />{" "}
@@ -1023,30 +1052,28 @@ export default function SeatManagement() {
 
         {/* Seat Transfer Modal */}
         {showTransferModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-md">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="px-6 py-3 border-b border-zinc-100 flex justify-between items-center bg-white">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-zinc-950/40 backdrop-blur-sm transition-all duration-300">
+            <div className="bg-white rounded-2xl shadow-xl shadow-zinc-900/10 w-full max-w-[420px] flex flex-col max-h-[90dvh] overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-[0.98] duration-200">
+              <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-white shrink-0">
                 <div>
-                  <h3 className="font-bold text-zinc-900 text-lg tracking-tight">
+                  <h3 className="font-semibold text-zinc-900 text-base leading-tight">
                     Seat Transfer
                   </h3>
-                  <p className="text-xs text-zinc-500 font-medium">
+                  <p className="text-[11px] font-medium text-zinc-500 mt-0.5">
                     {transferDept}
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    setShowTransferModal(false);
-                  }}
-                  className="text-zinc-400 hover:text-zinc-700 bg-zinc-50 hover:bg-zinc-100 p-2 rounded-full transition-colors"
+                  onClick={() => setShowTransferModal(false)}
+                  className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 p-1.5 rounded-lg transition-colors"
                 >
-                  <X size={20} />
+                  <X size={18} strokeWidth={2} />
                 </button>
               </div>
-              <div className="p-6 space-y-4">
+              <div className="overflow-y-auto flex-1 p-5 custom-scrollbar space-y-4">
                 {/* Source Quota Selection */}
-                <div>
-                  <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-zinc-600">
                     From Quota
                   </label>
                   <select
@@ -1055,7 +1082,14 @@ export default function SeatManagement() {
                       setSourceQuota(e.target.value);
                       setSourceCommunity("");
                     }}
-                    className="w-full px-3 py-2.5 border border-zinc-300 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none bg-white font-medium text-sm text-zinc-800"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none text-sm text-zinc-900 shadow-sm appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                      backgroundPosition: `right 0.75rem center`,
+                      backgroundRepeat: `no-repeat`,
+                      backgroundSize: `1em 1em`,
+                      paddingRight: `2.5rem`
+                    }}
                   >
                     <option value="">Select Quota</option>
                     {(seatConfigs[transferDept]?.quotas
@@ -1072,14 +1106,21 @@ export default function SeatManagement() {
                 {/* Source Community Selection (if split) */}
                 {sourceQuota &&
                   isQuotaSplitForDept(transferDept, sourceQuota) && (
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium text-zinc-600">
                         From Community
                       </label>
                       <select
                         value={sourceCommunity}
                         onChange={(e) => setSourceCommunity(e.target.value)}
-                        className="w-full px-3 py-2.5 border border-zinc-300 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none bg-white font-medium text-sm text-zinc-800"
+                        className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none text-sm text-zinc-900 shadow-sm appearance-none"
+                        style={{
+                          backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                          backgroundPosition: `right 0.75rem center`,
+                          backgroundRepeat: `no-repeat`,
+                          backgroundSize: `1em 1em`,
+                          paddingRight: `2.5rem`
+                        }}
                       >
                         <option value="">Select Community</option>
                         {globalCommunities.map((comm) => (
@@ -1095,19 +1136,19 @@ export default function SeatManagement() {
                 {sourceQuota &&
                   (!isQuotaSplitForDept(transferDept, sourceQuota) ||
                     sourceCommunity) && (
-                    <div className="bg-zinc-50 p-3 rounded-xl border border-zinc-200/60 flex justify-between items-center text-xs">
-                      <span className="font-semibold text-zinc-500">
+                    <div className="bg-zinc-50 py-2.5 px-3.5 rounded-lg border border-zinc-200/80 flex justify-between items-center shadow-sm">
+                      <span className="text-xs font-medium text-zinc-600">
                         Available Seats in Source:
                       </span>
-                      <span className="font-bold text-[#120c7a] text-sm">
+                      <span className="font-semibold text-[#120c7a] text-sm">
                         {getAvailableSourceCount()}
                       </span>
                     </div>
                   )}
 
                 {/* Destination Quota Selection */}
-                <div>
-                  <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                <div className="space-y-1.5 pt-2">
+                  <label className="block text-xs font-medium text-zinc-600">
                     To Quota
                   </label>
                   <select
@@ -1116,7 +1157,14 @@ export default function SeatManagement() {
                       setDestQuota(e.target.value);
                       setDestCommunity("");
                     }}
-                    className="w-full px-3 py-2.5 border border-zinc-300 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none bg-white font-medium text-sm text-zinc-800"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none text-sm text-zinc-900 shadow-sm appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                      backgroundPosition: `right 0.75rem center`,
+                      backgroundRepeat: `no-repeat`,
+                      backgroundSize: `1em 1em`,
+                      paddingRight: `2.5rem`
+                    }}
                   >
                     <option value="">Select Quota</option>
                     {(seatConfigs[transferDept]?.quotas
@@ -1132,14 +1180,21 @@ export default function SeatManagement() {
 
                 {/* Destination Community Selection (if split) */}
                 {destQuota && isQuotaSplitForDept(transferDept, destQuota) && (
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-zinc-600">
                       To Community
                     </label>
                     <select
                       value={destCommunity}
                       onChange={(e) => setDestCommunity(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-zinc-300 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none bg-white font-medium text-sm text-zinc-800"
+                      className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none text-sm text-zinc-900 shadow-sm appearance-none"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                        backgroundPosition: `right 0.75rem center`,
+                        backgroundRepeat: `no-repeat`,
+                        backgroundSize: `1em 1em`,
+                        paddingRight: `2.5rem`
+                      }}
                     >
                       <option value="">Select Community</option>
                       {globalCommunities.map((comm) => (
@@ -1152,8 +1207,8 @@ export default function SeatManagement() {
                 )}
 
                 {/* Transfer Count Input */}
-                <div>
-                  <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                <div className="space-y-1.5 pt-2">
+                  <label className="block text-xs font-medium text-zinc-600">
                     Number of Seats to Transfer
                   </label>
                   <input
@@ -1164,16 +1219,16 @@ export default function SeatManagement() {
                       setTransferCount(e.target.value.replace(/[^0-9]/g, ""))
                     }
                     placeholder="e.g. 5"
-                    className="w-full px-3 py-2.5 border border-zinc-300 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none shadow-sm font-medium text-sm"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all placeholder:text-zinc-400 text-sm text-zinc-900 shadow-sm"
                   />
                 </div>
               </div>
 
               {/* Action buttons */}
-              <div className="px-6 py-5 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-3">
+              <div className="px-5 py-4 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-3 shrink-0">
                 <button
                   onClick={() => setShowTransferModal(false)}
-                  className="px-5 py-2.5 text-sm font-bold text-zinc-600 bg-white border border-zinc-300 rounded-xl hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm"
+                  className="px-4 py-2 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-lg hover:bg-zinc-50 transition-colors shadow-sm"
                 >
                   Cancel
                 </button>
@@ -1190,7 +1245,7 @@ export default function SeatManagement() {
                     Number(transferCount) <= 0 ||
                     Number(transferCount) > getAvailableSourceCount()
                   }
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-[#120c7a] rounded-xl hover:bg-[#1a148a] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#120c7a] rounded-lg hover:bg-[#1a148a] transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed"
                 >
                   Transfer Seats
                 </button>
@@ -1201,10 +1256,10 @@ export default function SeatManagement() {
 
         {/* Add Quota Modal */}
         {showAddQuotaModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-md">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="px-6 py-5 border-b border-zinc-100 flex justify-between items-center bg-white">
-                <h3 className="font-bold text-zinc-900 text-lg tracking-tight">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-zinc-950/40 backdrop-blur-sm transition-all duration-300">
+            <div className="bg-white rounded-2xl shadow-xl shadow-zinc-900/10 w-full max-w-[420px] flex flex-col max-h-[90dvh] overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-[0.98] duration-200">
+              <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-white shrink-0">
+                <h3 className="font-semibold text-zinc-900 text-base">
                   Add Quota
                 </h3>
                 <button
@@ -1213,64 +1268,64 @@ export default function SeatManagement() {
                     setNewQuotaInput("");
                     setIsSplitCommunity(false);
                   }}
-                  className="text-zinc-400 hover:text-zinc-700 bg-zinc-50 hover:bg-zinc-100 p-2 rounded-full transition-colors"
+                  className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 p-1.5 rounded-lg transition-colors"
                 >
-                  <X size={20} />
+                  <X size={18} strokeWidth={2} />
                 </button>
               </div>
-              <div className="p-6 space-y-5">
-                <div>
-                  <label className="block text-sm font-bold text-zinc-700 mb-2">
+              <div className="overflow-y-auto flex-1 p-5 custom-scrollbar space-y-5">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-zinc-600">
                     Quota Name
                   </label>
                   <input
                     type="text"
                     value={newQuotaInput}
                     onChange={(e) => setNewQuotaInput(e.target.value)}
-                    placeholder="e.g., First Graduate, Sports Quota"
-                    className="w-full px-4 py-3 border border-zinc-300/80 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none transition-all shadow-sm font-medium"
+                    placeholder="e.g. First Graduate, Sports Quota"
+                    className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all placeholder:text-zinc-400 text-sm text-zinc-900 shadow-sm"
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === "Enter") submitAddQuota();
                     }}
                   />
                 </div>
-                <div className="flex items-center gap-3 bg-zinc-50 p-4 rounded-xl border border-zinc-200/60">
+                <div className="flex items-start gap-3 bg-zinc-50 p-3.5 rounded-xl border border-zinc-200/80 shadow-sm">
                   <input
                     type="checkbox"
                     id="splitByCommunity"
                     checked={isSplitCommunity}
                     onChange={(e) => setIsSplitCommunity(e.target.checked)}
-                    className="rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a] w-5 h-5 cursor-pointer"
+                    className="mt-0.5 rounded border-zinc-300 text-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/20 w-4 h-4 cursor-pointer"
                   />
-                  <div className="flex flex-col">
+                  <div className="flex flex-col gap-0.5">
                     <label
                       htmlFor="splitByCommunity"
-                      className="text-sm font-bold text-zinc-900 cursor-pointer"
+                      className="text-sm font-medium text-zinc-800 cursor-pointer select-none"
                     >
                       Split by Community
                     </label>
-                    <p className="text-xs text-zinc-500 font-medium">
+                    <p className="text-xs text-zinc-500 leading-tight">
                       Create separate inputs for each community option.
                     </p>
                   </div>
                 </div>
               </div>
-              <div className="px-6 py-5 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-3">
+              <div className="px-5 py-4 border-t border-zinc-100 bg-zinc-50/50 flex justify-end gap-3 shrink-0">
                 <button
                   onClick={() => {
                     setShowAddQuotaModal(false);
                     setNewQuotaInput("");
                     setIsSplitCommunity(false);
                   }}
-                  className="px-5 py-2.5 text-sm font-bold text-zinc-600 bg-white border border-zinc-300 rounded-xl hover:bg-zinc-50 hover:text-zinc-900 transition-colors shadow-sm"
+                  className="px-4 py-2 text-sm font-medium text-zinc-700 bg-white border border-zinc-300 rounded-lg hover:bg-zinc-50 transition-colors shadow-sm"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={submitAddQuota}
                   disabled={!newQuotaInput.trim()}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-[#120c7a] rounded-xl hover:bg-[#1a148a] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#120c7a] rounded-lg hover:bg-[#1a148a] transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed"
                 >
                   Add Quota
                 </button>
@@ -1281,10 +1336,10 @@ export default function SeatManagement() {
 
         {/* Manage Communities Modal */}
         {showAddCommunityModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-md">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="px-6 py-3 border-b border-zinc-100 flex justify-between items-center bg-white">
-                <h3 className="font-bold text-zinc-900 text-lg tracking-tight">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-zinc-950/40 backdrop-blur-sm transition-all duration-300">
+            <div className="bg-white rounded-2xl shadow-xl shadow-zinc-900/10 w-full max-w-[420px] flex flex-col max-h-[90dvh] overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-[0.98] duration-200">
+              <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-white shrink-0">
+                <h3 className="font-semibold text-zinc-900 text-base">
                   Manage Communities
                 </h3>
                 <button
@@ -1293,53 +1348,59 @@ export default function SeatManagement() {
                     setNewCommunityInput("");
                     setNewCommunityPercent("");
                   }}
-                  className="text-zinc-400 hover:text-zinc-700 bg-zinc-50 hover:bg-zinc-100 p-2 rounded-full transition-colors"
+                  className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 p-1.5 rounded-lg transition-colors"
                 >
-                  <X size={20} />
+                  <X size={18} strokeWidth={2} />
                 </button>
               </div>
 
-              <div className="p-5">
-                <div className="space-y-2 mb-4 max-h-32 overflow-y-auto custom-scrollbar">
-                  <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">
+              <div className="overflow-y-auto flex-1 p-5 custom-scrollbar">
+                <div className="mb-6">
+                  <h4 className="text-xs font-semibold text-zinc-900 mb-3">
                     Existing Communities
                   </h4>
                   {globalCommunities.length === 0 ? (
-                    <p className="text-sm text-zinc-400 italic">
-                      No communities configured.
-                    </p>
+                    <div className="py-8 px-4 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50">
+                      <p className="text-sm font-medium text-zinc-500">No communities yet</p>
+                      <p className="text-xs text-zinc-400 mt-1">Add one below to get started</p>
+                    </div>
                   ) : (
-                    globalCommunities.map((comm) => (
-                      <div
-                        key={comm.name}
-                        className="flex items-center justify-between bg-zinc-50 p-2.5 rounded-xl border border-zinc-200/60"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-zinc-700">
-                            {comm.name}
-                          </span>
-                          <span className="text-xs font-medium bg-[#120c7a]/10 text-[#120c7a] px-2 py-0.5 rounded-full">
-                            {comm.percentage}%
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => deleteCommunity(comm.name)}
-                          className="text-rose-400 hover:text-rose-600 bg-white hover:bg-rose-50 p-1.5 rounded-lg border border-transparent hover:border-rose-100 transition-colors"
+                    <div className="space-y-2">
+                      {globalCommunities.map((comm) => (
+                        <div
+                          key={comm.name}
+                          className="group flex items-center justify-between bg-white p-3 rounded-xl border border-zinc-200/60 shadow-sm hover:border-zinc-300 transition-colors"
                         >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium text-zinc-800 text-sm leading-tight">
+                              {comm.name}
+                            </span>
+                            <div className="flex items-center mt-0.5">
+                              <span className="text-[11px] font-medium text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-md border border-zinc-200/80">
+                                {comm.percentage}%
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => deleteCommunity(comm.name)}
+                            className="text-zinc-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-md transition-colors opacity-100 sm:opacity-0 group-hover:opacity-100"
+                            title="Remove community"
+                          >
+                            <X size={16} strokeWidth={2} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
 
-                <div className="pt-4 border-t border-zinc-100 space-y-3">
-                  <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                <div className="pt-5 border-t border-zinc-100">
+                  <h4 className="text-xs font-semibold text-zinc-900 mb-4">
                     Add New
                   </h4>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">
+                  <div className="grid grid-cols-3 gap-3 mb-5">
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="block text-xs font-medium text-zinc-600">
                         Name
                       </label>
                       <input
@@ -1347,14 +1408,14 @@ export default function SeatManagement() {
                         value={newCommunityInput}
                         onChange={(e) => setNewCommunityInput(e.target.value)}
                         placeholder="e.g. OC, BC"
-                        className="w-full px-3 py-2 border border-zinc-300/80 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none transition-all shadow-sm font-medium text-sm"
+                        className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all placeholder:text-zinc-400 text-sm text-zinc-900 shadow-sm"
                         onKeyDown={(e) => {
                           if (e.key === "Enter") submitAddCommunity();
                         }}
                       />
                     </div>
-                    <div className="col-span-1">
-                      <label className="block text-xs font-bold text-zinc-700 mb-1.5">
+                    <div className="col-span-1 space-y-1.5">
+                      <label className="block text-xs font-medium text-zinc-600">
                         Percent (%)
                       </label>
                       <input
@@ -1367,7 +1428,7 @@ export default function SeatManagement() {
                           )
                         }
                         placeholder="e.g. 31"
-                        className="w-full px-3 py-2 border border-zinc-300/80 rounded-xl focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a] outline-none transition-all shadow-sm font-medium text-sm"
+                        className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all placeholder:text-zinc-400 text-sm text-zinc-900 shadow-sm"
                         onKeyDown={(e) => {
                           if (e.key === "Enter") submitAddCommunity();
                         }}
@@ -1377,9 +1438,125 @@ export default function SeatManagement() {
                   <button
                     onClick={submitAddCommunity}
                     disabled={!newCommunityInput.trim()}
-                    className="w-full flex justify-center items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#120c7a] rounded-xl hover:bg-[#1a148a] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full flex justify-center items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-[#120c7a] rounded-lg hover:bg-[#1a148a] transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed"
                   >
-                    <Plus size={16} /> Add Community
+                    <Plus size={16} strokeWidth={2.5} /> 
+                    <span>Add Community</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Manage Scholarships Modal */}
+        {showAddScholarshipModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-zinc-950/40 backdrop-blur-sm transition-all duration-300">
+            <div className="bg-white rounded-2xl shadow-xl shadow-zinc-900/10 w-full max-w-[420px] flex flex-col max-h-[90dvh] overflow-hidden ring-1 ring-zinc-900/5 animate-in fade-in zoom-in-[0.98] duration-200">
+              <div className="px-5 py-4 border-b border-zinc-100 flex justify-between items-center bg-white shrink-0">
+                <h3 className="font-semibold text-zinc-900 text-base">
+                  Manage Scholarships
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowAddScholarshipModal(false);
+                    setNewScholarshipInput("");
+                    setScholarshipQuota("");
+                  }}
+                  className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 p-1.5 rounded-lg transition-colors"
+                >
+                  <X size={18} strokeWidth={2} />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto flex-1 p-5 custom-scrollbar">
+                <div className="mb-6">
+                  <h4 className="text-xs font-semibold text-zinc-900 mb-3">
+                    Existing Scholarships
+                  </h4>
+                  {scholarships.length === 0 ? (
+                    <div className="py-8 px-4 text-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50">
+                      <p className="text-sm font-medium text-zinc-500">No scholarships yet</p>
+                      <p className="text-xs text-zinc-400 mt-1">Add one below to get started</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {scholarships.map((s) => (
+                        <div key={s.id} className="group flex items-center justify-between bg-white p-3 rounded-xl border border-zinc-200/60 shadow-sm hover:border-zinc-300 transition-colors">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium text-zinc-800 text-sm leading-tight">{s.name}</span>
+                            <div className="flex items-center">
+                              {s.quota ? (
+                                <span className="text-[11px] font-medium text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-md border border-zinc-200/80">{s.quota}</span>
+                              ) : (
+                                <span className="text-[11px] font-medium text-zinc-400">All Quotas</span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => deleteScholarship(s.id)}
+                            className="text-zinc-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-md transition-colors opacity-100 sm:opacity-0 group-hover:opacity-100"
+                            title="Remove scholarship"
+                          >
+                            <X size={16} strokeWidth={2} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-5 border-t border-zinc-100">
+                  <h4 className="text-xs font-semibold text-zinc-900 mb-4">Add New</h4>
+                  
+                  <div className="space-y-4 mb-5">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-medium text-zinc-600">Name</label>
+                      <input
+                        type="text"
+                        value={newScholarshipInput}
+                        onChange={(e) => setNewScholarshipInput(e.target.value)}
+                        placeholder="e.g. Merit Scholarship"
+                        className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all placeholder:text-zinc-400 text-sm text-zinc-900 shadow-sm"
+                      />
+                    </div>
+                    
+                    <div className="space-y-1.5">
+                      <label className="flex items-center justify-between text-xs font-medium text-zinc-600">
+                        <span>Applicable Quota</span>
+                        <span className="text-[11px] text-zinc-400">Optional</span>
+                      </label>
+                      <select
+                        value={scholarshipQuota}
+                        onChange={(e) => setScholarshipQuota(e.target.value)}
+                        className="w-full px-3.5 py-2 bg-white border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all text-sm text-zinc-900 shadow-sm appearance-none"
+                        style={{
+                          backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                          backgroundPosition: `right 0.75rem center`,
+                          backgroundRepeat: `no-repeat`,
+                          backgroundSize: `1em 1em`,
+                          paddingRight: `2.5rem`
+                        }}
+                      >
+                        <option value="">Apply to all quotas</option>
+                        {quotaColumns.map((q) => <option key={q} value={q}>{q} Quota</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (newScholarshipInput.trim()) {
+                        addScholarship(newScholarshipInput, scholarshipQuota);
+                        setNewScholarshipInput("");
+                        setScholarshipQuota("");
+                      }
+                    }}
+                    disabled={!newScholarshipInput.trim()}
+                    className="w-full flex justify-center items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-[#120c7a] rounded-lg hover:bg-[#1a148a] transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed"
+                  >
+                    <Plus size={16} strokeWidth={2.5} /> 
+                    <span>Add Scholarship</span>
                   </button>
                 </div>
               </div>

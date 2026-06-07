@@ -12,6 +12,8 @@ import {
 } from "../services/enquiryService";
 import { getCommunitiesRealtime } from "../services/configService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
+import { fetchPincodeDetails as fetchPincode } from "../services/pincodeService";
+import { getScholarshipsRealtime } from "../services/scholarshipService";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { useRegulations } from "../hooks/useRegulations";
@@ -59,6 +61,20 @@ const applyDateMask = (value) => {
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
 };
 
+const applyMonthYearMask = (value) => {
+  const digits = value.replace(/\D/g, "").slice(0, 6);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 6)}`;
+};
+
+const sanitizeMonthYear = (value) => {
+  if (!value) return "";
+  const parts = value.split("/").filter(Boolean);
+  if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
+  if (parts.length === 2 && parts[1].length === 4) return value;
+  return value;
+};
+
 export default function AddEnquiryModal({
   open,
   mode = "add",
@@ -72,11 +88,12 @@ export default function AddEnquiryModal({
   const { getRegulationForBatch } = useRegulations();
   const [form, setForm] = useState({ ...createEmptyEnquiryForm(), firstName: "", lastName: "" });
   const [errors, setErrors] = useState({});
+  const [sameAsPresent, setSameAsPresent] = useState(false);
   const [communityOptions, setCommunityOptions] = useState([]);
   const [quotaOptions, setQuotaOptions] = useState([]);
   const [feeCategoriesOptions, setFeeCategoriesOptions] = useState([]);
+  const [scholarships, setScholarships] = useState([]);
   const { getActiveBatches } = useBatches(durations);
-  const [isSameAddress, setIsSameAddress] = useState(false);
   const dobInputRef = useRef(null);
   const enquiryDateInputRef = useRef(null);
   const readOnly = mode === "view";
@@ -118,6 +135,14 @@ export default function AddEnquiryModal({
     const unsub = getCommunitiesRealtime((data) => {
       setCommunityOptions((data || []).map(c => c.name));
     });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = getScholarshipsRealtime(
+      (data) => setScholarships(data || []),
+      (err) => console.error("Scholarships fetch error:", err)
+    );
     return () => unsub();
   }, []);
 
@@ -166,13 +191,32 @@ export default function AddEnquiryModal({
       documents: initialValues?.documents ?? {}
     });
 
-    // Sync checkbox state based on initial data
-    const same = initialValues?.address && initialValues?.permanentAddress && 
-                 initialValues.address.trim() === initialValues.permanentAddress.trim();
-    setIsSameAddress(!!same);
-
     setErrors({});
+    setSameAsPresent(false);
   }, [open, initialValues, mode]);
+
+  useEffect(() => {
+    if (!open || !initialValues) return;
+    const monthYearFields = [
+      "qualifyingExamMonthYear",
+      "qualifyingExam10thMonthYear",
+      "qualifyingExam11thMonthYear",
+      "qualifyingExam12thMonthYear",
+      "qualifyingExamDipDegMonthYear",
+    ];
+    let needsUpdate = false;
+    const updates = {};
+    monthYearFields.forEach((f) => {
+      const sanitized = sanitizeMonthYear(initialValues[f]);
+      if (sanitized !== initialValues[f]) {
+        updates[f] = sanitized;
+        needsUpdate = true;
+      }
+    });
+    if (needsUpdate) {
+      setForm((prev) => ({ ...prev, ...updates }));
+    }
+  }, [open, initialValues]);
 
   useEffect(() => {
     if (!open || readOnly) return;
@@ -259,6 +303,32 @@ export default function AddEnquiryModal({
   const displayCutoff = calculatedCutoff !== "" ? calculatedCutoff : form.cutoff;
   const isCutoffRequired = (form.status === "Application" || form.status === "Admission") && form.enquiryFor === "BE / B.Tech";
 
+  const fetchPincodeDetails = async (pincode, isPresent) => {
+    const result = await fetchPincode(pincode);
+    if (result) {
+      setForm((prev) => ({
+        ...prev,
+        [isPresent ? "presentDistrict" : "permanentDistrict"]: result.district,
+        [isPresent ? "presentState" : "permanentState"]: result.state,
+        [isPresent ? "presentCountry" : "permanentCountry"]: result.country,
+      }));
+    }
+  };
+
+  const handleSameAsPresent = (checked) => {
+    setSameAsPresent(checked);
+    if (checked) {
+      setForm((prev) => ({
+        ...prev,
+        permanentPincode: prev.presentPincode,
+        permanentDistrict: prev.presentDistrict,
+        permanentState: prev.presentState,
+        permanentCity: prev.presentCity,
+        permanentCountry: prev.presentCountry,
+      }));
+    }
+  };
+
   const handleChange = (field, value) => {
     let nextValue = ["mobile", "parentMobile", "landline", "mathsMark", "physicsMark", "chemistryMark", "totalMarks"].includes(field)
       ? cleanDigits(value, field === "landline" ? 12 : (field.includes("Mark") || field === "totalMarks" ? 3 : 10))
@@ -268,12 +338,12 @@ export default function AddEnquiryModal({
       nextValue = applyDateMask(value);
     }
 
+    if (field.includes("MonthYear")) {
+      nextValue = applyMonthYearMask(value);
+    }
+
     setForm((prev) => {
       const updated = { ...prev, [field]: nextValue };
-      // Auto-sync permanent address if the checkbox is checked
-      if (field === "address" && isSameAddress) {
-        updated.permanentAddress = nextValue;
-      }
       return updated;
     });
 
@@ -282,6 +352,10 @@ export default function AddEnquiryModal({
     }
     if (field === "permanentPincode" && nextValue.length === 6) {
       fetchPincodeDetails(nextValue, false);
+    }
+
+    if (sameAsPresent && field.startsWith("permanent") && field !== "permanentPincode") {
+      setSameAsPresent(false);
     }
 
     if (field === "programme") {
@@ -410,9 +484,124 @@ export default function AddEnquiryModal({
     };
 
     const img = new Image();
-    img.src = '/logo.png';
     img.onload = () => generatePdf(img);
     img.onerror = () => generatePdf(null);
+    img.src = '/logo.png';
+  };
+
+  const handleDownloadConsolidatedReceipt = () => {
+    const studentName = form.studentName || "N/A";
+    const appNo = form.applicationNo || form.id || "N/A"; 
+    const receiptNo = `CREC-${Date.now().toString().slice(-6)}`;
+    
+    // Only include valid payments that have an amount
+    const validPayments = (form.payments || []).filter(p => parseFloat(p.feeAmount) > 0);
+    if (validPayments.length === 0) return;
+
+    const generatePdf = (img) => {
+      const doc = new jsPDF();
+      
+      const renderReceipt = (startY, title) => {
+        let currentY = startY;
+
+        if (img) {
+          const imgWidth = img.width;
+          const imgHeight = img.height;
+          const maxWidth = 180;
+          const maxHeight = 30;
+          let ratio = Math.min(maxWidth / imgWidth, maxHeight / imgHeight);
+          let newWidth = imgWidth * ratio;
+          let newHeight = imgHeight * ratio;
+          let x = (210 - newWidth) / 2;
+          
+          doc.addImage(img, 'PNG', x, currentY, newWidth, newHeight);
+          currentY += newHeight + 10;
+        } else {
+          currentY += 5;
+        }
+        
+        doc.setFontSize(20);
+        doc.setTextColor(18, 12, 122);
+        doc.text("Consolidated Fee Receipt", 105, currentY, { align: "center" });
+
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`(${title})`, 105, currentY + 6, { align: "center" });
+
+        currentY += 15;
+
+        doc.setFontSize(11);
+        doc.setTextColor(50, 50, 50);
+        doc.text(`Receipt No: ${receiptNo}`, 14, currentY);
+        const lastPaymentDate = validPayments[validPayments.length - 1].paymentDate || "N/A";
+        doc.text(`Latest Date: ${lastPaymentDate}`, 14, currentY + 8);
+        
+        doc.text(`Student Name: ${studentName}`, 120, currentY);
+        doc.text(`Application No: ${appNo}`, 120, currentY + 8);
+
+        currentY += 18;
+
+        const tableBody = validPayments.map((p, idx) => [
+          `Payment ${idx + 1}: ${p.feeCategory || "N/A"} (${p.paymentDate || "N/A"})`,
+          p.feeAmount || "0"
+        ]);
+        
+        const totalAmount = validPayments.reduce((sum, p) => sum + parseFloat(p.feeAmount || 0), 0);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Particulars", "Amount (Rs)"]],
+          body: tableBody,
+          foot: [["Total Amount", totalAmount.toString()]],
+          theme: "grid",
+          headStyles: { fillColor: [18, 12, 122] },
+          footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold" },
+          margin: { left: 14, right: 14 }
+        });
+
+        const finalY = doc.lastAutoTable.finalY || currentY + 10;
+        
+        doc.setFontSize(10);
+        doc.text("Payment Modes Used:", 14, finalY + 10);
+        
+        const modesMap = {
+          "pay_online": "Online (UPI)",
+          "cash": "Cash / Hand"
+        };
+        
+        // Collect unique payment modes
+        const unqModes = [...new Set(validPayments.map(p => {
+          if (p.paymentMode === "pay_online") {
+            return `Online (UPI: ${p.upiNumber || "N/A"})`;
+          }
+          return "Cash / Hand";
+        }))];
+        
+        unqModes.forEach((modeStr, idx) => {
+          doc.text(`- ${modeStr}`, 14, finalY + 16 + (idx * 5));
+        });
+        
+        doc.text("Authorized Signatory", 150, finalY + 30);
+        doc.line(140, finalY + 25, 190, finalY + 25);
+      };
+
+      renderReceipt(15, "Student Copy");
+      
+      doc.setLineDashPattern([2, 2], 0);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(10, 148, 200, 148);
+      doc.setLineDashPattern([], 0);
+
+      renderReceipt(160, "Accounts Copy");
+
+      doc.autoPrint();
+      window.open(doc.output('bloburl'), '_blank');
+    };
+
+    const img = new Image();
+    img.onload = () => generatePdf(img);
+    img.onerror = () => generatePdf(null);
+    img.src = '/logo.png';
   };
 
   const handleFileChange = async (key, file, target) => {
@@ -467,6 +656,10 @@ export default function AddEnquiryModal({
     guardianName: normalizeText(form.guardianName).trim(),
     parentWhatsAppNo: cleanDigits(form.parentWhatsAppNo, 10),
     studentWhatsAppNo: cleanDigits(form.studentWhatsAppNo, 10),
+    presentHouseNo: normalizeText(form.presentHouseNo).trim(),
+    presentStreet: normalizeText(form.presentStreet).trim(),
+    presentLocality: normalizeText(form.presentLocality).trim(),
+    presentCity: normalizeText(form.presentCity).trim(),
     presentAddress: normalizeText(form.presentAddress).trim(),
     permanentAddress: normalizeText(form.permanentAddress).trim(),
     presentPincode: cleanDigits(form.presentPincode, 6),
@@ -475,6 +668,7 @@ export default function AddEnquiryModal({
     permanentDistrict: normalizeText(form.permanentDistrict).trim(),
     presentState: normalizeText(form.presentState).trim(),
     permanentState: normalizeText(form.permanentState).trim(),
+    permanentCity: normalizeText(form.permanentCity).trim(),
     presentCountry: normalizeText(form.presentCountry).trim(),
     permanentCountry: normalizeText(form.permanentCountry).trim(),
     motherOccupation: normalizeText(form.motherOccupation).trim(),
@@ -555,7 +749,6 @@ export default function AddEnquiryModal({
     if (!String(form.emailId || "").trim()) nextErrors.emailId = "Email ID is required";
     else if (!isValidEmail(form.emailId)) nextErrors.emailId = "Enter a valid email address";
 
-    if (!String(form.address || "").trim()) nextErrors.address = "Address is required";
     if (!String(form.schoolCollege || "").trim()) nextErrors.schoolCollege = "School/college name is required";
     if (!String(form.mediumOfInstruction || "").trim()) nextErrors.mediumOfInstruction = "Medium of instruction is required";
     if (!String(form.community || "").trim()) nextErrors.community = "Community is required";
@@ -642,7 +835,6 @@ export default function AddEnquiryModal({
       parentMobile: cleanDigits(form.parentMobile, 10),
       landline: cleanDigits(form.landline, 12),
       emailId: normalizeText(form.emailId).trim(),
-      address: normalizeText(form.address).trim(),
       parentOccupation: normalizeText(form.parentOccupation).trim(),
       dateOfBirth: formatDisplayToISO(form.dateOfBirth),
       schoolCollege: normalizeText(form.schoolCollege).trim(),
@@ -680,33 +872,40 @@ export default function AddEnquiryModal({
   };
 
   const exportPdf = (enq) => {
-    const newFields = Array.isArray(enq.newFields) ? enq.newFields : [];
-
     const row = (label, key, value) => {
-      const isNew = newFields.includes(key);
       const display = value === null || value === undefined ? "" : String(value);
       return `
         <tr>
           <td style="padding:8px;border:1px solid #ddd;width:35%;font-weight:600">${label}</td>
-          <td style="padding:8px;border:1px solid #ddd">${isNew ? `<span style=\"background:#fffbcc;padding:2px 6px;border-radius:6px;\">NEW</span> ` : ""}${display}</td>
+          <td style="padding:8px;border:1px solid #ddd">${display}</td>
         </tr>
       `;
     };
 
-    const html = `<!doctype html>
+    const documentTitle = (enq.status === "Application" || enq.status === "Admission")
+      ? `Admission Application - ${enq.applicationNo || "N/A"}`
+      : `Admission Enquiry - ${enq.enquiryId || ""}`;
+
+    const generateHtml = (logoDataUrl) => {
+      const logoImg = logoDataUrl || "";
+      return `<!doctype html>
       <html>
       <head>
         <meta charset="utf-8" />
-        <title>Enquiry ${enq.enquiryId || ""}</title>
+        <title>${documentTitle}</title>
         <style>
-          body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:20mm}
-          table{width:100%;border-collapse:collapse;margin-top:10px}
+          *{margin:0;padding:0}
+          body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:10mm 10mm 5mm}
+          table{width:100%;border-collapse:collapse;margin-top:6px}
           td{vertical-align:top}
-          .title{font-size:18px;font-weight:700;margin-bottom:6px}
+          .title{font-size:16px;font-weight:700;text-align:center;}
+          .header{text-align:center;}
+          .header img{max-width:150mm;max-height:20mm;object-fit:contain;}
         </style>
       </head>
       <body>
-        <div class="title">Admission Enquiry - ${enq.enquiryId || ""}</div>
+        ${logoImg ? `<div class="header"><img src="${logoImg}" alt="College Logo" /></div>` : ""}
+        <div class="title" style="margin-top:${logoImg ? "4px" : "0"}">${documentTitle}</div>
         <table>
           ${row("Application No.","applicationNo", enq.applicationNo)}
           ${row("Title","title", enq.title)}
@@ -821,19 +1020,47 @@ export default function AddEnquiryModal({
         </table>
       </body>
       </html>`;
+    };
 
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => {
-      try {
-        win.print();
-      } catch (e) {
-        console.error(e);
-      }
-    }, 500);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const maxWidth = 600;
+      const maxHeight = 100;
+      let w = img.width;
+      let h = img.height;
+      const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      const logoDataUrl = canvas.toDataURL("image/png");
+
+      const html = generateHtml(logoDataUrl);
+      const win = window.open("", "_blank");
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => {
+        try { win.print(); } catch (e) { console.error(e); }
+      }, 200);
+    };
+    img.onerror = () => {
+      const html = generateHtml("");
+      const win = window.open("", "_blank");
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => {
+        try { win.print(); } catch (e) { console.error(e); }
+      }, 100);
+    };
+    img.src = '/logo.png';
   };
 
   const disabledClass = readOnly ? "bg-zinc-50 text-zinc-500" : "bg-white";
@@ -957,45 +1184,69 @@ export default function AddEnquiryModal({
                   readOnly={readOnly}
                 />
               </Field>
+            </div>
 
-              <div className="md:col-span-2 xl:col-span-3 space-y-4">
-                <Field label="Communication Address" required error={errors.address} readOnly={readOnly}>
-                  <textarea
-                    value={form.address}
-                    onChange={(event) => handleChange("address", event.target.value)}
-                    className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                    placeholder="Enter communication address"
-                    readOnly={readOnly}
-                  />
+            <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-4 md:p-5">
+              <h5 className="mb-4 text-sm font-bold text-zinc-900">Present Address</h5>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <Field label="House / Door No." error={errors.presentHouseNo} readOnly={readOnly}>
+                  <input value={form.presentHouseNo} onChange={(event) => handleChange("presentHouseNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="House / Door No." readOnly={readOnly} />
                 </Field>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="sameAsPermanent"
-                    checked={isSameAddress}
-                    onChange={(e) => handleSameAddressToggle(e.target.checked)}
-                    disabled={readOnly}
-                    className="w-4 h-4 rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]"
-                  />
-                  <label htmlFor="sameAsPermanent" className="text-sm font-medium text-zinc-700 cursor-pointer">
-                    same as permanent Address
-                  </label>
-                </div>
-
-                {!isSameAddress && (
-                  <Field label="Permanent Address" error={errors.permanentAddress} readOnly={readOnly}>
-                    <textarea
-                      value={form.permanentAddress}
-                      onChange={(event) => handleChange("permanentAddress", event.target.value)}
-                      className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                      placeholder="Enter permanent address"
-                      readOnly={readOnly}
-                    />
-                  </Field>
-                )}
+                <Field label="Street / Road Name" error={errors.presentStreet} readOnly={readOnly}>
+                  <input value={form.presentStreet} onChange={(event) => handleChange("presentStreet", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Street / Road Name" readOnly={readOnly} />
+                </Field>
+                <Field label="Locality / Village" error={errors.presentLocality} readOnly={readOnly}>
+                  <input value={form.presentLocality} onChange={(event) => handleChange("presentLocality", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Locality / Village" readOnly={readOnly} />
+                </Field>
+                <Field label="City / Town" error={errors.presentCity} readOnly={readOnly}>
+                  <input value={form.presentCity} onChange={(event) => handleChange("presentCity", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="City / Town" readOnly={readOnly} />
+                </Field>
+                <Field label="Present Pincode" error={errors.presentPincode} readOnly={readOnly}>
+                  <input value={form.presentPincode} onChange={(event) => handleChange("presentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present pincode" inputMode="numeric" readOnly={readOnly} />
+                </Field>
+                <Field label="Present District" error={errors.presentDistrict} readOnly={readOnly}>
+                  <input value={form.presentDistrict} onChange={(event) => handleChange("presentDistrict", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present district" readOnly={readOnly} />
+                </Field>
+                <Field label="Present State" error={errors.presentState} readOnly={readOnly}>
+                  <input value={form.presentState} onChange={(event) => handleChange("presentState", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present state" readOnly={readOnly} />
+                </Field>
+                <Field label="Present Country" error={errors.presentCountry} readOnly={readOnly}>
+                  <input value={form.presentCountry} onChange={(event) => handleChange("presentCountry", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present country" readOnly={readOnly} />
+                </Field>
               </div>
             </div>
+
+            {(form.status === "Application" || form.status === "Admission") && (
+              <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-4 md:p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <h5 className="text-sm font-bold text-zinc-900">Permanent Address</h5>
+                  <label className="relative inline-flex items-center gap-3 cursor-pointer group shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={sameAsPresent}
+                      onChange={(e) => handleSameAsPresent(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-6 bg-zinc-200 rounded-full peer-checked:bg-[#120c7a] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[#120c7a]/20 transition-colors after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-4"></div>
+                    <span className="whitespace-nowrap text-sm font-medium text-zinc-700 group-hover:text-zinc-900 transition-colors">Same as Present Address</span>
+                  </label>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label="Permanent Pincode" error={errors.permanentPincode} readOnly={readOnly}>
+                    <input value={form.permanentPincode} onChange={(event) => handleChange("permanentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent pincode" inputMode="numeric" readOnly={readOnly} />
+                  </Field>
+                  <Field label="Permanent District" error={errors.permanentDistrict} readOnly={readOnly}>
+                    <input value={form.permanentDistrict} onChange={(event) => handleChange("permanentDistrict", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent district" readOnly={readOnly} />
+                  </Field>
+                  <Field label="Permanent State" error={errors.permanentState} readOnly={readOnly}>
+                    <input value={form.permanentState} onChange={(event) => handleChange("permanentState", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent state" readOnly={readOnly} />
+                  </Field>
+                  <Field label="Permanent City / Town" error={errors.permanentCity} readOnly={readOnly}>
+                    <input value={form.permanentCity} onChange={(event) => handleChange("permanentCity", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent city / town" readOnly={readOnly} />
+                  </Field>
+                </div>
+              </div>
+            )}
           </Section>
 
           {(form.status === "Application" || form.status === "Admission") && (
@@ -1041,9 +1292,26 @@ export default function AddEnquiryModal({
                       {STUDENT_CATEGORY_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
                   </Field>
+                  <Field label="Seat Category" error={errors.quotaAskedFor} readOnly={readOnly}>
+                    <select
+                      value={form.quotaAskedFor}
+                      onChange={(event) => handleChange("quotaAskedFor", event.target.value)}
+                      className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                      disabled={readOnly}
+                    >
+                      <option value="">Select quota</option>
+                      {Array.from(new Set([...quotaOptions, form.quotaAskedFor].filter(Boolean))).map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Scholarship Details" error={errors.scholarshipDetails} readOnly={readOnly}>
+                    <select value={form.scholarshipDetails} onChange={(event) => handleChange("scholarshipDetails", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
+                      <option value="">Select scholarship</option>
+                      {scholarships.filter((s) => !s.quota || s.quota === form.quotaAskedFor).map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
+                    </select>
+                  </Field>
                   
-                  <Field label="Seat Category / Scholarship Details" error={errors.seatCategory} readOnly={readOnly}><input value={form.seatCategory} onChange={(event) => handleChange("seatCategory", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="e.g. Govt Quota / FG / PMS" readOnly={readOnly} /></Field>
-                  <Field label="Scholarship Details" error={errors.scholarshipDetails} readOnly={readOnly}><input value={form.scholarshipDetails} onChange={(event) => handleChange("scholarshipDetails", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Scholarship details" readOnly={readOnly} /></Field>
                   <Field label="Nationality" error={errors.nationality} readOnly={readOnly}><input value={form.nationality} onChange={(event) => handleChange("nationality", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Nationality" readOnly={readOnly} /></Field>
                   <Field label="Religion" error={errors.religion} readOnly={readOnly}><input value={form.religion} onChange={(event) => handleChange("religion", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Religion" readOnly={readOnly} /></Field>
                   <Field label="Caste" error={errors.caste} readOnly={readOnly}><input value={form.caste} onChange={(event) => handleChange("caste", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Caste" readOnly={readOnly} /></Field>
@@ -1068,15 +1336,6 @@ export default function AddEnquiryModal({
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <Field label="Mother's Name" error={errors.motherName} readOnly={readOnly}><input value={form.motherName} onChange={(event) => handleChange("motherName", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Mother's name" readOnly={readOnly} /></Field>
                   <Field label="Guardian's Name" error={errors.guardianName} readOnly={readOnly}><input value={form.guardianName} onChange={(event) => handleChange("guardianName", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Guardian's name" readOnly={readOnly} /></Field>
-                  <Field label="Present Address" error={errors.presentAddress} readOnly={readOnly}><textarea value={form.presentAddress} onChange={(event) => handleChange("presentAddress", event.target.value)} className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present address" readOnly={readOnly} /></Field>
-                  <Field label="Present Pincode" error={errors.presentPincode} readOnly={readOnly}><input value={form.presentPincode} onChange={(event) => handleChange("presentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present pincode" inputMode="numeric" readOnly={readOnly} /></Field>
-                  <Field label="Permanent Pincode" error={errors.permanentPincode} readOnly={readOnly}><input value={form.permanentPincode} onChange={(event) => handleChange("permanentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent pincode" inputMode="numeric" readOnly={readOnly} /></Field>
-                  <Field label="Present District" error={errors.presentDistrict} readOnly={readOnly}><input value={form.presentDistrict} onChange={(event) => handleChange("presentDistrict", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present district" readOnly={readOnly} /></Field>
-                  <Field label="Permanent District" error={errors.permanentDistrict} readOnly={readOnly}><input value={form.permanentDistrict} onChange={(event) => handleChange("permanentDistrict", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent district" readOnly={readOnly} /></Field>
-                  <Field label="Present State" error={errors.presentState} readOnly={readOnly}><input value={form.presentState} onChange={(event) => handleChange("presentState", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present state" readOnly={readOnly} /></Field>
-                  <Field label="Permanent State" error={errors.permanentState} readOnly={readOnly}><input value={form.permanentState} onChange={(event) => handleChange("permanentState", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent state" readOnly={readOnly} /></Field>
-                  <Field label="Present Country" error={errors.presentCountry} readOnly={readOnly}><input value={form.presentCountry} onChange={(event) => handleChange("presentCountry", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present country" readOnly={readOnly} /></Field>
-                  <Field label="Permanent Country" error={errors.permanentCountry} readOnly={readOnly}><input value={form.permanentCountry} onChange={(event) => handleChange("permanentCountry", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent country" readOnly={readOnly} /></Field>
                   <Field label="Parent WhatsApp No." error={errors.parentWhatsAppNo} readOnly={readOnly}><input value={form.parentWhatsAppNo} onChange={(event) => handleChange("parentWhatsAppNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Parent WhatsApp number" inputMode="numeric" readOnly={readOnly} /></Field>
                   <Field label="Student WhatsApp No." error={errors.studentWhatsAppNo} readOnly={readOnly}><input value={form.studentWhatsAppNo} onChange={(event) => handleChange("studentWhatsAppNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Student WhatsApp number" inputMode="numeric" readOnly={readOnly} /></Field>
                   <Field label="Age" error={errors.age} readOnly={readOnly}><input value={form.age} onChange={(event) => handleChange("age", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Age" readOnly={readOnly} /></Field>
@@ -1148,11 +1407,11 @@ export default function AddEnquiryModal({
                         </Field>
                         <Field label="Month & Year of Passing" error={errors[`qualifyingExam${level.key}MonthYear`]} readOnly={readOnly}>
                           <input
-                            type="date"
+                            type="text"
                             value={form[`qualifyingExam${level.key}MonthYear`] || ""}
                             onChange={(event) => handleChange(`qualifyingExam${level.key}MonthYear`, event.target.value)}
-                            onClick={(e) => !readOnly && e.target.showPicker?.()}
                             className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            placeholder="MM/YYYY"
                             readOnly={readOnly}
                           />
                         </Field>
@@ -1339,20 +1598,6 @@ export default function AddEnquiryModal({
                 </select>
               </Field>
 
-              <Field label="Quota Asked For" error={errors.quotaAskedFor} readOnly={readOnly}>
-                <select
-                  value={form.quotaAskedFor}
-                  onChange={(event) => handleChange("quotaAskedFor", event.target.value)}
-                  className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  disabled={readOnly}
-                >
-                  <option value="">Select quota</option>
-                  {Array.from(new Set([...quotaOptions, form.quotaAskedFor].filter(Boolean))).map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </Field>
-
               <Field label="Reference, if any" error={errors.reference} readOnly={readOnly}>
                 <input
                   value={form.reference}
@@ -1386,8 +1631,9 @@ export default function AddEnquiryModal({
             </div>
           </Section>
 
-          <Section title="Marks and Cutoff" description="Enter subject marks and the cutoff is calculated automatically.">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {form.examinationPassedAppeared === "+2" && (
+            <Section title="Marks and Cutoff" description="Enter subject marks and the cutoff is calculated automatically.">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <Field label="Maths/P/C" required={isCutoffRequired && mode !== "view"} error={errors.mathsMark} readOnly={readOnly}>
                 <input
                   value={form.mathsMark}
@@ -1403,7 +1649,7 @@ export default function AddEnquiryModal({
                 <input
                   value={form.physicsMark}
                   onChange={(event) => handleChange("physicsMark", event.target.value)}
-                  className={`w-full rounded-xl border border-[#120c7a]/0 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                  className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
                   placeholder="Physics/Theory mark"
                   inputMode="numeric"
                   readOnly={readOnly}
@@ -1455,40 +1701,43 @@ export default function AddEnquiryModal({
               </Field>
             </div>
           </Section>
+          )}
 
           {(form.status === "Application" || form.status === "Admission") && (
             <Section title="Payment Details" description="Multiple fee payments.">
               {(form.payments || []).map((payment, index) => (
-                <div key={index} className="mb-6 rounded-xl border border-zinc-100 bg-zinc-50 p-4 relative pt-10">
-                  <div className="absolute top-3 left-4 bg-white px-3 py-1 text-xs font-semibold text-[#120c7a] border border-[#120c7a]/20 rounded-full">
-                    Payment {index + 1}
-                  </div>
-                  
-                  <div className="absolute top-3 right-4 flex items-center gap-2">
-                    {payment.feeCategory && payment.feeAmount && (
-                      <button
-                        type="button"
-                        onClick={() => handleDownloadReceipt(payment, index)}
-                        className="flex items-center gap-1.5 bg-white text-[#120c7a] border border-[#120c7a]/20 rounded-full px-3 py-1 hover:bg-[#120c7a]/5 transition-colors text-xs font-semibold"
-                        title="Download Receipt"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Download Receipt
-                      </button>
-                    )}
-                    {!readOnly && (form.payments.length > 1) && (
-                      <button
-                        type="button"
-                        onClick={() => removePayment(index)}
-                        className="bg-white text-red-500 border border-red-200 rounded-full p-1 hover:bg-red-50 transition-colors"
-                        title="Remove this payment"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    )}
+                <div key={index} className="mb-6 rounded-xl border border-zinc-100 bg-zinc-50 p-4">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="bg-white px-3 py-1 text-xs font-semibold text-[#120c7a] border border-[#120c7a]/20 rounded-full inline-block shrink-0">
+                      Payment {index + 1}
+                    </div>
+                    
+                    <div className="flex items-center gap-2 shrink-0">
+                      {payment.feeCategory && payment.feeAmount && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadReceipt(payment, index)}
+                          className="flex items-center gap-1.5 bg-white text-[#120c7a] border border-[#120c7a]/20 rounded-full px-3 py-1 hover:bg-[#120c7a]/5 transition-colors text-xs font-semibold"
+                          title="Download Receipt"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download Receipt
+                        </button>
+                      )}
+                      {!readOnly && (form.payments.length > 1) && (
+                        <button
+                          type="button"
+                          onClick={() => removePayment(index)}
+                          className="bg-white text-red-500 border border-red-200 rounded-full p-1.5 hover:bg-red-50 transition-colors"
+                          title="Remove this payment"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5 mt-2">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <Field label="Fee Category" required error={errors[`payment_${index}_feeCategory`]} readOnly={readOnly}>
                       <select value={payment.feeCategory} onChange={(event) => handlePaymentChange(index, "feeCategory", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
                         <option value="">Select fee category</option>
@@ -1516,7 +1765,7 @@ export default function AddEnquiryModal({
                 </div>
               ))}
               {!readOnly && (
-                <div className="flex justify-start">
+                <div className="flex justify-between items-center">
                   <button
                     type="button"
                     onClick={addPayment}
@@ -1525,7 +1774,30 @@ export default function AddEnquiryModal({
                     <Plus className="h-4 w-4" />
                     Add Another Payment
                   </button>
+                  
+                  {form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleDownloadConsolidatedReceipt}
+                      className="flex items-center gap-2 bg-[#120c7a] hover:bg-[#1a148a] text-white px-4 py-2 rounded-xl shadow-sm transition-all text-sm font-semibold ml-auto"
+                    >
+                      <Download className="h-4 w-4" />
+                      Consolidated Receipt
+                    </button>
+                  )}
                 </div>
+              )}
+              {readOnly && form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
+                 <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleDownloadConsolidatedReceipt}
+                      className="flex items-center gap-2 bg-[#120c7a] hover:bg-[#1a148a] text-white px-4 py-2 rounded-xl shadow-sm transition-all text-sm font-semibold"
+                    >
+                      <Download className="h-4 w-4" />
+                      Consolidated Receipt
+                    </button>
+                 </div>
               )}
             </Section>
           )}
