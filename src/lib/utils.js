@@ -10,7 +10,7 @@ export function cn(...inputs) {
 
 export function sanitizeKey(key) {
   if (!key) return "";
-  return String(key).replace(/[.#$[\]]/g, '_');
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
 }
 
 export function formatProgrammeKey(p) {
@@ -19,7 +19,7 @@ export function formatProgrammeKey(p) {
   if (p === 'B.Tech.') return 'B_Tech';
   if (p === 'M.E.') return 'M_E';
   if (p === 'M.Tech.') return 'M_Tech';
-  return String(p).replace(/[.#$[\]]/g, '_');
+  return String(p).replace(/[.#$[\]/ ]/g, '_');
 }
 
 export function formatProgDisplay(prog) {

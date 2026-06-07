@@ -14,7 +14,8 @@ import {
   MapPin, 
   X,
   CheckCircle2,
-  Bell
+  Bell,
+  Edit
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Layout from "../components/Layout";
@@ -28,23 +29,28 @@ export default function AcademicCalendar() {
   // Calendar Logic States
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState({});
+  const [rawEvents, setRawEvents] = useState({});
   const [officialDoc, setOfficialDoc] = useState(null);
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
+  const [editingEventId, setEditingEventId] = useState(null);
   
   // Form State
   const [newEvent, setNewEvent] = useState({ title: "", type: "Holiday", description: "", time: "", fromDate: "", toDate: "", ciaId: "" });
   const [userRole, setUserRole] = useState(null);
+  const [userEmail, setUserEmail] = useState(null);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
+        setUserEmail(user.email);
         getDoc(doc(db, 'users', user.uid)).then(snap => { // Firestore doc reference
           if (snap.exists()) setUserRole(snap.data().role); // Use .data() for Firestore documents
         });
       } else {
         setUserRole(null);
+        setUserEmail(null);
       }
     });
     return () => unsubscribeAuth();
@@ -62,9 +68,33 @@ export default function AcademicCalendar() {
     // Fetch Global Digital Events
     const eventsRef = collection(db, 'academic_calendar_events'); // Firestore collection reference
     const unsubEvents = onSnapshot(eventsRef, (snap) => { // Use onSnapshot for real-time updates
-      const data = {}; // Convert QuerySnapshot to object
-      snap.forEach(doc => { data[doc.id] = doc.data(); });
-      setEvents(data || {});
+      const allEvents = {}; // Convert QuerySnapshot to object
+      const dateMap = {};
+      
+      snap.forEach(doc => { 
+        const ev = { id: doc.id, ...doc.data() };
+        allEvents[doc.id] = ev; 
+        
+        const start = new Date(ev.fromDate);
+        const end = new Date(ev.toDate);
+        if (!ev.fromDate || !ev.toDate || isNaN(start.getTime()) || isNaN(end.getTime())) {
+             // Fallback for old events that might have 'eventDate'
+             if (ev.eventDate) {
+                 if (!dateMap[ev.eventDate]) dateMap[ev.eventDate] = {};
+                 dateMap[ev.eventDate][ev.id] = ev;
+             }
+             return;
+        }
+        let cursor = new Date(start);
+        while (cursor <= end) {
+            const dStr = cursor.toISOString().split('T')[0];
+            if (!dateMap[dStr]) dateMap[dStr] = {};
+            dateMap[dStr][ev.id] = ev;
+            cursor.setDate(cursor.getDate() + 1);
+        }
+      });
+      setRawEvents(allEvents);
+      setEvents(dateMap);
     });
     
     // Fetch CIA Configs for linking
@@ -111,8 +141,9 @@ export default function AcademicCalendar() {
   const monthName = currentDate.toLocaleString('default', { month: 'long' });
   const year = currentDate.getFullYear();
 
-  const isAdmin = userRole === 'Admin';
-  const canManage = userRole === 'Admin' || userRole === 'HOD';
+  const isMaster = userEmail === 'cselab2022@gmail.com';
+  const isAdmin = userRole === 'Admin' || isMaster;
+  const canManage = userRole === 'Admin' || userRole === 'HOD' || isMaster;
 
   const handleAddEvent = async () => {
     if (!newEvent.title || !newEvent.fromDate || !newEvent.toDate) return;
@@ -125,48 +156,45 @@ export default function AcademicCalendar() {
       return;
     }
 
-    const updates = {};
-    const dateCursor = new Date(start);
+    const eventsCollectionRef = collection(db, 'academic_calendar_events'); // Firestore collection path
     
-    // Add event entry for each day in range
-    while (dateCursor <= end) {
-      const dateStr = dateCursor.toISOString().split('T')[0];
-      const eventsCollectionRef = collection(db, 'academic_calendar_events', dateStr, 'events'); // Firestore subcollection path
-      
-      // Use addDoc to create a new document with an auto-generated ID
-      await addDoc(eventsCollectionRef, {
-        ...newEvent,
-        eventDate: dateStr,
-        createdAt: new Date().toISOString()
-      });
-      
-      dateCursor.setDate(dateCursor.getDate() + 1);
-    }
-
-    // If linked to a CIA, update the CIA configuration dates in Curriculum
-    if (newEvent.type === 'Exam' && newEvent.ciaId) {
-      const ciaDocRef = doc(db, 'cia_configs', newEvent.ciaId); // Firestore doc reference
-      await updateDoc(ciaDocRef, { // Use updateDoc for Firestore
-        startDate: newEvent.fromDate,
-        endDate: newEvent.toDate,
-        ...(newEvent.time && { examTime: newEvent.time }),
-        examDate: newEvent.fromDate // Also set the main examDate used by generators
-      });
-      
-    }
-
     try {
-      // No need for a single update call if we're using addDoc for events and updateDoc for CIA
+      if (editingEventId) {
+        // Update existing event
+        await updateDoc(doc(db, 'academic_calendar_events', editingEventId), {
+          ...newEvent,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        // Create new event
+        await addDoc(eventsCollectionRef, {
+          ...newEvent,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      // If linked to a CIA, update the CIA configuration dates in Curriculum
+      if (newEvent.type === 'Exam' && newEvent.ciaId) {
+        const ciaDocRef = doc(db, 'cia_configs', newEvent.ciaId); // Firestore doc reference
+        await updateDoc(ciaDocRef, { // Use updateDoc for Firestore
+          startDate: newEvent.fromDate,
+          endDate: newEvent.toDate,
+          ...(newEvent.time && { examTime: newEvent.time }),
+          examDate: newEvent.fromDate // Also set the main examDate used by generators
+        });
+      }
+
     } catch (err) {
       console.error("Save error:", err);
     }
 
     setShowEventModal(false);
     setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: "", toDate: "", ciaId: "" });
+    setEditingEventId(null);
   };
 
-  const handleDeleteEvent = async (date, eventId) => {
-    await deleteDoc(doc(db, 'academic_calendar_events', date, 'events', eventId)); // Firestore subcollection path
+  const handleDeleteEvent = async (eventId) => {
+    await deleteDoc(doc(db, 'academic_calendar_events', eventId)); // Firestore doc path
   };
 
   const EVENT_TYPES = {
@@ -239,7 +267,7 @@ export default function AcademicCalendar() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
                   <p className="text-[10px] font-bold text-blue-200 uppercase opacity-70">Total Holidays</p>
-                  <p className="text-lg font-black">{Object.values(events).flat().filter(e => e.type === 'Holiday').length}</p>
+                  <p className="text-lg font-black">{Object.values(rawEvents).filter(e => e.type === 'Holiday').length}</p>
                 </div>
                 <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10">
                   <p className="text-[10px] font-bold text-blue-200 uppercase opacity-70">Working Days</p>
@@ -394,7 +422,7 @@ export default function AcademicCalendar() {
                       }
                     </p>
                   </div>
-                  <button onClick={() => setShowEventModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                  <button onClick={() => { setShowEventModal(false); setEditingEventId(null); setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: selectedDate, toDate: selectedDate, ciaId: "" }); }} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                     <X size={28} />
                   </button>
                 </div>
@@ -412,20 +440,47 @@ export default function AcademicCalendar() {
                           </div>
                         </div>
                         {isAdmin && (
-                          <button 
-                            onClick={() => handleDeleteEvent(selectedDate, ev.id)}
-                            className="p-2 text-zinc-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingEventId(ev.id);
+                                setNewEvent({
+                                  title: ev.title || "",
+                                  type: ev.type || "Holiday",
+                                  description: ev.description || "",
+                                  time: ev.time || "",
+                                  fromDate: ev.fromDate || selectedDate,
+                                  toDate: ev.toDate || selectedDate,
+                                  ciaId: ev.ciaId || ""
+                                });
+                              }}
+                              className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteEvent(ev.id)}
+                              className="p-2 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}
+                    {(!events[selectedDate] || Object.values(events[selectedDate]).length === 0) && (
+                      <p className="text-zinc-400 text-sm italic text-center py-4">No events for this date.</p>
+                    )}
                   </div>
 
-                  {/* New Event Form */}
+                  {/* New/Edit Event Form */}
                   {canManage && (
-                    <div className="space-y-4 pt-6 border-t border-zinc-100">
+                    <div className="space-y-4 pt-6 border-t border-zinc-100 relative">
+                    {editingEventId && (
+                      <div className="absolute top-2 right-0">
+                         <button onClick={() => { setEditingEventId(null); setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: selectedDate, toDate: selectedDate, ciaId: "" }); }} className="text-[10px] uppercase font-bold text-zinc-400 hover:text-zinc-600">Cancel Edit</button>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">From Date</label>
@@ -517,7 +572,7 @@ export default function AcademicCalendar() {
                       onClick={handleAddEvent}
                       className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
                     >
-                      Add to Calendar
+                      {editingEventId ? "Update Event" : "Add to Calendar"}
                     </button>
                   </div>
                   )}

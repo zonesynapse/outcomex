@@ -26,7 +26,8 @@ import {
   Clock,
   CheckCircle2,
   ChevronDown,
-  Trash2
+  Trash2,
+  Wallet
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -47,6 +48,7 @@ const allPossibleItems = [
   { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
   { id: "admission-enquiries", icon: Users, label: "Admission Enquiries", path: "/admissions/enquiries" },
   { id: "seat-management", icon: Settings2, label: "Seat Management", path: "/admissions/seats" },
+  { id: "fee-config", icon: Wallet, label: "Fee Configuration", path: "/admissions/fees" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
@@ -76,7 +78,7 @@ const modules = [
     id: "admission",
     label: "Admission",
     icon: Users,
-    itemIds: ["admission-enquiries", "seat-management"]
+    itemIds: ["admission-enquiries", "seat-management", "fee-config"]
   },
   {
     id: "academics",
@@ -151,43 +153,44 @@ export default function Layout({ children, title }) {
             setUserData(data);
             setUserRole(data.role);
 
-            // Use onSnapshot for real-time permission updates
-            const permsRef = doc(db, "role_permissions", data.role);
-            unsubscribePerms(); // Unsubscribe from previous role permissions if any
-            unsubscribePerms = onSnapshot(permsRef, (permsSnap) => {
-              if (permsSnap.exists()) {
-                const permsData = permsSnap.data();
-                let permsArray = [];
-                // Check for 'value' key if migration script wrapped a list
-                if (permsData.value && Array.isArray(permsData.value)) {
-                  permsArray = permsData.value;
-                } else if (Array.isArray(permsData)) {
-                  permsArray = permsData;
-                } else if (typeof permsData === 'object' && permsData !== null) {
-                  permsArray = Object.values(permsData);
+            if (data.role) {
+              // Use onSnapshot for real-time permission updates
+              const permsRef = doc(db, "role_permissions", data.role.trim());
+              unsubscribePerms(); // Unsubscribe from previous role permissions if any
+              unsubscribePerms = onSnapshot(permsRef, (permsSnap) => {
+                if (permsSnap.exists()) {
+                  const permsData = permsSnap.data();
+                  let permsArray = [];
+                  
+                  // Robust parsing of permissions document
+                  if (Array.isArray(permsData)) {
+                    permsArray = permsData;
+                  } else if (permsData.value && Array.isArray(permsData.value)) {
+                    permsArray = permsData.value;
+                  } else if (permsData.permissions && Array.isArray(permsData.permissions)) {
+                    permsArray = permsData.permissions;
+                  } else if (typeof permsData === 'object' && permsData !== null) {
+                    const entries = Object.entries(permsData);
+                    // Check if it's a map of permissionId -> boolean (standard Firestore pattern)
+                    if (entries.length > 0 && typeof entries[0][1] === 'boolean') {
+                      permsArray = entries.filter(([, val]) => val === true).map(([key]) => key);
+                    } else {
+                      // Handle map of something -> ID (e.g. numeric keys) or ID -> ID
+                      permsArray = Object.values(permsData).filter(v => typeof v === 'string');
+                    }
+                  }
+                  setRolePermissions(permsArray);
+                } else {
+                  setRolePermissions([]);
                 }
-                setRolePermissions(permsArray);
-              } else {
-                setRolePermissions(null);
-              }
-            });
+              }, () => setRolePermissions([]));
+            } else {
+              setRolePermissions([]);
+            }
 
             if (data.role === 'HOD') {
-              const assignmentsRef = collection(db, 'subject_assignments');
-              getDocs(assignmentsRef).then(assignmentsSnap => {
-                if (!assignmentsSnap.empty) {
-                  const allAssignments = {};
-                  assignmentsSnap.forEach(doc => { allAssignments[doc.id] = doc.data(); });
-                  const checkAssignments = (obj) => {
-                    if (!obj || typeof obj !== 'object') return false;
-                    if (obj[currentUser.uid]) return true;
-                    return Object.values(obj).some(val => typeof val === 'object' && checkAssignments(val));
-                  };
-                  setHasAssignments(checkAssignments(allAssignments));
-                } else {
-                  setHasAssignments(false);
-                }
-              }).catch(() => setHasAssignments(false));
+              // Default to true for HODs to ensure they see faculty menu items.
+              setHasAssignments(true);
             } else {
               setHasAssignments(false);
             }
@@ -222,8 +225,22 @@ export default function Layout({ children, title }) {
       unsubscribe = onSnapshot(facultyPermsRef, (permsSnap) => {
         if (permsSnap.exists()) {
           const permsData = permsSnap.data();
-          const perms = permsData.value || permsData;
-          setFacultyPermissions(Array.isArray(perms) ? perms : (typeof perms === 'object' && perms !== null ? Object.values(perms) : []));
+          let permsArray = [];
+          if (Array.isArray(permsData)) {
+            permsArray = permsData;
+          } else if (permsData.value && Array.isArray(permsData.value)) {
+            permsArray = permsData.value;
+          } else if (permsData.permissions && Array.isArray(permsData.permissions)) {
+            permsArray = permsData.permissions;
+          } else if (typeof permsData === 'object' && permsData !== null) {
+            const entries = Object.entries(permsData);
+            if (entries.length > 0 && typeof entries[0][1] === 'boolean') {
+              permsArray = entries.filter(([, val]) => val === true).map(([key]) => key);
+            } else {
+              permsArray = Object.values(permsData).filter(v => typeof v === 'string');
+            }
+          }
+          setFacultyPermissions(permsArray);
         } else {
           setFacultyPermissions([]);
         }

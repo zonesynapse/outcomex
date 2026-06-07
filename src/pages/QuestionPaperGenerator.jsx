@@ -4,8 +4,7 @@ import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, 
 import Layout from '../components/Layout';
 import { auth, db, rtdb } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
-import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc } from 'firebase/firestore'; // Firestore imports
-import { ref, get, onValue } from 'firebase/database';
+import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query } from 'firebase/firestore'; // Firestore imports
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
@@ -488,18 +487,16 @@ export default function QuestionPaperGenerator() {
   }, []);
 
   useEffect(() => {
-    const configsRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(configsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const configsArray = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        setCiaConfigs(configsArray);
-      } else {
-        setCiaConfigs([]);
-      }
+    const ciaRef = collection(db, 'cia_configs');
+    const unsubscribe = onSnapshot(ciaRef, (snapshot) => {
+      const configsArray = [];
+      snapshot.forEach(doc => {
+        configsArray.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      setCiaConfigs(configsArray);
     });
 
     return () => unsubscribe();
@@ -547,7 +544,7 @@ export default function QuestionPaperGenerator() {
           courseRef = doc(db, 'courses', progKey, 'Overall', regKey, subjectKey);
           snap = await getDoc(courseRef); // Use getDoc for Firestore
         }
-        if (snap.exists()) courseData = snap.val();
+        if (snap.exists()) courseData = snap.data();
       } catch (error) { console.error("Error fetching course details for AI:", error); }
       setSubjectCourseDetails(courseData);
     };
@@ -1573,18 +1570,18 @@ export default function QuestionPaperGenerator() {
       if (!semNum) return;
 
       try {
-        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
-        const snapshot = await get(syllabusRef);
-        const data = snapshot.val();
+        const syllabusRef = doc(db, 'syllabus_data', syllabusKey);
+        const snapshot = await getDoc(syllabusRef);
+        const data = snapshot.data();
         let fetchedSubjects = [];
         
         if (data && data.semesters && data.semesters[semNum]) {
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
             .map(s => ({
-            value: s.code,
-            text: `${s.code} - ${s.name}`
-          }));
+              value: s.code,
+              text: `${s.code} - ${s.name}`
+            }));
         }
 
         // Filter by HOD Assignments

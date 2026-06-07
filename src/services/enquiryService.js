@@ -1,5 +1,5 @@
-import { get, onValue, ref, remove, set, update } from "firebase/database";
-import { rtdb } from "../firebase";
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { db } from "../firebase";
 
 const ENQUIRY_ROOT = "enquiries";
 
@@ -71,12 +71,33 @@ export function createEmptyEnquiryForm() {
     transportRoute: "",
     transportStage: "",
     emsUmsNo: "",
+    aadharNo: "",
     qualifyingExamProgrammes: "",
     qualifyingExamInstitute: "",
     qualifyingExamBoardUniversity: "",
     qualifyingExamMonthYear: "",
     qualifyingExamAttempts: "",
     qualifyingExamMarks: "",
+    qualifyingExam10thInstitute: "",
+    qualifyingExam10thBoard: "",
+    qualifyingExam10thMonthYear: "",
+    qualifyingExam10thAttempts: "",
+    qualifyingExam10thMarks: "",
+    qualifyingExam11thInstitute: "",
+    qualifyingExam11thBoard: "",
+    qualifyingExam11thMonthYear: "",
+    qualifyingExam11thAttempts: "",
+    qualifyingExam11thMarks: "",
+    qualifyingExam12thInstitute: "",
+    qualifyingExam12thBoard: "",
+    qualifyingExam12thMonthYear: "",
+    qualifyingExam12thAttempts: "",
+    qualifyingExam12thMarks: "",
+    qualifyingExamDipDegInstitute: "",
+    qualifyingExamDipDegBoard: "",
+    qualifyingExamDipDegMonthYear: "",
+    qualifyingExamDipDegAttempts: "",
+    qualifyingExamDipDegMarks: "",
     mathsMark: "",
     physicsMark: "",
     chemistryMark: "",
@@ -91,9 +112,7 @@ export function createEmptyEnquiryForm() {
     department3: "",
     status: "Enquiry",
     enquiryAttendedBy: "",
-    feeAmount: "",
-    paymentMode: "cash",
-    upiNumber: ""
+    payments: [{ feeCategory: "", feeAmount: "", paymentMode: "cash", paymentDate: "", upiNumber: "" }]
   };
 }
 
@@ -181,12 +200,33 @@ const normalizeEnquiry = (enquiryId, data = {}) => ({
   transportRoute: asString(data.transportRoute),
   transportStage: asString(data.transportStage),
   emsUmsNo: asString(data.emsUmsNo),
+  aadharNo: asString(data.aadharNo),
   qualifyingExamProgrammes: asString(data.qualifyingExamProgrammes),
   qualifyingExamInstitute: asString(data.qualifyingExamInstitute),
   qualifyingExamBoardUniversity: asString(data.qualifyingExamBoardUniversity),
   qualifyingExamMonthYear: asString(data.qualifyingExamMonthYear),
   qualifyingExamAttempts: asString(data.qualifyingExamAttempts),
   qualifyingExamMarks: asString(data.qualifyingExamMarks),
+  qualifyingExam10thInstitute: asString(data.qualifyingExam10thInstitute),
+  qualifyingExam10thBoard: asString(data.qualifyingExam10thBoard),
+  qualifyingExam10thMonthYear: asString(data.qualifyingExam10thMonthYear),
+  qualifyingExam10thAttempts: asString(data.qualifyingExam10thAttempts),
+  qualifyingExam10thMarks: asString(data.qualifyingExam10thMarks),
+  qualifyingExam11thInstitute: asString(data.qualifyingExam11thInstitute),
+  qualifyingExam11thBoard: asString(data.qualifyingExam11thBoard),
+  qualifyingExam11thMonthYear: asString(data.qualifyingExam11thMonthYear),
+  qualifyingExam11thAttempts: asString(data.qualifyingExam11thAttempts),
+  qualifyingExam11thMarks: asString(data.qualifyingExam11thMarks),
+  qualifyingExam12thInstitute: asString(data.qualifyingExam12thInstitute),
+  qualifyingExam12thBoard: asString(data.qualifyingExam12thBoard),
+  qualifyingExam12thMonthYear: asString(data.qualifyingExam12thMonthYear),
+  qualifyingExam12thAttempts: asString(data.qualifyingExam12thAttempts),
+  qualifyingExam12thMarks: asString(data.qualifyingExam12thMarks),
+  qualifyingExamDipDegInstitute: asString(data.qualifyingExamDipDegInstitute),
+  qualifyingExamDipDegBoard: asString(data.qualifyingExamDipDegBoard),
+  qualifyingExamDipDegMonthYear: asString(data.qualifyingExamDipDegMonthYear),
+  qualifyingExamDipDegAttempts: asString(data.qualifyingExamDipDegAttempts),
+  qualifyingExamDipDegMarks: asString(data.qualifyingExamDipDegMarks),
   mathsMark: asString(data.mathsMark),
   physicsMark: asString(data.physicsMark),
   chemistryMark: asString(data.chemistryMark),
@@ -201,9 +241,13 @@ const normalizeEnquiry = (enquiryId, data = {}) => ({
   department3: asString(data.department3),
   status: asString(data.status) || "Enquiry",
   enquiryAttendedBy: asString(data.enquiryAttendedBy),
-  feeAmount: data.feeAmount !== undefined && data.feeAmount !== null && data.feeAmount !== "" ? asNumber(data.feeAmount) : "",
-  paymentMode: asString(data.paymentMode) || "cash",
-  upiNumber: asString(data.upiNumber),
+  payments: Array.isArray(data.payments) && data.payments.length > 0 ? data.payments : (data.feeAmount || data.feeCategory ? [{
+    feeCategory: asString(data.feeCategory),
+    feeAmount: data.feeAmount !== undefined && data.feeAmount !== null && data.feeAmount !== "" ? asNumber(data.feeAmount) : "",
+    paymentMode: asString(data.paymentMode) || "cash",
+    paymentDate: asString(data.paymentDate),
+    upiNumber: asString(data.upiNumber)
+  }] : [{ feeCategory: "", feeAmount: "", paymentMode: "cash", paymentDate: "", upiNumber: "" }]),
   newFields: Array.isArray(data.newFields) ? data.newFields : [],
   documents: data.documents || {},
   createdAt: data.createdAt || Date.now(),
@@ -219,12 +263,12 @@ const compareEnquiries = (left, right) => {
 
 const getNextEnquiryId = async () => {
   const year = new Date().getFullYear();
-  const enquiriesSnap = await get(ref(rtdb, ENQUIRY_ROOT));
+  const queriesSnap = await getDocs(collection(db, ENQUIRY_ROOT));
   let maxSequence = 0;
 
-  if (enquiriesSnap.exists()) {
-    Object.keys(enquiriesSnap.val() || {}).forEach((key) => {
-      const match = String(key).match(/^ENQ(\d{4})-(\d{3})$/);
+  if (!queriesSnap.empty) {
+    queriesSnap.forEach((docSnap) => {
+      const match = String(docSnap.id).match(/^ENQ(\d{4})-(\d{3})$/);
       if (match && Number(match[1]) === year) {
         maxSequence = Math.max(maxSequence, Number(match[2]));
       }
@@ -233,6 +277,25 @@ const getNextEnquiryId = async () => {
 
   return `ENQ${year}-${String(maxSequence + 1).padStart(3, "0")}`;
 };
+
+export async function getNextApplicationNo() {
+  const year = new Date().getFullYear();
+  const queriesSnap = await getDocs(collection(db, ENQUIRY_ROOT));
+  let maxSequence = 0;
+
+  if (!queriesSnap.empty) {
+    queriesSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const appNo = String(data.applicationNo || "");
+      const match = appNo.match(/^APP(\d{4})-(\d{3,4})$/);
+      if (match && Number(match[1]) === year) {
+        maxSequence = Math.max(maxSequence, Number(match[2]));
+      }
+    });
+  }
+
+  return `APP${year}-${String(maxSequence + 1).padStart(4, "0")}`;
+}
 
 export async function addEnquiry(data) {
   const enquiryId = await getNextEnquiryId();
@@ -245,21 +308,18 @@ export async function addEnquiry(data) {
   const excluded = new Set(["createdAt", "updatedAt", "enquiryId", "newFields"]);
   payload.newFields = Object.keys(payload).filter((k) => !excluded.has(k) && payload[k] !== "" && payload[k] !== null && payload[k] !== undefined);
 
-  await set(ref(rtdb, `${ENQUIRY_ROOT}/${enquiryId}`), payload);
+  await setDoc(doc(db, ENQUIRY_ROOT, enquiryId), payload);
   return enquiryId;
 }
 
 export function getEnquiriesRealtime(onData, onError) {
-  const enquiriesRef = ref(rtdb, ENQUIRY_ROOT);
+  const enquiriesRef = collection(db, ENQUIRY_ROOT);
 
-  return onValue(
+  return onSnapshot(
     enquiriesRef,
     (snapshot) => {
-      const enquiries = snapshot.exists()
-        ? Object.entries(snapshot.val() || {})
-            .map(([key, value]) => normalizeEnquiry(key, value))
-            .sort(compareEnquiries)
-        : [];
+      const enquiries = snapshot.docs.map((docSnap) => normalizeEnquiry(docSnap.id, docSnap.data()))
+                                     .sort(compareEnquiries);
 
       onData(enquiries);
     },
@@ -277,8 +337,8 @@ export async function updateEnquiry(enquiryId, updates) {
   if (!enquiryId) return;
 
   // fetch existing record to compute which fields are newly added
-  const existingSnap = await get(ref(rtdb, `${ENQUIRY_ROOT}/${enquiryId}`));
-  const existing = existingSnap.exists() ? existingSnap.val() : {};
+  const existingSnap = await getDoc(doc(db, ENQUIRY_ROOT, enquiryId));
+  const existing = existingSnap.exists() ? existingSnap.data() : {};
 
   const payload = normalizeEnquiry(enquiryId, {
     ...existing,
@@ -300,17 +360,17 @@ export async function updateEnquiry(enquiryId, updates) {
 
   payload.newFields = Array.from(new Set([...(Array.isArray(prev.newFields) ? prev.newFields : []), ...newlyAdded]));
 
-  await update(ref(rtdb, `${ENQUIRY_ROOT}/${enquiryId}`), payload);
+  await updateDoc(doc(db, ENQUIRY_ROOT, enquiryId), payload);
 }
 
 export async function deleteEnquiry(enquiryId) {
   if (!enquiryId) return;
-  await remove(ref(rtdb, `${ENQUIRY_ROOT}/${enquiryId}`));
+  await deleteDoc(doc(db, ENQUIRY_ROOT, enquiryId));
 }
 
 export async function getEnquiryById(enquiryId) {
   if (!enquiryId) return null;
-  const snap = await get(ref(rtdb, `${ENQUIRY_ROOT}/${enquiryId}`));
+  const snap = await getDoc(doc(db, ENQUIRY_ROOT, enquiryId));
   if (!snap.exists()) return null;
-  return normalizeEnquiry(enquiryId, snap.val());
+  return normalizeEnquiry(enquiryId, snap.data());
 }

@@ -78,7 +78,7 @@ export default function Dashboard() {
   useEffect(() => {
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (snapshot.exists) { // For QuerySnapshot, use .exists
+      if (!snapshot.empty) { 
         const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         setCiaConfigs(data);
       }
@@ -132,11 +132,11 @@ export default function Dashboard() {
       const progKey = formatProgrammeKey(programme);
       const semNum = deriveSemesterNumber(semester);
       const assignmentPath = `subject_assignments/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}`;
-      const assignmentRef = ref(rtdb, assignmentPath);
-      
-      const unsubscribe = onValue(assignmentRef, (snapshot) => {
+      const assignmentRef = doc(db, 'subject_assignments', progKey, sanitizeKey(department), sanitizeKey(batch), sanitizeKey(academicYear), String(semNum));
+
+      const unsubscribe = onSnapshot(assignmentRef, (snapshot) => {
         if (snapshot.exists()) {
-          const assignments = snapshot.val();
+          const assignments = snapshot.data();
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             const allAllocatedCodes = new Set();
             Object.values(assignments).forEach(codes => {
@@ -149,7 +149,7 @@ export default function Dashboard() {
         } else {
           setUserAssignments([]);
         }
-      });
+      }, (err) => console.error("Assignments fetch error:", err));
       return () => unsubscribe();
     } else if (userAssignments.length > 0) {
       setTimeout(() => setUserAssignments([]), 0);

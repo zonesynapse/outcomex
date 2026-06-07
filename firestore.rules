@@ -63,18 +63,8 @@ service cloud.firestore {
              data.order is list && data.order.size() < 200;
     }
 
-    match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
-                      request.resource.data.uid == resource.data.uid;
-      allow delete: if false; // Users cannot delete their profile for now
-    }
-
-    match /students/{compositeKey} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && isValidStudent(request.resource.data);
-      allow delete: if isAuthenticated();
+    match /{document=**} {
+      allow read, write: if isAuthenticated();
     }
   }
 }

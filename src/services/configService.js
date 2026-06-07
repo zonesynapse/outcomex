@@ -1,18 +1,20 @@
-import { onValue, ref, remove, set, update } from "firebase/database";
-import { rtdb } from "../firebase";
+import { collection, doc, onSnapshot, setDoc, deleteDoc } from "firebase/firestore";
+import { db } from "../firebase";
 
-const COMMUNITIES_ROOT = "settings/communities";
+const COMMUNITIES_ROOT = "settings_communities";
 
 export function getCommunitiesRealtime(onData, onError) {
-  const commRef = ref(rtdb, COMMUNITIES_ROOT);
-  return onValue(
+  const commRef = collection(db, COMMUNITIES_ROOT);
+  return onSnapshot(
     commRef,
     (snapshot) => {
-      const data = snapshot.exists() ? snapshot.val() : {};
-      const normalized = Object.keys(data).map(k => ({
-        name: k,
-        percentage: typeof data[k] === 'number' ? data[k] : 0
-      }));
+      const normalized = [];
+      snapshot.forEach(docSnap => {
+          normalized.push({
+              name: docSnap.id,
+              percentage: typeof docSnap.data().percentage === 'number' ? docSnap.data().percentage : 0
+          });
+      });
       onData(normalized);
     },
     (error) => {
@@ -24,10 +26,10 @@ export function getCommunitiesRealtime(onData, onError) {
 
 export async function saveCommunity(name, percentage = 0) {
   if (!name) return;
-  await set(ref(rtdb, `${COMMUNITIES_ROOT}/${name}`), Number(percentage) || 0);
+  await setDoc(doc(db, COMMUNITIES_ROOT, name), { percentage: Number(percentage) || 0 });
 }
 
 export async function deleteCommunity(name) {
   if (!name) return;
-  await remove(ref(rtdb, `${COMMUNITIES_ROOT}/${name}`));
+  await deleteDoc(doc(db, COMMUNITIES_ROOT, name));
 }

@@ -1,17 +1,30 @@
-import { get, onValue, ref, remove, set, update } from "firebase/database";
-import { rtdb } from "../firebase";
+import { collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { db } from "../firebase";
 
 const SEAT_CONFIG_ROOT = "seatConfigurations";
 const STUDENTS_ROOT = "students"; // For calculating filled seats
 
-export function getSeatConfigurationsRealtime(onData, onError) {
-  const seatConfigRef = ref(rtdb, SEAT_CONFIG_ROOT);
+export const sanitizeKey = (key) => {
+  if (!key) return key;
+  return String(key).replace(/\./g, '%2E').replace(/#/g, '%23').replace(/\$/g, '%24').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+};
 
-  return onValue(
+export const desanitizeKey = (key) => {
+  if (!key) return key;
+  return String(key).replace(/%2E/g, '.').replace(/%23/g, '#').replace(/%24/g, '$').replace(/%5B/g, '[').replace(/%5D/g, ']');
+};
+
+export function getSeatConfigurationsRealtime(onData, onError) {
+  const seatConfigRef = collection(db, SEAT_CONFIG_ROOT);
+
+  return onSnapshot(
     seatConfigRef,
     (snapshot) => {
-      const data = snapshot.exists() ? snapshot.val() : {};
-      onData(data);
+      const desanitizedData = {};
+      snapshot.forEach(docSnap => {
+        desanitizedData[desanitizeKey(docSnap.id)] = docSnap.data();
+      });
+      onData(desanitizedData);
     },
     (error) => {
       if (onError) onError(error);
@@ -21,12 +34,15 @@ export function getSeatConfigurationsRealtime(onData, onError) {
 }
 
 export function getStudentsRealtime(onData, onError) {
-  const studentsRef = ref(rtdb, STUDENTS_ROOT);
+  const studentsRef = collection(db, STUDENTS_ROOT);
 
-  return onValue(
+  return onSnapshot(
     studentsRef,
     (snapshot) => {
-      const data = snapshot.exists() ? snapshot.val() : {};
+      const data = {};
+      snapshot.forEach(docSnap => {
+          data[docSnap.id] = docSnap.data();
+      });
       onData(data);
     },
     (error) => {
@@ -53,13 +69,13 @@ export async function saveSeatConfiguration(department, config) {
     }
   });
 
-  await set(ref(rtdb, `${SEAT_CONFIG_ROOT}/${department}`), dataToSave);
+  await setDoc(doc(db, SEAT_CONFIG_ROOT, sanitizeKey(department)), dataToSave);
 }
 
 export async function updateSeatConfiguration(department, updates) {
-  await update(ref(rtdb, `${SEAT_CONFIG_ROOT}/${department}`), updates);
+  await updateDoc(doc(db, SEAT_CONFIG_ROOT, sanitizeKey(department)), updates);
 }
 
 export async function deleteSeatConfiguration(department) {
-  await remove(ref(rtdb, `${SEAT_CONFIG_ROOT}/${department}`));
+  await deleteDoc(doc(db, SEAT_CONFIG_ROOT, sanitizeKey(department)));
 }

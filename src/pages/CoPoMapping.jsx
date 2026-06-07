@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { auth, db, rtdb } from "../firebase"; // Import db for Firestore
-import { doc, getDoc } from "firebase/firestore"; // Firestore imports
-import { ref, get, set, remove, onValue, serverTimestamp } from "firebase/database";
+import { auth, db } from "../firebase"; // Import db for Firestore
+import { doc, getDoc, collection, onSnapshot, setDoc, updateDoc, deleteField, getDocs } from "firebase/firestore"; // Firestore imports
 import { 
   ChevronDown, 
   Download, 
@@ -58,9 +57,9 @@ export default function CoPoMapping() {
           const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
-            const assignmentsRef = ref(rtdb, 'subject_assignments');
-            const unsubscribe = onValue(assignmentsRef, (assignSnap) => {
-              const data = assignSnap.val() || {};
+            const assignmentsRef = collection(db, 'subject_assignments');
+            const unsubscribe = onSnapshot(assignmentsRef, (assignSnap) => {
+              const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
               const progs = new Set();
               const depts = new Set();
 
@@ -169,18 +168,17 @@ export default function CoPoMapping() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
 
-      const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${selectedOutcome.code}`;
+      const actionRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey);
 
-      await set(ref(rtdb, actionPath), {
-        batch,
-        programme,
-        department,
-        regulation,
-        outcomeCode: selectedOutcome.code,
-        action: actionText,
-        updatedAt: serverTimestamp(),
-        updatedBy: auth.currentUser?.uid
-      });
+      await setDoc(actionRef, {
+        [selectedOutcome.code]: {
+          outcomeCode: selectedOutcome.code,
+          action: actionText,
+          updatedAt: new Date().toISOString(),
+          updatedBy: auth.currentUser?.uid
+        }
+      }, { merge: true });
+      
       setIsActionModalOpen(false); // Close modal after saving
     } catch (error) {
       console.error("Error saving action taken:", error);
@@ -198,8 +196,8 @@ export default function CoPoMapping() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
 
-      const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${outcomeCode}`;
-      await remove(ref(rtdb, actionPath));
+      const actionRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey);
+      await updateDoc(actionRef, { [outcomeCode]: deleteField() });
     } catch (error) {
       console.error("Error deleting action plan:", error);
       alert("Failed to delete action plan.");
@@ -210,8 +208,12 @@ export default function CoPoMapping() {
   useEffect(() => {
     const fetchCiaConfigs = async () => {
       try {
-        const snap = await get(ref(rtdb, 'cia_configs'));
-        setCiaConfigs(snap.val() || {});
+        const snap = await getDocs(collection(db, 'cia_configs'));
+        const data = {};
+        snap.forEach(doc => {
+          data[doc.id] = doc.data();
+        });
+        setCiaConfigs(data);
       } catch (err) {
         console.error('Error fetching cia_configs:', err);
         setCiaConfigs({});
@@ -269,18 +271,18 @@ export default function CoPoMapping() {
       if (!semNum) return;
 
       try {
-        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
-        const snapshot = await get(syllabusRef);
-        const data = snapshot.val();
+        const syllabusRef = doc(db, 'syllabus_data', syllabusKey);
+        const snapshot = await getDoc(syllabusRef);
+        const data = snapshot.data();
         let fetchedSubjects = [];
         
         if (data && data.semesters && data.semesters[semNum]) {
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
             .map(s => ({
-            value: s.code,
-            text: `${s.code} - ${s.name}`
-          }));
+              value: s.code,
+              text: `${s.code} - ${s.name}`
+            }));
         }
 
         // Filter by HOD Assignments
@@ -342,15 +344,15 @@ export default function CoPoMapping() {
         const progKey = formatProgrammeKey(programme);
         
         // Fetch PO/PSO
-        // Note: COConfiguration uses `${progKey}_${regulation}__${department}` for poPsoKey
         const poPsoKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
-        const poPsoRef = ref(rtdb, `po_pso/${poPsoKey}`);
-        const poPsoSnap = await get(poPsoRef);
-        const poPsoData = poPsoSnap.val() || {};
+        const poPsoRef = doc(db, 'po_pso', poPsoKey);
+        const poPsoSnap = await getDoc(poPsoRef);
+        const poPsoData = poPsoSnap.data() || {};
 
         const pos = (poPsoData.po_statements || []).map((po, idx) => ({
           code: `PO${idx + 1}`,
-          description: po.statement
+          description: po.statement,
+          label: `PO${idx + 1}`
         }));
         const psos = (poPsoData.pso_statements || []).map((pso, idx) => ({
           code: `PSO${pos.length + idx + 1}`,
@@ -358,14 +360,14 @@ export default function CoPoMapping() {
           description: pso.statement
         }));
 
-        setPoList(pos.map(po => ({ ...po, label: po.code })));
+        setPoList(pos);
         setPsoList(psos);
 
         // Fetch COs
         const coKey = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
-        const coRef = ref(rtdb, `course_outcomes/${coKey}`);
-        const coSnap = await get(coRef);
-        const coData = coSnap.val() || {};
+        const coRef = doc(db, 'course_outcomes', coKey);
+        const coSnap = await getDoc(coRef);
+        const coData = coSnap.data() || {};
         
         const cos = Object.keys(coData)
           .filter(k => k.startsWith('CO'))

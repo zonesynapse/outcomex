@@ -1,4 +1,4 @@
-import { Edit2, Eye, Trash2 } from "lucide-react";
+import { Edit2, Eye, Trash2, CheckCircle2 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 
 const formatCurrencyLikeNumber = (value) => {
@@ -10,7 +10,13 @@ const formatCurrencyLikeNumber = (value) => {
 
 const formatDate = (value) => {
   if (!value) return "-";
-  const date = new Date(value);
+  let date;
+  if (typeof value === 'string' && value.includes('/')) {
+    const [d, m, y] = value.split('/');
+    date = new Date(y, m - 1, d);
+  } else {
+    date = new Date(value);
+  }
   if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
@@ -26,7 +32,7 @@ function TableSkeleton() {
         <table className="min-w-[1100px] w-full border-collapse">
           <thead className="bg-zinc-50">
             <tr>
-              {Array.from({ length: 8 }).map((_, index) => (
+              {Array.from({ length: 9 }).map((_, index) => (
                 <th key={index} className="border-b border-zinc-200 px-4 py-4 text-left text-sm font-semibold text-zinc-500">
                   <div className="h-3 w-20 rounded-full bg-zinc-200 animate-pulse" />
                 </th>
@@ -36,7 +42,7 @@ function TableSkeleton() {
           <tbody>
             {Array.from({ length: 5 }).map((_, rowIndex) => (
               <tr key={rowIndex} className="border-b border-zinc-100">
-                {Array.from({ length: 8 }).map((__, cellIndex) => (
+                {Array.from({ length: 9 }).map((__, cellIndex) => (
                   <td key={cellIndex} className="px-4 py-4">
                     <div className="h-3 w-full rounded-full bg-zinc-200 animate-pulse" />
                   </td>
@@ -50,7 +56,7 @@ function TableSkeleton() {
   );
 }
 
-export default function EnquiryTable({ enquiries = [], loading = false, onView, onEdit, onDelete }) {
+export default function EnquiryTable({ enquiries = [], loading = false, onView, onEdit, onDelete, onMove }) {
   if (loading) {
     return <TableSkeleton />;
   }
@@ -61,21 +67,28 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
         <table className="min-w-[1100px] w-full border-collapse">
           <thead className="bg-zinc-50">
             <tr>
-              <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Enquiry ID</th>
+              <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">ID</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Student Name</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Mobile</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Cutoff</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Department</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Status</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Date</th>
+              <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Admission</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Actions</th>
             </tr>
           </thead>
           <tbody>
             {enquiries.map((enquiry) => (
               <tr key={enquiry.enquiryId} className="border-b border-zinc-100 transition-colors hover:bg-zinc-50/80">
-                <td className="px-4 py-4 text-sm font-semibold text-[#120c7a]">{enquiry.enquiryId}</td>
-                <td className="px-4 py-4 text-sm font-medium text-zinc-900">{enquiry.studentName}</td>
+                <td className="px-4 py-4 text-sm font-semibold text-[#120c7a]">
+                  {enquiry.status === "Application" && enquiry.applicationNo ? enquiry.applicationNo : enquiry.enquiryId}
+                </td>
+                <td className="px-4 py-4 text-sm font-medium text-zinc-900">
+                  {enquiry.firstName || enquiry.lastName
+                    ? `${enquiry.firstName || ""} ${enquiry.lastName || ""}`.trim()
+                    : enquiry.studentName || "-"}
+                </td>
                 <td className="px-4 py-4 text-sm text-zinc-700">{enquiry.mobile}</td>
                 <td className="px-4 py-4 text-sm text-zinc-700">{formatCurrencyLikeNumber(enquiry.cutoff)}</td>
                 <td className="px-4 py-4 text-sm text-zinc-700">
@@ -85,6 +98,30 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                   <StatusBadge status={enquiry.status} />
                 </td>
                 <td className="px-4 py-4 text-sm text-zinc-700">{formatDate(enquiry.enquiryDate || enquiry.createdAt)}</td>
+                <td className="px-4 py-4 text-center">
+                  {enquiry.status === "Admission" ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-1">
+                      <CheckCircle2 size={12} className="text-green-600" />
+                      Admitted
+                    </span>
+                  ) : enquiry.status === "Application" ? (
+                    <button
+                      type="button"
+                      onClick={() => onMove?.(enquiry)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold shadow-sm transition-all"
+                    >
+                      Move
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onMove?.(enquiry)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50/50 hover:bg-amber-100 hover:border-amber-300 text-amber-800 px-3 py-1.5 text-xs font-semibold shadow-sm transition-all"
+                    >
+                      Move
+                    </button>
+                  )}
+                </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-center gap-2">
                     <button

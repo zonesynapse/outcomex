@@ -453,6 +453,22 @@ export default function Auth() {
               </div>
             </div>
 
+            <div className="relative mb-6">
+              <select
+                value={regDesignation}
+                onChange={(e) => setRegDesignation(e.target.value)}
+                className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
+                required
+              >
+                <option value="">Select Designation</option>
+                <option value="Assistant Professor">Assistant Professor</option>
+                <option value="Associate Professor">Associate Professor</option>
+                <option value="Professor">Professor</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+              <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Designation</span>
+            </div>
+
             <div className="grid grid-cols-2 gap-3 mb-6">
               <div className="relative">
                 <select
@@ -486,22 +502,6 @@ export default function Auth() {
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
               </div>
-            </div>
-
-            <div className="relative mb-6">
-              <select
-                value={regDesignation}
-                onChange={(e) => setRegDesignation(e.target.value)}
-                className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
-                required
-              >
-                <option value="">Select Designation</option>
-                <option value="Assistant Professor">Assistant Professor</option>
-                <option value="Associate Professor">Associate Professor</option>
-                <option value="Professor">Professor</option>
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-              <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Designation</span>
             </div>
 
             <div className="relative mb-4">

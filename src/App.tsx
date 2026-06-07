@@ -28,6 +28,8 @@ import HODDashboard from "./pages/HODDashboard";
 import AdmissionEnquiries from "./pages/AdmissionEnquiries.js";
 import SeatManagement from "./pages/SeatManagement";
 import ProtectedRoute from "./components/ProtectedRoute";
+import FeeConfig from "./pages/FeeConfig"; // Add this import
+
 
 export default function App() {
   return (
@@ -51,7 +53,7 @@ export default function App() {
         <Route path="/markk" element={<ProtectedRoute><MarkEntry /></ProtectedRoute>} />
         <Route path="/co-po" element={<ProtectedRoute><CoPoMapping /></ProtectedRoute>} />
         <Route path="/po-attainment" element={<ProtectedRoute><PoAttainment /></ProtectedRoute>} />
-        
+        <Route path="/admissions/fees" element={<ProtectedRoute><FeeConfig /></ProtectedRoute>} />
         {/* New Pages */}
         <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
         <Route path="/course-enrolment" element={<ProtectedRoute><CourseEnrolment /></ProtectedRoute>} />

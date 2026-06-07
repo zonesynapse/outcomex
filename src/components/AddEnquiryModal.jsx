@@ -1,19 +1,24 @@
-import { useEffect, useState, useMemo } from "react";
-import { X, ChevronDown } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
+import { X, ChevronDown, Calendar as CalendarIcon, Trash2, Plus, Download } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import StatusBadge from "./StatusBadge";
 import {
   calculateCutoffFromMarks,
-  createEmptyEnquiryForm
+  createEmptyEnquiryForm,
+  getNextApplicationNo
 } from "../services/enquiryService";
 import { getCommunitiesRealtime } from "../services/configService";
+import { getSeatConfigurationsRealtime } from "../services/seatService";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey } from "../lib/utils";
+import { useRegulations } from "../hooks/useRegulations";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, formatProgDisplay } from "../lib/utils";
 
-const STATUS_OPTIONS = ["Enquiry", "Application", "Admission"];
-const ENQUIRY_FOR_OPTIONS = ["BE / B.Tech", "LE / ME", "MBA", "Transfer Course"];
+const STATUS_OPTIONS = ["Enquiry", "Application"];
 const EXAM_OPTIONS = ["+2", "Diploma", "UG"];
-const QUOTA_OPTIONS = ["MQ", "Counseling", "FG"];
 const MEDIUM_OPTIONS = ["English", "Tamil", "English / Tamil"];
 const ELIGIBILITY_OPTIONS = ["Eligible", "Not Eligible"];
 const TITLE_OPTIONS = ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."];
@@ -35,6 +40,25 @@ const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value |
 const cleanDigits = (value, limit = 10) => String(value || "").replace(/\D/g, "").slice(0, limit);
 const normalizeText = (value) => String(value || "");
 
+const formatDateToDisplay = (isoDate) => {
+  if (!isoDate || !isoDate.includes('-')) return isoDate;
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+const formatDisplayToISO = (displayDate) => {
+  if (!displayDate || !displayDate.includes('/')) return displayDate;
+  const [d, m, y] = displayDate.split('/');
+  return `${y}-${m}-${d}`;
+};
+
+const applyDateMask = (value) => {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+};
+
 export default function AddEnquiryModal({
   open,
   mode = "add",
@@ -45,10 +69,50 @@ export default function AddEnquiryModal({
   onSubmit
 }) {
   const { departments: allDepartments, durations } = useDepartments();
-  const [form, setForm] = useState(createEmptyEnquiryForm());
+  const { getRegulationForBatch } = useRegulations();
+  const [form, setForm] = useState({ ...createEmptyEnquiryForm(), firstName: "", lastName: "" });
   const [errors, setErrors] = useState({});
   const [communityOptions, setCommunityOptions] = useState([]);
+  const [quotaOptions, setQuotaOptions] = useState([]);
+  const [feeCategoriesOptions, setFeeCategoriesOptions] = useState([]);
   const { getActiveBatches } = useBatches(durations);
+  const [isSameAddress, setIsSameAddress] = useState(false);
+  const dobInputRef = useRef(null);
+  const enquiryDateInputRef = useRef(null);
+  const readOnly = mode === "view";
+
+  useEffect(() => {
+    if (form.programme && form.batch) {
+      const progKey = formatProgrammeKey(form.programme);
+      const docId = `${progKey}_${sanitizeKey(form.batch)}`;
+      const unsub = onSnapshot(doc(db, "fee_configurations", docId), (snapshot) => {
+        if (snapshot.exists()) {
+           const data = snapshot.data();
+           setFeeCategoriesOptions(data.categories || []);
+        } else {
+           setFeeCategoriesOptions([]);
+        }
+      });
+      return () => unsub();
+    } else {
+      setFeeCategoriesOptions([]);
+    }
+  }, [form.programme, form.batch]);
+
+  useEffect(() => {
+    const unsub = getSeatConfigurationsRealtime((data) => {
+      const quotasSet = new Set();
+      Object.values(data || {}).forEach((config) => {
+        if (config && config.quotas) {
+          Object.keys(config.quotas).forEach((qName) => {
+            quotasSet.add(qName);
+          });
+        }
+      });
+      setQuotaOptions(Array.from(quotasSet));
+    }, (err) => console.error("Error loading quotas in AddEnquiryModal:", err));
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = getCommunitiesRealtime((data) => {
@@ -63,15 +127,16 @@ export default function AddEnquiryModal({
     setForm({
       ...createEmptyEnquiryForm(),
       ...initialValues,
-      studentName: initialValues?.studentName ?? "",
+      firstName: initialValues?.firstName ?? (initialValues?.studentName?.split(' ')[0] || ""),
+      lastName: initialValues?.lastName ?? (initialValues?.studentName?.split(' ').slice(1).join(' ') || ""),
       fatherGuardianName: initialValues?.fatherGuardianName ?? "",
       mobile: initialValues?.mobile ?? "",
       parentMobile: initialValues?.parentMobile ?? "",
       landline: initialValues?.landline ?? "",
-      emailId: initialValues?.emailId ?? "",
+      emailId: initialValues?.emailId ?? initialValues?.email ?? "",
       address: initialValues?.address ?? "",
       parentOccupation: initialValues?.parentOccupation ?? "",
-      dateOfBirth: initialValues?.dateOfBirth ?? "",
+      dateOfBirth: formatDateToDisplay(initialValues?.dateOfBirth ?? ""),
       schoolCollege: initialValues?.schoolCollege ?? "",
       mediumOfInstruction: initialValues?.mediumOfInstruction ?? "",
       community: initialValues?.community ?? "",
@@ -88,20 +153,51 @@ export default function AddEnquiryModal({
       eligibility: initialValues?.eligibility ?? "",
       quotaAskedFor: initialValues?.quotaAskedFor ?? "",
       reference: initialValues?.reference ?? "",
-      enquiryDate: initialValues?.enquiryDate ?? new Date().toISOString().slice(0, 10),
+      enquiryDate: formatDateToDisplay(initialValues?.enquiryDate ?? new Date().toISOString().slice(0, 10)),
       department: initialValues?.department ?? "",
       department2: initialValues?.department2 ?? "",
       department3: initialValues?.department3 ?? "",
       status: initialValues?.status ?? "Enquiry",
       enquiryAttendedBy: initialValues?.enquiryAttendedBy ?? "",
-      feeAmount: initialValues?.feeAmount ?? "",
-      paymentMode: initialValues?.paymentMode ?? "cash",
-      upiNumber: initialValues?.upiNumber ?? "",
+      payments: Array.isArray(initialValues?.payments) && initialValues.payments.length > 0 
+        ? initialValues.payments.map(p => ({...p, paymentDate: formatDateToDisplay(p.paymentDate ?? "")}))
+        : [{ feeCategory: initialValues?.feeCategory ?? "", feeAmount: initialValues?.feeAmount ?? "", paymentMode: initialValues?.paymentMode ?? "cash", paymentDate: formatDateToDisplay(initialValues?.paymentDate ?? ""), upiNumber: initialValues?.upiNumber ?? "" }],
       newFields: Array.isArray(initialValues?.newFields) ? initialValues.newFields : [],
       documents: initialValues?.documents ?? {}
     });
+
+    // Sync checkbox state based on initial data
+    const same = initialValues?.address && initialValues?.permanentAddress && 
+                 initialValues.address.trim() === initialValues.permanentAddress.trim();
+    setIsSameAddress(!!same);
+
     setErrors({});
   }, [open, initialValues, mode]);
+
+  useEffect(() => {
+    if (!open || readOnly) return;
+
+    if (form.status === "Application" || form.status === "Admission") {
+      // Auto-fill 12th Institute from School/College if empty
+      setForm(prev => {
+        if (!prev.qualifyingExam12thInstitute && prev.schoolCollege) {
+          return { ...prev, qualifyingExam12thInstitute: prev.schoolCollege };
+        }
+        return prev;
+      });
+
+      if (!form.applicationNo) {
+        getNextApplicationNo().then((nextAppNo) => {
+          setForm((prev) => {
+            if (!prev.applicationNo && (prev.status === "Application" || prev.status === "Admission")) {
+              return { ...prev, applicationNo: nextAppNo };
+            }
+            return prev;
+          });
+        });
+      }
+    }
+  }, [open, form.status, form.applicationNo, readOnly, form.schoolCollege, form.qualifyingExam12thInstitute]);
 
   const DOCUMENT_CHECKLIST = [
     { key: "tenthMarkSheet", label: "10th Mark Sheet" },
@@ -132,19 +228,61 @@ export default function AddEnquiryModal({
     return getAcademicYears(form.batch);
   }, [form.batch]);
 
+  const getChoice1Options = () => {
+    const list = [...departments];
+    if (form.department && !list.includes(form.department)) {
+      list.push(form.department);
+    }
+    return list;
+  };
+
+  const getChoice2Options = () => {
+    const list = [...departments];
+    if (form.department2 && !list.includes(form.department2)) {
+      list.push(form.department2);
+    }
+    return list;
+  };
+
+  const getChoice3Options = () => {
+    const list = [...departments];
+    if (form.department3 && !list.includes(form.department3)) {
+      list.push(form.department3);
+    }
+    return list;
+  };
+
   if (!open) return null;
 
-  const readOnly = mode === "view";
   const title = mode === "edit" ? "Edit Enquiry" : mode === "view" ? "Enquiry Details" : "New Enquiry";
   const calculatedCutoff = calculateCutoffFromMarks(form);
   const displayCutoff = calculatedCutoff !== "" ? calculatedCutoff : form.cutoff;
+  const isCutoffRequired = (form.status === "Application" || form.status === "Admission") && form.enquiryFor === "BE / B.Tech";
 
   const handleChange = (field, value) => {
-    const nextValue = ["mobile", "parentMobile", "landline", "mathsMark", "physicsMark", "chemistryMark", "totalMarks"].includes(field)
+    let nextValue = ["mobile", "parentMobile", "landline", "mathsMark", "physicsMark", "chemistryMark", "totalMarks"].includes(field)
       ? cleanDigits(value, field === "landline" ? 12 : (field.includes("Mark") || field === "totalMarks" ? 3 : 10))
       : value;
 
-    setForm((prev) => ({ ...prev, [field]: nextValue }));
+    if (field === "dateOfBirth" || field === "enquiryDate") {
+      nextValue = applyDateMask(value);
+    }
+
+    setForm((prev) => {
+      const updated = { ...prev, [field]: nextValue };
+      // Auto-sync permanent address if the checkbox is checked
+      if (field === "address" && isSameAddress) {
+        updated.permanentAddress = nextValue;
+      }
+      return updated;
+    });
+
+    if (field === "presentPincode" && nextValue.length === 6) {
+      fetchPincodeDetails(nextValue, true);
+    }
+    if (field === "permanentPincode" && nextValue.length === 6) {
+      fetchPincodeDetails(nextValue, false);
+    }
 
     if (field === "programme") {
       setForm((prev) => ({ ...prev, batch: "", academicYear: "" }));
@@ -157,8 +295,143 @@ export default function AddEnquiryModal({
     }
   };
 
-  const handleFileChange = async (key, file) => {
+  const handlePaymentChange = (index, field, value) => {
+    setForm(prev => {
+      const payments = Array.isArray(prev.payments) ? [...prev.payments] : [];
+      if (!payments[index]) return prev;
+      
+      let nextValue = value;
+      if (field === "paymentDate") {
+        nextValue = applyDateMask(value);
+      }
+      
+      payments[index] = { ...payments[index], [field]: nextValue };
+      return { ...prev, payments };
+    });
+  };
+
+  const addPayment = () => {
+    setForm(prev => {
+      const payments = Array.isArray(prev.payments) ? [...prev.payments] : [];
+      payments.push({ feeCategory: "", feeAmount: "", paymentMode: "cash", paymentDate: "", upiNumber: "" });
+      return { ...prev, payments };
+    });
+  };
+
+  const removePayment = (index) => {
+    setForm(prev => {
+      const payments = Array.isArray(prev.payments) ? prev.payments.filter((_, i) => i !== index) : [];
+      return { ...prev, payments };
+    });
+  };
+
+  const handleDownloadReceipt = (payment, index) => {
+    const studentName = form.studentName || "N/A";
+    const appNo = form.applicationNo || form.id || "N/A"; 
+    const receiptNo = `REC-${Date.now().toString().slice(-6)}-${index+1}`;
+
+    const generatePdf = (img) => {
+      const doc = new jsPDF();
+      
+      const renderReceipt = (startY, title) => {
+        let currentY = startY;
+
+        if (img) {
+          const imgWidth = img.width;
+          const imgHeight = img.height;
+          const maxWidth = 180;
+          const maxHeight = 30;
+          let ratio = Math.min(maxWidth / imgWidth, maxHeight / imgHeight);
+          let newWidth = imgWidth * ratio;
+          let newHeight = imgHeight * ratio;
+          let x = (210 - newWidth) / 2;
+          
+          doc.addImage(img, 'PNG', x, currentY, newWidth, newHeight);
+          currentY += newHeight + 10;
+        } else {
+          currentY += 5;
+        }
+        
+        doc.setFontSize(20);
+        doc.setTextColor(18, 12, 122);
+        doc.text("Fee Receipt", 105, currentY, { align: "center" });
+
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`(${title})`, 105, currentY + 6, { align: "center" });
+
+        currentY += 15;
+
+        doc.setFontSize(11);
+        doc.setTextColor(50, 50, 50);
+        doc.text(`Receipt No: ${receiptNo}`, 14, currentY);
+        doc.text(`Date of Payment: ${payment.paymentDate || "N/A"}`, 14, currentY + 8);
+        
+        doc.text(`Student Name: ${studentName}`, 120, currentY);
+        doc.text(`Application No: ${appNo}`, 120, currentY + 8);
+
+        currentY += 18;
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Particulars (Fee Category)", "Amount (Rs)"]],
+          body: [
+            [payment.feeCategory || "N/A", payment.feeAmount || "0"],
+          ],
+          foot: [["Total", payment.feeAmount || "0"]],
+          theme: "grid",
+          headStyles: { fillColor: [18, 12, 122] },
+          footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold" },
+          margin: { left: 14, right: 14 }
+        });
+
+        const finalY = doc.lastAutoTable.finalY || currentY + 10;
+        doc.setFontSize(10);
+        const modeText = payment.paymentMode === "pay_online" 
+          ? `Online (UPI: ${payment.upiNumber || "N/A"})` 
+          : "Cash / Hand";
+        doc.text(`Payment Mode: ${modeText}`, 14, finalY + 15);
+        
+        doc.text("Authorized Signatory", 150, finalY + 30);
+        doc.line(140, finalY + 25, 190, finalY + 25);
+      };
+
+      renderReceipt(15, "Student Copy");
+      
+      doc.setLineDashPattern([2, 2], 0);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(10, 148, 200, 148);
+      doc.setLineDashPattern([], 0);
+
+      renderReceipt(160, "Accounts Copy");
+
+      doc.autoPrint();
+      window.open(doc.output('bloburl'), '_blank');
+    };
+
+    const img = new Image();
+    img.src = '/logo.png';
+    img.onload = () => generatePdf(img);
+    img.onerror = () => generatePdf(null);
+  };
+
+  const handleFileChange = async (key, file, target) => {
     if (!file) return;
+    if (file.size > 100 * 1024) {
+      setErrors((prev) => ({
+        ...prev,
+        [key]: "File exceeds 100kb limit"
+      }));
+      if (target) {
+        target.value = "";
+      }
+      return;
+    }
+    setErrors((prev) => {
+      const errs = { ...prev };
+      delete errs[key];
+      return errs;
+    });
     try {
       const encoded = await fileToBase64(file);
       setForm((prev) => ({
@@ -178,6 +451,11 @@ export default function AddEnquiryModal({
       const docs = { ...(prev.documents || {}) };
       delete docs[key];
       return { ...prev, documents: docs };
+    });
+    setErrors((prev) => {
+      const errs = { ...prev };
+      delete errs[key];
+      return errs;
     });
   };
 
@@ -228,18 +506,40 @@ export default function AddEnquiryModal({
     transportRoute: normalizeText(form.transportRoute).trim(),
     transportStage: normalizeText(form.transportStage).trim(),
     emsUmsNo: normalizeText(form.emsUmsNo).trim(),
+    aadharNo: normalizeText(form.aadharNo).trim(),
     qualifyingExamProgrammes: normalizeText(form.qualifyingExamProgrammes).trim(),
     qualifyingExamInstitute: normalizeText(form.qualifyingExamInstitute).trim(),
     qualifyingExamBoardUniversity: normalizeText(form.qualifyingExamBoardUniversity).trim(),
     qualifyingExamMonthYear: normalizeText(form.qualifyingExamMonthYear).trim(),
     qualifyingExamAttempts: normalizeText(form.qualifyingExamAttempts).trim(),
-    qualifyingExamMarks: normalizeText(form.qualifyingExamMarks).trim()
+    qualifyingExamMarks: normalizeText(form.qualifyingExamMarks).trim(),
+    qualifyingExam10thInstitute: normalizeText(form.qualifyingExam10thInstitute).trim(),
+    qualifyingExam10thBoard: normalizeText(form.qualifyingExam10thBoard).trim(),
+    qualifyingExam10thMonthYear: normalizeText(form.qualifyingExam10thMonthYear).trim(),
+    qualifyingExam10thAttempts: normalizeText(form.qualifyingExam10thAttempts).trim(),
+    qualifyingExam10thMarks: normalizeText(form.qualifyingExam10thMarks).trim(),
+    qualifyingExam11thInstitute: normalizeText(form.qualifyingExam11thInstitute).trim(),
+    qualifyingExam11thBoard: normalizeText(form.qualifyingExam11thBoard).trim(),
+    qualifyingExam11thMonthYear: normalizeText(form.qualifyingExam11thMonthYear).trim(),
+    qualifyingExam11thAttempts: normalizeText(form.qualifyingExam11thAttempts).trim(),
+    qualifyingExam11thMarks: normalizeText(form.qualifyingExam11thMarks).trim(),
+    qualifyingExam12thInstitute: normalizeText(form.qualifyingExam12thInstitute).trim(),
+    qualifyingExam12thBoard: normalizeText(form.qualifyingExam12thBoard).trim(),
+    qualifyingExam12thMonthYear: normalizeText(form.qualifyingExam12thMonthYear).trim(),
+    qualifyingExam12thAttempts: normalizeText(form.qualifyingExam12thAttempts).trim(),
+    qualifyingExam12thMarks: normalizeText(form.qualifyingExam12thMarks).trim(),
+    qualifyingExamDipDegInstitute: normalizeText(form.qualifyingExamDipDegInstitute).trim(),
+    qualifyingExamDipDegBoard: normalizeText(form.qualifyingExamDipDegBoard).trim(),
+    qualifyingExamDipDegMonthYear: normalizeText(form.qualifyingExamDipDegMonthYear).trim(),
+    qualifyingExamDipDegAttempts: normalizeText(form.qualifyingExamDipDegAttempts).trim(),
+    qualifyingExamDipDegMarks: normalizeText(form.qualifyingExamDipDegMarks).trim()
   });
 
   const validate = () => {
     const nextErrors = {};
 
-    if (!String(form.studentName || "").trim()) nextErrors.studentName = "Student name is required";
+    if (!String(form.firstName || "").trim()) nextErrors.firstName = "First name is required";
+    if (!String(form.lastName || "").trim()) nextErrors.lastName = "Last name is required";
     if (!String(form.fatherGuardianName || "").trim()) nextErrors.fatherGuardianName = "Father/guardian name is required";
     if (!String(form.mobile || "").trim()) nextErrors.mobile = "Mobile number is required";
     else if (!isValidMobile(form.mobile)) nextErrors.mobile = "Enter a valid 10-digit mobile number";
@@ -261,22 +561,37 @@ export default function AddEnquiryModal({
     if (!String(form.community || "").trim()) nextErrors.community = "Community is required";
     if (!String(form.enquiryFor || "").trim()) nextErrors.enquiryFor = "Enquiry for is required";
     if (!String(form.examinationPassedAppeared || "").trim()) nextErrors.examinationPassedAppeared = "Examination type is required";
-    if (!String(form.batch || "").trim()) nextErrors.batch = "Batch is required";
-    if (!String(form.academicYear || "").trim()) nextErrors.academicYear = "Academic Year is required";
+    if (form.status === "Application" || form.status === "Admission") {
+      if (!String(form.batch || "").trim()) nextErrors.batch = "Batch selection is required for applications";
+      if (!String(form.academicYear || "").trim()) nextErrors.academicYear = "Academic Year selection is required for applications";
+    }
     if (!String(form.department || "").trim()) nextErrors.department = "Department interest is required";
     if (!String(form.status || "").trim()) nextErrors.status = "Status is required";
     if (!String(form.enquiryDate || "").trim()) nextErrors.enquiryDate = "Enquiry date is required";
 
-    // Payment validations
-    if (form.status === "Application") {
-      const fee = Number(String(form.feeAmount || "").trim());
-      if (!fee || Number.isNaN(fee) || fee <= 0) {
-        nextErrors.feeAmount = "Enter the minimum fee amount";
-      }
+    const dateReg = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+    if (form.dateOfBirth && !dateReg.test(form.dateOfBirth)) nextErrors.dateOfBirth = "Enter date in DD/MM/YYYY format";
+    if (form.enquiryDate && !dateReg.test(form.enquiryDate)) nextErrors.enquiryDate = "Enter date in DD/MM/YYYY format";
 
-      if (!form.paymentMode) nextErrors.paymentMode = "Select payment mode";
-      if (form.paymentMode === "pay_online") {
-        if (!String(form.upiNumber || "").trim()) nextErrors.upiNumber = "Enter UPI ID for online payment";
+    // Payment validations
+    if (form.status === "Application" || form.status === "Admission") {
+      if (Array.isArray(form.payments)) {
+        form.payments.forEach((payment, index) => {
+          const fee = Number(String(payment.feeAmount || "").trim());
+          if (!fee || Number.isNaN(fee) || fee <= 0) {
+            nextErrors[`payment_${index}_feeAmount`] = `Enter fee amount for payment ${index + 1}`;
+          }
+          if (!payment.paymentDate) {
+            nextErrors[`payment_${index}_paymentDate`] = `Enter payment date for payment ${index + 1}`;
+          } else if (!dateReg.test(payment.paymentDate)) {
+            nextErrors[`payment_${index}_paymentDate`] = `Enter date in DD/MM/YYYY format for payment ${index + 1}`;
+          }
+          if (!payment.paymentMode) nextErrors[`payment_${index}_paymentMode`] = `Select payment mode for payment ${index + 1}`;
+          if (!payment.feeCategory) nextErrors[`payment_${index}_feeCategory`] = `Select fee category for payment ${index + 1}`;
+          if (payment.paymentMode === "pay_online") {
+            if (!String(payment.upiNumber || "").trim()) nextErrors[`payment_${index}_upiNumber`] = `Enter UPI ID for online payment ${index + 1}`;
+          }
+        });
       }
     }
 
@@ -297,7 +612,7 @@ export default function AddEnquiryModal({
       if (calculatedCutoff === "") {
         nextErrors.cutoff = "Cutoff could not be calculated";
       }
-    } else if (!form.cutoff && mode === "add") {
+    } else if (isCutoffRequired && !form.cutoff && mode === "add") {
       nextErrors.cutoff = "Enter Maths, Physics and Chemistry marks to calculate cutoff";
     }
 
@@ -319,7 +634,9 @@ export default function AddEnquiryModal({
     }
 
     await onSubmit?.({
-      studentName: normalizeText(form.studentName).trim(),
+      firstName: normalizeText(form.firstName).trim(),
+      lastName: normalizeText(form.lastName).trim(),
+      studentName: `${normalizeText(form.firstName).trim()} ${normalizeText(form.lastName).trim()}`,
       fatherGuardianName: normalizeText(form.fatherGuardianName).trim(),
       mobile: cleanDigits(form.mobile, 10),
       parentMobile: cleanDigits(form.parentMobile, 10),
@@ -327,7 +644,7 @@ export default function AddEnquiryModal({
       emailId: normalizeText(form.emailId).trim(),
       address: normalizeText(form.address).trim(),
       parentOccupation: normalizeText(form.parentOccupation).trim(),
-      dateOfBirth: normalizeText(form.dateOfBirth).trim(),
+      dateOfBirth: formatDisplayToISO(form.dateOfBirth),
       schoolCollege: normalizeText(form.schoolCollege).trim(),
       mediumOfInstruction: normalizeText(form.mediumOfInstruction).trim(),
       community: normalizeText(form.community).trim(),
@@ -344,15 +661,19 @@ export default function AddEnquiryModal({
       eligibility: normalizeText(form.eligibility).trim(),
       quotaAskedFor: normalizeText(form.quotaAskedFor).trim(),
       reference: normalizeText(form.reference).trim(),
-      enquiryDate: normalizeText(form.enquiryDate).trim(),
+      enquiryDate: formatDisplayToISO(form.enquiryDate),
       department: normalizeText(form.department).trim(),
       department2: normalizeText(form.department2).trim(),
       department3: normalizeText(form.department3).trim(),
       status: normalizeText(form.status).trim(),
       enquiryAttendedBy: normalizeText(form.enquiryAttendedBy).trim(),
-      feeAmount: Number(String(form.feeAmount || "").trim()) || "",
-      paymentMode: normalizeText(form.paymentMode).trim(),
-      upiNumber: normalizeText(form.upiNumber).trim(),
+      payments: Array.isArray(form.payments) ? form.payments.map(p => ({
+        feeCategory: normalizeText(p.feeCategory).trim(),
+        feeAmount: Number(String(p.feeAmount || "").trim()) || "",
+        paymentMode: normalizeText(p.paymentMode).trim(),
+        paymentDate: formatDisplayToISO(p.paymentDate),
+        upiNumber: normalizeText(p.upiNumber).trim(),
+      })) : [],
       documents: form.documents || {},
       ...getApplicationPayload()
     });
@@ -433,20 +754,62 @@ export default function AddEnquiryModal({
           ${row("Transport Required","transportRequired", enq.transportRequired)}
           ${row("Route","transportRoute", enq.transportRoute)}
           ${row("Stage","transportStage", enq.transportStage)}
-          ${row("EMS / UMS No.","emsUmsNo", enq.emsUmsNo)}
+          ${row("EMIS / UMIS No.","emsUmsNo", enq.emsUmsNo)}
+          ${row("Aadhar No.","aadharNo", enq.aadharNo)}
           ${row("Qualifying Exam Programme","qualifyingExamProgrammes", enq.qualifyingExamProgrammes)}
           ${row("Institute","qualifyingExamInstitute", enq.qualifyingExamInstitute)}
           ${row("Board / University","qualifyingExamBoardUniversity", enq.qualifyingExamBoardUniversity)}
           ${row("Month & Year of Passing","qualifyingExamMonthYear", enq.qualifyingExamMonthYear)}
           ${row("No. of Attempts","qualifyingExamAttempts", enq.qualifyingExamAttempts)}
           ${row("% of Marks","qualifyingExamMarks", enq.qualifyingExamMarks)}
-          ${row("Maths Mark","mathsMark", enq.mathsMark)}
-          ${row("Physics Mark","physicsMark", enq.physicsMark)}
-          ${row("Chemistry Mark","chemistryMark", enq.chemistryMark)}
+          
+          ${enq.qualifyingExam10thInstitute || enq.qualifyingExam10thBoard || enq.qualifyingExam10thMonthYear || enq.qualifyingExam10thAttempts || enq.qualifyingExam10thMarks ? `
+          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">10th Std Details</td></tr>
+          ${row("Institute","qualifyingExam10thInstitute", enq.qualifyingExam10thInstitute)}
+          ${row("Board / University","qualifyingExam10thBoard", enq.qualifyingExam10thBoard)}
+          ${row("Month & Year of Passing","qualifyingExam10thMonthYear", enq.qualifyingExam10thMonthYear)}
+          ${row("No. of Attempts","qualifyingExam10thAttempts", enq.qualifyingExam10thAttempts)}
+          ${row("% of Marks","qualifyingExam10thMarks", enq.qualifyingExam10thMarks)}
+          ` : ""}
+
+          ${enq.qualifyingExam11thInstitute || enq.qualifyingExam11thBoard || enq.qualifyingExam11thMonthYear || enq.qualifyingExam11thAttempts || enq.qualifyingExam11thMarks ? `
+          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">11th Std Details</td></tr>
+          ${row("Institute","qualifyingExam11thInstitute", enq.qualifyingExam11thInstitute)}
+          ${row("Board / University","qualifyingExam11thBoard", enq.qualifyingExam11thBoard)}
+          ${row("Month & Year of Passing","qualifyingExam11thMonthYear", enq.qualifyingExam11thMonthYear)}
+          ${row("No. of Attempts","qualifyingExam11thAttempts", enq.qualifyingExam11thAttempts)}
+          ${row("% of Marks","qualifyingExam11thMarks", enq.qualifyingExam11thMarks)}
+          ` : ""}
+
+          ${enq.qualifyingExam12thInstitute || enq.qualifyingExam12thBoard || enq.qualifyingExam12thMonthYear || enq.qualifyingExam12thAttempts || enq.qualifyingExam12thMarks ? `
+          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">12th Std Details</td></tr>
+          ${row("Institute","qualifyingExam12thInstitute", enq.qualifyingExam12thInstitute)}
+          ${row("Board / University","qualifyingExam12thBoard", enq.qualifyingExam12thBoard)}
+          ${row("Month & Year of Passing","qualifyingExam12thMonthYear", enq.qualifyingExam12thMonthYear)}
+          ${row("No. of Attempts","qualifyingExam12thAttempts", enq.qualifyingExam12thAttempts)}
+          ${row("% of Marks","qualifyingExam12thMarks", enq.qualifyingExam12thMarks)}
+          ` : ""}
+
+          ${enq.qualifyingExamDipDegInstitute || enq.qualifyingExamDipDegBoard || enq.qualifyingExamDipDegMonthYear || enq.qualifyingExamDipDegAttempts || enq.qualifyingExamDipDegMarks ? `
+          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">Diploma / Degree Details</td></tr>
+          ${row("Institute","qualifyingExamDipDegInstitute", enq.qualifyingExamDipDegInstitute)}
+          ${row("Board / University","qualifyingExamDipDegBoard", enq.qualifyingExamDipDegBoard)}
+          ${row("Month & Year of Passing","qualifyingExamDipDegMonthYear", enq.qualifyingExamDipDegMonthYear)}
+          ${row("No. of Attempts","qualifyingExamDipDegAttempts", enq.qualifyingExamDipDegAttempts)}
+          ${row("% of Marks","qualifyingExamDipDegMarks", enq.qualifyingExamDipDegMarks)}
+          ` : ""}
+
+          ${row("Maths/P/C Mark","mathsMark", enq.mathsMark)}
+          ${row("Physics/Theory Mark","physicsMark", enq.physicsMark)}
+          ${row("Chemistry/Lab Mark","chemistryMark", enq.chemistryMark)}
           ${row("Cutoff","cutoff", enq.cutoff)}
-          ${row("Minimum Fee (₹)","feeAmount", enq.feeAmount)}
-          ${row("Payment Mode","paymentMode", enq.paymentMode === "pay_online" ? `Online (UPI: ${enq.upiNumber || ""})` : "Hand / Cash")}
-          ${row("UPI ID","upiNumber", enq.upiNumber)}
+          ${(Array.isArray(enq.payments) ? enq.payments : []).map((p, i) => `
+            <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">Payment ${i + 1}</td></tr>
+            ${row("Fee Category","feeCategory", p.feeCategory)}
+            ${row("Minimum Fee (₹)","feeAmount", p.feeAmount)}
+            ${row("Payment Date","paymentDate", formatDateToDisplay(p.paymentDate))}
+            ${row("Payment Mode","paymentMode", p.paymentMode === "pay_online" ? "Online (UPI: " + (p.upiNumber || "") + ")" : "Hand / Cash")}
+          `).join("")}
           <tr>
             <td style="padding:8px;border:1px solid #ddd;width:35%;font-weight:600">Documents</td>
             <td style="padding:8px;border:1px solid #ddd">
@@ -492,7 +855,7 @@ export default function AddEnquiryModal({
                       onChange={(event) => handleChange("status", event.target.value)}
                       className="appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1 pr-8 text-[11px] font-bold text-[#120c7a] outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
                     >
-                      {STATUS_OPTIONS.map((status) => (
+                      {Array.from(new Set([...STATUS_OPTIONS, form.status].filter(Boolean))).map((status) => (
                         <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
@@ -515,12 +878,29 @@ export default function AddEnquiryModal({
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto px-6 py-5">
           <Section title="Applicant Details" description="Basic student and parent information.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <Field label="Student Name" required error={errors.studentName} readOnly={readOnly}>
+              <Field label="Title" error={errors.title} readOnly={readOnly}>
+                <select value={form.title} onChange={(event) => handleChange("title", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
+                  <option value="">Select title</option>
+                  {TITLE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </Field>
+
+              <Field label="First Name" required error={errors.firstName} readOnly={readOnly}>
                 <input
-                  value={form.studentName}
-                  onChange={(event) => handleChange("studentName", event.target.value)}
+                  value={form.firstName}
+                  onChange={(event) => handleChange("firstName", event.target.value)}
                   className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  placeholder="Enter student name"
+                  placeholder="Enter first name"
+                  readOnly={readOnly}
+                />
+              </Field>
+
+              <Field label="Last Name" required error={errors.lastName} readOnly={readOnly}>
+                <input
+                  value={form.lastName}
+                  onChange={(event) => handleChange("lastName", event.target.value)}
+                  className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                  placeholder="Enter last name"
                   readOnly={readOnly}
                 />
               </Field>
@@ -578,32 +958,52 @@ export default function AddEnquiryModal({
                 />
               </Field>
 
-              <div className="md:col-span-2 xl:col-span-3">
-                <Field label="Address" required error={errors.address} readOnly={readOnly}>
+              <div className="md:col-span-2 xl:col-span-3 space-y-4">
+                <Field label="Communication Address" required error={errors.address} readOnly={readOnly}>
                   <textarea
                     value={form.address}
                     onChange={(event) => handleChange("address", event.target.value)}
                     className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                    placeholder="Enter full address"
+                    placeholder="Enter communication address"
                     readOnly={readOnly}
                   />
                 </Field>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="sameAsPermanent"
+                    checked={isSameAddress}
+                    onChange={(e) => handleSameAddressToggle(e.target.checked)}
+                    disabled={readOnly}
+                    className="w-4 h-4 rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]"
+                  />
+                  <label htmlFor="sameAsPermanent" className="text-sm font-medium text-zinc-700 cursor-pointer">
+                    same as permanent Address
+                  </label>
+                </div>
+
+                {!isSameAddress && (
+                  <Field label="Permanent Address" error={errors.permanentAddress} readOnly={readOnly}>
+                    <textarea
+                      value={form.permanentAddress}
+                      onChange={(event) => handleChange("permanentAddress", event.target.value)}
+                      className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                      placeholder="Enter permanent address"
+                      readOnly={readOnly}
+                    />
+                  </Field>
+                )}
               </div>
             </div>
           </Section>
 
-          {form.status === "Application" && (
+          {(form.status === "Application" || form.status === "Admission") && (
             <>
-              <Section title="Application Details" description="Fields mapped from the application form images.">
+               <Section title="Application Details" description="Fields mapped from the application form images.">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <Field label="Application No." error={errors.applicationNo} readOnly={readOnly}>
-                    <input value={form.applicationNo} onChange={(event) => handleChange("applicationNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Application number" readOnly={readOnly} />
-                  </Field>
-                  <Field label="Title" error={errors.title} readOnly={readOnly}>
-                    <select value={form.title} onChange={(event) => handleChange("title", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
-                      <option value="">Select title</option>
-                      {TITLE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
+                    <input value={form.applicationNo} onChange={(event) => handleChange("applicationNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Auto-generating..." readOnly={readOnly} />
                   </Field>
                   <Field label="Gender" error={errors.gender} readOnly={readOnly}>
                     <select value={form.gender} onChange={(event) => handleChange("gender", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
@@ -611,7 +1011,7 @@ export default function AddEnquiryModal({
                       {GENDER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
                   </Field>
-                  <Field label="Programme" error={errors.programme} readOnly={readOnly}>
+                  <Field label="Programme" required={form.status !== "Enquiry" && !readOnly} error={errors.programme} readOnly={readOnly}>
                     <select value={form.programme} onChange={(event) => handleChange("programme", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
                       <option value="">Select programme</option>
                       {Object.keys(durations).map((progKey) => (
@@ -619,7 +1019,7 @@ export default function AddEnquiryModal({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Batch" error={errors.batch} readOnly={readOnly}>
+                  <Field label="Batch" required={form.status !== "Enquiry" && !readOnly} error={errors.batch} readOnly={readOnly}>
                     <select value={form.batch} onChange={(event) => handleChange("batch", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
                       <option value="">Select batch</option>
                       {availableBatches.map((b) => (
@@ -627,7 +1027,7 @@ export default function AddEnquiryModal({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Academic Year" error={errors.academicYear} readOnly={readOnly}>
+                  <Field label="Academic Year" required={form.status !== "Enquiry" && !readOnly} error={errors.academicYear} readOnly={readOnly}>
                     <select value={form.academicYear} onChange={(event) => handleChange("academicYear", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly || !form.batch}>
                       <option value="">Select academic year</option>
                       {availableAcademicYears.map((y) => (
@@ -669,7 +1069,6 @@ export default function AddEnquiryModal({
                   <Field label="Mother's Name" error={errors.motherName} readOnly={readOnly}><input value={form.motherName} onChange={(event) => handleChange("motherName", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Mother's name" readOnly={readOnly} /></Field>
                   <Field label="Guardian's Name" error={errors.guardianName} readOnly={readOnly}><input value={form.guardianName} onChange={(event) => handleChange("guardianName", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Guardian's name" readOnly={readOnly} /></Field>
                   <Field label="Present Address" error={errors.presentAddress} readOnly={readOnly}><textarea value={form.presentAddress} onChange={(event) => handleChange("presentAddress", event.target.value)} className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present address" readOnly={readOnly} /></Field>
-                  <Field label="Permanent Address" error={errors.permanentAddress} readOnly={readOnly}><textarea value={form.permanentAddress} onChange={(event) => handleChange("permanentAddress", event.target.value)} className={`min-h-24 w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent address" readOnly={readOnly} /></Field>
                   <Field label="Present Pincode" error={errors.presentPincode} readOnly={readOnly}><input value={form.presentPincode} onChange={(event) => handleChange("presentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present pincode" inputMode="numeric" readOnly={readOnly} /></Field>
                   <Field label="Permanent Pincode" error={errors.permanentPincode} readOnly={readOnly}><input value={form.permanentPincode} onChange={(event) => handleChange("permanentPincode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Permanent pincode" inputMode="numeric" readOnly={readOnly} /></Field>
                   <Field label="Present District" error={errors.presentDistrict} readOnly={readOnly}><input value={form.presentDistrict} onChange={(event) => handleChange("presentDistrict", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Present district" readOnly={readOnly} /></Field>
@@ -704,7 +1103,7 @@ export default function AddEnquiryModal({
                 </div>
               </Section>
 
-              <Section title="Transport / Exam Details" description="Transport, EMS / UMS and qualifying exam information.">
+              <Section title="Transport / Exam Details" description="Transport, EMIS / UMIS and qualifying exam information.">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <Field label="Transport Facilities Required" error={errors.transportRequired} readOnly={readOnly}>
                     <select value={form.transportRequired} onChange={(event) => handleChange("transportRequired", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
@@ -714,13 +1113,70 @@ export default function AddEnquiryModal({
                   </Field>
                   <Field label="Route" error={errors.transportRoute} readOnly={readOnly || form.transportRequired === 'NO'}><input value={form.transportRoute} onChange={(event) => handleChange("transportRoute", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${readOnly || form.transportRequired === 'NO' ? 'bg-zinc-50 text-zinc-500' : 'bg-white'}`} placeholder="Transport route" readOnly={readOnly || form.transportRequired === 'NO'} /></Field>
                   <Field label="Stage" error={errors.transportStage} readOnly={readOnly || form.transportRequired === 'NO'}><input value={form.transportStage} onChange={(event) => handleChange("transportStage", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${readOnly || form.transportRequired === 'NO' ? 'bg-zinc-50 text-zinc-500' : 'bg-white'}`} placeholder="Transport stage" readOnly={readOnly || form.transportRequired === 'NO'} /></Field>
-                  <Field label="EMS / UMS No." error={errors.emsUmsNo} readOnly={readOnly}><input value={form.emsUmsNo} onChange={(event) => handleChange("emsUmsNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="EMS / UMS number" readOnly={readOnly} /></Field>
-                  <Field label="Qualifying Exam Programme" error={errors.qualifyingExamProgrammes} readOnly={readOnly}><input value={form.qualifyingExamProgrammes} onChange={(event) => handleChange("qualifyingExamProgrammes", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="e.g. 10th Std / Diploma / UG" readOnly={readOnly} /></Field>
-                  <Field label="Institute" error={errors.qualifyingExamInstitute} readOnly={readOnly}><input value={form.qualifyingExamInstitute} onChange={(event) => handleChange("qualifyingExamInstitute", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Institute name" readOnly={readOnly} /></Field>
-                  <Field label="Board / University" error={errors.qualifyingExamBoardUniversity} readOnly={readOnly}><input value={form.qualifyingExamBoardUniversity} onChange={(event) => handleChange("qualifyingExamBoardUniversity", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Board / University" readOnly={readOnly} /></Field>
-                  <Field label="Month & Year of Passing" error={errors.qualifyingExamMonthYear} readOnly={readOnly}><input value={form.qualifyingExamMonthYear} onChange={(event) => handleChange("qualifyingExamMonthYear", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Month & year" readOnly={readOnly} /></Field>
-                  <Field label="No. of Attempts" error={errors.qualifyingExamAttempts} readOnly={readOnly}><input value={form.qualifyingExamAttempts} onChange={(event) => handleChange("qualifyingExamAttempts", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Attempts" readOnly={readOnly} /></Field>
-                  <Field label="% of Marks" error={errors.qualifyingExamMarks} readOnly={readOnly}><input value={form.qualifyingExamMarks} onChange={(event) => handleChange("qualifyingExamMarks", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Percentage of marks" readOnly={readOnly} /></Field>
+                  <Field label="EMIS / UMIS No." error={errors.emsUmsNo} readOnly={readOnly}><input value={form.emsUmsNo} onChange={(event) => handleChange("emsUmsNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="EMIS / UMIS number" readOnly={readOnly} /></Field>
+                  <Field label="Aadhar No." error={errors.aadharNo} readOnly={readOnly}><input value={form.aadharNo} onChange={(event) => handleChange("aadharNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Aadhar number" readOnly={readOnly} /></Field>
+
+                  {[
+                    { key: "10th", label: "10th Std" },
+                    { key: "11th", label: "11th Std" },
+                    { key: "12th", label: "12th Std" },
+                    { key: "DipDeg", label: "Diploma / Degree" }
+                  ].map((level) => (
+                    <div key={level.key} className="col-span-full mt-2 rounded-xl border border-zinc-100 bg-zinc-50/50 p-4">
+                      <h5 className="mb-3 text-sm font-semibold text-zinc-900 border-b border-zinc-100 pb-2 flex items-center justify-between">
+                        <span>{level.label} Details</span>
+                        <span className="text-xs font-normal text-zinc-400">Optional</span>
+                      </h5>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                        <Field label="Institute" error={errors[`qualifyingExam${level.key}Institute`]} readOnly={readOnly}>
+                          <input
+                            value={form[`qualifyingExam${level.key}Institute`] || ""}
+                            onChange={(event) => handleChange(`qualifyingExam${level.key}Institute`, event.target.value)}
+                            className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            placeholder="Institute name"
+                            readOnly={readOnly}
+                          />
+                        </Field>
+                        <Field label="Board / University" error={errors[`qualifyingExam${level.key}Board`]} readOnly={readOnly}>
+                          <input
+                            value={form[`qualifyingExam${level.key}Board`] || ""}
+                            onChange={(event) => handleChange(`qualifyingExam${level.key}Board`, event.target.value)}
+                            className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            placeholder="Board / University"
+                            readOnly={readOnly}
+                          />
+                        </Field>
+                        <Field label="Month & Year of Passing" error={errors[`qualifyingExam${level.key}MonthYear`]} readOnly={readOnly}>
+                          <input
+                            type="date"
+                            value={form[`qualifyingExam${level.key}MonthYear`] || ""}
+                            onChange={(event) => handleChange(`qualifyingExam${level.key}MonthYear`, event.target.value)}
+                            onClick={(e) => !readOnly && e.target.showPicker?.()}
+                            className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            readOnly={readOnly}
+                          />
+                        </Field>
+                        <Field label="No. of Attempts" error={errors[`qualifyingExam${level.key}Attempts`]} readOnly={readOnly}>
+                          <input
+                            value={form[`qualifyingExam${level.key}Attempts`] || ""}
+                            onChange={(event) => handleChange(`qualifyingExam${level.key}Attempts`, event.target.value)}
+                            className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            placeholder="1"
+                            readOnly={readOnly}
+                          />
+                        </Field>
+                        <Field label="% of Marks" error={errors[`qualifyingExam${level.key}Marks`]} readOnly={readOnly}>
+                          <input
+                            value={form[`qualifyingExam${level.key}Marks`] || ""}
+                            onChange={(event) => handleChange(`qualifyingExam${level.key}Marks`, event.target.value)}
+                            className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                            placeholder="e.g. 85%"
+                            readOnly={readOnly}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </Section>
 
@@ -747,7 +1203,12 @@ export default function AddEnquiryModal({
                         ) : readOnly ? (
                           <div className="text-sm text-zinc-400">Not provided</div>
                         ) : (
-                          <input type="file" accept="image/*,application/pdf" onChange={(e) => handleFileChange(doc.key, e.target.files && e.target.files[0])} className="block w-full text-sm text-zinc-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[#120c7a] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[#0f0a66]" />
+                          <div className="space-y-2">
+                            <input type="file" accept="image/*,application/pdf" onChange={(e) => handleFileChange(doc.key, e.target.files && e.target.files[0], e.target)} className="block w-full text-sm text-zinc-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[#120c7a] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[#0f0a66]" />
+                            {errors[doc.key] && (
+                              <p className="text-xs font-medium text-red-600">{errors[doc.key]}</p>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -759,22 +1220,13 @@ export default function AddEnquiryModal({
 
           <Section title="Academic Details" description="Capture school, programme, and admission preferences.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <Field label="Parent's Occupation" error={errors.parentOccupation} readOnly={readOnly}>
-                <input
-                  value={form.parentOccupation}
-                  onChange={(event) => handleChange("parentOccupation", event.target.value)}
-                  className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  placeholder="Enter occupation"
-                  readOnly={readOnly}
-                />
-              </Field>
-
               <Field label="Date of Birth" error={errors.dateOfBirth} readOnly={readOnly}>
                 <input
-                  type="date"
+                  type="text"
                   value={form.dateOfBirth}
                   onChange={(event) => handleChange("dateOfBirth", event.target.value)}
                   className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                  placeholder="DD/MM/YYYY"
                   readOnly={readOnly}
                 />
               </Field>
@@ -825,8 +1277,8 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select enquiry type</option>
-                  {ENQUIRY_FOR_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
+                  {Object.keys(durations).map((progKey) => (
+                    <option key={progKey} value={formatProgDisplay(progKey)}>{formatProgDisplay(progKey)}</option>
                   ))}
                 </select>
               </Field>
@@ -853,7 +1305,7 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select department</option>
-                  {departments.map((department) => (
+                  {getChoice1Options().map((department) => (
                     <option key={department} value={department}>{department}</option>
                   ))}
                 </select>
@@ -867,7 +1319,7 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select department</option>
-                  {departments.map((department) => (
+                  {getChoice2Options().map((department) => (
                     <option key={department} value={department}>{department}</option>
                   ))}
                 </select>
@@ -881,7 +1333,7 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select department</option>
-                  {departments.map((department) => (
+                  {getChoice3Options().map((department) => (
                     <option key={department} value={department}>{department}</option>
                   ))}
                 </select>
@@ -895,7 +1347,7 @@ export default function AddEnquiryModal({
                   disabled={readOnly}
                 >
                   <option value="">Select quota</option>
-                  {QUOTA_OPTIONS.map((option) => (
+                  {Array.from(new Set([...quotaOptions, form.quotaAskedFor].filter(Boolean))).map((option) => (
                     <option key={option} value={option}>{option}</option>
                   ))}
                 </select>
@@ -923,10 +1375,11 @@ export default function AddEnquiryModal({
 
               <Field label="Enquiry Date" required error={errors.enquiryDate} readOnly={readOnly}>
                 <input
-                  type="date"
+                  type="text"
                   value={form.enquiryDate}
                   onChange={(event) => handleChange("enquiryDate", event.target.value)}
                   className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                  placeholder="DD/MM/YYYY"
                   readOnly={readOnly}
                 />
               </Field>
@@ -935,34 +1388,34 @@ export default function AddEnquiryModal({
 
           <Section title="Marks and Cutoff" description="Enter subject marks and the cutoff is calculated automatically.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Field label="Maths" required={mode !== "view"} error={errors.mathsMark} readOnly={readOnly}>
+              <Field label="Maths/P/C" required={isCutoffRequired && mode !== "view"} error={errors.mathsMark} readOnly={readOnly}>
                 <input
                   value={form.mathsMark}
                   onChange={(event) => handleChange("mathsMark", event.target.value)}
                   className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  placeholder="Maths mark"
+                  placeholder="Maths/P/C mark"
                   inputMode="numeric"
                   readOnly={readOnly}
                 />
               </Field>
 
-              <Field label="Physics" required={mode !== "view"} error={errors.physicsMark} readOnly={readOnly}>
+              <Field label="Physics/Theory" required={isCutoffRequired && mode !== "view"} error={errors.physicsMark} readOnly={readOnly}>
                 <input
                   value={form.physicsMark}
                   onChange={(event) => handleChange("physicsMark", event.target.value)}
-                  className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  placeholder="Physics mark"
+                  className={`w-full rounded-xl border border-[#120c7a]/0 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
+                  placeholder="Physics/Theory mark"
                   inputMode="numeric"
                   readOnly={readOnly}
                 />
               </Field>
 
-              <Field label="Chemistry" required={mode !== "view"} error={errors.chemistryMark} readOnly={readOnly}>
+              <Field label="Chemistry/Lab" required={isCutoffRequired && mode !== "view"} error={errors.chemistryMark} readOnly={readOnly}>
                 <input
                   value={form.chemistryMark}
                   onChange={(event) => handleChange("chemistryMark", event.target.value)}
                   className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`}
-                  placeholder="Chemistry mark"
+                  placeholder="Chemistry/Lab mark"
                   inputMode="numeric"
                   readOnly={readOnly}
                 />
@@ -978,7 +1431,7 @@ export default function AddEnquiryModal({
                 />
               </Field>
 
-              <Field label="Cutoff" required={mode !== "view"} error={errors.cutoff} readOnly>
+              <Field label="Cutoff" required={isCutoffRequired && mode !== "view"} error={errors.cutoff} readOnly>
                 <input
                   value={displayCutoff}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 outline-none"
@@ -1003,30 +1456,88 @@ export default function AddEnquiryModal({
             </div>
           </Section>
 
-          {form.status === "Application" && (
-            <Section title="Payment" description="Minimum fee and payment method.">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <Field label="Minimum Fee (₹)" required error={errors.feeAmount} readOnly={readOnly}>
-                  <input type="number" value={form.feeAmount} onChange={(event) => handleChange("feeAmount", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Enter minimum fee amount" readOnly={readOnly} />
-                </Field>
-                <Field label="Payment Mode" required error={errors.paymentMode} readOnly={readOnly}>
-                  <select value={form.paymentMode} onChange={(event) => handleChange("paymentMode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
-                    <option value="">Select payment mode</option>
-                    {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  </select>
-                </Field>
-                {form.paymentMode === "pay_online" && (
-                  <Field label="UPI ID" required={form.paymentMode === "pay_online"} error={errors.upiNumber} readOnly={readOnly}>
-                    <input value={form.upiNumber} onChange={(event) => handleChange("upiNumber", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="e.g. yourupiid@bank" readOnly={readOnly} />
-                  </Field>
-                )}
-              </div>
+          {(form.status === "Application" || form.status === "Admission") && (
+            <Section title="Payment Details" description="Multiple fee payments.">
+              {(form.payments || []).map((payment, index) => (
+                <div key={index} className="mb-6 rounded-xl border border-zinc-100 bg-zinc-50 p-4 relative pt-10">
+                  <div className="absolute top-3 left-4 bg-white px-3 py-1 text-xs font-semibold text-[#120c7a] border border-[#120c7a]/20 rounded-full">
+                    Payment {index + 1}
+                  </div>
+                  
+                  <div className="absolute top-3 right-4 flex items-center gap-2">
+                    {payment.feeCategory && payment.feeAmount && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadReceipt(payment, index)}
+                        className="flex items-center gap-1.5 bg-white text-[#120c7a] border border-[#120c7a]/20 rounded-full px-3 py-1 hover:bg-[#120c7a]/5 transition-colors text-xs font-semibold"
+                        title="Download Receipt"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download Receipt
+                      </button>
+                    )}
+                    {!readOnly && (form.payments.length > 1) && (
+                      <button
+                        type="button"
+                        onClick={() => removePayment(index)}
+                        className="bg-white text-red-500 border border-red-200 rounded-full p-1 hover:bg-red-50 transition-colors"
+                        title="Remove this payment"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5 mt-2">
+                    <Field label="Fee Category" required error={errors[`payment_${index}_feeCategory`]} readOnly={readOnly}>
+                      <select value={payment.feeCategory} onChange={(event) => handlePaymentChange(index, "feeCategory", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
+                        <option value="">Select fee category</option>
+                        {feeCategoriesOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Minimum Fee (₹)" required error={errors[`payment_${index}_feeAmount`]} readOnly={readOnly}>
+                      <input type="number" value={payment.feeAmount} onChange={(event) => handlePaymentChange(index, "feeAmount", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Enter amount" readOnly={readOnly} />
+                    </Field>
+                    <Field label="Payment Mode" required error={errors[`payment_${index}_paymentMode`]} readOnly={readOnly}>
+                      <select value={payment.paymentMode} onChange={(event) => handlePaymentChange(index, "paymentMode", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
+                        <option value="">Select mode</option>
+                        {PAYMENT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Date of Payment" required error={errors[`payment_${index}_paymentDate`]} readOnly={readOnly}>
+                      <input type="text" value={payment.paymentDate} onChange={(event) => handlePaymentChange(index, "paymentDate", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="DD/MM/YYYY" readOnly={readOnly} />
+                    </Field>
+                    {payment.paymentMode === "pay_online" && (
+                      <Field label="UPI ID" required={payment.paymentMode === "pay_online"} error={errors[`payment_${index}_upiNumber`]} readOnly={readOnly}>
+                        <input value={payment.upiNumber} onChange={(event) => handlePaymentChange(index, "upiNumber", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="e.g. upi id" readOnly={readOnly} />
+                      </Field>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!readOnly && (
+                <div className="flex justify-start">
+                  <button
+                    type="button"
+                    onClick={addPayment}
+                    className="flex items-center gap-2 text-sm font-semibold text-[#120c7a] hover:text-[#211a9c] transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Another Payment
+                  </button>
+                </div>
+              )}
             </Section>
           )}
 
           {Object.keys(errors).length > 0 && !readOnly && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              Please fix the highlighted fields before saving.
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+              <p className="font-bold mb-1">Please fix the following issues before saving:</p>
+              <ul className="list-disc pl-5 space-y-0.5">
+                {Object.entries(errors).map(([key, msg]) => (
+                  <li key={key}>{msg}</li>
+                ))}
+              </ul>
             </div>
           )}
 

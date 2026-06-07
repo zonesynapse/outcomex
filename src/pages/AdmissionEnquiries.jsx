@@ -1,15 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Plus, Search, Inbox, X, Trash2 } from "lucide-react";
+import { Filter, Plus, Search, Inbox, X, Trash2, CheckCircle2 } from "lucide-react";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
 import EnquiryTable from "../components/EnquiryTable";
 import AddEnquiryModal from "../components/AddEnquiryModal";
 import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
+import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission"];
 
 const getTodayKey = (value) => new Date(value).toDateString();
+
+const hasQuotaSeats = (config) => {
+  if (!config || !config.quotas) return false;
+  let totalQuotaSeats = 0;
+  Object.values(config.quotas).forEach((q) => {
+    if (typeof q === "object" && q !== null) {
+      totalQuotaSeats += Number(q.total) || 0;
+    } else {
+      totalQuotaSeats += Number(q) || 0;
+    }
+  });
+  return totalQuotaSeats > 0;
+};
 
 export default function AdmissionEnquiries() {
   const { departments: deptMap } = useDepartments();
@@ -22,6 +36,9 @@ export default function AdmissionEnquiries() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
+  const [admissionMoveTarget, setAdmissionMoveTarget] = useState(null);
+  const [selectedAdmissionDept, setSelectedAdmissionDept] = useState("");
+  const [seatConfigs, setSeatConfigs] = useState({});
 
   useEffect(() => {
     setLoading(true);
@@ -38,17 +55,34 @@ export default function AdmissionEnquiries() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = getSeatConfigurationsRealtime(
+      (data) => {
+        setSeatConfigs(data || {});
+      },
+      (err) => console.error("Error fetching seat configurations:", err)
+    );
+
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, []);
+
   const departmentOptions = useMemo(() => {
     const fromConfig = Object.values(deptMap || {}).flat();
-    const fromData = enquiries.flatMap((enquiry) => [enquiry.department, enquiry.department2, enquiry.department3]).filter(Boolean);
-    return Array.from(new Set([...fromConfig, ...fromData])).sort((left, right) => left.localeCompare(right));
-  }, [deptMap, enquiries]);
+    const options = fromConfig.filter((dept) => {
+      const config = seatConfigs[dept];
+      return hasQuotaSeats(config);
+    });
+    return (options.length > 0 ? options : fromConfig)
+      .sort((left, right) => left.localeCompare(right));
+  }, [deptMap, seatConfigs]);
 
   const filteredEnquiries = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
 
     return enquiries.filter((enquiry) => {
-      const matchesSearch = !query || [enquiry.enquiryId, enquiry.studentName, enquiry.mobile]
+      const matchesSearch = !query || [enquiry.enquiryId, enquiry.applicationNo, enquiry.studentName, enquiry.firstName, enquiry.lastName, enquiry.mobile]
         .filter(Boolean)
         .some((field) => String(field).toLowerCase().includes(query));
 
@@ -104,6 +138,18 @@ export default function AdmissionEnquiries() {
     setFormModal({ open: false, mode: "add", enquiry: null });
   };
 
+  const handleMove = (enquiry) => {
+    if (enquiry.status === "Enquiry") {
+      openEditModal({
+        ...enquiry,
+        status: "Application"
+      });
+    } else if (enquiry.status === "Application") {
+      setAdmissionMoveTarget(enquiry);
+      setSelectedAdmissionDept(enquiry.department || enquiry.department2 || enquiry.department3 || "");
+    }
+  };
+
   const handleSave = async (values) => {
     setSaving(true);
     try {
@@ -120,7 +166,8 @@ export default function AdmissionEnquiries() {
       closeModal();
     } catch (error) {
       console.error("Enquiry save error:", error);
-      showToast("Failed to save enquiry", "error");
+      const msg = error.code === 'permission-denied' ? "Permission Denied: You don't have Admin rights." : "Failed to save enquiry";
+      showToast(msg, "error");
     } finally {
       setSaving(false);
     }
@@ -179,7 +226,7 @@ export default function AdmissionEnquiries() {
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
                   className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
-                  placeholder="Search by student name, mobile, or enquiry ID"
+                  placeholder="Search by student name, mobile, or ID"
                 />
               </div>
             </label>
@@ -266,6 +313,7 @@ export default function AdmissionEnquiries() {
               onView={openViewModal}
               onEdit={openEditModal}
               onDelete={setDeleteTarget}
+              onMove={handleMove}
             />
           )}
         </div>
@@ -291,7 +339,10 @@ export default function AdmissionEnquiries() {
               <div>
                 <h3 className="text-lg font-bold text-zinc-900">Delete enquiry?</h3>
                 <p className="mt-2 text-sm text-zinc-500">
-                  {deleteTarget.studentName} ({deleteTarget.enquiryId}) will be removed permanently from enquiries.
+                  {deleteTarget.firstName || deleteTarget.lastName 
+                    ? `${deleteTarget.firstName || ""} ${deleteTarget.lastName || ""}`.trim() 
+                    : deleteTarget.studentName || "Student"}{" "}
+                  ({deleteTarget.enquiryId}) will be removed permanently from enquiries.
                 </p>
               </div>
             </div>
@@ -309,6 +360,123 @@ export default function AdmissionEnquiries() {
                 className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {admissionMoveTarget && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+                <CheckCircle2 size={22} />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-zinc-900">Finalize Admission</h3>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Select the finalized department to admit{" "}
+                  <strong className="text-zinc-900">
+                    {admissionMoveTarget.firstName || admissionMoveTarget.lastName 
+                      ? `${admissionMoveTarget.firstName || ""} ${admissionMoveTarget.lastName || ""}`.trim() 
+                      : admissionMoveTarget.studentName || "Student"}
+                  </strong> (App No: {admissionMoveTarget.applicationNo || "N/A"}).
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  <span className="block text-xs font-bold uppercase tracking-wider text-zinc-400">Department Choices</span>
+                  
+                  {(() => {
+                    const choices = [
+                      { label: "Choice 1", value: admissionMoveTarget.department },
+                      { label: "Choice 2", value: admissionMoveTarget.department2 },
+                      { label: "Choice 3", value: admissionMoveTarget.department3 }
+                    ].filter(item => Boolean(item.value));
+
+                    if (choices.length === 0) {
+                      return (
+                        <p className="text-xs text-red-600 bg-red-50 p-3 rounded-xl border border-red-200">
+                          This applicant has no departments chosen in their application. Please edit the application to select departments first.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        {choices.map((choice, idx) => (
+                          <label
+                            key={idx}
+                            className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition-all cursor-pointer ${
+                              selectedAdmissionDept === choice.value
+                                ? "border-[#120c7a] bg-[#120c7a]/5 text-[#120c7a]"
+                                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="admissionDept"
+                              value={choice.value}
+                              checked={selectedAdmissionDept === choice.value}
+                              onChange={() => setSelectedAdmissionDept(choice.value)}
+                              className="h-4 w-4 border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]"
+                            />
+                            <div>
+                              <span className="text-xs text-zinc-400 font-normal block">{choice.label}</span>
+                              {choice.value}
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdmissionMoveTarget(null);
+                  setSelectedAdmissionDept("");
+                }}
+                className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={(() => {
+                  const hasChoices = Boolean(admissionMoveTarget.department || admissionMoveTarget.department2 || admissionMoveTarget.department3);
+                  return !selectedAdmissionDept || !hasChoices;
+                })()}
+                onClick={async () => {
+                  if (!selectedAdmissionDept) return;
+                  setSaving(true);
+                  try {
+                    await updateEnquiry(admissionMoveTarget.enquiryId, {
+                      ...admissionMoveTarget,
+                      status: "Admission",
+                      department: selectedAdmissionDept
+                    });
+                    showToast(`Admitted successfully to ${selectedAdmissionDept}`);
+                    setAdmissionMoveTarget(null);
+                    setSelectedAdmissionDept("");
+                  } catch (err) {
+                    console.error("Admission move error:", err);
+                    showToast("Failed to finalize admission", "error");
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors ${
+                  !selectedAdmissionDept
+                    ? "bg-zinc-300 cursor-not-allowed"
+                    : "bg-emerald-600 hover:bg-emerald-700"
+                }`}
+              >
+                {saving ? "Admitting..." : "Confirm Admission"}
               </button>
             </div>
           </div>

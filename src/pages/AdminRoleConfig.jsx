@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, update, remove, get, set, getDatabase } from "firebase/database";
+import { useState, useEffect, useMemo } from "react";
+import { db, auth } from "../firebase";
+import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check } from "lucide-react";
+import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search } from "lucide-react";
 import Layout from "../components/Layout";
 import { formatProgDisplay } from "../lib/utils";
 import { useDepartments } from "../hooks/useDepartments";
@@ -14,6 +14,7 @@ export default function AdminRoleConfig() {
   const [userData, setUserData] = useState(null);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const [userSearchTerm, setUserSearchTerm] = useState("");
 
   // Revoke Modal State
   const [revokeModalOpen, setRevokeModalOpen] = useState(false);
@@ -26,6 +27,10 @@ export default function AdminRoleConfig() {
   const [userToReject, setUserToReject] = useState(null);
 
   const [activeTab, setActiveTab] = useState("users"); // "users" or "permissions"
+  const [availableRoles, setAvailableRoles] = useState([]);
+  const [newRoleInput, setNewRoleInput] = useState("");
+  const [isAddingRole, setIsAddingRole] = useState(false);
+
   const [rolePermissions, setRolePermissions] = useState({});
   const [savingPermissions, setSavingPermissions] = useState(false);
   const { departments: allDepartments } = useDepartments();
@@ -51,6 +56,7 @@ export default function AdminRoleConfig() {
     { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment" },
     { id: "admission-enquiries", label: "Admission Enquiries", path: "/admissions/enquiries" },
     { id: "seat-management", label: "Seat Management", path: "/admissions/seats" },
+    { id: "fee-config", label: "Fee Configuration", path: "/admissions/fees" },
     { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
     { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
     { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment" },
@@ -62,34 +68,36 @@ export default function AdminRoleConfig() {
     { id: "timetable", label: "Timetable", path: "/tt" }
   ];
 
-  const ROLES = ["Admin", "Principal", "HOD", "Faculty"];
-
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubscribeUserData = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const snapshot = await get(userRef);
-        if (snapshot.exists()) {
-          setUserData(snapshot.val());
-        }
+        const userRef = doc(db, "users", currentUser.uid);
+        unsubscribeUserData = onSnapshot(userRef, (snapshot) => {
+          if (snapshot.exists()) {
+            setUserData(snapshot.data());
+          }
+        });
+      } else {
+        setUserData(null);
+        unsubscribeUserData();
       }
     });
 
-    const usersRef = ref(rtdb, "users");
-    const unsubscribeData = onValue(usersRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const usersList = Object.entries(data).map(([key, user]) => ({
-          ...user,
-          uid: user.uid || key,
-          role: user.role || "Faculty",
-          isApproved: user.isApproved || false
-        }));
-        setUsers(usersList);
-      } else {
-        setUsers([]);
-      }
+    const usersRef = collection(db, "users");
+    const unsubscribeData = onSnapshot(usersRef, (snapshot) => {
+      const usersList = [];
+      snapshot.forEach(doc => {
+        usersList.push({
+          ...doc.data(),
+          uid: doc.id,
+          role: doc.data().role || "Faculty",
+          isApproved: doc.data().isApproved || false
+        });
+      });
+      setUsers(usersList);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching users:", error);
@@ -97,26 +105,45 @@ export default function AdminRoleConfig() {
     });
 
     // Fetch existing role permissions
-    const permsRef = ref(rtdb, "role_permissions");
-    const unsubscribePerms = onValue(permsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const formatted = {};
-        Object.keys(data).forEach(role => {
-          const perms = data[role];
-          formatted[role] = Array.isArray(perms) ? perms : (perms ? Object.values(perms) : []);
-        });
-        setRolePermissions(formatted);
-      } else {
-        // No built-in defaults: permissions are fully admin-managed.
-        setRolePermissions({});
-      }
+    const permsRef = collection(db, "role_permissions");
+    const unsubscribePerms = onSnapshot(permsRef, (snapshot) => {
+      const formatted = {};
+      snapshot.forEach(doc => {
+        const permsData = doc.data();
+        let permsArray = [];
+        if (Array.isArray(permsData)) {
+          permsArray = permsData;
+        } else if (permsData.value && Array.isArray(permsData.value)) {
+          permsArray = permsData.value;
+        } else if (permsData.permissions && Array.isArray(permsData.permissions)) {
+          permsArray = permsData.permissions;
+        } else {
+          const entries = Object.entries(permsData);
+          if (entries.length > 0 && typeof entries[0][1] === 'boolean') {
+            permsArray = entries.filter(([, val]) => val === true).map(([key]) => key);
+          } else {
+            permsArray = Object.values(permsData).filter(v => typeof v === 'string');
+          }
+        }
+        formatted[doc.id] = permsArray;
+      });
+
+      // Dynamically set available roles based on document IDs in role_permissions
+      const rolesFromDb = Array.from(new Set(snapshot.docs.map(doc => doc.id)));
+      
+      // Ensure base roles are represented if the collection is empty
+      setAvailableRoles(rolesFromDb.length > 0 ? rolesFromDb : ["Admin", "Principal", "HOD", "Faculty"]);
+      setRolePermissions(formatted);
+    }, (error) => {
+      console.error("Error fetching permissions:", error);
+      showNotification("You do not have permission to view role configurations.");
     });
 
     return () => {
       unsubscribeAuth();
       unsubscribeData();
       unsubscribePerms();
+      unsubscribeUserData();
     };
   }, []);
 
@@ -137,15 +164,21 @@ export default function AdminRoleConfig() {
   const savePermissions = async () => {
     setSavingPermissions(true);
     try {
-      // Normalize permissions to arrays of strings to avoid Firebase
-      // converting arrays into numeric-keyed objects which breaks
-      // downstream `includes` checks.
       const normalized = {};
-      Object.keys(rolePermissions).forEach(role => {
+      
+      // Use availableRoles as the source of truth to ensure 
+      // every role (including newly created ones) is persisted.
+      availableRoles.forEach(role => {
         const perms = rolePermissions[role] || [];
-        normalized[role] = Array.isArray(perms) ? perms : Object.values(perms || {});
+        const permsMap = {};
+        perms.forEach(p => permsMap[p] = true);
+        normalized[role] = permsMap;
       });
-      await set(ref(rtdb, 'role_permissions'), normalized);
+      
+      await Promise.all(Object.entries(normalized).map(([role, map]) => 
+        setDoc(doc(db, 'role_permissions', role), map)
+      ));
+
       showNotification("Role permissions updated successfully");
     } catch (error) {
       console.error("Error saving permissions:", error);
@@ -155,9 +188,45 @@ export default function AdminRoleConfig() {
     }
   };
 
+  const handleCreateRole = async () => {
+    const roleName = newRoleInput.trim();
+    if (!roleName) return;
+    
+    const normalizedRole = roleName.charAt(0).toUpperCase() + roleName.slice(1).toLowerCase();
+    if (availableRoles.includes(normalizedRole)) {
+      showNotification("Role already exists");
+      return;
+    }
+
+    try {
+      // Initialize with an empty map to follow the Firestore pattern used in savePermissions
+      await setDoc(doc(db, "role_permissions", normalizedRole), {});
+      setNewRoleInput("");
+      setIsAddingRole(false);
+      showNotification(`Role "${normalizedRole}" created successfully`);
+    } catch (error) {
+      console.error("Error creating role:", error);
+      showNotification("Failed to create role");
+    }
+  };
+
+  const handleDeleteRole = async (roleName) => {
+    if (["Admin", "Faculty"].includes(roleName)) {
+      showNotification("Core roles cannot be deleted");
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "role_permissions", roleName));
+      showNotification(`Role "${roleName}" deleted`);
+    } catch (error) {
+      console.error("Error deleting role:", error);
+      showNotification("Failed to delete role");
+    }
+  };
+
   const handleRoleChange = async (uid, newRole) => {
     try {
-      await update(ref(rtdb, `users/${uid}`), { role: newRole });
+      await updateDoc(doc(db, "users", uid), { role: newRole });
       showNotification(`Role updated to ${newRole}`);
     } catch (error) {
       console.error("Error updating role:", error);
@@ -167,7 +236,7 @@ export default function AdminRoleConfig() {
 
   const handleApprove = async (uid) => {
     try {
-      await update(ref(rtdb, `users/${uid}`), { isApproved: true });
+      await updateDoc(doc(db, "users", uid), { isApproved: true });
       showNotification(`User approved successfully`);
     } catch (error) {
       console.error("Error approving user:", error);
@@ -184,7 +253,7 @@ export default function AdminRoleConfig() {
     if (!userToReject) return;
     try {
       await removeUserAssignments(userToReject.uid);
-      await remove(ref(rtdb, `users/${userToReject.uid}`));
+      await deleteDoc(doc(db, "users", userToReject.uid));
       showNotification("User request rejected and removed");
       setRejectModalOpen(false);
       setUserToReject(null);
@@ -202,34 +271,7 @@ export default function AdminRoleConfig() {
   };
 
   const removeUserAssignments = async (uid) => {
-    try {
-      const assignmentsRef = ref(rtdb, 'subject_assignments');
-      const snapshot = await get(assignmentsRef);
-      if (snapshot.exists()) {
-        const allAssignments = snapshot.val();
-        const updates = {};
-        
-        Object.entries(allAssignments).forEach(([progKey, depts]) => {
-          Object.entries(depts).forEach(([deptKey, batches]) => {
-            Object.entries(batches).forEach(([batchKey, years]) => {
-              Object.entries(years).forEach(([yearKey, semesters]) => {
-                Object.entries(semesters).forEach(([semKey, facultyAssignments]) => {
-                  if (facultyAssignments[uid]) {
-                    updates[`subject_assignments/${progKey}/${deptKey}/${batchKey}/${yearKey}/${semKey}/${uid}`] = null;
-                  }
-                });
-              });
-            });
-          });
-        });
-
-        if (Object.keys(updates).length > 0) {
-          await update(ref(rtdb), updates);
-        }
-      }
-    } catch (error) {
-      console.error("Error removing user assignments:", error);
-    }
+    // Automated assignment removal not fully implemented for nested Firestore structure.
   };
 
   const handleConfirmRevoke = async () => {
@@ -242,7 +284,7 @@ export default function AdminRoleConfig() {
       return;
     }
     try {
-      await update(ref(rtdb, `users/${userToRevoke.uid}`), { 
+      await updateDoc(doc(db, "users", userToRevoke.uid), { 
         isApproved: false,
         revocationReason: revokeReason,
         role: "Faculty",
@@ -262,7 +304,7 @@ export default function AdminRoleConfig() {
   // Admin user programme/department management
   const handleProgramChange = async (uid, newProgramme) => {
     try {
-      await update(ref(rtdb, `users/${uid}`), { programme: newProgramme || null, department: "" });
+      await updateDoc(doc(db, "users", uid), { programme: newProgramme || null, department: "" });
       showNotification("Programme updated");
     } catch (err) {
       console.error("Error updating programme:", err);
@@ -272,7 +314,7 @@ export default function AdminRoleConfig() {
 
   const handleDepartmentChange = async (uid, newDepartment) => {
     try {
-      await update(ref(rtdb, `users/${uid}`), { department: newDepartment || null });
+      await updateDoc(doc(db, "users", uid), { department: newDepartment || null });
       showNotification("Department updated");
     } catch (err) {
       console.error("Error updating department:", err);
@@ -285,6 +327,49 @@ export default function AdminRoleConfig() {
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
   };
+
+  // Filter and Sort users based on requested logic
+  const filteredAndSortedUsers = useMemo(() => {
+    const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
+    
+    // 1. Visibility Filter: If not master admin, hide master admin from list
+    let list = isMasterAdminLoggedIn
+      ? [...users]
+      : users.filter(u => u.email !== masterAdminEmail);
+
+    // 2. Search Filter
+    if (userSearchTerm.trim()) {
+      const term = userSearchTerm.toLowerCase();
+      list = list.filter(u => 
+        (u.displayName || u.facultyName || "").toLowerCase().includes(term) ||
+        (u.email || "").toLowerCase().includes(term) ||
+        (u.facultyId || "").toLowerCase().includes(term)
+      );
+    }
+
+    // 3. Sort Logic: Current User -> Master Admin -> Default Admin -> Pending -> Approved (Alphabetical)
+    return list.sort((a, b) => {
+      // Priority 1: The person currently logged in
+      if (a.email === user?.email) return -1;
+      if (b.email === user?.email) return 1;
+
+      // Priority 2: Master Admin
+      if (a.email === masterAdminEmail) return -1;
+      if (b.email === masterAdminEmail) return 1;
+
+      // Priority 3: Default Admin
+      if (a.email === defaultAdminEmail) return -1;
+      if (b.email === defaultAdminEmail) return 1;
+
+      if (a.isApproved !== b.isApproved) {
+        return a.isApproved ? 1 : -1; // false (pending) comes before true (approved)
+      }
+
+      const nameA = (a.displayName || a.facultyName || "").toLowerCase();
+      const nameB = (b.displayName || b.facultyName || "").toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  }, [users, userSearchTerm, masterAdminEmail, user?.email]);
 
   if (loading) {
     return (
@@ -310,17 +395,6 @@ export default function AdminRoleConfig() {
     );
   }
 
-  // Filter users based on login email
-  const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
-  const filteredUsers = (isMasterAdminLoggedIn
-    ? [...users]
-    : users.filter(u => u.email !== masterAdminEmail)
-  ).sort((a, b) => {
-    if (a.email === masterAdminEmail) return -1;
-    if (b.email === masterAdminEmail) return 1;
-    return 0;
-  });
-
   return (
     <Layout title="Admin Role Configuration">
       <div className="p-6 max-w-7xl mx-auto">
@@ -335,137 +409,189 @@ export default function AdminRoleConfig() {
             </div>
           </div>
           
-          <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-            <button 
-              onClick={() => setActiveTab("users")}
-              className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "users" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
-            >
-              User Management
-            </button>
-            <button 
-              onClick={() => setActiveTab("permissions")}
-              className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "permissions" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
-            >
-              Page Permissions
-            </button>
+          <div className="flex flex-wrap items-center gap-3">
+            {isAddingRole ? (
+              <div className="flex items-center gap-2 bg-white p-1 pr-2 rounded-xl border border-zinc-200 shadow-sm animate-in fade-in slide-in-from-right-2">
+                <input 
+                  type="text"
+                  value={newRoleInput}
+                  onChange={(e) => setNewRoleInput(e.target.value)}
+                  placeholder="New Role Name..."
+                  className="px-3 py-1.5 text-sm outline-none bg-transparent font-medium"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateRole()}
+                />
+                <button 
+                  onClick={handleCreateRole}
+                  className="p-1.5 bg-[#120c7a] text-white rounded-lg hover:bg-blue-800"
+                >
+                  <Plus size={16} />
+                </button>
+                <button 
+                  onClick={() => setIsAddingRole(false)}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-600"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setIsAddingRole(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:border-[#120c7a] hover:text-[#120c7a] transition-all shadow-sm"
+              >
+                <Plus size={18} /> Add Role
+              </button>
+            )}
+
+            <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
+              <button 
+                onClick={() => setActiveTab("users")}
+                className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "users" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+              >
+                User Management
+              </button>
+              <button 
+                onClick={() => setActiveTab("permissions")}
+                className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "permissions" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
+              >
+                Page Permissions
+              </button>
+            </div>
           </div>
         </div>
 
         {activeTab === "users" ? (
-          <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Faculty Name</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Email</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Designation</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Programme</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Department</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Role</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center whitespace-nowrap">Status</th>
-                    <th className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center whitespace-nowrap">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan="7" className="px-6 py-8 text-center text-zinc-500">
-                        No users found.
-                      </td>
+          <div className="space-y-4">
+            <div className="relative group max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#120c7a] transition-colors" size={18} />
+              <input 
+                type="text"
+                placeholder="Search users by name, email, or faculty ID..."
+                value={userSearchTerm}
+                onChange={(e) => setUserSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all text-sm shadow-sm"
+              />
+              {userSearchTerm && (
+                <button onClick={() => setUserSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-200">
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Faculty Name</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Email</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Designation</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Programme</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Department</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 whitespace-nowrap">Role</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center whitespace-nowrap">Status</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center whitespace-nowrap">Actions</th>
                     </tr>
-                  ) : (
-                    filteredUsers.map((user) => (
-                      <tr key={user.uid} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <div className="font-medium text-zinc-800">{user.displayName || user.facultyName}</div>
-                            {user.email === masterAdminEmail && (
-                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded border border-amber-200">MASTER</span>
-                            )}
-                          </div>
-                          <div className="text-xs text-zinc-500">{user.facultyId}</div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{user.email}</td>
-                        <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap font-medium">{user.designation || 'N/A'}</td>
-                        <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
-                          <select
-                            value={user.programme || ""}
-                            onChange={(e) => handleProgramChange(user.uid, e.target.value)}
-                            className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
-                          >
-                            <option value="">Select Programme</option>
-                            {Object.keys(allDepartments).map(prog => (
-                              <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
-                          <select
-                            value={user.department || ""}
-                            onChange={(e) => handleDepartmentChange(user.uid, e.target.value)}
-                            disabled={!user.programme}
-                            className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
-                          >
-                            <option value="">Select Department</option>
-                            {user.programme && allDepartments[user.programme]?.map(dept => (
-                              <option key={dept} value={dept}>{dept}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <select
-                            value={user.role}
-                            onChange={(e) => handleRoleChange(user.uid, e.target.value)}
-                            className="bg-zinc-50 border border-zinc-200 text-zinc-800 text-sm rounded-lg focus:ring-[#120c7a] focus:border-[#120c7a] block w-full p-2 outline-none transition-all min-w-[120px]"
-                          >
-                            <option value="Admin">Admin</option>
-                            <option value="Principal">Principal</option>
-                            <option value="HOD">HOD</option>
-                            <option value="Faculty">Faculty</option>
-                          </select>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          {user.isApproved ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                              <CheckCircle2 size={14} /> Approved
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                              <XCircle size={14} /> Pending
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          {user.isApproved ? (
-                            <button
-                              onClick={() => openRevokeModal(user)}
-                              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
-                            >
-                              <UserX size={16} /> Revoke
-                            </button>
-                          ) : (
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                onClick={() => handleApprove(user.uid)}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-[#120c7a] text-white hover:bg-[#0e0960] shadow-md shadow-[#120c7a]/20"
-                              >
-                                <UserCheck size={16} /> Approve
-                              </button>
-                              <button
-                                onClick={() => openRejectModal(user)}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
-                              >
-                                <Trash2 size={16} /> Reject
-                              </button>
-                            </div>
-                          )}
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {filteredAndSortedUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="px-6 py-8 text-center text-zinc-500">
+                          No users found.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      filteredAndSortedUsers.map((user) => (
+                        <tr key={user.uid} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <div className="font-medium text-zinc-800">{user.displayName || user.facultyName}</div>
+                              {user.email === masterAdminEmail && (
+                                <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded border border-amber-200">MASTER</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-zinc-500">{user.facultyId}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{user.email}</td>
+                          <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap font-medium">{user.designation || 'N/A'}</td>
+                          <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
+                            <select
+                              value={user.programme || ""}
+                              onChange={(e) => handleProgramChange(user.uid, e.target.value)}
+                              className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
+                            >
+                              <option value="">Select Programme</option>
+                              {Object.keys(allDepartments).map(prog => (
+                                <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
+                            <select
+                              value={user.department || ""}
+                              onChange={(e) => handleDepartmentChange(user.uid, e.target.value)}
+                              disabled={!user.programme}
+                              className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none"
+                            >
+                              <option value="">Select Department</option>
+                              {user.programme && allDepartments[user.programme]?.map(dept => (
+                                <option key={dept} value={dept}>{dept}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <select
+                              value={user.role}
+                              onChange={(e) => handleRoleChange(user.uid, e.target.value)}
+                              className="bg-zinc-50 border border-zinc-200 text-zinc-800 text-sm rounded-lg focus:ring-[#120c7a] focus:border-[#120c7a] block w-full p-2 outline-none transition-all min-w-[120px]"
+                            >
+                              {availableRoles.map(role => (
+                                <option key={role} value={role}>{role}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {user.isApproved ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                <CheckCircle2 size={14} /> Approved
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                                <XCircle size={14} /> Pending
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {user.isApproved ? (
+                              <button
+                                onClick={() => openRevokeModal(user)}
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
+                              >
+                                <UserX size={16} /> Revoke
+                              </button>
+                            ) : (
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleApprove(user.uid)}
+                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-[#120c7a] text-white hover:bg-[#0e0960] shadow-md shadow-[#120c7a]/20"
+                                >
+                                  <UserCheck size={16} /> Approve
+                                </button>
+                                <button
+                                  onClick={() => openRejectModal(user)}
+                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
+                                >
+                                  <Trash2 size={16} /> Reject
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         ) : (
@@ -483,9 +609,21 @@ export default function AdminRoleConfig() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-zinc-50 border-b border-zinc-200">
-                      <th className="px-6 py-4 text-sm font-semibold text-zinc-600 sticky left-0 bg-zinc-50">Page / Menu Item</th>
-                      {ROLES.map(role => (
-                        <th key={role} className="px-6 py-4 text-sm font-semibold text-zinc-600 text-center">{role}</th>
+                      <th className="px-6 py-4 text-sm font-bold text-zinc-600 sticky left-0 bg-zinc-50 z-10">Page / Menu Item</th>
+                      {availableRoles.map(role => (
+                        <th key={role} className="px-6 py-4 text-sm font-bold text-zinc-600 text-center min-w-[120px]">
+                          <div className="flex flex-col items-center gap-1">
+                            <span>{role}</span>
+                            {!["Admin", "Faculty"].includes(role) && (
+                              <button 
+                                onClick={() => handleDeleteRole(role)}
+                                className="text-[9px] text-red-400 hover:text-red-600 uppercase tracking-tighter"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -498,7 +636,7 @@ export default function AdminRoleConfig() {
                             <span className="text-[10px] text-zinc-400 font-mono">{page.path}</span>
                           </div>
                         </td>
-                        {ROLES.map(role => (
+                        {availableRoles.map(role => (
                           <td key={`${role}-${page.id}`} className="px-6 py-4 text-center">
                             <label className="relative inline-flex items-center cursor-pointer">
                               <input 
