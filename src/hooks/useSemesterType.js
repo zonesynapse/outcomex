@@ -1,21 +1,20 @@
 import { useState, useEffect } from 'react';
-import { rtdb } from '../firebase';
-import { ref, onValue } from 'firebase/database';
+import { db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 export function useSemesterType() {
   const [semesterType, setSemesterType] = useState('Both');
 
   useEffect(() => {
-    const configRef = ref(rtdb, 'info_configuration/semesterType');
-    const unsubscribe = onValue(configRef, (snapshot) => {
+    const unsub = onSnapshot(doc(db, 'info_configuration', 'semesterType'), (snapshot) => {
       if (snapshot.exists()) {
-        setSemesterType(snapshot.val());
+        setSemesterType(snapshot.data()?.value || 'Both');
       } else {
         setSemesterType('Both');
       }
     });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
   return semesterType;

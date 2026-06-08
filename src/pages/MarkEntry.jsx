@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { db, auth, rtdb } from "../firebase"; // Import db for Firestore
-import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore"; // Firestore imports
-import { ref, get } from "firebase/database";
+import { db, auth } from "../firebase";
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore";
 import { 
   ChevronDown, 
   Save, 
@@ -63,7 +62,7 @@ export default function MarkEntry() {
           if (userData.role === 'Faculty') {
             const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
             onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
-              if (assignSnap.exists()) {
+              if (!assignSnap.empty) {
                 const data = {}; // Convert QuerySnapshot to object
                 assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
@@ -213,7 +212,7 @@ export default function MarkEntry() {
       try {
         const configsRef = collection(db, 'cia_configs'); // Firestore collection reference
         const snapshot = await getDocs(configsRef); // Use getDocs for collection
-        if (snapshot.exists) { // For QuerySnapshot, use .exists
+        if (!snapshot.empty) {
           const data = {}; // Convert QuerySnapshot to object
           snapshot.forEach(doc => { data[doc.id] = doc.data(); });
           const configsArray = Object.keys(data).map(key => ({
@@ -384,16 +383,17 @@ export default function MarkEntry() {
       const uniqueQpSubjects = [...new Set(qpSubjects.map(s => norm(s)))];
 
       try {
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const userSnap = await get(userRef);
-        const userRole = userSnap.exists() ? userSnap.val().role : null;
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentPath = `subject_assignments/${progKey}/${deptKey}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${needSem}`;
-        const assignmentSnap = await get(ref(rtdb, assignmentPath));
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}`;
+        const assignmentDocRef = doc(db, 'subject_assignments', assignmentCompositeKey);
+        const assignmentSnap = await getDoc(assignmentDocRef);
         
         let assignedCodes = [];
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.val();
+          const assignments = assignmentSnap.data();
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             Object.values(assignments).forEach(userAssignments => {
               if (Array.isArray(userAssignments)) assignedCodes.push(...userAssignments);
@@ -558,7 +558,6 @@ export default function MarkEntry() {
 
       setLoading(true);
       try {
-        const qpRef = ref(rtdb, 'generated_qps');
         const snapshot = await getDocs(collection(db, 'generated_qps')); // Use getDocs for collection
         const root = {}; snapshot.forEach(doc => { root[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         
@@ -690,9 +689,9 @@ export default function MarkEntry() {
           .map(sanitizeKey)
           .join('_');
         
-        const marksRef = ref(rtdb, `marks/${marksKey}`);
-        const marksSnapshot = await get(marksRef);
-        const savedMarks = marksSnapshot.val();
+        const marksDocRef = doc(db, 'marks', marksKey);
+        const marksSnapshot = await getDoc(marksDocRef);
+        const savedMarks = marksSnapshot.data() || {};
 
         const initialMarks = {};
         studentList.forEach(s => {

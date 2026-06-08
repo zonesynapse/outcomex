@@ -157,8 +157,8 @@ export default function CourseEnrolment() {
 
         setStudents(studentsList.sort((a,b) => a.examNo.localeCompare(b.examNo)));
 
-        get(enrolmentsRef).then(enrolSnap => {
-          setEnrolments(enrolSnap.val() || {});
+        getDoc(enrolmentsRef).then(enrolSnap => {
+          setEnrolments(enrolSnap.data() || {});
           setLoading(false);
         });
       });
@@ -200,7 +200,7 @@ export default function CourseEnrolment() {
     const enrolKey = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
     
     try {
-      await set(ref(rtdb, `course_enrolments/${enrolKey}`), enrolments);
+      await setDoc(doc(db, 'course_enrolments', enrolKey), enrolments);
       setSuccessMessage("Enrolments saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

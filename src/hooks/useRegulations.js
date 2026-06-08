@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { rtdb } from "../firebase";
-import { ref, onValue, set } from "firebase/database";
+import { db } from "../firebase";
+import { doc, collection, onSnapshot, setDoc } from "firebase/firestore";
 
 export function useRegulations() {
   const [regulations, setRegulations] = useState([]);
@@ -8,30 +8,31 @@ export function useRegulations() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const regRef = ref(rtdb, "regulations");
-    const unsubscribeReg = onValue(regRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        setRegulations(data);
-      } else {
-        setRegulations([]); // no defaults
+    const unsubReg = onSnapshot(collection(db, "regulations"), (snapshot) => {
+      const extracted = [];
+      snapshot.forEach(d => {
+        const docData = d.data();
+        if (d.id === "list" && Array.isArray(docData.list)) {
+          docData.list.forEach(r => { if (!extracted.includes(r)) extracted.push(r); });
+        } else if (typeof docData.value === 'string') {
+          if (!extracted.includes(docData.value)) extracted.push(docData.value);
+        }
+      });
+      if (extracted.length > 0) {
+        setRegulations(extracted);
       }
     });
 
-    const batchRegRef = ref(rtdb, "batch_regulations");
-    const unsubscribeBatchReg = onValue(batchRegRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        setBatchRegulations(data);
-      } else {
-        setBatchRegulations({});
-      }
+    const unsubBatch = onSnapshot(collection(db, "batch_regulations"), (snapshot) => {
+      const data = {};
+      snapshot.forEach(d => { data[d.id] = d.data(); });
+      setBatchRegulations(data);
       setLoading(false);
     });
 
     return () => {
-      unsubscribeReg();
-      unsubscribeBatchReg();
+      unsubReg();
+      unsubBatch();
     };
   }, []);
 
@@ -39,20 +40,15 @@ export function useRegulations() {
     if (!newReg) return;
     if (regulations.includes(newReg)) return;
     const updatedRegs = [...regulations, newReg];
-    await set(ref(rtdb, "regulations"), updatedRegs);
+    await setDoc(doc(db, "regulations", "list"), { list: updatedRegs });
   };
 
   const mapBatchToRegulation = useCallback(async (programme, batch, regulation) => {
     if (!programme || !batch || !regulation) return;
-    const updatedMapping = {
-      ...batchRegulations,
-      [programme]: {
-        ...(batchRegulations[programme] || {}),
-        [batch]: regulation
-      }
-    };
-    await set(ref(rtdb, "batch_regulations"), updatedMapping);
-  }, [batchRegulations]);
+    await setDoc(doc(db, "batch_regulations", programme), {
+      [batch]: regulation
+    }, { merge: true });
+  }, []);
 
   const getRegulationForBatch = useCallback((programme, batch) => {
     if (!programme || !batch) return "";

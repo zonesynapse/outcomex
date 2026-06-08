@@ -147,11 +147,9 @@ export default function TimetableSetup() {
   const [allocationLoading, setAllocationLoading] = useState(false);
 
   useEffect(() => {
-    const templatesRef = ref(rtdb, 'timetable_templates');
-    const unsub = onValue(templatesRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.val();
-        const templatesArr = Object.entries(data).map(([id, template]) => ({ id, ...template }));
+    const unsub = onSnapshot(collection(db, 'timetable_templates'), (snap) => {
+      if (!snap.empty) {
+        const templatesArr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setSavedTemplates(templatesArr);
       } else {
         setSavedTemplates([]);

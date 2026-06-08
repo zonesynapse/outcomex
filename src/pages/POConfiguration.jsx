@@ -2,11 +2,13 @@ import { useState, useEffect } from "react";
 import Layout from "../components/Layout";
 import { db, auth } from "../firebase"; // `db` is already Firestore
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, setDoc, getDoc, onSnapshot } from "firebase/firestore"; // Firestore imports
+import { doc, setDoc, getDoc, onSnapshot, collection, getDocs } from "firebase/firestore"; // Firestore imports
 import { Trash2, Save, ChevronDown, CheckCircle2 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
-import { formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
+import { formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+
+const sanitizeKey = (key) => String(key).replace(/[.#$[\]]/g, '_');
 
 const POConfiguration = () => {
   const { departments: deptMap, durations } = useDepartments();
@@ -152,25 +154,83 @@ Statement: "${item.statement}"`;
       if (currentUser) { // Use Firestore to get user data
         const userRef = doc(db, 'users', currentUser.uid);
         const snapshot = await getDoc(userRef);
-        if (snapshot.exists()) setUserData(snapshot.val());
+        if (snapshot.exists()) setUserData(snapshot.data());
       }
     });
     return () => unsubscribeAuth();
   }, []);
   useEffect(() => {
-    const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
+    const progKey = formatProgrammeKey(programme);
+    const regKey = sanitizeKey(regulation);
+    const deptKey = sanitizeKey(department);
     if (programme && regulation && department) {
-      const compositeKey = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`; // This is the document ID
-      const dataRef = doc(db, 'po_pso', compositeKey); // Reference to a document in 'po_pso' collection
+      const compositeKey = `${progKey}_${regKey}__${deptKey}`;
       
-      const unsubscribe = onSnapshot(dataRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
+      console.log('[POCONFIG] Fetching po_pso for:', { progKey, compositeKey });
+      // DEBUG: list all docs in po_pso collection
+      getDocs(collection(db, 'po_pso'))
+        .then(snap => {
+          console.log('[POCONFIG] ALL po_pso doc IDs:', snap.docs.map(d => d.id));
+          // Check if compositeKey exists in the list
+          const found = snap.docs.find(d => d.id === compositeKey);
+          console.log('[POCONFIG] compositeKey in list:', !!found);
+        })
+        .catch(e => console.error('[POCONFIG] list po_pso error:', e));
+      
+      const loadPsoData = (data) => {
+        setPoData(data.po_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
+        setPsoData(data.pso_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
+        setDirectWeight(data.direct_weight || "80");
+        setIndirectWeight(data.indirect_weight || "20");
+        setSurveys(data.surveys || [{ name: "Alumni Survey", weight: "100" }]);
+      };
+
+      const tryFindNested = async () => {
+        try {
+          const nestedRef = doc(db, 'po_pso', progKey);
+          const nestedSnap = await getDoc(nestedRef);
+          console.log('[POCONFIG] nested doc exists:', nestedSnap.exists());
+          if (nestedSnap.exists()) {
+            const nestedData = nestedSnap.data();
+            console.log('[POCONFIG] nested keys:', Object.keys(nestedData));
+            console.log('[POCONFIG] looking for reg:', { regulation, regKey });
+            const regData = nestedData[regulation] || nestedData[regKey];
+            if (regData && typeof regData === 'object') {
+              console.log('[POCONFIG] regData keys:', Object.keys(regData));
+              console.log('[POCONFIG] looking for dept:', { department, deptKey });
+              const deptData = regData[department] || regData[deptKey];
+              if (deptData && typeof deptData === 'object') {
+                console.log('[POCONFIG] deptData found!');
+                return deptData;
+              }
+            }
+            const deptDirect = nestedData[department] || nestedData[deptKey];
+            if (deptDirect && typeof deptDirect === 'object') return deptDirect;
+          }
+          return null;
+        } catch (e) {
+          console.error('[POCONFIG] nested fallback error:', e);
+          return null;
+        }
+      };
+
+      const dataRef = doc(db, 'po_pso', compositeKey);
+      console.log('[POCONFIG] compositeKey being queried:', JSON.stringify(compositeKey));
+      // Force a one-time server read for comparison
+      getDoc(dataRef).then(docSnap => {
+        console.log('[POCONFIG] DIRECT getDoc exists:', docSnap.exists(), 'fromCache:', docSnap.metadata?.fromCache);
+      });
+      const unsubscribe = onSnapshot(dataRef, async (snapshot) => {
+        const fromCache = snapshot.metadata?.fromCache;
+        const hasPending = snapshot.metadata?.hasPendingWrites;
+        let data = snapshot.data();
+        console.log('[POCONFIG] onSnapshot fired: exists:', snapshot.exists(), 'fromCache:', fromCache, 'pendingWrites:', hasPending, 'data keys:', data ? Object.keys(data) : null);
+        if (!data) {
+          data = await tryFindNested();
+          console.log('[POCONFIG] nested fallback found:', !!data);
+        }
         if (data) {
-          setPoData(data.po_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
-          setPsoData(data.pso_statements || [{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
-          setDirectWeight(data.direct_weight || "80");
-          setIndirectWeight(data.indirect_weight || "20");
-          setSurveys(data.surveys || [{ name: "Alumni Survey", weight: "100" }]);
+          loadPsoData(data);
         } else {
           setPoData([{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
           setPsoData([{ statement: "", competencies: [{ statement: "", pis: [{ value: "1.1.1", description: "" }] }] }]);
@@ -179,9 +239,11 @@ Statement: "${item.statement}"`;
           setSurveys([{ name: "Alumni Survey", weight: "100" }]);
         }
         setLoading(false);
-      }, (error) => {
-        console.error("Firebase fetch error:", error);
-        setLoading(false);
+      }, async (error) => {
+        console.error('[POCONFIG] onSnapshot error, trying nested fallback:', error);
+        const nested = await tryFindNested();
+        if (nested) loadPsoData(nested);
+        else setLoading(false);
       });
       return () => unsubscribe();
     }

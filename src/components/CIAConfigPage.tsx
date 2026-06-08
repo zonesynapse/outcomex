@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Save, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { rtdb } from '../firebase';
-import { ref, set, push, onValue, remove } from 'firebase/database';
+import { db } from '../firebase';
+import { doc, collection, addDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 
 interface CIAConfig {
   program: string;
@@ -47,49 +47,41 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
   const [selectedFilterTypes, setSelectedFilterTypes] = useState<string[]>([]);
 
   useEffect(() => {
-    const configsRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(configsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const configsArray = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        // Sort by createdAt descending
-        configsArray.sort((a, b) => {
-          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return dateB - dateA;
-        });
-        setConfigs(configsArray as CIAConfigWithId[]);
-      } else {
-        setConfigs([]);
-      }
+    const unsub = onSnapshot(collection(db, 'cia_configs'), (snapshot) => {
+      const configsArray = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as CIAConfigWithId[];
+      configsArray.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      setConfigs(configsArray);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching configs:", error);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  // Fetch available course types for the selected regulation
   useEffect(() => {
     if (!regulation) {
       setAvailableCourseTypes([]);
       return;
     }
     const regKey = regulation.replace(/[.#$[\]]/g, '_');
-    const ctRef = ref(rtdb, `course_type_configs/${regKey}`);
-    const unsubscribe = onValue(ctRef, (snapshot) => {
+    const unsub = onSnapshot(doc(db, 'course_type_configs', regKey), (snapshot) => {
       if (snapshot.exists()) {
-        setAvailableCourseTypes(snapshot.val() || []);
+        const data = snapshot.data();
+        setAvailableCourseTypes(Array.isArray(data) ? data : (data?.list || []));
       } else {
         setAvailableCourseTypes([]);
       }
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [regulation]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -139,8 +131,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     }
 
     try {
-      const newConfigRef = push(ref(rtdb, 'cia_configs'));
-      await set(newConfigRef, {
+      await addDoc(collection(db, 'cia_configs'), {
         program: program || "",
         department: department || "",
         regulation,
@@ -171,7 +162,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
 
   const handleDelete = async (id: string) => {
     try {
-      await remove(ref(rtdb, `cia_configs/${id}`));
+      await deleteDoc(doc(db, 'cia_configs', id));
       setDeleteConfirmId(null);
     } catch (err) {
       console.error("Error deleting config:", err);
@@ -195,7 +186,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Configuration Form */}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -346,7 +336,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           </form>
         </motion.div>
 
-        {/* Configurations List */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex flex-col gap-4">
             <h4 className="text-xl font-semibold flex items-center gap-2">

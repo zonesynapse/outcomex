@@ -81,12 +81,14 @@ export default function CreateCourse() {
       setAvailableCourseTypes(["Program Course"]);
       return;
     }
-    const typesRef = doc(db, 'course_type_configs', regKey); // Firestore doc reference
-    const unsub = onSnapshot(typesRef, (snap) => { // Use onSnapshot for real-time updates
+    const typesRef = doc(db, 'course_type_configs', regKey);
+    const unsub = onSnapshot(typesRef, (snap) => {
       if (snap.exists()) {
-        setAvailableCourseTypes(snap.data()); // Use .data() for Firestore documents
+        const data = snap.data();
+        const types = data?.list || data?.types || Object.values(data).filter(v => typeof v === 'string');
+        setAvailableCourseTypes(types.length > 0 ? types : ["Program Course"]);
       } else {
-        setAvailableCourseTypes(["Program Course"]); // Default if none configured
+        setAvailableCourseTypes(["Program Course"]);
       }
     });
     return () => unsub();
@@ -101,9 +103,9 @@ export default function CreateCourse() {
   // subscribe to Bloom's taxonomy from RTDB
   useEffect(() => {
     const bloomsRef = collection(db, 'blooms_taxonomy'); // Firestore collection reference
-    const unsub = onSnapshot(bloomsRef, (snap) => { // Use onSnapshot for real-time updates
-      if (snap.exists()) { // For QuerySnapshot, use .exists
-        const data = {}; snap.forEach(d => { data[d.id] = d.data(); }); setBloomsDomains(data); // Convert QuerySnapshot to object
+    const unsub = onSnapshot(bloomsRef, (snap) => {
+      if (!snap.empty) {
+        const data = {}; snap.forEach(d => { data[d.id] = d.data(); }); setBloomsDomains(data);
       } else {
         setBloomsDomains({});
       }
@@ -173,7 +175,7 @@ export default function CreateCourse() {
     try {
       const progKey = sanitizeKey(programme);
       const sanitizedDept = sanitizeKey(deptKey);
-      const courseKey = sanitizeKey(courseCode.trim());
+      const courseKey = `${progKey}_${sanitizedDept}_${sanitizeKey(courseCode.trim())}`;
       const payload = {
         code: courseCode.trim(),
         name: courseName.trim(),
@@ -190,7 +192,7 @@ export default function CreateCourse() {
         co: coDefs.map((c, i) => ({ id: `CO${i + 1}`, description: c || "", content: (coContents[i] || ""), domain: (coDomains[i] || ""), level: (coLevels[i] || "") }))
       };
 
-      await setDoc(doc(db, 'courses', progKey, sanitizedDept, sanitizeKey(regulation), courseKey), payload); // Firestore subcollection path
+      await setDoc(doc(db, 'courses', courseKey), payload); // Firestore subcollection path
 
       setMessage("Course saved successfully.");
       setSelectedExistingCourseKey(`${deptKey}:${courseKey}`);
@@ -213,67 +215,73 @@ export default function CreateCourse() {
   };
 
   // Fetch existing courses for selected Programme + Department + Regulation.
-  // If a department is selected, also include Overall courses.
   useEffect(() => {
+      console.log('[COURSES] Effect fired with:', { programme, regulation, department, progKey: sanitizeKey(programme) });
     if (!programme || !regulation) {
       setExistingCourses([]);
       setSelectedExistingCourseKey("");
       return;
     }
 
-    const baseRegKey = sanitizeKey(regulation);
     const progKey = sanitizeKey(programme);
-    const deptRefs = [];
-    if (department) {
-      const sanitizedDept = sanitizeKey(department); // Ensure department is sanitized
-      deptRefs.push({ dept: department, ref: collection(db, 'courses', progKey, sanitizedDept, baseRegKey) }); // Firestore subcollection path
-      deptRefs.push({ dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', baseRegKey) }); // Firestore subcollection path
-    } else {
-      deptRefs.push({ dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', baseRegKey) }); // Firestore subcollection path
-    }
-    
-    const unsubs = [];
-    const combined = new Map();
+    const normalize = (v) => String(v ?? '').replace(/[.#$[\]/ ]/g, '_');
 
-    const rebuild = () => {
-      const list = Array.from(combined.values()).sort((a, b) => {
-        const ac = (a.code || a.key || "").toUpperCase();
-        const bc = (b.code || b.key || "").toUpperCase();
-        return ac.localeCompare(bc);
-      });
-      setExistingCourses(list);
-    };
-
-    deptRefs.forEach(({ dept, ref: deptRef }) => {
-      const unsub = onSnapshot(deptRef, (snap) => { // Use onSnapshot for real-time updates
-        // Remove any previously added items from this dept
-        for (const [k, v] of combined.entries()) {
-          if (v._sourceDept === dept) combined.delete(k);
-        }
-        if (snap.exists) { // For QuerySnapshot, use .exists
-          const data = {}; // Convert QuerySnapshot to object
-          snap.forEach(d => { data[d.id] = d.data(); });
-          Object.entries(data).forEach(([key, course]) => {
-            combined.set(`${dept}:${key}`, {
-              key,
-              code: course?.code || key,
-              name: course?.name || "",
-              credits: course?.credits,
-              type: course?.type,
-              periods: course?.periods || { l: 0, t: 0, p: 0 },
-              co: Array.isArray(course?.co) ? course.co : [],
-              _sourceDept: dept,
-            });
+    const unsub = onSnapshot(collection(db, 'courses'), (snap) => {
+      console.log('[COURSES] snapshot received, size:', snap.size);
+      const data = {};
+      snap.forEach(d => {
+        const docData = d.data();
+        console.log('[COURSES] doc.id:', d.id, '| fields:', Object.keys(docData));
+        const hasDirectCourseFields = docData?.code || docData?.programme;
+        if (hasDirectCourseFields) {
+          data[d.id] = { ...docData, _outerKey: d.id };
+        } else {
+          // RTDB migration format: { department: { regulation: { courseCode: { ... } } } }
+          Object.entries(docData).forEach(([deptValue, deptCourses]) => {
+            if (deptCourses && typeof deptCourses === 'object') {
+              Object.entries(deptCourses).forEach(([regValue, regCourses]) => {
+                if (regCourses && typeof regCourses === 'object') {
+                  Object.entries(regCourses).forEach(([courseCode, courseData]) => {
+                    if (courseData && typeof courseData === 'object') {
+                      const key = `${d.id}_${deptValue}_${regValue}_${courseCode}`;
+                      data[key] = courseData;
+                    }
+                  });
+                }
+              });
+            }
           });
         }
-        rebuild();
       });
-      unsubs.push(unsub);
+      console.log('[DBG] Total flattened courses:', Object.keys(data).length, '| progKey:', progKey, '| regulation:', regulation, '| department:', department);
+      if (Object.keys(data).length > 0) {
+        const sample = data[Object.keys(data)[0]];
+        console.log('[DBG] Sample course:', { programme: sample.programme, regulation: sample.regulation, department: sample.department, _outerKey: sample._outerKey, keys: Object.keys(sample) });
+      }
+      const filtered = Object.entries(data)
+        .filter(([, course]) => {
+          const courseProg = normalize(course?._outerKey || course?.programme || '');
+          const courseReg = normalize(course?.regulation || '');
+          const courseDept = normalize(course?.department || '');
+          const matchProg = courseProg === progKey || normalize(course?.programme || '') === progKey;
+          const matchReg = courseReg === normalize(regulation);
+          const matchDept = !department || courseDept === normalize(department) || courseDept === "Overall";
+          return matchProg && matchReg && matchDept;
+        })
+        .map(([key, course]) => ({
+          key,
+          code: course?.code || key,
+          name: course?.name || "",
+          credits: course?.credits,
+          type: course?.type,
+          periods: course?.periods || { l: 0, t: 0, p: 0 },
+          co: Array.isArray(course?.co) ? course.co : [],
+          _sourceDept: course?.department || "Overall",
+        }));
+      setExistingCourses(filtered);
     });
 
-    return () => {
-      unsubs.forEach(u => u && u());
-    };
+    return () => unsub();
   }, [programme, department, regulation]);
 
   const loadExistingCourseIntoForm = (compositeKey) => {

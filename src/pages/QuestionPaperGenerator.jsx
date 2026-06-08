@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X } from 'lucide-react';
 import Layout from '../components/Layout';
-import { auth, db, rtdb } from '../firebase';
+import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
 import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query } from 'firebase/firestore'; // Firestore imports
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
@@ -537,12 +537,12 @@ export default function QuestionPaperGenerator() {
       const subjectKey = sanitizeKey(subject);
 
       let courseData = null;
-      try { // Firestore subcollection path
-        let courseRef = doc(db, 'courses', progKey, deptKey, regKey, subjectKey);
-        let snap = await getDoc(courseRef); // Use getDoc for Firestore
-        if (!snap.exists()) { // Fallback to Overall if not found in specific department
-          courseRef = doc(db, 'courses', progKey, 'Overall', regKey, subjectKey);
-          snap = await getDoc(courseRef); // Use getDoc for Firestore
+      try {
+        let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${regKey}_${subjectKey}`);
+        let snap = await getDoc(courseRef);
+        if (!snap.exists()) {
+          courseRef = doc(db, 'courses', `${progKey}_Overall_${regKey}_${subjectKey}`);
+          snap = await getDoc(courseRef);
         }
         if (snap.exists()) courseData = snap.data();
       } catch (error) { console.error("Error fetching course details for AI:", error); }

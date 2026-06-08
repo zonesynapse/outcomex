@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { db, auth, rtdb } from "../firebase"; // Import db for Firestore
+import { db, auth } from "../firebase";
 import { doc, collection, setDoc, onSnapshot, addDoc, deleteDoc, getDoc, updateDoc } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
-import { ref, get, onValue } from "firebase/database";
 import { 
   Plus, 
   Trash2, 
@@ -29,21 +28,20 @@ export default function BloomsTaxonomy() {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const snapshot = await get(userRef);
+        const userRef = doc(db, "users", currentUser.uid);
+        const snapshot = await getDoc(userRef);
         if (snapshot.exists()) {
-          setUserData(snapshot.val());
+          setUserData(snapshot.data());
         }
       }
     });
 
-    const bloomsRef = ref(rtdb, "blooms_taxonomy");
-    const unsubscribeData = onValue(bloomsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setDomains(snapshot.val());
-      } else {
-        setDomains({});
-      }
+    const unsubscribeData = onSnapshot(collection(db, "blooms_taxonomy"), (snapshot) => {
+      const domainsData = {};
+      snapshot.forEach((doc) => {
+        domainsData[doc.id] = doc.data();
+      });
+      setDomains(domainsData);
       setLoading(false);
     });
 

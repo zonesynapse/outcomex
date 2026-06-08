@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { CKEditor } from 'ckeditor4-react';
-import { rtdb, auth } from "../firebase"; // Ensure auth is imported
-import { ref, set, get, onValue } from "firebase/database";
+import { db, auth } from "../firebase";
+import { doc, collection, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { 
   ChevronDown, 
   Download, 
@@ -80,13 +80,12 @@ export default function QuestionPaper() {
   }, [programme, getActiveBatches]);
 
   useEffect(() => {
-    const configsRef = ref(rtdb, 'cia_configs');
-    const unsubscribe = onValue(configsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const configsArray = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
+    const configsRef = collection(db, 'cia_configs');
+    const unsubscribe = onSnapshot(configsRef, (snapshot) => {
+      if (!snapshot.empty) {
+        const configsArray = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
         }));
         setCiaConfigs(configsArray);
       } else {
@@ -165,9 +164,9 @@ export default function QuestionPaper() {
 
       try {
         // 1. Fetch Syllabus Subjects
-        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
-        const snapshot = await get(syllabusRef);
-        const data = snapshot.val();
+        const syllabusRef = doc(db, 'syllabus_data', syllabusKey);
+        const snapshot = await getDoc(syllabusRef);
+        const data = snapshot.data();
         let fetchedSubjects = [];
         
         if (data && data.semesters && data.semesters[semNum]) {
@@ -193,12 +192,12 @@ export default function QuestionPaper() {
           return;
         }
 
-        const assignmentPath = `subject_assignments/${progKey}/${deptKey}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}`;
-        const assignmentRef = ref(rtdb, assignmentPath);
-        const assignmentSnap = await get(assignmentRef);
+        const compositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}`;
+        const assignmentRef = doc(db, 'subject_assignments', compositeKey);
+        const assignmentSnap = await getDoc(assignmentRef);
         
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.val();
+          const assignments = assignmentSnap.data();
           const userAssignments = assignments[currentUser.uid] || [];
           
           // Filter syllabus subjects by user assignments
@@ -469,7 +468,7 @@ export default function QuestionPaper() {
         saved_at: new Date().toISOString()
       };
 
-      await set(ref(rtdb, `generated_qps/${marksKey}`), payload);
+      await setDoc(doc(db, 'generated_qps', marksKey), payload);
       setSuccessMessage("Question Paper Saved!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

@@ -1,48 +1,42 @@
 import { useState, useEffect, useCallback } from "react";
-import { rtdb } from "../firebase";
-import { ref, onValue, set, update } from "firebase/database";
+import { db } from "../firebase";
+import { doc, collection, onSnapshot, setDoc, updateDoc } from "firebase/firestore";
 import { getRecentBatches } from "../lib/utils";
 
 export function useBatches(durations = {}) {
   const [batchStatus, setBatchStatus] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Use JSON.stringify for durations to avoid infinite loops if durations object is recreated
   const durationsStr = JSON.stringify(durations);
 
   useEffect(() => {
     const parsedDurations = JSON.parse(durationsStr);
-    const batchRef = ref(rtdb, "batch_status");
-    const unsubscribe = onValue(batchRef, (snapshot) => {
-      const data = snapshot.val() || {};
+    const unsub = onSnapshot(collection(db, "batch_status"), (snapshot) => {
+      const data = {};
+      snapshot.forEach(d => { data[d.id] = d.data(); });
       setBatchStatus(data);
       setLoading(false);
 
-      // Auto-creation logic
       Object.entries(parsedDurations).forEach(([progKey, duration]) => {
         const expectedBatches = getRecentBatches(duration);
         const currentProgBatches = data[progKey] || {};
-        
-        let updates = null;
-        expectedBatches.forEach(batch => {
-          if (currentProgBatches[batch] === undefined) {
-            if (!updates) updates = {};
-            updates[`${progKey}/${batch}`] = { isActive: true };
-          }
-        });
 
-        if (updates) {
-          update(ref(rtdb, "batch_status"), updates);
+        const missingBatches = expectedBatches.filter(batch => currentProgBatches[batch] === undefined);
+        if (missingBatches.length > 0) {
+          const payload = {};
+          missingBatches.forEach(batch => { payload[batch] = { isActive: true }; });
+          setDoc(doc(db, "batch_status", progKey), payload, { merge: true });
         }
       });
     });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, [durationsStr]);
 
   const toggleBatchStatus = useCallback(async (progKey, batchId, currentStatus) => {
-    const statusRef = ref(rtdb, `batch_status/${progKey}/${batchId}/isActive`);
-    await set(statusRef, !currentStatus);
+    await updateDoc(doc(db, "batch_status", progKey), {
+      [`${batchId}.isActive`]: !currentStatus
+    });
   }, []);
 
   const getActiveBatches = useCallback((progKey) => {

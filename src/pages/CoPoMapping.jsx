@@ -140,7 +140,7 @@ export default function CoPoMapping() {
     const batchKey = sanitizeKey(batch);
     const regKey = sanitizeKey(regulation);
     
-    const actionsRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey); // Firestore subcollection path
+    const actionsRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
 
     const unsubscribe = onSnapshot(actionsRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (snapshot.exists()) {
@@ -168,7 +168,7 @@ export default function CoPoMapping() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
 
-      const actionRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey);
+      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
 
       await setDoc(actionRef, {
         [selectedOutcome.code]: {
@@ -196,7 +196,7 @@ export default function CoPoMapping() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
 
-      const actionRef = doc(db, 'po_actions_taken', progKey, deptKey, batchKey, regKey);
+      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
       await updateDoc(actionRef, { [outcomeCode]: deleteField() });
     } catch (error) {
       console.error("Error deleting action plan:", error);
@@ -296,7 +296,8 @@ export default function CoPoMapping() {
         const userSnap = await getDoc(userRef); // Use getDoc for Firestore
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentRef = doc(db, 'subject_assignments', progKey, deptKey, sanitizeKey(batch), sanitizeKey(academicYear || ''), semNum); // Firestore subcollection path
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear || '')}_${semNum}`;
+        const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey); // Firestore flat key path
         const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
         
         if (assignmentSnap.exists()) {
@@ -447,9 +448,9 @@ export default function CoPoMapping() {
             (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
           );
           children = [{ key: '_legacy', data, isUniversity, isIndirect, label: m.exam || 'Legacy' }];
-        } else { // Assuming coAttData contains sub-documents for each exam
-          // In Firestore, if coAttData is a document, and its fields are exam IDs, then we need to iterate its fields.
-          const entries = Object.entries(coAttData).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v })); // This assumes coAttData is an object of exam documents
+        } else { // Assuming data contains sub-documents for each exam
+          // In Firestore, if data is a document, and its fields are exam IDs, then we need to iterate its fields.
+          const entries = Object.entries(data).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v })); // This assumes data is an object of exam documents
           children = entries.map(e => {
             const m = e.data._meta || {};
             let label = m.exam || m.qpaper_name || e.key;

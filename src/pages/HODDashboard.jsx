@@ -158,7 +158,6 @@ export default function HODDashboard() {
 
       // 2. Fetch Signatures
       if (selectedQP.forwarded_by) {
-        const userRef = ref(rtdb, `users/${selectedQP.forwarded_by}`);
         const snap = await getDoc(doc(db, 'users', selectedQP.forwarded_by)); // Firestore doc reference
         if (snap.exists()) setFacultySignatureForQP(snap.data().signatureUrl || ''); // Use .data() for Firestore documents
       }

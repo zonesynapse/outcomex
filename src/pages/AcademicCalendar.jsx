@@ -100,7 +100,7 @@ export default function AcademicCalendar() {
     // Fetch CIA Configs for linking
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubCia = onSnapshot(ciaRef, (snap) => { // Use onSnapshot for real-time updates
-      if (snap.exists) { // For QuerySnapshot, use .exists
+      if (!snap.empty) {
         const data = {}; // Convert QuerySnapshot to object
         snap.forEach(doc => { data[doc.id] = doc.data(); });
         setCiaConfigs(Object.entries(data).map(([id, val]) => ({ id, ...val })));

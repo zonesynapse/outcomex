@@ -1,7 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { rtdb } from "../firebase";
-import { ref as dbRef, set, get, onValue, update } from "firebase/database";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { formatProgDisplay, formatProgrammeKey } from "../lib/utils";

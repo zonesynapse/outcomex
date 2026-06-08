@@ -35,7 +35,7 @@ const COConfiguration = () => {
           if (userData.role === 'Faculty') {
             const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
             onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
-              if (assignSnap.exists()) {
+              if (!assignSnap.empty) {
                 const data = {}; // Convert QuerySnapshot to object
                 assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
@@ -120,18 +120,20 @@ const deriveSemesterNumber = (label) => {
 
       // Fetch Course Content from courses node for enriched AI mapping
       const progKey = formatProgrammeKey(programme);
-      const courseRef = ref(rtdb, `courses/${progKey}/${sanitizeKey(department)}/${sanitizeKey(regulation)}/${sanitizeKey(subject)}`);
-      const overallCourseRef = ref(rtdb, `courses/${progKey}/Overall/${sanitizeKey(regulation)}/${sanitizeKey(subject)}`);
+      const compositeKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+      const courseRef = doc(db, 'courses', compositeKey);
+      const overallCompositeKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+      const overallCourseRef = doc(db, 'courses', overallCompositeKey);
 
       let courseDataObj = null;
       try {
-        const snap = await get(courseRef);
+        const snap = await getDoc(courseRef);
         if (snap.exists()) {
-          courseDataObj = snap.val();
+          courseDataObj = snap.data();
         } else {
-          const overallSnap = await get(overallCourseRef);
+          const overallSnap = await getDoc(overallCourseRef);
           if (overallSnap.exists()) {
-            courseDataObj = overallSnap.val();
+            courseDataObj = overallSnap.data();
           }
         }
       } catch (e) {
@@ -267,7 +269,7 @@ Return an exhaustive list of all plausible mappings.`;
   useEffect(() => {
     const bloomsRef = collection(db, "blooms_taxonomy"); // Firestore collection reference
     const unsubscribe = onSnapshot(bloomsRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (snapshot.exists()) {
+      if (!snapshot.empty) {
         const data = {}; // Convert QuerySnapshot to object
         snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         setBloomsTaxonomy(data);
@@ -347,18 +349,29 @@ Return an exhaustive list of all plausible mappings.`;
       if (!semNum) return;
 
       try {
-        const syllabusRef = ref(rtdb, `syllabus_data/${syllabusKey}`);
-        const snapshot = await get(syllabusRef);
-        const data = snapshot.val();
+        console.log('[COCONFIG] fetchSubjects:', { progKey, deptKey, regKey, syllabusKey, semNum, currentReg, department, batch, academicYear, semester });
+        // DEBUG: list all syllabus_data doc IDs
+        getDocs(collection(db, 'syllabus_data'))
+          .then(snap => console.log('[COCONFIG] ALL syllabus_data doc IDs:', snap.docs.map(d => d.id)))
+          .catch(e => console.error('[COCONFIG] list syllabus error:', e));
+        const syllabusRef = doc(db, 'syllabus_data', syllabusKey);
+        const snapshot = await getDoc(syllabusRef);
+        console.log('[COCONFIG] syllabus doc exists:', snapshot.exists(), 'key:', syllabusKey);
+        const data = snapshot.data();
+        console.log('[COCONFIG] syllabus data keys:', data ? Object.keys(data) : null);
         let fetchedSubjects = [];
         
         if (data && data.semesters && data.semesters[semNum]) {
+          console.log('[COCONFIG] semesters found for sem:', semNum, 'count:', data.semesters[semNum].length);
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
             .map(s => ({
             id: s.code,
             name: `${s.code} - ${s.name}`
           }));
+          console.log('[COCONFIG] fetchedSubjects before assignment filter:', fetchedSubjects.length);
+        } else {
+          console.log('[COCONFIG] no semesters data:', { hasData: !!data, hasSemesters: data?.semesters ? true : false, hasSemNum: data?.semesters?.[semNum] ? true : false });
         }
 
         // Filter by HOD Assignments
@@ -368,16 +381,23 @@ Return an exhaustive list of all plausible mappings.`;
           return;
         }
 
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const userSnap = await get(userRef);
-        const userRole = userSnap.exists() ? userSnap.val().role : null;
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
+        const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentPath = `subject_assignments/${progKey}/${deptKey}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}`;
-        const assignmentRef = ref(rtdb, assignmentPath);
-        const assignmentSnap = await get(assignmentRef);
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}`;
+        console.log('[COCONFIG] looking for assignment doc:', assignmentCompositeKey);
+        // DEBUG: list all subject_assignments doc IDs
+        getDocs(collection(db, 'subject_assignments'))
+          .then(snap => console.log('[COCONFIG] ALL subject_assignments doc IDs:', snap.docs.map(d => d.id)))
+          .catch(e => console.error('[COCONFIG] list assignments error:', e));
+        const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey);
+        const assignmentSnap = await getDoc(assignmentRef);
+        console.log('[COCONFIG] assignment doc exists:', assignmentSnap.exists());
         
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.val();
+          const assignments = assignmentSnap.data();
+          console.log('[COCONFIG] assignment keys:', Object.keys(assignments));
           
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             // Show all subjects that have at least one allocation to ANY faculty
@@ -387,14 +407,18 @@ Return an exhaustive list of all plausible mappings.`;
                 userAssignments.forEach(code => allAllocatedCodes.add(code));
               }
             });
+            console.log('[COCONFIG] allAllocatedCodes:', [...allAllocatedCodes]);
             const filteredSubjects = fetchedSubjects.filter(s => allAllocatedCodes.has(s.id));
+            console.log('[COCONFIG] filtered subjects count:', filteredSubjects.length);
             setSubjects(filteredSubjects);
           } else {
             const userAssignments = assignments[currentUser.uid] || [];
+            console.log('[COCONFIG] user assignments:', userAssignments);
             const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.id));
             setSubjects(filteredSubjects);
           }
         } else {
+          console.log('[COCONFIG] no assignment doc, setting empty subjects');
           setSubjects([]);
         }
 
@@ -424,8 +448,10 @@ Return an exhaustive list of all plausible mappings.`;
       const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
       const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
-      const courseRef = doc(db, 'courses', progKey, sanitizeKey(department), sanitizeKey(regulation), sanitizeKey(subject)); // Firestore subcollection path
-      const overallCourseRef = doc(db, 'courses', progKey, 'Overall', sanitizeKey(regulation), sanitizeKey(subject)); // Firestore subcollection path
+      const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+      const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+      const courseRef = doc(db, 'courses', flatCourseKey);
+      const overallCourseRef = doc(db, 'courses', flatOverallKey);
 
       setLoading(true);
 
@@ -715,13 +741,14 @@ Return an exhaustive list of all plausible mappings.`;
     setLoading(true);
     try {
       // 1. Find any other course outcomes for this regulation and subject
-      const coRef = ref(rtdb, 'course_outcomes');
-      const coSnap = await get(coRef);
+      const coRef = collection(db, 'course_outcomes');
+      const coSnap = await getDocs(coRef);
       let foundCOs = null;
       let foundMapping = null;
 
-      if (coSnap.exists()) {
-        const allCOs = coSnap.val();
+      if (!coSnap.empty) {
+        const allCOs = {};
+        coSnap.forEach(doc => { allCOs[doc.id] = doc.data(); });
         // Look for keys containing _regulation_subject_
         const searchStr = `_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_`;
         const matchingKey = Object.keys(allCOs).find(key => key.includes(searchStr));
@@ -731,10 +758,11 @@ Return an exhaustive list of all plausible mappings.`;
       }
 
       // 2. Find any other mapping for this regulation and subject
-      const mappingRef = ref(rtdb, 'mapping_summary');
-      const mappingSnap = await get(mappingRef);
-      if (mappingSnap.exists()) {
-        const allMappings = mappingSnap.val();
+      const mappingRef = collection(db, 'mapping_summary');
+      const mappingSnap = await getDocs(mappingRef);
+      if (!mappingSnap.empty) {
+        const allMappings = {};
+        mappingSnap.forEach(doc => { allMappings[doc.id] = doc.data(); });
         const progKey = formatProgrammeKey(programme);
         const searchStr = `_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_`;
         const matchingKey = Object.keys(allMappings).find(key => key.includes(searchStr));

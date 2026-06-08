@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { rtdb } from "../firebase";
-import { ref, onValue, set } from "firebase/database";
+import { db } from "../firebase";
+import { doc, onSnapshot, getDoc, setDoc } from "firebase/firestore";
 
 const DEFAULT_PROGRAMME_DEPARTMENTS = {
   "B.E.": ["CSE", "ECE", "EEE", "CIVIL", "MECH"],
@@ -14,18 +14,16 @@ export function useProgrammeDepartments() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const configRef = ref(rtdb, "config/programme_departments");
-    const unsubscribe = onValue(configRef, (snapshot) => {
+    const unsub = onSnapshot(doc(db, "config", "programme_departments"), (snapshot) => {
       if (snapshot.exists()) {
-        setProgrammeDepartments(snapshot.val());
+        setProgrammeDepartments(snapshot.data()?.list || DEFAULT_PROGRAMME_DEPARTMENTS);
       } else {
-        // Initialize with defaults if not present
-        set(configRef, DEFAULT_PROGRAMME_DEPARTMENTS);
+        setDoc(doc(db, "config", "programme_departments"), { list: DEFAULT_PROGRAMME_DEPARTMENTS });
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
   const addDepartment = async (programme, newDept) => {
@@ -39,7 +37,7 @@ export function useProgrammeDepartments() {
       [programme]: updatedDepts
     };
 
-    await set(ref(rtdb, "config/programme_departments"), updatedConfig);
+    await setDoc(doc(db, "config", "programme_departments"), { list: updatedConfig });
   };
 
   return { programmeDepartments, addDepartment, loading };

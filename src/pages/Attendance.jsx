@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { rtdb, auth } from "../firebase";
-import { ref, onValue, get, set } from "firebase/database";
+import { db, auth } from "../firebase";
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   CalendarCheck2, 
@@ -68,8 +68,8 @@ export default function Attendance() {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setCurrentUid(user.uid);
-        const snap = await get(ref(rtdb, `users/${user.uid}`));
-        if (snap.exists()) setUserRole(snap.val().role);
+        const snap = await getDoc(doc(db, "users", user.uid));
+        if (snap.exists()) setUserRole(snap.data().role);
       }
     });
     return unsub;
@@ -115,10 +115,10 @@ export default function Attendance() {
 
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
-    const assignmentsRef = ref(rtdb, `subject_assignments/${progKey}/${deptKey}`);
+    const assignmentsRef = doc(db, "subject_assignments", `${progKey}_${deptKey}`);
 
-    const unsubscribe = onValue(assignmentsRef, async (snapshot) => {
-      const data = snapshot.val() || {};
+    const unsubscribe = onSnapshot(assignmentsRef, async (snapshot) => {
+      const data = snapshot.data() || {};
       const contexts = [];
       const batchesToFetchSyllabus = new Set();
 
@@ -144,9 +144,9 @@ export default function Attendance() {
         // Fetch syllabus for all regulations associated with the batches found.
         if (reg) {
           const syllabusKey = `${progKey}_${deptKey}_${sanitizeKey(reg)}`;
-          const syllabusSnap = await get(ref(rtdb, `syllabus_data/${syllabusKey}`));
+          const syllabusSnap = await getDoc(doc(db, "syllabus_data", syllabusKey));
           if (syllabusSnap.exists()) {
-            const syllabus = syllabusSnap.val();
+            const syllabus = syllabusSnap.data();
             Object.values(syllabus.semesters || {}).forEach(semList => {
               if (Array.isArray(semList)) {
                 semList.forEach(s => { if (s && s.code) namesMap[s.code] = s.name; });
@@ -219,18 +219,16 @@ export default function Attendance() {
       }
 
       const progKey = formatProgrammeKey(programme);
-      const allocatedPath = `timetables/${progKey}/${sanitizeKey(batch)}/data`;
 
       try {
-        const allocatedSnap = await get(ref(rtdb, allocatedPath));
+        const allocatedSnap = await getDoc(doc(db, "timetables", `${progKey}_${sanitizeKey(batch)}`));
         if (allocatedSnap.exists()) {
-          const allocatedData = allocatedSnap.val();
+          const allocatedData = allocatedSnap.data();
           const templateName = allocatedData.timetableName;
           if (templateName) {
-            const templatePath = `timetable_templates/${sanitizeKey(templateName)}`;
-            const templateSnap = await get(ref(rtdb, templatePath));
+            const templateSnap = await getDoc(doc(db, "timetable_templates", sanitizeKey(templateName)));
             if (templateSnap.exists()) {
-              const templateConfig = templateSnap.val();
+              const templateConfig = templateSnap.data();
               setTimetableConfig(templateConfig);
 
               const periods = [];
@@ -285,19 +283,18 @@ export default function Attendance() {
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
-    const attendancePath = `attendance/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}/${selectedSubjectObj.code}`;
+    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-    const studentListPath = `students/${compositeKey}`;
     
     const fetchData = async () => {
       try {
         const [attendanceSnap, studentSnap] = await Promise.all([
-          get(ref(rtdb, attendancePath)),
-          get(ref(rtdb, studentListPath))
+          getDoc(doc(db, "attendance", attendanceDocId)),
+          getDoc(doc(db, "students", compositeKey))
         ]);
 
-        const attData = attendanceSnap.val();
-        const masterList = studentSnap.val() || {};
+        const attData = attendanceSnap.data();
+        const masterList = studentSnap.data() || {};
         setAttendanceData(attData);
         const tHours = attData?._meta?.totalHours || "1";
         setTotalConducted(tHours);
@@ -363,13 +360,13 @@ export default function Attendance() {
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
-    const path = `attendance/${progKey}/${sanitizeKey(department)}/${sanitizeKey(batch)}/${sanitizeKey(academicYear)}/${semNum}/${selectedSubjectObj.code}`;
+    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
     
     const studentsMap = {};
     students.forEach(s => { studentsMap[s.reg] = s.hours; });
 
     try {
-      await set(ref(rtdb, path), {
+      await setDoc(doc(db, "attendance", attendanceDocId), {
         _meta: { totalHours: parseInt(totalConducted), date: attendanceDate, period, updatedBy: "Manual", updatedAt: new Date().toISOString() },
         students: studentsMap
       });

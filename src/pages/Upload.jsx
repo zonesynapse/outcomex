@@ -49,51 +49,49 @@ export default function Upload() {
       return;
     }
 
-    const progKey = formatProgrammeKey(syllabusProgramme); // Ensure progKey is sanitized
-    const regKey = sanitizeKey(regulation); // Ensure regKey is sanitized
+    const progKey = formatProgrammeKey(syllabusProgramme);
 
-    const deptRefs = [
-      { dept: syllabusDept, ref: collection(db, 'courses', progKey, sanitizeKey(syllabusDept), regKey) }, // Firestore subcollection path
-      { dept: "Overall", ref: collection(db, 'courses', progKey, 'Overall', regKey) } // Firestore subcollection path
-    ];
-    
-    const unsubs = [];
-    const combined = new Map();
-
-    const rebuild = () => {
-      const list = Array.from(combined.values()).sort((a, b) => {
-        const ac = (a.code || a.key || "").toUpperCase();
-        const bc = (b.code || b.key || "").toUpperCase();
-        return ac.localeCompare(bc);
-      });
-      setAvailableCourses(list);
-    };
-
-    deptRefs.forEach(({ dept, ref: refPath }) => {
-      const unsub = onSnapshot(refPath, (snap) => { // Use onSnapshot for real-time updates
-        for (const [k, v] of combined.entries()) {
-           if (v._sourceDept === dept) combined.delete(k);
-        }
-        if (snap.exists) { // For QuerySnapshot, use .exists
-          const data = {}; // Convert QuerySnapshot to object
-          snap.forEach(d => { data[d.id] = d.data(); });
-          Object.entries(data).forEach(([key, course]) => {
-            combined.set(`${dept}:${key}`, {
-              key,
-              code: course?.code || key,
-              name: course?.name || "",
-              credits: course?.credits || 0,
-              type: course?.type,
-              _sourceDept: dept,
-            });
+    const unsub = onSnapshot(collection(db, 'courses'), (snap) => {
+      const flat = {};
+      snap.forEach(d => {
+        const docData = d.data();
+        const hasDirect = docData?.code || docData?.programme;
+        if (hasDirect) {
+          flat[d.id] = docData;
+        } else {
+          Object.entries(docData).forEach(([deptVal, deptCourses]) => {
+            if (deptCourses && typeof deptCourses === 'object') {
+              Object.entries(deptCourses).forEach(([regVal, regCourses]) => {
+                if (regCourses && typeof regCourses === 'object') {
+                  Object.entries(regCourses).forEach(([cc, courseData]) => {
+                    if (courseData && typeof courseData === 'object') {
+                      flat[`${d.id}_${deptVal}_${regVal}_${cc}`] = courseData;
+                    }
+                  });
+                }
+              });
+            }
           });
         }
-        rebuild();
       });
-      unsubs.push(unsub);
+      const filtered = Object.entries(flat)
+        .filter(([, course]) =>
+          course?.programme === progKey &&
+          course?.regulation === regulation &&
+          (course?.department === syllabusDept || course?.department === "Overall")
+        )
+        .map(([key, course]) => ({
+          key,
+          code: course?.code || key,
+          name: course?.name || "",
+          credits: course?.credits || 0,
+          type: course?.type,
+          _sourceDept: course?.department || "Overall",
+        }));
+      setAvailableCourses(filtered);
     });
 
-    return () => unsubs.forEach(u => u && u());
+    return () => unsub();
   }, [uploadType, syllabusProgramme, syllabusDept, regulation]);
 
   const updateSubjectFromBank = (sem, index, selectedCode) => {
@@ -411,7 +409,7 @@ export default function Upload() {
         const existingSnapshot = await getDoc(syllabusRef); // Use getDoc for Firestore
         const existingData = existingSnapshot.exists() ? existingSnapshot.data() : null; // Use .data() for Firestore documents
         
-        await set(syllabusRef, {
+        await setDoc(syllabusRef, {
           programme: syllabusProgramme,
           department: deptVal,
           regulation: regulation,

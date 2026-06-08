@@ -118,7 +118,7 @@ export default function HODRoleConfig() {
       const deptKey = sanitizeKey(currentUserData.department);
 
       // Fetch Incoming
-      const incomingRef = collection(db, 'inter_dept_requests', 'incoming', deptKey, 'requests');
+      const incomingRef = collection(db, 'inter_dept_requests', 'incoming', deptKey);
       const unsubIncoming = onSnapshot(incomingRef, (snapshot) => {
         const requests = [];
         snapshot.forEach(doc => { 
@@ -128,7 +128,7 @@ export default function HODRoleConfig() {
       });
 
       // Fetch Sent
-      const outgoingRef = collection(db, 'inter_dept_requests', 'outgoing', deptKey, 'requests');
+      const outgoingRef = collection(db, 'inter_dept_requests', 'outgoing', deptKey);
       const unsubOutgoing = onSnapshot(outgoingRef, (snapshot) => {
         const requests = [];
         snapshot.forEach(doc => { 
@@ -138,7 +138,7 @@ export default function HODRoleConfig() {
       });
       
       // Fetch Fulfilled (Requests I handled)
-      const fulfilledRef = collection(db, 'inter_dept_requests', 'fulfilled', deptKey, 'requests');
+      const fulfilledRef = collection(db, 'inter_dept_requests', 'fulfilled', deptKey);
       const unsubFulfilled = onSnapshot(fulfilledRef, (snapshot) => {
         const requests = [];
         snapshot.forEach(doc => { 
@@ -328,8 +328,8 @@ export default function HODRoleConfig() {
         requestedAt: Date.now()
       };
 
-      await setDoc(doc(db, 'inter_dept_requests', 'incoming', sanitizeKey(targetDept), 'requests', requestId), payload);
-      await setDoc(doc(db, 'inter_dept_requests', 'outgoing', sanitizeKey(currentUserData.department), 'requests', requestId), payload);
+      await setDoc(doc(db, 'inter_dept_requests', 'incoming', sanitizeKey(targetDept), requestId), payload);
+      await setDoc(doc(db, 'inter_dept_requests', 'outgoing', sanitizeKey(currentUserData.department), requestId), payload);
       
       showToast("Request sent to other HOD successfully!");
       setRequestModal({ open: false, subject: null });
@@ -366,9 +366,9 @@ export default function HODRoleConfig() {
         processedAt: Date.now() 
       };
 
-      batch.delete(doc(db, 'inter_dept_requests', 'incoming', toKey, 'requests', request.id));
-      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, 'requests', request.id), statusUpdate);
-      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, 'requests', request.id), statusUpdate);
+      batch.delete(doc(db, 'inter_dept_requests', 'incoming', toKey, request.id));
+      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, request.id), statusUpdate);
 
       await batch.commit();
       showToast(`Request ${status} successfully!`);
@@ -414,8 +414,8 @@ export default function HODRoleConfig() {
         processedAt: Date.now() 
       };
 
-      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, 'requests', request.id), statusUpdate);
-      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, 'requests', request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, request.id), statusUpdate);
       
       await batch.commit();
       showToast("Assigned faculty updated successfully!");
@@ -458,12 +458,12 @@ export default function HODRoleConfig() {
       
       // Process newly assigned subjects' COs
       for (const subjectCode of allAssignedSubjects) {
-        let courseRef = doc(db, 'courses', progKey, sanitizeKey(syllabusDept), sanitizeKey(regulation), sanitizeKey(subjectCode));
+        let courseRef = doc(db, 'courses', `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}`);
         let snap = await getDoc(courseRef);
         let isOverall = false;
 
         if (!snap.exists()) {
-          courseRef = doc(db, 'courses', progKey, 'Overall', sanitizeKey(regulation), sanitizeKey(subjectCode));
+          courseRef = doc(db, 'courses', `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}`);
           snap = await getDoc(courseRef);
           isOverall = true;
         }

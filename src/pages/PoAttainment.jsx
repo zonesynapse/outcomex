@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
-import { auth, rtdb } from "../firebase";
-import { ref, get, onValue, set, remove, serverTimestamp } from "firebase/database";
+import { auth, db } from "../firebase";
+import { doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, deleteField } from "firebase/firestore";
 import { 
   BarChart, 
   Bar,
@@ -30,7 +30,12 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
+import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+
+const sanitizeKey = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+};
 
 export default function PoAttainment() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -85,11 +90,12 @@ export default function PoAttainment() {
     const batchKey = sanitizeKey(batch);
     const regKey = sanitizeKey(regulation);
     
-    const actionsRef = ref(rtdb, `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}`);
+    const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+    const actionsRef = doc(db, "po_actions_taken", compositeKey);
 
-    const unsubscribe = onValue(actionsRef, (snapshot) => {
+    const unsubscribe = onSnapshot(actionsRef, (snapshot) => {
       if (snapshot.exists()) {
-        setActionsTaken(snapshot.val());
+        setActionsTaken(snapshot.data());
       } else {
         setActionsTaken({});
       }
@@ -113,18 +119,20 @@ export default function PoAttainment() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
       
-      const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${selectedOutcome.name}`;
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
       
-      await set(ref(rtdb, actionPath), {
-        batch,
-        programme,
-        department,
-        regulation,
-        outcomeCode: selectedOutcome.name,
-        action: actionText,
-        updatedAt: serverTimestamp(),
-        updatedBy: auth.currentUser?.uid
-      });
+      await setDoc(doc(db, "po_actions_taken", compositeKey), {
+        [selectedOutcome.name]: {
+          batch,
+          programme,
+          department,
+          regulation,
+          outcomeCode: selectedOutcome.name,
+          action: actionText,
+          updatedAt: serverTimestamp(),
+          updatedBy: auth.currentUser?.uid
+        }
+      }, { merge: true });
       setIsActionModalOpen(false);
     } catch (error) {
       console.error("Error saving action taken:", error);
@@ -142,8 +150,10 @@ export default function PoAttainment() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
       
-      const actionPath = `po_actions_taken/${progKey}/${deptKey}/${batchKey}/${regKey}/${outcomeCode}`;
-      await remove(ref(rtdb, actionPath));
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+      await updateDoc(doc(db, "po_actions_taken", compositeKey), {
+        [outcomeCode]: deleteField()
+      });
     } catch (error) {
       console.error("Error deleting action plan:", error);
       alert("Failed to delete action plan.");
@@ -168,8 +178,8 @@ export default function PoAttainment() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
       
-      const scoresPath = `survey_scores/${progKey}/${deptKey}/${batchKey}/${regKey}`;
-      await set(ref(rtdb, scoresPath), surveyScores);
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+      await setDoc(doc(db, "survey_scores", compositeKey), surveyScores);
       alert("Survey scores saved successfully!");
     } catch (error) {
       console.error("Error saving survey scores:", error);
@@ -189,10 +199,10 @@ export default function PoAttainment() {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      get(userRef).then(snapshot => {
+      const userRef = doc(db, "users", user.uid);
+      getDoc(userRef).then(snapshot => {
         if (snapshot.exists()) {
-          setUserRole(snapshot.val().role);
+          setUserRole(snapshot.data().role);
         }
       });
     }
@@ -216,22 +226,23 @@ export default function PoAttainment() {
         const batchKey = sanitizeKey(batch);
 
         // Fetch PO/PSO configuration
-        const poConfigRef = ref(rtdb, `po_configuration/${progKey}/${deptKey}/${regKey}`);
-        const poConfigSnap = await get(poConfigRef);
-        const poConfig = poConfigSnap.val() || {};
+        const poConfigRef = doc(db, "po_configuration", `${progKey}_${deptKey}_${regKey}`);
+        const poConfigSnap = await getDoc(poConfigRef);
+        const poConfig = poConfigSnap.data() || {};
         
         const posSet = new Set();
         const psosSet = new Set();
         if (poConfig.pos) poConfig.pos.forEach(po => po.code && posSet.add(po.code));
         if (poConfig.psos) poConfig.psos.forEach(pso => pso.code && psosSet.add(pso.code));
         
-        const summaryRef = ref(rtdb, `mapping_summary`);
-        const summarySnap = await get(summaryRef);
-        const allSummaries = summarySnap.val() || {};
+        const summaryRef = collection(db, `mapping_summary`);
+        const summarySnap = await getDocs(summaryRef);
 
         const summariesMap = {};
         const prefix = `${batchKey}_${progKey}_${regKey}_`;
-        Object.entries(allSummaries).forEach(([key, summaryData]) => {
+        summarySnap.forEach(doc_ => {
+          const key = doc_.id;
+          const summaryData = doc_.data();
           if (key.startsWith(prefix)) {
              summariesMap[key] = summaryData;
              if (summaryData.summary) {
@@ -251,9 +262,9 @@ export default function PoAttainment() {
 
         // Fetch Attainment Configuration from po_pso
         const compositeKey = `${progKey}_${regKey}__${deptKey}`;
-        const poPsoConfigRef = ref(rtdb, `po_pso/${compositeKey}`);
-        const poPsoConfigSnap = await get(poPsoConfigRef);
-        const poPsoConfig = poPsoConfigSnap.val() || {};
+        const poPsoConfigRef = doc(db, "po_pso", compositeKey);
+        const poPsoConfigSnap = await getDoc(poPsoConfigRef);
+        const poPsoConfig = poPsoConfigSnap.data() || {};
         
         const dWeight = parseFloat(poPsoConfig.direct_weight) || 80;
         const iWeight = parseFloat(poPsoConfig.indirect_weight) || 20;
@@ -261,18 +272,21 @@ export default function PoAttainment() {
         setAttainmentConfig({ directWeight: dWeight, indirectWeight: iWeight, surveys: survs });
 
         // Fetch existing survey scores
-        const surveyScoresRef = ref(rtdb, `survey_scores/${progKey}/${deptKey}/${batchKey}/${regKey}`);
-        const surveyScoresSnap = await get(surveyScoresRef);
-        setSurveyScores(surveyScoresSnap.val() || {});
+        const surveyScoresRef = doc(db, "survey_scores", `${progKey}_${deptKey}_${batchKey}_${regKey}`);
+        const surveyScoresSnap = await getDoc(surveyScoresRef);
+        setSurveyScores(surveyScoresSnap.data() || {});
 
         // Fetch Syllabus to map subCode -> semester
-        const syllabusRef = ref(rtdb, `syllabus_data/${progKey}_${deptKey}_${regKey}`);
-        const syllabusSnap = await get(syllabusRef);
-        const syllabus = syllabusSnap.val();
+        const syllabusRef = doc(db, "syllabus_data", `${progKey}_${deptKey}_${regKey}`);
+        const syllabusSnap = await getDoc(syllabusRef);
+        const syllabus = syllabusSnap.data();
         
-        const ciaRef = ref(rtdb, 'cia_configs');
-        const ciaSnap = await get(ciaRef);
-        const ciaConfigs = ciaSnap.val() || {};
+        const ciaRef = collection(db, 'cia_configs');
+        const ciaSnap = await getDocs(ciaRef);
+        const ciaConfigs = {};
+        ciaSnap.forEach(doc_ => {
+          ciaConfigs[doc_.id] = doc_.data();
+        });
         
         const subToSem = {};
         const subMetadata = {};
@@ -316,8 +330,8 @@ export default function PoAttainment() {
               
               const coAttKey = `${batchKey}_${sanitizeKey(programme)}_${deptKey}_${subCode}_${ayKey}_${semKey}`;
               
-              const promise = get(ref(rtdb, `co_attainment/${coAttKey}`)).then(coAttSnap => {
-                   const coAttData = coAttSnap.val();
+              const promise = getDoc(doc(db, "co_attainment", coAttKey)).then(coAttSnap => {
+                   const coAttData = coAttSnap.data();
                    
                    // 1. Calculate Mapping Averages (Targets) regardless of attainment existence
                    const subMappingResults = {};

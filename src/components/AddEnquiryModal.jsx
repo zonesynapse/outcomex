@@ -1313,7 +1313,15 @@ export default function AddEnquiryModal({
                   </Field>
                   
                   <Field label="Nationality" error={errors.nationality} readOnly={readOnly}><input value={form.nationality} onChange={(event) => handleChange("nationality", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Nationality" readOnly={readOnly} /></Field>
-                  <Field label="Religion" error={errors.religion} readOnly={readOnly}><input value={form.religion} onChange={(event) => handleChange("religion", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Religion" readOnly={readOnly} /></Field>
+                  <Field label="Religion" error={errors.religion} readOnly={readOnly}>
+                    <select value={form.religion} onChange={(event) => handleChange("religion", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>
+                      <option value="">Select religion</option>
+                      <option value="Hindu">Hindu</option>
+                      <option value="Muslim">Muslim</option>
+                      <option value="Christian">Christian</option>
+                      <option value="others">others</option>
+                    </select>
+                  </Field>
                   <Field label="Caste" error={errors.caste} readOnly={readOnly}><input value={form.caste} onChange={(event) => handleChange("caste", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Caste" readOnly={readOnly} /></Field>
                   <Field label="Community" required error={errors.community} readOnly={readOnly}>
                     <select value={form.community} onChange={(event) => handleChange("community", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} disabled={readOnly}>

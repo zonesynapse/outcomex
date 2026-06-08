@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { db, auth } from "../firebase"; // Import db for Firestore
-import { doc, collection, setDoc, onSnapshot, getDoc, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
+import { doc, collection, setDoc, onSnapshot, getDoc, updateDoc, getDocs, deleteDoc, deleteField } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   Trash2,
@@ -79,10 +79,10 @@ export default function Curriculum() {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const userRef = ref(rtdb, `users/${currentUser.uid}`);
-        const snapshot = await get(userRef);
+        const userRef = doc(db, "users", currentUser.uid);
+        const snapshot = await getDoc(userRef);
         if (snapshot.exists()) {
-          setUserData(snapshot.val());
+          setUserData(snapshot.data());
         }
       }
       setLoading(false);
@@ -1221,7 +1221,7 @@ export default function Curriculum() {
                                         "Unmap Batch",
                                         `Unmap batch ${formatBatchDisplay(batch)} from ${mapping.regulation}?`,
                                         async () => {
-                                          await set(ref(rtdb, `batch_regulations/${mapping.progKey}/${batch}`), null);
+                                          await updateDoc(doc(db, "batch_regulations", mapping.progKey), { [batch]: deleteField() });
                                           setSuccessMessage("Mapping removed successfully!");
                                           setShowSuccess(true);
                                           setTimeout(() => setShowSuccess(false), 3000);
