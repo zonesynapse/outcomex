@@ -478,14 +478,18 @@ export default function CoPoMapping() {
           return tb - ta;
         });
 
-        // choose latest internal (non-university, non-indirect) child for direct attainment
+        // Collect ALL unique CO keys from all internal children (not just the latest)
         const internalChildren = children.filter(c => !c.isUniversity && !c.isIndirect);
-        const chosen = internalChildren.length > 0 ? internalChildren[0] : (children[0] || null);
+        const directChildren = internalChildren.length > 0 ? internalChildren : children;
 
-        const consolidationData = chosen ? { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || {} } : { studentTotals: {}, maxMarks: {} };
+        const allCoKeysSet = new Set();
+        directChildren.forEach(child => {
+          Object.keys(child.data.co_max_marks || {}).forEach(k => {
+            allCoKeysSet.add(k);
+          });
+        });
 
-        // Compute direct attainment summary
-        const coKeysLocal = Object.keys(consolidationData.maxMarks || {}).sort((a, b) => {
+        const coKeysLocal = Array.from(allCoKeysSet).sort((a, b) => {
           const na = Number(a.replace(/[^0-9]/g, '')) || 0;
           const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
           return na - nb;
@@ -493,15 +497,25 @@ export default function CoPoMapping() {
 
         const attainmentStats = {};
         coKeysLocal.forEach(co => {
+          // Aggregate student marks and max marks for this CO across all direct children
+          const mergedStudentMarks = {};
+          let totalMaxMark = 0;
+
+          directChildren.forEach(child => {
+            const childMax = Number(child.data.co_max_marks?.[co] || 0);
+            totalMaxMark += childMax;
+            Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
+              const mark = Number(marks?.[co] || 0);
+              mergedStudentMarks[studentId] = (mergedStudentMarks[studentId] || 0) + mark;
+            });
+          });
+
           let countGreaterEqual = 0;
           let countLess = 0;
-          const studentTotals = Object.values(consolidationData.studentTotals || {});
-          const totalStudents = studentTotals.length;
+          const totalStudents = Object.keys(mergedStudentMarks).length;
 
-          studentTotals.forEach(s => {
-            const mark = s[co] || 0;
-            const maxMark = consolidationData.maxMarks[co] || 100;
-            const markPct = maxMark > 0 ? (mark / maxMark) * 100 : 0;
+          Object.values(mergedStudentMarks).forEach(total => {
+            const markPct = totalMaxMark > 0 ? (total / totalMaxMark) * 100 : 0;
             if (markPct >= Number(mappingCutoff || 0)) {
               countGreaterEqual++;
             } else {

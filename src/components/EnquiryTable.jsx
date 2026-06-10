@@ -74,7 +74,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Department</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Status</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Date</th>
-              <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Admission</th>
+              <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Application</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Actions</th>
             </tr>
           </thead>
@@ -104,15 +104,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                       <CheckCircle2 size={12} className="text-green-600" />
                       Admitted
                     </span>
-                  ) : enquiry.status === "Application" ? (
-                    <button
-                      type="button"
-                      onClick={() => onMove?.(enquiry)}
-                      className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-semibold shadow-sm transition-all"
-                    >
-                      Move
-                    </button>
-                  ) : (
+                  ) : enquiry.status === "Enquiry" ? (
                     <button
                       type="button"
                       onClick={() => onMove?.(enquiry)}
@@ -120,7 +112,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                     >
                       Move
                     </button>
-                  )}
+                  ) : null}
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-center gap-2">
@@ -132,22 +124,26 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                     >
                       <Eye size={16} />
                     </button>
-                    <button
-                      type="button"
-                      title="Edit"
-                      onClick={() => onEdit?.(enquiry)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete"
-                      onClick={() => onDelete?.(enquiry)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-red-200 hover:text-red-600"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    {enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
+                      <button
+                        type="button"
+                        title="Edit"
+                        onClick={() => onEdit?.(enquiry)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    )}
+                    {enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
+                      <button
+                        type="button"
+                        title="Delete"
+                        onClick={() => onDelete?.(enquiry)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-red-200 hover:text-red-600"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

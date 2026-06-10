@@ -265,7 +265,9 @@ export default function CreateCourse() {
           const courseDept = normalize(course?.department || '');
           const matchProg = courseProg === progKey || normalize(course?.programme || '') === progKey;
           const matchReg = courseReg === normalize(regulation);
-          const matchDept = !department || courseDept === normalize(department) || courseDept === "Overall";
+          const matchDept = department
+            ? courseDept === normalize(department) || courseDept === "Overall"
+            : courseDept === "Overall";
           return matchProg && matchReg && matchDept;
         })
         .map(([key, course]) => ({

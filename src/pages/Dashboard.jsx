@@ -266,7 +266,7 @@ export default function Dashboard() {
     if (!questionPapers.length) return [];
     
     let filtered = questionPapers;
-    if (userRole !== 'Admin') {
+    if (userRole === 'Faculty') {
       filtered = filtered.filter(qp => userAssignments.includes(qp.subject));
     }
     if (field === 'academic_year') filtered = filtered.filter(qp => !batch || qp.batch === batch);
@@ -1515,7 +1515,7 @@ export default function Dashboard() {
                     <option value="">Choose Subject</option>
                     {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
                       ?.filter(sub => sub != null && sub.isActive !== false)
-                      ?.filter(sub => userAssignments.includes(sub.code))
+                      ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
                       ?.map(sub => (
                       <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
                     ))}
@@ -1831,7 +1831,7 @@ export default function Dashboard() {
               ) : (
                 (() => {
                   const filteredQPs = questionPapers
-                    .filter(qp => userAssignments.includes(qp.subject))
+                    .filter(qp => userRole !== 'Faculty' || userAssignments.includes(qp.subject))
                     .filter(qp => !batch || qp.batch === batch)
                     .filter(qp => !academicYear || qp.academic_year === academicYear)
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))

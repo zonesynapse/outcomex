@@ -356,7 +356,7 @@ export default function HODRoleConfig() {
         const assignRef = doc(db, 'subject_assignments', progKey, fromKey, sanitizeKey(request.batch), sanitizeKey(request.academicYear), request.semester);
         const snap = await getDoc(assignRef);
         const current = snap.exists() ? (snap.data()[facultyUid] || []) : [];
-        batch.update(assignRef, { [facultyUid]: [...new Set([...current, request.subjectCode])] });
+        batch.set(assignRef, { [facultyUid]: [...new Set([...current, request.subjectCode])] }, { merge: true });
       }
 
       const statusUpdate = { 
@@ -399,14 +399,14 @@ export default function HODRoleConfig() {
         const oldAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
         const oldSnap = await getDoc(oldAssignRef);
         const oldSubs = oldSnap.exists() ? (oldSnap.data()[request.allocatedFacultyUid] || []) : [];
-        batch.update(oldAssignRef, { [request.allocatedFacultyUid]: oldSubs.filter(code => code !== request.subjectCode) });
+        batch.set(oldAssignRef, { [request.allocatedFacultyUid]: oldSubs.filter(code => code !== request.subjectCode) }, { merge: true });
       }
 
       // 2. Add subject to new faculty's assignments
       const newAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
       const newSnap = await getDoc(newAssignRef);
       const newSubs = newSnap.exists() ? (newSnap.data()[newFacultyUid] || []) : [];
-      batch.update(newAssignRef, { [newFacultyUid]: [...new Set([...newSubs, request.subjectCode])] });
+      batch.set(newAssignRef, { [newFacultyUid]: [...new Set([...newSubs, request.subjectCode])] }, { merge: true });
       
       const statusUpdate = { 
         ...request, 

@@ -23,7 +23,7 @@ function SkeletonCard() {
   );
 }
 
-export default function DashboardCards({ stats = {}, loading = false, cards = DEFAULT_CARDS }) {
+export default function DashboardCards({ stats = {}, loading = false, cards = DEFAULT_CARDS, onCardClick }) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
@@ -43,7 +43,10 @@ export default function DashboardCards({ stats = {}, loading = false, cards = DE
         return (
           <div
             key={card.key}
-            className="group rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+            onClick={() => onCardClick?.(card.key)}
+            className={`group rounded-2xl border bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+              onCardClick ? "cursor-pointer border-zinc-200 hover:border-[#120c7a]" : "border-zinc-200"
+            }`}
           >
             <div className="flex items-start justify-between gap-4">
               <div>

@@ -82,7 +82,8 @@ export default function AddEnquiryModal({
   departments = [],
   saving = false,
   onClose,
-  onSubmit
+  onSubmit,
+  showReceipt = true
 }) {
   const { departments: allDepartments, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
@@ -99,22 +100,15 @@ export default function AddEnquiryModal({
   const readOnly = mode === "view";
 
   useEffect(() => {
-    if (form.programme && form.batch) {
-      const progKey = formatProgrammeKey(form.programme);
-      const docId = `${progKey}_${sanitizeKey(form.batch)}`;
-      const unsub = onSnapshot(doc(db, "fee_configurations", docId), (snapshot) => {
-        if (snapshot.exists()) {
-           const data = snapshot.data();
-           setFeeCategoriesOptions(data.categories || []);
-        } else {
-           setFeeCategoriesOptions([]);
-        }
-      });
-      return () => unsub();
-    } else {
-      setFeeCategoriesOptions([]);
-    }
-  }, [form.programme, form.batch]);
+    const unsub = onSnapshot(doc(db, "fee_categories", "global"), (snapshot) => {
+      if (snapshot.exists()) {
+        setFeeCategoriesOptions(snapshot.data().categories || []);
+      } else {
+        setFeeCategoriesOptions([]);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = getSeatConfigurationsRealtime((data) => {
@@ -1721,7 +1715,7 @@ export default function AddEnquiryModal({
                     </div>
                     
                     <div className="flex items-center gap-2 shrink-0">
-                      {payment.feeCategory && payment.feeAmount && (
+                      {showReceipt && payment.feeCategory && payment.feeAmount && (
                         <button
                           type="button"
                           onClick={() => handleDownloadReceipt(payment, index)}
@@ -1783,7 +1777,7 @@ export default function AddEnquiryModal({
                     Add Another Payment
                   </button>
                   
-                  {form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
+                  {showReceipt && form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
                     <button
                       type="button"
                       onClick={handleDownloadConsolidatedReceipt}
@@ -1795,7 +1789,7 @@ export default function AddEnquiryModal({
                   )}
                 </div>
               )}
-              {readOnly && form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
+              {showReceipt && readOnly && form.payments && form.payments.length > 1 && form.payments.some(p => parseFloat(p.feeAmount) > 0) && (
                  <div className="flex justify-end">
                     <button
                       type="button"

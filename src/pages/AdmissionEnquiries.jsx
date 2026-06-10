@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Plus, Search, Inbox, X, Trash2, CheckCircle2 } from "lucide-react";
+import { Filter, Plus, Search, Inbox, X, Trash2 } from "lucide-react";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
 import EnquiryTable from "../components/EnquiryTable";
 import AddEnquiryModal from "../components/AddEnquiryModal";
-import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
+import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById } from "../services/enquiryService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission"];
-
-const getTodayKey = (value) => new Date(value).toDateString();
 
 const hasQuotaSeats = (config) => {
   if (!config || !config.quotas) return false;
@@ -36,23 +34,43 @@ export default function AdmissionEnquiries() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
-  const [admissionMoveTarget, setAdmissionMoveTarget] = useState(null);
-  const [selectedAdmissionDept, setSelectedAdmissionDept] = useState("");
   const [seatConfigs, setSeatConfigs] = useState({});
+  const [pageCursors, setPageCursors] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0 });
+  const PAGE_SIZE = 20;
+
+  const loadPage = async (page, cursor) => {
+    setLoading(true);
+    try {
+      const result = await getEnquiriesPaginated({ pageSize: PAGE_SIZE, startAfterDoc: cursor });
+      setEnquiries(result.items);
+      setHasMore(result.hasMore);
+      setPageCursors((prev) => {
+        const next = [...prev];
+        next[page - 1] = result.lastDoc;
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to load enquiries:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const goToPage = (page) => {
+    if (page < 1) return;
+    const cursor = page > 1 ? pageCursors[page - 2] : null;
+    setCurrentPage(page);
+    loadPage(page, cursor);
+  };
 
   useEffect(() => {
-    setLoading(true);
-    const unsubscribe = getEnquiriesRealtime(
-      (items) => {
-        setEnquiries(items);
-        setLoading(false);
-      },
-      () => setLoading(false)
-    );
-
-    return () => {
-      if (typeof unsubscribe === "function") unsubscribe();
-    };
+    goToPage(1);
+    getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
+    getEnquiriesStats().then(setStats).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -93,17 +111,7 @@ export default function AdmissionEnquiries() {
     });
   }, [enquiries, searchTerm, departmentFilter, statusFilter]);
 
-  const stats = useMemo(() => {
-    const today = getTodayKey(Date.now());
-
-    return {
-      total: enquiries.length,
-      today: enquiries.filter((enquiry) => getTodayKey(enquiry.createdAt) === today).length,
-      new: enquiries.filter((enquiry) => enquiry.status === "Enquiry").length,
-      application: enquiries.filter((enquiry) => enquiry.status === "Application").length,
-      admission: enquiries.filter((enquiry) => enquiry.status === "Admission").length
-    };
-  }, [enquiries]);
+  // stats now come from getEnquiriesStats (aggregation queries on the entire dataset)
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
@@ -139,15 +147,11 @@ export default function AdmissionEnquiries() {
   };
 
   const handleMove = (enquiry) => {
-    if (enquiry.status === "Enquiry") {
-      openEditModal({
-        ...enquiry,
-        status: "Application"
-      });
-    } else if (enquiry.status === "Application") {
-      setAdmissionMoveTarget(enquiry);
-      setSelectedAdmissionDept(enquiry.department || enquiry.department2 || enquiry.department3 || "");
-    }
+    if (enquiry.status !== "Enquiry") return;
+    openEditModal({
+      ...enquiry,
+      status: "Application"
+    });
   };
 
   const handleSave = async (values) => {
@@ -161,9 +165,11 @@ export default function AdmissionEnquiries() {
         showToast("Enquiry updated successfully");
       } else {
         await addEnquiry(values);
-        showToast("Enquiry created successfully");
       }
       closeModal();
+      refreshPage();
+      getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
+      getEnquiriesStats().then(setStats).catch(() => {});
     } catch (error) {
       console.error("Enquiry save error:", error);
       const msg = error.code === 'permission-denied' ? "Permission Denied: You don't have Admin rights." : "Failed to save enquiry";
@@ -178,6 +184,9 @@ export default function AdmissionEnquiries() {
     try {
       await deleteEnquiry(deleteTarget.enquiryId);
       showToast("Enquiry deleted successfully");
+      refreshPage();
+      getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
+      getEnquiriesStats().then(setStats).catch(() => {});
     } catch (error) {
       console.error("Delete enquiry error:", error);
       showToast("Failed to delete enquiry", "error");
@@ -192,27 +201,14 @@ export default function AdmissionEnquiries() {
     setStatusFilter("All");
   };
 
-  const isEmpty = !loading && enquiries.length === 0;
+  const isEmpty = !loading && totalCount === 0;
   const noFilteredResults = !loading && enquiries.length > 0 && filteredEnquiries.length === 0;
+
+  const refreshPage = () => goToPage(currentPage);
 
   return (
     <Layout title="Admission Enquiries">
       <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#120c7a]/70">Admissions</p>
-            <h1 className="mt-2 text-2xl font-bold text-zinc-900 md:text-3xl">Admission Enquiries</h1>
-            <p className="mt-2 max-w-2xl text-sm text-zinc-500">Track incoming admission interest, filter the pipeline, and manage enquiries in real time.</p>
-          </div>
-          <button
-            type="button"
-            onClick={openAddModal}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#120c7a] px-5 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0f0a66] hover:shadow-md"
-          >
-            <Plus size={18} />
-            New Enquiry
-          </button>
-        </div>
 
         <DashboardCards loading={loading} stats={stats} />
 
@@ -269,6 +265,14 @@ export default function AdmissionEnquiries() {
                 <Filter size={16} />
                 Clear
               </button>
+              <button
+                type="button"
+                onClick={openAddModal}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#120c7a] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0f0a66] hover:shadow-md"
+              >
+                <Plus size={18} />
+                New Enquiry
+              </button>
             </div>
           </div>
         </div>
@@ -316,6 +320,32 @@ export default function AdmissionEnquiries() {
               onMove={handleMove}
             />
           )}
+
+          {!isEmpty && !noFilteredResults && (
+            <div className="mt-4 flex items-center justify-between">
+              <span className="text-sm text-zinc-500">
+                Page {currentPage} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))} ({totalCount} total)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={currentPage === 1}
+                  onClick={() => goToPage(currentPage - 1)}
+                  className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasMore}
+                  onClick={() => goToPage(currentPage + 1)}
+                  className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -327,6 +357,7 @@ export default function AdmissionEnquiries() {
         saving={saving}
         onClose={closeModal}
         onSubmit={handleSave}
+        showReceipt={false}
       />
 
       {deleteTarget && (
@@ -360,123 +391,6 @@ export default function AdmissionEnquiries() {
                 className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700"
               >
                 Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {admissionMoveTarget && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-                <CheckCircle2 size={22} />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-bold text-zinc-900">Finalize Admission</h3>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Select the finalized department to admit{" "}
-                  <strong className="text-zinc-900">
-                    {admissionMoveTarget.firstName || admissionMoveTarget.lastName 
-                      ? `${admissionMoveTarget.firstName || ""} ${admissionMoveTarget.lastName || ""}`.trim() 
-                      : admissionMoveTarget.studentName || "Student"}
-                  </strong> (App No: {admissionMoveTarget.applicationNo || "N/A"}).
-                </p>
-
-                <div className="mt-4 space-y-3">
-                  <span className="block text-xs font-bold uppercase tracking-wider text-zinc-400">Department Choices</span>
-                  
-                  {(() => {
-                    const choices = [
-                      { label: "Choice 1", value: admissionMoveTarget.department },
-                      { label: "Choice 2", value: admissionMoveTarget.department2 },
-                      { label: "Choice 3", value: admissionMoveTarget.department3 }
-                    ].filter(item => Boolean(item.value));
-
-                    if (choices.length === 0) {
-                      return (
-                        <p className="text-xs text-red-600 bg-red-50 p-3 rounded-xl border border-red-200">
-                          This applicant has no departments chosen in their application. Please edit the application to select departments first.
-                        </p>
-                      );
-                    }
-
-                    return (
-                      <div className="space-y-2">
-                        {choices.map((choice, idx) => (
-                          <label
-                            key={idx}
-                            className={`flex items-center gap-3 rounded-xl border p-3 text-sm font-medium transition-all cursor-pointer ${
-                              selectedAdmissionDept === choice.value
-                                ? "border-[#120c7a] bg-[#120c7a]/5 text-[#120c7a]"
-                                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="admissionDept"
-                              value={choice.value}
-                              checked={selectedAdmissionDept === choice.value}
-                              onChange={() => setSelectedAdmissionDept(choice.value)}
-                              className="h-4 w-4 border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]"
-                            />
-                            <div>
-                              <span className="text-xs text-zinc-400 font-normal block">{choice.label}</span>
-                              {choice.value}
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-            
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setAdmissionMoveTarget(null);
-                  setSelectedAdmissionDept("");
-                }}
-                className="rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={(() => {
-                  const hasChoices = Boolean(admissionMoveTarget.department || admissionMoveTarget.department2 || admissionMoveTarget.department3);
-                  return !selectedAdmissionDept || !hasChoices;
-                })()}
-                onClick={async () => {
-                  if (!selectedAdmissionDept) return;
-                  setSaving(true);
-                  try {
-                    await updateEnquiry(admissionMoveTarget.enquiryId, {
-                      ...admissionMoveTarget,
-                      status: "Admission",
-                      department: selectedAdmissionDept
-                    });
-                    showToast(`Admitted successfully to ${selectedAdmissionDept}`);
-                    setAdmissionMoveTarget(null);
-                    setSelectedAdmissionDept("");
-                  } catch (err) {
-                    console.error("Admission move error:", err);
-                    showToast("Failed to finalize admission", "error");
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                className={`rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors ${
-                  !selectedAdmissionDept
-                    ? "bg-zinc-300 cursor-not-allowed"
-                    : "bg-emerald-600 hover:bg-emerald-700"
-                }`}
-              >
-                {saving ? "Admitting..." : "Confirm Admission"}
               </button>
             </div>
           </div>

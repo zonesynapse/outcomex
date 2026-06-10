@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase";
-import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs } from "firebase/firestore";
+import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs, query, orderBy, limit, startAfter, getCountFromServer, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search } from "lucide-react";
 import Layout from "../components/Layout";
@@ -15,6 +15,16 @@ export default function AdminRoleConfig() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [userSearchTerm, setUserSearchTerm] = useState("");
+  const [allUsers, setAllUsers] = useState([]);
+  const [masterAdminUser, setMasterAdminUser] = useState(null);
+  const [defaultAdminUser, setDefaultAdminUser] = useState(null);
+
+  // Pagination
+  const [pageCursors, setPageCursors] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalUserCount, setTotalUserCount] = useState(0);
+  const PAGE_SIZE = 20;
 
   // Revoke Modal State
   const [revokeModalOpen, setRevokeModalOpen] = useState(false);
@@ -38,11 +48,50 @@ export default function AdminRoleConfig() {
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
   const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
 
+  const loadUsersPage = async (page, cursor) => {
+    setLoading(true);
+    try {
+      const usersRef = collection(db, "users");
+      const constraints = [orderBy("displayName"), limit(PAGE_SIZE + 1)];
+      if (cursor) constraints.push(startAfter(cursor));
+      const q = query(usersRef, ...constraints);
+      const snapshot = await getDocs(q);
+      const docs = snapshot.docs;
+      const items = docs.slice(0, PAGE_SIZE).map((docSnap) => ({
+        ...docSnap.data(),
+        uid: docSnap.id,
+        role: docSnap.data().role || "Faculty",
+        isApproved: docSnap.data().isApproved || false
+      }));
+      setHasMore(docs.length > PAGE_SIZE);
+      setUsers(items);
+      setPageCursors((prev) => {
+        const next = [...prev];
+        next[page - 1] = docs.length > 0 ? docs[Math.min(docs.length, PAGE_SIZE) - 1] : null;
+        return next;
+      });
+    } catch (err) {
+      console.error("Error fetching users:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const goToPage = (page) => {
+    if (page < 1) return;
+    const cursor = page > 1 ? pageCursors[page - 2] : null;
+    setCurrentPage(page);
+    loadUsersPage(page, cursor);
+  };
+
+  const refreshPage = () => goToPage(currentPage);
+
   // All available system pages
   const ALL_PAGES = [
     { id: "dashboard", label: "Dashboard", path: "/dashboard" },
     { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard" },
     { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard" },
+    { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard" },
     { id: "course-bank", label: "Course Bank", path: "/course-bank" },
     { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles" },
     { id: "info-configuration", label: "Info Configuration", path: "/info-configuration" },
@@ -56,6 +105,7 @@ export default function AdminRoleConfig() {
     { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment" },
     { id: "admission-enquiries", label: "Admission Enquiries", path: "/admissions/enquiries" },
     { id: "seat-management", label: "Seat Management", path: "/admissions/seats" },
+    { id: "admission-confirmation", label: "Admission Confirmation", path: "/admissions/confirm" },
     { id: "fee-config", label: "Fee Configuration", path: "/admissions/fees" },
     { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
     { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
@@ -86,23 +136,34 @@ export default function AdminRoleConfig() {
       }
     });
 
-    const usersRef = collection(db, "users");
-    const unsubscribeData = onSnapshot(usersRef, (snapshot) => {
-      const usersList = [];
-      snapshot.forEach(doc => {
-        usersList.push({
-          ...doc.data(),
-          uid: doc.id,
-          role: doc.data().role || "Faculty",
-          isApproved: doc.data().isApproved || false
-        });
-      });
-      setUsers(usersList);
-      setLoading(false);
-    }, (error) => {
-      console.error("Error fetching users:", error);
-      setLoading(false);
-    });
+    // Load first page of users
+    loadUsersPage(1, null);
+    getCountFromServer(collection(db, "users")).then((snap) => setTotalUserCount(snap.data().count)).catch(() => {});
+
+    // Fetch master admin and default admin user data so they always appear in the list
+    const fetchAdminUsers = async () => {
+      try {
+        if (masterAdminEmail) {
+          const qMaster = query(collection(db, "users"), where("email", "==", masterAdminEmail));
+          const snapMaster = await getDocs(qMaster);
+          if (!snapMaster.empty) {
+            const d = snapMaster.docs[0];
+            setMasterAdminUser({ ...d.data(), uid: d.id, role: d.data().role || "Admin", isApproved: d.data().isApproved || false });
+          }
+        }
+        if (defaultAdminEmail) {
+          const qDefault = query(collection(db, "users"), where("email", "==", defaultAdminEmail));
+          const snapDefault = await getDocs(qDefault);
+          if (!snapDefault.empty) {
+            const d = snapDefault.docs[0];
+            setDefaultAdminUser({ ...d.data(), uid: d.id, role: d.data().role || "Admin", isApproved: d.data().isApproved || false });
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching admin users:", err);
+      }
+    };
+    fetchAdminUsers();
 
     // Fetch existing role permissions
     const permsRef = collection(db, "role_permissions");
@@ -141,11 +202,33 @@ export default function AdminRoleConfig() {
 
     return () => {
       unsubscribeAuth();
-      unsubscribeData();
       unsubscribePerms();
       unsubscribeUserData();
     };
   }, []);
+
+  // Fetch all users when search is active (to search across pages)
+  useEffect(() => {
+    if (!userSearchTerm.trim()) {
+      setAllUsers([]);
+      return;
+    }
+    const fetchAllUsers = async () => {
+      try {
+        const snap = await getDocs(collection(db, "users"));
+        const all = snap.docs.map(d => ({
+          ...d.data(),
+          uid: d.id,
+          role: d.data().role || "Faculty",
+          isApproved: d.data().isApproved || false
+        }));
+        setAllUsers(all);
+      } catch (err) {
+        console.error("Error fetching all users:", err);
+      }
+    };
+    fetchAllUsers();
+  }, [userSearchTerm]);
 
   const handleTogglePermission = (role, pageId) => {
     const currentPerms = rolePermissions[role] || [];
@@ -228,6 +311,7 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { role: newRole });
       showNotification(`Role updated to ${newRole}`);
+      refreshPage();
     } catch (error) {
       console.error("Error updating role:", error);
       showNotification("Failed to update role.");
@@ -238,6 +322,7 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { isApproved: true });
       showNotification(`User approved successfully`);
+      refreshPage();
     } catch (error) {
       console.error("Error approving user:", error);
       showNotification("Failed to approve user.");
@@ -257,6 +342,8 @@ export default function AdminRoleConfig() {
       showNotification("User request rejected and removed");
       setRejectModalOpen(false);
       setUserToReject(null);
+      refreshPage();
+      getCountFromServer(collection(db, "users")).then((snap) => setTotalUserCount(snap.data().count)).catch(() => {});
     } catch (error) {
       console.error("Error rejecting user:", error);
       showNotification("Failed to reject user.");
@@ -295,6 +382,7 @@ export default function AdminRoleConfig() {
       showNotification(`User access revoked`);
       setRevokeModalOpen(false);
       setUserToRevoke(null);
+      refreshPage();
     } catch (error) {
       console.error("Error revoking user:", error);
       showNotification("Failed to revoke user access.");
@@ -306,6 +394,7 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { programme: newProgramme || null, department: "" });
       showNotification("Programme updated");
+      refreshPage();
     } catch (err) {
       console.error("Error updating programme:", err);
       showNotification("Failed to update programme.");
@@ -316,6 +405,7 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { department: newDepartment || null });
       showNotification("Department updated");
+      refreshPage();
     } catch (err) {
       console.error("Error updating department:", err);
       showNotification("Failed to update department.");
@@ -328,48 +418,81 @@ export default function AdminRoleConfig() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
+  const isEmptyUsers = !loading && totalUserCount === 0;
+
   // Filter and Sort users based on requested logic
   const filteredAndSortedUsers = useMemo(() => {
+    // Use allUsers (cross-page) when searching, else paginated users
+    const source = userSearchTerm.trim() ? allUsers : users;
     const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
-    
-    // 1. Visibility Filter: If not master admin, hide master admin from list
-    let list = isMasterAdminLoggedIn
-      ? [...users]
-      : users.filter(u => u.email !== masterAdminEmail);
 
-    // 2. Search Filter
+    // Start with source, prepend master/default admin users if paginating
+    let list = isMasterAdminLoggedIn
+      ? [...source]
+      : source.filter(u => u.email !== masterAdminEmail);
+
+    // When not searching, ensure master/default admin are always in the list
+    if (!userSearchTerm.trim()) {
+      const existingUids = new Set(list.map(u => u.uid));
+      if (defaultAdminUser && !existingUids.has(defaultAdminUser.uid) && (isMasterAdminLoggedIn || defaultAdminUser.email !== masterAdminEmail)) {
+        list.unshift(defaultAdminUser);
+        existingUids.add(defaultAdminUser.uid);
+      }
+      if (masterAdminUser && !existingUids.has(masterAdminUser.uid) && isMasterAdminLoggedIn) {
+        list.unshift(masterAdminUser);
+      }
+    }
+
+    // Search filter
     if (userSearchTerm.trim()) {
       const term = userSearchTerm.toLowerCase();
-      list = list.filter(u => 
+      list = list.filter(u =>
         (u.displayName || u.facultyName || "").toLowerCase().includes(term) ||
         (u.email || "").toLowerCase().includes(term) ||
         (u.facultyId || "").toLowerCase().includes(term)
       );
     }
 
-    // 3. Sort Logic: Current User -> Master Admin -> Default Admin -> Pending -> Approved (Alphabetical)
+    const term = userSearchTerm.trim().toLowerCase();
+
     return list.sort((a, b) => {
-      // Priority 1: The person currently logged in
+      // 1. Current logged-in user always first
       if (a.email === user?.email) return -1;
       if (b.email === user?.email) return 1;
 
-      // Priority 2: Master Admin
-      if (a.email === masterAdminEmail) return -1;
-      if (b.email === masterAdminEmail) return 1;
-
-      // Priority 3: Default Admin
-      if (a.email === defaultAdminEmail) return -1;
-      if (b.email === defaultAdminEmail) return 1;
-
-      if (a.isApproved !== b.isApproved) {
-        return a.isApproved ? 1 : -1; // false (pending) comes before true (approved)
+      // 2. MASTER_ADMIN login: Master → Default → pending → approved
+      if (user?.email === masterAdminEmail) {
+        if (a.email === masterAdminEmail) return -1;
+        if (b.email === masterAdminEmail) return 1;
+        if (a.email === defaultAdminEmail) return -1;
+        if (b.email === defaultAdminEmail) return 1;
       }
 
+      // 3. DEFAULT_ADMIN login: Default → pending → approved
+      if (user?.email === defaultAdminEmail) {
+        if (a.email === defaultAdminEmail) return -1;
+        if (b.email === defaultAdminEmail) return 1;
+      }
+
+      // 4. When searching, bring name-matched users to top
+      if (term) {
+        const aMatch = (a.displayName || a.facultyName || "").toLowerCase().includes(term);
+        const bMatch = (b.displayName || b.facultyName || "").toLowerCase().includes(term);
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+      }
+
+      // 5. Pending before approved
+      if (a.isApproved !== b.isApproved) {
+        return a.isApproved ? 1 : -1;
+      }
+
+      // 6. Alphabetical by name
       const nameA = (a.displayName || a.facultyName || "").toLowerCase();
       const nameB = (b.displayName || b.facultyName || "").toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  }, [users, userSearchTerm, masterAdminEmail, user?.email]);
+  }, [users, allUsers, userSearchTerm, masterAdminEmail, defaultAdminEmail, user?.email, masterAdminUser, defaultAdminUser]);
 
   if (loading) {
     return (
@@ -399,14 +522,27 @@ export default function AdminRoleConfig() {
     <Layout title="Admin Role Configuration">
       <div className="p-6 max-w-7xl mx-auto">
         <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg">
+            <div className="flex items-center gap-4 flex-1">
+            <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg shrink-0">
               <Shield size={25} />
             </div>
-            <div>
-              <h3 className="text-2xl font-bold text-zinc-800">Role & Access Configuration</h3>
-              <p className="text-zinc-500 text-sm">Manage user roles and dynamic page permissions</p>
-            </div>
+            {activeTab === "users" && (
+              <div className="relative max-w-md w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#120c7a] transition-colors" size={18} />
+                <input 
+                  type="text"
+                  placeholder="Search users by name, email, or faculty ID..."
+                  value={userSearchTerm}
+                  onChange={(e) => setUserSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all text-sm shadow-sm"
+                />
+                {userSearchTerm && (
+                  <button onClick={() => setUserSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
@@ -462,22 +598,6 @@ export default function AdminRoleConfig() {
 
         {activeTab === "users" ? (
           <div className="space-y-4">
-            <div className="relative group max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#120c7a] transition-colors" size={18} />
-              <input 
-                type="text"
-                placeholder="Search users by name, email, or faculty ID..."
-                value={userSearchTerm}
-                onChange={(e) => setUserSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all text-sm shadow-sm"
-              />
-              {userSearchTerm && (
-                <button onClick={() => setUserSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
             <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -563,12 +683,14 @@ export default function AdminRoleConfig() {
                           </td>
                           <td className="px-6 py-4 text-center">
                             {user.isApproved ? (
-                              <button
-                                onClick={() => openRevokeModal(user)}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
-                              >
-                                <UserX size={16} /> Revoke
-                              </button>
+                              <div className="flex items-center justify-center">
+                                <button
+                                  onClick={() => openRevokeModal(user)}
+                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-50 text-red-600 hover:bg-red-100"
+                                >
+                                  <UserX size={16} /> Revoke
+                                </button>
+                              </div>
                             ) : (
                               <div className="flex items-center justify-center gap-2">
                                 <button
@@ -593,6 +715,32 @@ export default function AdminRoleConfig() {
                 </table>
               </div>
             </div>
+
+            {!isEmptyUsers && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-zinc-500">
+                  Page {currentPage} of {Math.max(1, Math.ceil(totalUserCount / PAGE_SIZE))} ({totalUserCount} total)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={currentPage === 1}
+                    onClick={() => goToPage(currentPage - 1)}
+                    className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!hasMore}
+                    onClick={() => goToPage(currentPage + 1)}
+                    className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-6">

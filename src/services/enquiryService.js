@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, orderBy, limit, startAfter, where, getCountFromServer } from "firebase/firestore";
 import { db } from "../firebase";
 
 const ENQUIRY_ROOT = "enquiries";
@@ -252,6 +252,7 @@ const normalizeEnquiry = (enquiryId, data = {}) => ({
   department2: asString(data.department2),
   department3: asString(data.department3),
   status: asString(data.status) || "Enquiry",
+  remarks: asString(data.remarks),
   enquiryAttendedBy: asString(data.enquiryAttendedBy),
   payments: Array.isArray(data.payments) && data.payments.length > 0 ? data.payments : (data.feeAmount || data.feeCategory ? [{
     feeCategory: asString(data.feeCategory),
@@ -385,4 +386,56 @@ export async function getEnquiryById(enquiryId) {
   const snap = await getDoc(doc(db, ENQUIRY_ROOT, enquiryId));
   if (!snap.exists()) return null;
   return normalizeEnquiry(enquiryId, snap.data());
+}
+
+export async function getEnquiriesPaginated({ pageSize = 20, startAfterDoc = null }) {
+  const enquiriesRef = collection(db, ENQUIRY_ROOT);
+  const constraints = [orderBy("createdAt", "desc"), limit(pageSize + 1)];
+  if (startAfterDoc) {
+    constraints.push(startAfter(startAfterDoc));
+  }
+  const q = query(enquiriesRef, ...constraints);
+  const snapshot = await getDocs(q);
+  const docs = snapshot.docs;
+  const hasMore = docs.length > pageSize;
+  const items = docs.slice(0, pageSize).map((docSnap) => normalizeEnquiry(docSnap.id, docSnap.data()));
+  const lastDoc = docs.length > 0 ? docs[Math.min(docs.length, pageSize) - 1] : null;
+  return { items, lastDoc, hasMore };
+}
+
+export async function getAllEnquiries() {
+  const snapshot = await getDocs(collection(db, ENQUIRY_ROOT));
+  return snapshot.docs.map((docSnap) => normalizeEnquiry(docSnap.id, docSnap.data())).sort(compareEnquiries);
+}
+
+export async function getEnquiriesCount({ statusIn = null } = {}) {
+  const constraints = [];
+  if (statusIn && statusIn.length > 0) {
+    constraints.push(where("status", "in", statusIn));
+  }
+  const q = constraints.length > 0 ? query(collection(db, ENQUIRY_ROOT), ...constraints) : collection(db, ENQUIRY_ROOT);
+  const snapshot = await getCountFromServer(q);
+  return snapshot.data().count;
+}
+
+export async function getEnquiriesStats() {
+  const baseRef = collection(db, ENQUIRY_ROOT);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const [totalSnap, todaySnap, newSnap, appSnap, admSnap] = await Promise.all([
+    getCountFromServer(baseRef),
+    getCountFromServer(query(baseRef, where("createdAt", ">=", todayStart.getTime()))),
+    getCountFromServer(query(baseRef, where("status", "==", "Enquiry"))),
+    getCountFromServer(query(baseRef, where("status", "==", "Application"))),
+    getCountFromServer(query(baseRef, where("status", "==", "Admission"))),
+  ]);
+
+  return {
+    total: totalSnap.data().count,
+    today: todaySnap.data().count,
+    new: newSnap.data().count,
+    application: appSnap.data().count,
+    admission: admSnap.data().count,
+  };
 }

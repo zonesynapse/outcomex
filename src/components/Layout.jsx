@@ -36,6 +36,7 @@ const allPossibleItems = [
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { id: "faculty-dashboard", icon: LayoutDashboard, label: "Faculty Dashboard", path: "/faculty-dashboard" },
   { id: "hod-dashboard", icon: LayoutDashboard, label: "HOD Dashboard", path: "/hod-dashboard" },
+  { id: "principal-dashboard", icon: LayoutDashboard, label: "Principal Dashboard", path: "/principal-dashboard" },
   { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
   { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
   { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
@@ -49,6 +50,7 @@ const allPossibleItems = [
   { id: "admission-enquiries", icon: Users, label: "Admission Enquiries", path: "/admissions/enquiries" },
   { id: "seat-management", icon: Settings2, label: "Seat Management", path: "/admissions/seats" },
   { id: "fee-config", icon: Wallet, label: "Fee Configuration", path: "/admissions/fees" },
+  { id: "admission-confirmation", icon: CheckCircle2, label: "Admission Confirmation", path: "/admissions/confirm" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
@@ -78,7 +80,13 @@ const modules = [
     id: "admission",
     label: "Admission",
     icon: Users,
-    itemIds: ["admission-enquiries", "seat-management", "fee-config"]
+    itemIds: ["admission-enquiries", "seat-management", "admission-confirmation"]
+  },
+  {
+    id: "fee",
+    label: "Fee",
+    icon: Wallet,
+    itemIds: ["fee-config"]
   },
   {
     id: "academics",

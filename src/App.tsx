@@ -25,10 +25,12 @@ import TimetableSetup from "./pages/TimetableSetup";
 import RegulationFormation from "./pages/RegulationFormation";
 import FacultyDashboard from "./pages/FacultyDashboard";
 import HODDashboard from "./pages/HODDashboard";
+import PrincipalDashboard from "./pages/PrincipalDashboard";
 import AdmissionEnquiries from "./pages/AdmissionEnquiries.js";
+import AdmissionConfirmation from "./pages/AdmissionConfirmation";
 import SeatManagement from "./pages/SeatManagement";
 import ProtectedRoute from "./components/ProtectedRoute";
-import FeeConfig from "./pages/FeeConfig"; // Add this import
+import FeeConfig from "./pages/FeeConfig";
 
 
 export default function App() {
@@ -43,6 +45,7 @@ export default function App() {
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/faculty-dashboard" element={<ProtectedRoute><FacultyDashboard /></ProtectedRoute>} />
         <Route path="/hod-dashboard" element={<ProtectedRoute><HODDashboard /></ProtectedRoute>} />
+        <Route path="/principal-dashboard" element={<ProtectedRoute><PrincipalDashboard /></ProtectedRoute>} />
         <Route path="/course-bank" element={<ProtectedRoute><CourseBank /></ProtectedRoute>} />
         <Route path="/admin-roles" element={<ProtectedRoute><AdminRoleConfig /></ProtectedRoute>} />
         <Route path="/info-configuration" element={<ProtectedRoute><InfoConfiguration /></ProtectedRoute>} />
@@ -58,6 +61,8 @@ export default function App() {
         <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
         <Route path="/course-enrolment" element={<ProtectedRoute><CourseEnrolment /></ProtectedRoute>} />
         <Route path="/admissions/enquiries" element={<ProtectedRoute><AdmissionEnquiries /></ProtectedRoute>} />
+        <Route path="/admissions/confirm" element={<ProtectedRoute><AdmissionConfirmation /></ProtectedRoute>} />
+        <Route path="/admissions/confirm/:enquiryId" element={<ProtectedRoute><AdmissionConfirmation /></ProtectedRoute>} />
         <Route path="/admissions/seats" element={<ProtectedRoute><SeatManagement /></ProtectedRoute>} />
         <Route path="/academic-calendar" element={<ProtectedRoute><AcademicCalendar /></ProtectedRoute>} />
         <Route path="/tt" element={<ProtectedRoute><TimetableSetup /></ProtectedRoute>} />

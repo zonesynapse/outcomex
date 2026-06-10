@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { db } from "../firebase";
-import { doc, onSnapshot, setDoc, collection } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, getDoc, collection } from "firebase/firestore";
 import { 
   Wallet, 
   Plus, 
@@ -34,6 +34,7 @@ export default function FeeConfig() {
   const [quotas, setQuotas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [catSaving, setCatSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
 
   // Fetch Batches based on Programme
@@ -71,7 +72,17 @@ export default function FeeConfig() {
     return () => unsub();
   }, []);
 
-  // Fetch existing Fee Data
+  // Load Fee Categories (global — common for all programmes & batches)
+  useEffect(() => {
+    getDoc(doc(db, "fee_categories", "global")).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.categories) setFeeCategories(data.categories);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Fetch existing Fee Data (batch-specific)
   useEffect(() => {
     if (programme && batch) {
       setLoading(true);
@@ -80,7 +91,6 @@ export default function FeeConfig() {
         if (snapshot.exists()) {
           const data = snapshot.data();
           setFeeData(data.fees || {});
-          if (data.categories) setFeeCategories(data.categories);
         } else {
           setFeeData({});
         }
@@ -142,6 +152,22 @@ export default function FeeConfig() {
     }));
   };
 
+  const handleSaveCategories = async () => {
+    setCatSaving(true);
+    try {
+      await setDoc(doc(db, "fee_categories", "global"), {
+        categories: feeCategories,
+        updatedAt: new Date().toISOString()
+      });
+      showToast("Fee categories saved successfully!");
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to save categories", "error");
+    } finally {
+      setCatSaving(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!programme || !batch) {
       showToast("Please select Programme and Batch", "error");
@@ -154,14 +180,13 @@ export default function FeeConfig() {
         programme,
         batch,
         regulation: regulation || "",
-        categories: feeCategories,
         fees: feeData,
         updatedAt: new Date().toISOString()
       });
-      showToast("Fee configuration saved successfully!");
+      showToast("Fee structure saved successfully!");
     } catch (err) {
       console.error(err);
-      showToast("Failed to save configuration", "error");
+      showToast("Failed to save fee structure", "error");
     } finally {
       setSaving(false);
     }
@@ -224,44 +249,54 @@ export default function FeeConfig() {
           </div>
         </div>
 
-        {programme && batch && (
-          <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Fee Categories Setup */}
-            <div className="bg-white rounded-3xl shadow-xl p-8 border border-zinc-100">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-50 text-[#120c7a] rounded-lg">
-                    <Settings2 size={20} />
-                  </div>
-                  <h3 className="text-lg font-bold text-zinc-800">Fee Categories</h3>
+        {/* Fee Categories — global (common for all programmes & batches) */}
+        <div className="bg-white rounded-3xl shadow-xl p-8 border border-zinc-100 animate-in fade-in duration-500">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-50 text-[#120c7a] rounded-lg">
+                  <Settings2 size={20} />
                 </div>
+                <h3 className="text-lg font-bold text-zinc-800">Fee Categories</h3>
+              </div>
+              <div className="flex items-center gap-3">
                 <button 
                   onClick={handleAddCategory}
                   className="flex items-center gap-2 text-sm font-bold text-[#120c7a] hover:underline"
                 >
                   <Plus size={16} /> Add Category
                 </button>
-              </div>
-              <div className="flex flex-wrap gap-4">
-                {feeCategories.map((cat, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2 group">
-                    <input 
-                      value={cat}
-                      onChange={(e) => handleCategoryNameChange(idx, e.target.value)}
-                      className="bg-transparent border-none outline-none font-bold text-zinc-700 text-sm w-32"
-                    />
-                    <button 
-                      onClick={() => setFeeCategories(feeCategories.filter((_, i) => i !== idx))}
-                      className="text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                <button
+                  onClick={handleSaveCategories}
+                  disabled={catSaving}
+                  className="flex items-center gap-2 bg-[#120c7a] hover:bg-[#120c7a]/90 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all"
+                >
+                  {catSaving ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={16} />}
+                  Save Categories
+                </button>
               </div>
             </div>
+            <div className="flex flex-wrap gap-4">
+              {feeCategories.map((cat, idx) => (
+                <div key={idx} className="flex items-center gap-2 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2 group">
+                  <input 
+                    value={cat}
+                    onChange={(e) => handleCategoryNameChange(idx, e.target.value)}
+                    className="bg-transparent border-none outline-none font-bold text-zinc-700 text-sm w-32"
+                  />
+                  <button 
+                    onClick={() => setFeeCategories(feeCategories.filter((_, i) => i !== idx))}
+                    className="text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
 
-            {/* Matrix Table */}
+        {/* Fee Structure Matrix — batch-specific */}
+        {programme && batch && (
+          <div className="space-y-8 animate-in fade-in duration-500">
             <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-200">
               <div className="bg-[#120c7a] px-8 py-4 flex justify-between items-center">
                 <div className="flex items-center gap-3">
@@ -346,8 +381,8 @@ export default function FeeConfig() {
             <div className="w-16 h-16 bg-zinc-50 rounded-2xl flex items-center justify-center text-zinc-300 mb-4">
               <Layers size={32} />
             </div>
-            <h3 className="text-lg font-bold text-zinc-600">Select filters to configure fees</h3>
-            <p className="text-zinc-400 text-sm">Choose a programme and batch to start defining the fee structure.</p>
+            <h3 className="text-lg font-bold text-zinc-600">Select a Programme to get started</h3>
+            <p className="text-zinc-400 text-sm">Choose a programme to define fee categories, then select a batch for the fee structure.</p>
           </div>
         )}
       </div>
