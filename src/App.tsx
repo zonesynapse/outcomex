@@ -29,9 +29,38 @@ import PrincipalDashboard from "./pages/PrincipalDashboard";
 import AdmissionEnquiries from "./pages/AdmissionEnquiries.js";
 import AdmissionConfirmation from "./pages/AdmissionConfirmation";
 import SeatManagement from "./pages/SeatManagement";
+import FeeDashboard from "./pages/FeeDashboard";
+import FeeOperations from "./pages/FeeOperations";
+import FeeControl from "./pages/FeeControl";
 import ProtectedRoute from "./components/ProtectedRoute";
-import FeeConfig from "./pages/FeeConfig";
+import StudentLayout from "./components/student/StudentLayout";
+import StudentDashboard from "./pages/student/Dashboard";
+import StudentProfile from "./pages/student/Profile";
+import StudentAttendance from "./pages/student/Attendance";
+import StudentMarks from "./pages/student/Marks";
+import StudentTimetable from "./pages/student/Timetable";
+import StudentFees from "./pages/student/Fees";
+import StudentSyllabus from "./pages/student/Syllabus";
+import StudentQuestionPapers from "./pages/student/QuestionPapers";
+import StudentCalendar from "./pages/student/Calendar";
+import StudentCourseReg from "./pages/student/CourseReg";
+import StudentLibrary from "./pages/student/Library";
+import StudentPlacement from "./pages/student/Placement";
+import StudentDownloads from "./pages/student/Downloads";
+import StudentNotices from "./pages/student/Notices";
+import LibraryCatalog from "./pages/LibraryCatalog";
+import LibraryCirculation from "./pages/LibraryCirculation";
+import LibraryReports from "./pages/LibraryReports";
+import LibraryCategories from "./pages/LibraryCategories";
+import LibraryEntryExit from "./pages/LibraryEntryExit";
+import PlacementDashboard from "./pages/PlacementDashboard";
+import PlacementDrives from "./pages/PlacementDrives";
+import PlacementStudents from "./pages/PlacementStudents";
+import PlacementActivities from "./pages/PlacementActivities";
 
+function RootRedirect() {
+  return <Navigate to="/dashboard" replace />;
+}
 
 export default function App() {
   return (
@@ -56,7 +85,10 @@ export default function App() {
         <Route path="/markk" element={<ProtectedRoute><MarkEntry /></ProtectedRoute>} />
         <Route path="/co-po" element={<ProtectedRoute><CoPoMapping /></ProtectedRoute>} />
         <Route path="/po-attainment" element={<ProtectedRoute><PoAttainment /></ProtectedRoute>} />
-        <Route path="/admissions/fees" element={<ProtectedRoute><FeeConfig /></ProtectedRoute>} />
+        <Route path="/admissions/fees" element={<ProtectedRoute><FeeOperations /></ProtectedRoute>} />
+        <Route path="/fee/dashboard" element={<ProtectedRoute><FeeDashboard /></ProtectedRoute>} />
+        <Route path="/fee/operations" element={<ProtectedRoute><FeeOperations /></ProtectedRoute>} />
+        <Route path="/fee/control" element={<ProtectedRoute><FeeControl /></ProtectedRoute>} />
         {/* New Pages */}
         <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
         <Route path="/course-enrolment" element={<ProtectedRoute><CourseEnrolment /></ProtectedRoute>} />
@@ -68,6 +100,20 @@ export default function App() {
         <Route path="/tt" element={<ProtectedRoute><TimetableSetup /></ProtectedRoute>} />
         <Route path="/regulation-formation" element={<ProtectedRoute><RegulationFormation /></ProtectedRoute>} />
 
+        {/* Library Routes */}
+        <Route path="/library/catalog" element={<ProtectedRoute><LibraryCatalog /></ProtectedRoute>} />
+        <Route path="/library/circulation" element={<ProtectedRoute><LibraryCirculation /></ProtectedRoute>} />
+        <Route path="/library/reports" element={<ProtectedRoute><LibraryReports /></ProtectedRoute>} />
+        <Route path="/library/categories" element={<ProtectedRoute><LibraryCategories /></ProtectedRoute>} />
+        <Route path="/library/entry-exit" element={<ProtectedRoute><LibraryEntryExit /></ProtectedRoute>} />
+
+        {/* Placement Routes */}
+        <Route path="/placement" element={<ProtectedRoute><PlacementDashboard /></ProtectedRoute>} />
+        <Route path="/placement/dashboard" element={<ProtectedRoute><PlacementDashboard /></ProtectedRoute>} />
+        <Route path="/placement/drives" element={<ProtectedRoute><PlacementDrives /></ProtectedRoute>} />
+        <Route path="/placement/students" element={<ProtectedRoute><PlacementStudents /></ProtectedRoute>} />
+        <Route path="/placement/activities" element={<ProtectedRoute><PlacementActivities /></ProtectedRoute>} />
+
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
         <Route path="/hod-role-configuration" element={<ProtectedRoute><HODRoleConfig /></ProtectedRoute>} />
@@ -76,8 +122,24 @@ export default function App() {
         <Route path="/question-paper-generator" element={<ProtectedRoute><QuestionPaperGenerator /></ProtectedRoute>} />
         <Route path="/cia-configuration" element={<ProtectedRoute><CIAConfiguration /></ProtectedRoute>} />
 
+        {/* Student Routes */}
+        <Route path="/student/dashboard" element={<ProtectedRoute><StudentLayout><StudentDashboard /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/profile" element={<ProtectedRoute><StudentLayout><StudentProfile /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/attendance" element={<ProtectedRoute><StudentLayout><StudentAttendance /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/marks" element={<ProtectedRoute><StudentLayout><StudentMarks /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/timetable" element={<ProtectedRoute><StudentLayout><StudentTimetable /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/fees" element={<ProtectedRoute><StudentLayout><StudentFees /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/syllabus" element={<ProtectedRoute><StudentLayout><StudentSyllabus /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/question-papers" element={<ProtectedRoute><StudentLayout><StudentQuestionPapers /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/calendar" element={<ProtectedRoute><StudentLayout><StudentCalendar /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/courses" element={<ProtectedRoute><StudentLayout><StudentCourseReg /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/library" element={<ProtectedRoute><StudentLayout><StudentLibrary /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/placement" element={<ProtectedRoute><StudentLayout><StudentPlacement /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout><StudentDownloads /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/notices" element={<ProtectedRoute><StudentLayout><StudentNotices /></StudentLayout></ProtectedRoute>} />
+
         {/* Redirects */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>

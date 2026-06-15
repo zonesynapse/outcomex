@@ -9,7 +9,9 @@ import {
   Edit2,
   Settings,
   AlertCircle,
-  X
+  X,
+  ChevronDown,
+  Save
 } from "lucide-react";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
@@ -51,6 +53,7 @@ export default function Curriculum() {
   const [newProgram, setNewProgram] = useState("");
   const [newDuration, setNewDuration] = useState(4);
   const [selectedProgram, setSelectedProgram] = useState("");
+  const [newDepartmentCode, setNewDepartmentCode] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
   const [newRegulation, setNewRegulation] = useState("");
   const [editingDurations, setEditingDurations] = useState({});
@@ -58,7 +61,18 @@ export default function Curriculum() {
   const [mappingBatch, setMappingBatch] = useState("");
   const [mappingRegulation, setMappingRegulation] = useState("");
   const [editProgramValue, setEditProgramValue] = useState({ key: "", value: "" });
-  const [editDepartmentValue, setEditDepartmentValue] = useState({ programme: "", oldValue: "", value: "" });
+  const [editDepartmentValue, setEditDepartmentValue] = useState({ programme: "", oldValue: "", code: "", value: "" });
+  const [deptMetadata, setDeptMetadata] = useState({});
+
+  // Section Config States
+  const [sectionProg, setSectionProg] = useState("");
+  const [sectionDepts, setSectionDepts] = useState([]);
+  const [sectionBatch, setSectionBatch] = useState("");
+  const [sectionCount, setSectionCount] = useState("2");
+  const [savingSection, setSavingSection] = useState(false);
+  const [showDeptDropdown, setShowDeptDropdown] = useState(false);
+  const [sectionConfigs, setSectionConfigs] = useState({});
+  const [deptSearch, setDeptSearch] = useState("");
 
   // Regulation Config States (Moved from RegulationFormation)
   const [configType, setConfigType] = useState("");
@@ -88,15 +102,24 @@ export default function Curriculum() {
       setLoading(false);
     });
 
-    const gradeRef = collection(db, 'grade_configs'); // Firestore collection reference
-    const unsubscribeData = onSnapshot(gradeRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (snapshot.exists) { // For QuerySnapshot, use .exists
-        const data = {}; // Convert QuerySnapshot to object
+    const gradeRef = collection(db, 'grade_configs');
+    const unsubscribeData = onSnapshot(gradeRef, (snapshot) => {
+      if (!snapshot.empty) {
+        const data = {};
         snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         setGradeConfigs(data);
       } else {
         setGradeConfigs({});
       }
+    });
+
+    // துறைக் குறியீடுகளைத் தனியாகப் பெற ஒரு லிசனர்
+    const unsubMeta = onSnapshot(collection(db, 'department_metadata'), (snapshot) => {
+      const data = {};
+      snapshot.forEach(doc => {
+        data[doc.id] = doc.data();
+      });
+      setDeptMetadata(data);
     });
 
     return () => {
@@ -106,10 +129,10 @@ export default function Curriculum() {
   }, []);
 
   useEffect(() => {
-    const ctRef = collection(db, 'course_type_configs'); // Firestore collection reference
-    const unsubscribe = onSnapshot(ctRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (snapshot.exists) { // For QuerySnapshot, use .exists
-        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setCourseTypeConfigs(data); // Convert QuerySnapshot to object
+    const ctRef = collection(db, 'course_type_configs');
+    const unsubscribe = onSnapshot(ctRef, (snapshot) => {
+      if (!snapshot.empty) {
+        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setCourseTypeConfigs(data);
       } else {
         setCourseTypeConfigs({});
       }
@@ -133,10 +156,10 @@ export default function Curriculum() {
   }, []);
 
   useEffect(() => {
-    const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
-    const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (snapshot.exists) { // For QuerySnapshot, use .exists
-        const data = {}; // Convert QuerySnapshot to object
+    const ciaRef = collection(db, 'cia_configs');
+    const unsubscribe = onSnapshot(ciaRef, (snapshot) => {
+      if (!snapshot.empty) {
+        const data = {};
         snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         setAllCiaConfigs(data);
       } else {
@@ -144,6 +167,15 @@ export default function Curriculum() {
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
   }, []);
 
   const handleUpdateNumSets = async (configId, num) => {
@@ -180,7 +212,7 @@ export default function Curriculum() {
     }
 
     try {
-      await setDoc(doc(db, 'course_type_weightage', regKey, type), data); // Firestore subcollection path
+      await setDoc(doc(db, 'course_type_weightage', regKey), { [type]: data }, { merge: true });
       setSuccessMessage("Weightage updated successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -246,17 +278,27 @@ export default function Curriculum() {
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
+  const toArray = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'object' && v !== null) {
+      const vals = Object.values(v);
+      if (vals.length === 1 && Array.isArray(vals[0])) return vals[0];
+      return vals;
+    }
+    return [];
+  };
+
   const handleAddCourseType = async () => {
     if (!selectedConfigReg || !newCourseType.trim()) return;
     const regKey = sanitizeKey(selectedConfigReg);
-    const currentTypes = courseTypeConfigs[regKey] || [];
+    const currentTypes = toArray(courseTypeConfigs[regKey]);
     
     if (currentTypes.includes(newCourseType.trim())) {
       showAlert("Error", "Course type already exists for this regulation.");
       return;
     }
-    const updatedTypes = [...currentTypes, newCourseType.trim()]; // Add new course type
-    await setDoc(doc(db, 'course_type_configs', regKey), updatedTypes); // Use setDoc for Firestore
+    const updatedTypes = [...currentTypes, newCourseType.trim()];
+    await setDoc(doc(db, 'course_type_configs', regKey), updatedTypes);
     setNewCourseType("");
     setSuccessMessage("Course type added successfully!");
     setShowSuccess(true);
@@ -264,13 +306,17 @@ export default function Curriculum() {
   };
 
   const handleRemoveCourseType = async (regKey, index) => {
-    const typeToRemove = courseTypeConfigs[regKey][index];
-    const currentTypes = [...(courseTypeConfigs[regKey] || [])];
-    currentTypes.splice(index, 1); // Remove the type
-    await setDoc(doc(db, 'course_type_configs', regKey), currentTypes.length > 0 ? currentTypes : null); // Update doc
+    const arr = toArray(courseTypeConfigs[regKey]);
+    const typeToRemove = arr[index];
+    const updatedArr = arr.filter((_, i) => i !== index);
+    if (updatedArr.length > 0) {
+      await setDoc(doc(db, 'course_type_configs', regKey), updatedArr);
+    } else {
+      await deleteDoc(doc(db, 'course_type_configs', regKey));
+    }
     
-    if (typeToRemove) { // Also remove its weightage config
-      await deleteDoc(doc(db, 'course_type_weightage', regKey, typeToRemove)); // Delete doc
+    if (typeToRemove) {
+      await setDoc(doc(db, 'course_type_weightage', regKey), { [typeToRemove]: {} }, { merge: true });
     }
     
     setSuccessMessage("Course type removed successfully!");
@@ -280,7 +326,7 @@ export default function Curriculum() {
 
   const handleAddGrade = async () => {
     if (!gradeReg || !newGrade.grade.trim() || !newGrade.gradePoint.trim()) return;
-    const currentGrades = gradeConfigs[sanitizeKey(gradeReg)] || [];
+    const currentGrades = toArray(gradeConfigs[sanitizeKey(gradeReg)]);
     const gradePoint = Number(newGrade.gradePoint);
     const mark = gradePoint * 10;
     const updatedGrades = [...currentGrades, { 
@@ -296,9 +342,13 @@ export default function Curriculum() {
   };
 
   const handleRemoveGrade = async (reg, index) => {
-    const currentGrades = [...(gradeConfigs[sanitizeKey(reg)] || [])];
+    const currentGrades = [...toArray(gradeConfigs[sanitizeKey(reg)])];
     currentGrades.splice(index, 1);
-    await setDoc(doc(db, 'grade_configs', sanitizeKey(reg)), currentGrades.length > 0 ? currentGrades : null); // Use setDoc for Firestore
+    if (currentGrades.length > 0) {
+      await setDoc(doc(db, 'grade_configs', sanitizeKey(reg)), currentGrades);
+    } else {
+      await deleteDoc(doc(db, 'grade_configs', sanitizeKey(reg)));
+    }
     setSuccessMessage("Grade removed successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
@@ -365,13 +415,26 @@ export default function Curriculum() {
   };
 
   const handleAddDepartment = async () => {
-    if (!selectedProgram || !newDepartment.trim()) return;
+    if (!selectedProgram || !newDepartment.trim() || !newDepartmentCode.trim()) {
+      showAlert("Validation Error", "Both Department Code and Name are required.");
+      return;
+    }
+
     const progKey = formatProgrammeKey(selectedProgram);
-    await addDepartment(progKey, newDepartment.trim());
+    const deptName = newDepartment.trim();
+    const deptCode = newDepartmentCode.trim().toUpperCase();
+    
+    await addDepartment(progKey, deptName);
+    // குறியீட்டைத் தனி கலெக்ஷனில் சேமிக்கிறோம் (Name-ஐ மாற்றாமல்)
+    await setDoc(doc(db, 'department_metadata', progKey), {
+      [deptName]: deptCode
+    }, { merge: true });
+    
     setSuccessMessage("Department added successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
     setNewDepartment("");
+    setNewDepartmentCode("");
   };
 
   const handleAddRegulation = async () => {
@@ -401,6 +464,41 @@ export default function Curriculum() {
     setMappingRegulation("");
   };
 
+  const handleSaveSection = async () => {
+    if (!sectionProg || sectionDepts.length === 0 || !sectionBatch || !sectionCount) return;
+    setSavingSection(true);
+    try {
+      const progKey = formatProgrammeKey(sectionProg);
+      const batchKey = sanitizeKey(sectionBatch);
+      for (const dept of sectionDepts) {
+        const deptKey = sanitizeKey(dept);
+        const docId = `${progKey}_${deptKey}_${batchKey}`;
+        await setDoc(doc(db, 'batch_sections', docId), {
+          programme: sectionProg, department: dept, batch: sectionBatch,
+          progKey, deptKey, batchKey,
+          numSections: parseInt(sectionCount, 10) || 1
+        });
+      }
+      setSuccessMessage("Section config saved!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+      setSectionProg(""); setSectionDepts([]); setSectionBatch(""); setSectionCount("2");
+      setShowDeptDropdown(false);
+    } catch (err) { console.error(err); }
+    setSavingSection(false);
+  };
+
+  const handleDeleteSection = async (docId) => {
+    showConfirm("Delete Section Config", "Remove this section configuration?", async () => {
+      try {
+        await deleteDoc(doc(db, 'batch_sections', docId));
+        setSuccessMessage("Section config removed!");
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 3000);
+      } catch (err) { console.error(err); }
+    });
+  };
+
   const handleRenameProgram = async (oldKey) => {
     const nextValue = editProgramValue.value.trim();
     if (!oldKey || !nextValue) return;
@@ -414,13 +512,29 @@ export default function Curriculum() {
   };
 
   const handleRenameDepartment = async () => {
-    const nextValue = editDepartmentValue.value.trim();
-    if (!editDepartmentValue.programme || !editDepartmentValue.oldValue || !nextValue) return;
-    await renameDepartment(editDepartmentValue.programme, editDepartmentValue.oldValue, nextValue); // This function is in useDepartments hook, which should be updated separately if needed.
+    const oldName = editDepartmentValue.oldValue;
+    const newName = editDepartmentValue.value.trim();
+    const newCode = editDepartmentValue.code.trim().toUpperCase();
+    const progKey = editDepartmentValue.programme;
+
+    if (!progKey || !oldName || !newName || !newCode) {
+      showAlert("Validation Error", "Both Department Code and Name are required.");
+      return;
+    }
+
+    await renameDepartment(progKey, oldName, newName);
+    
+    // மெட்டாடேட்டாவைப் புதுப்பிக்கிறோம்
+    const metaRef = doc(db, 'department_metadata', progKey);
+    await setDoc(metaRef, {
+      [oldName]: deleteField(),
+      [newName]: newCode
+    }, { merge: true });
+
     setSuccessMessage("Department updated successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
-    setEditDepartmentValue({ programme: "", oldValue: "", value: "" });
+    setEditDepartmentValue({ programme: "", oldValue: "", code: "", value: "" });
   };
 
   if (loading) {
@@ -600,8 +714,8 @@ export default function Curriculum() {
                       <div className="flex flex-wrap gap-2">
                         {departments[selectedProgram] && departments[selectedProgram].length > 0 ? (
                           departments[selectedProgram].map((dept, idx) => (
-                            <span key={idx} className="px-2 py-1 bg-slate-50 text-slate-700 border border-slate-100 rounded text-xs font-bold flex items-center gap-1">
-                              {dept}
+                          <span key={idx} className="px-2 py-1 bg-white text-slate-700 border border-slate-200 rounded text-xs font-bold flex items-center gap-1 shadow-sm">
+                            <span className="text-blue-600">{deptMetadata[formatProgrammeKey(selectedProgram)]?.[dept] || '???'}</span> - {dept}
                               <Trash2 
                                 size={12} 
                                 className="cursor-pointer hover:text-red-500 ml-1" 
@@ -626,7 +740,16 @@ export default function Curriculum() {
                     <input 
                       type="text" 
                       className="form-control" 
-                      placeholder="e.g., CSE, ECE, IT" 
+                      style={{ width: '120px' }}
+                      placeholder="Code (e.g. CSE)" 
+                      maxLength={10}
+                      value={newDepartmentCode}
+                      onChange={(e) => setNewDepartmentCode(e.target.value)}
+                    />
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="Department Name (e.g. Computer Science)" 
                       value={newDepartment}
                       onChange={(e) => setNewDepartment(e.target.value)}
                     />
@@ -646,7 +769,20 @@ export default function Curriculum() {
                         <select
                           className="form-select"
                           value={editDepartmentValue.oldValue}
-                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, programme: selectedProgram, oldValue: e.target.value, value: e.target.value })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              setEditDepartmentValue({ programme: "", oldValue: "", code: "", value: "" });
+                              return;
+                            }
+                            const code = deptMetadata[formatProgrammeKey(selectedProgram)]?.[val] || "";
+                            setEditDepartmentValue({ 
+                              programme: selectedProgram, 
+                              oldValue: val, 
+                              code: code, 
+                              value: val 
+                            });
+                          }}
                         >
                           <option value="">Select Department</option>
                           {(departments[selectedProgram] || []).map((dept) => (
@@ -656,16 +792,26 @@ export default function Curriculum() {
                         <input
                           type="text"
                           className="form-control"
+                          style={{ width: '120px' }}
+                          placeholder="Code"
+                          value={editDepartmentValue.code}
+                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, code: e.target.value })}
+                          disabled={!editDepartmentValue.oldValue}
+                          maxLength={10}
+                        />
+                        <input
+                          type="text"
+                          className="form-control"
                           placeholder="New Department Name"
                           value={editDepartmentValue.value}
-                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, programme: selectedProgram, value: e.target.value })}
+                          onChange={(e) => setEditDepartmentValue({ ...editDepartmentValue, value: e.target.value })}
                           disabled={!editDepartmentValue.oldValue}
                         />
                         <button
-                          className="btn btn-outline-primary"
-                          style={{ borderColor: '#120c7a', color: '#120c7a' }}
+                          className="btn btn-primary"
+                          style={{ backgroundColor: '#120c7a', border: 'none' }}
                           onClick={handleRenameDepartment}
-                          disabled={!editDepartmentValue.oldValue || !editDepartmentValue.value.trim()}
+                          disabled={!editDepartmentValue.oldValue || !editDepartmentValue.value.trim() || !editDepartmentValue.code.trim()}
                         >
                           Update
                         </button>
@@ -809,7 +955,7 @@ export default function Curriculum() {
                                 </div>
                                 
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                  {(courseTypeConfigs[sanitizeKey(selectedConfigReg)] || []).map((type, idx) => (
+                                  {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).map((type, idx) => (
                                     <div key={idx} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 space-y-4 flex flex-col">
                                       <div className="flex justify-between items-center">
                                         <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
@@ -1036,6 +1182,7 @@ export default function Curriculum() {
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1113,6 +1260,221 @@ export default function Curriculum() {
                               </div>
                             </div>
                           )}
+
+        {/* Section Configuration */}
+        <div className="card shadow-sm border-0 rounded-3 mb-5">
+          <div className="card-body p-4 p-md-5">
+            <h4 className="card-title mb-1 font-bold text-2xl text-zinc-800 flex items-center gap-2">
+              <i className="bi bi-columns-gap text-blue-600"></i>
+              Section Configuration
+            </h4>
+            <p className="text-sm text-slate-500 mb-4">Manage batch-wise section allocation.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Programme</label>
+                <div className="relative">
+                  <select className="w-full appearance-none bg-white border border-slate-300 rounded-lg px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all" value={sectionProg} onChange={e => { setSectionProg(e.target.value); setSectionDepts([]); setSectionBatch(""); setDeptSearch(""); }}>
+                    <option value="">Select Programme</option>
+                    {Object.keys(durations).map(prog => <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Batch</label>
+                <div className="relative">
+                  <select className="w-full appearance-none bg-white border border-slate-300 rounded-lg px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all disabled:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" value={sectionBatch} onChange={e => setSectionBatch(e.target.value)} disabled={!sectionProg}>
+                    <option value="">Select Batch</option>
+                    {sectionProg && getRecentBatches(sectionProg).map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                </div>
+              </div>
+              <div className="lg:col-span-2 relative">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Departments</label>
+
+                {/* Selected tags */}
+                {sectionDepts.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-1.5">
+                    {sectionDepts.map(d => {
+                      const code = deptMetadata[formatProgrammeKey(sectionProg)]?.[d] || '';
+                      return (
+                        <span key={d} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-[10px] font-bold border border-blue-100">
+                          {code && <span className="text-blue-400">{code}</span>}
+                          {!code && <span>{d}</span>}
+                          {code && <span>- {d}</span>}
+                          <button onClick={() => setSectionDepts(sectionDepts.filter(x => x !== d))} className="ml-0.5 hover:text-red-500 leading-none">
+                            <X size={10} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                    <button onClick={() => setSectionDepts([])} className="text-[10px] text-red-400 hover:text-red-600 font-medium px-1">Clear</button>
+                  </div>
+                )}
+
+                <div
+                  className={`w-full flex justify-between items-center border rounded-lg px-3 py-2.5 bg-white transition-all text-sm ${!sectionProg ? 'opacity-50 bg-slate-50 cursor-not-allowed' : 'cursor-pointer border-slate-300 hover:border-blue-300'}`}
+                  onClick={() => { if (sectionProg) { setShowDeptDropdown(!showDeptDropdown); setDeptSearch(""); } }}
+                >
+                  <span className="text-sm truncate">
+                    {!sectionProg
+                      ? "Select programme first"
+                      : sectionDepts.length === 0
+                        ? "Select Departments"
+                        : `${sectionDepts.length} Department${sectionDepts.length > 1 ? 's' : ''} selected`}
+                  </span>
+                  <ChevronDown size={16} className={`transition-transform duration-200 ${showDeptDropdown ? 'rotate-180' : ''}`} />
+                </div>
+
+                {showDeptDropdown && sectionProg && (
+                  <>
+                    <div className="fixed inset-0 z-[10]" onClick={() => setShowDeptDropdown(false)}></div>
+                    <div className="absolute top-full left-0 right-0 z-[11] mt-1 bg-white border border-zinc-200 rounded-xl shadow-xl animate-in fade-in zoom-in-95 duration-200 flex flex-col overflow-hidden">
+                      <div className="p-2 border-b border-slate-100">
+                        <div className="relative">
+                          <i className="bi bi-search absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                          <input
+                            type="text"
+                            className="w-full pl-7 pr-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            placeholder="Search departments..."
+                            value={deptSearch}
+                            onChange={e => setDeptSearch(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center px-3 py-1.5 border-b border-slate-100 shrink-0">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Choose Multiple</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSectionDepts(sectionDepts.length === departments[sectionProg]?.length ? [] : [...departments[sectionProg]]);
+                          }}
+                          className="text-[10px] font-bold text-blue-600 hover:text-blue-800"
+                        >
+                          {sectionDepts.length === departments[sectionProg]?.length ? 'Unselect All' : 'Select All'}
+                        </button>
+                      </div>
+                      <div className="max-h-[220px] overflow-y-auto custom-scrollbar p-1">
+                        {(departments[sectionProg] || [])
+                          .filter(d => !deptSearch || d.toLowerCase().includes(deptSearch.toLowerCase()))
+                          .map(d => {
+                            const code = deptMetadata[formatProgrammeKey(sectionProg)]?.[d] || '';
+                            return (
+                              <label key={d} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors text-xs font-medium ${sectionDepts.includes(d) ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'}`}>
+                                <input
+                                  type="checkbox"
+                                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                  checked={sectionDepts.includes(d)}
+                                  onChange={e => {
+                                    e.stopPropagation();
+                                    e.target.checked ? setSectionDepts([...sectionDepts, d]) : setSectionDepts(sectionDepts.filter(x => x !== d))
+                                  }}
+                                />
+                                <span className="font-bold text-blue-500">{code || '???'}</span>
+                                <span>{d}</span>
+                              </label>
+                            );
+                          })}
+                        {(departments[sectionProg] || []).filter(d => !deptSearch || d.toLowerCase().includes(deptSearch.toLowerCase())).length === 0 && (
+                          <div className="p-4 text-center text-xs text-slate-400 italic">No departments match your search.</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Sections</label>
+                <div className="flex gap-2">
+                  <input type="number" min="1" max="10" className="form-control flex-1 text-center font-bold" value={sectionCount} onChange={e => setSectionCount(e.target.value)} />
+                  <button
+                    className="btn btn-primary flex items-center gap-2 whitespace-nowrap px-4"
+                    style={{ backgroundColor: '#120c7a', border: 'none' }}
+                    onClick={handleSaveSection}
+                    disabled={!sectionProg || sectionDepts.length === 0 || !sectionBatch || savingSection}
+                  >
+                    {savingSection ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <i className="bi bi-save"></i>}
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Configured Sections - Card Grid */}
+            {Object.keys(sectionConfigs).length > 0 && (
+              <div className="mt-6 pt-5 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 bg-emerald-50 rounded-lg flex items-center justify-center">
+                      <i className="bi bi-check2-circle text-emerald-600 text-sm"></i>
+                    </div>
+                    <p className="font-bold text-slate-700 text-sm">Configured Sections</p>
+                    {(() => {
+                      const filteredEntries = Object.entries(sectionConfigs).filter(([id, cfg]) => {
+                        if (!sectionProg && !sectionBatch) return false;
+                        if (sectionProg && formatProgrammeKey(cfg.progKey || cfg.programme) !== formatProgrammeKey(sectionProg)) return false;
+                        if (sectionBatch && cfg.batch !== sectionBatch) return false;
+                        return true;
+                      });
+                      return <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-[10px] font-bold">{filteredEntries.length}</span>;
+                    })()}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {Object.entries(sectionConfigs).filter(([id, cfg]) => {
+                    if (!sectionProg && !sectionBatch) return false;
+                    if (sectionProg && formatProgrammeKey(cfg.progKey || cfg.programme) !== formatProgrammeKey(sectionProg)) return false;
+                    if (sectionBatch && cfg.batch !== sectionBatch) return false;
+                    return true;
+                  }).map(([id, cfg]) => {
+                    const progDisplay = formatProgDisplay(cfg.progKey || cfg.programme);
+                    const batchDisplay = formatBatchDisplay(cfg.batch);
+                    return (
+                      <div key={id} className="group relative bg-white border border-slate-200 rounded-xl p-3.5 hover:shadow-md hover:border-blue-200 transition-all duration-200">
+                        <div className="flex items-start justify-between mb-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 bg-[#120c7a]/10 text-[#120c7a] rounded-md text-[10px] font-black uppercase tracking-wider">{progDisplay}</span>
+                            <span className="text-slate-300 text-[10px]">|</span>
+                            <span className="text-[10px] font-medium text-slate-500">{cfg.department}</span>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteSection(id)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 w-6 h-6 flex items-center justify-center rounded-full hover:bg-red-50 text-red-400 hover:text-red-600"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <i className="bi bi-people text-slate-400"></i>
+                            <span className="font-medium">{batchDisplay}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex -space-x-1">
+                              {Array.from({ length: Math.min(cfg.numSections, 4) }).map((_, i) => (
+                                <div key={i} className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border-2 border-white flex items-center justify-center text-[7px] font-bold text-white shadow-sm">
+                                  {String.fromCharCode(65 + i)}
+                                </div>
+                              ))}
+                            </div>
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md text-[10px] font-bold border border-emerald-100">
+                              {cfg.numSections} Sec
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Side-by-Side Tables Section */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mt-6 mb-5">
           {/* Left: Program & Department Overview Table */}
@@ -1365,7 +1727,7 @@ export default function Curriculum() {
                       <div key={regKey} className="bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
                         <p className="text-xs font-bold text-[#120c7a] uppercase mb-2 border-b pb-1">{regKey}</p>
                         <div className="flex flex-wrap gap-2">
-                          {Array.isArray(grades) && grades.map((g, idx) => (
+                          {toArray(grades).map((g, idx) => (
                             <div key={idx} className="px-2 py-1 bg-slate-50 text-slate-700 border border-slate-100 rounded text-xs font-bold flex items-center gap-2">
                               <span>{g.grade}: <span className="text-blue-600">{g.gradePoint} GP</span> | <span className="text-emerald-600">{g.mark} M</span></span>
                               <Trash2 
@@ -1495,7 +1857,6 @@ export default function Curriculum() {
             </div>
           </div>
         )}
-      </div>
     </Layout>
   );
 }

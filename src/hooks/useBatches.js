@@ -20,12 +20,17 @@ export function useBatches(durations = {}) {
       Object.entries(parsedDurations).forEach(([progKey, duration]) => {
         const expectedBatches = getRecentBatches(duration);
         const currentProgBatches = data[progKey] || {};
+        const expectedSet = new Set(expectedBatches);
+        const currentKeys = Object.keys(currentProgBatches);
 
-        const missingBatches = expectedBatches.filter(batch => currentProgBatches[batch] === undefined);
-        if (missingBatches.length > 0) {
+        const hasMissing = expectedBatches.some(b => !currentProgBatches[b]);
+        const hasStale = currentKeys.some(k => !expectedSet.has(k));
+        if (hasMissing || hasStale) {
           const payload = {};
-          missingBatches.forEach(batch => { payload[batch] = { isActive: true }; });
-          setDoc(doc(db, "batch_status", progKey), payload, { merge: true });
+          expectedBatches.forEach(batch => {
+            payload[batch] = currentProgBatches[batch] || { isActive: true };
+          });
+          setDoc(doc(db, "batch_status", progKey), payload);
         }
       });
     });

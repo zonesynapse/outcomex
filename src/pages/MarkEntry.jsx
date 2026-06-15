@@ -41,6 +41,8 @@ export default function MarkEntry() {
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
   const [subject, setSubject] = useState("");
   const [subjects, setSubjects] = useState([]);
   const [exam, setExam] = useState("");
@@ -86,6 +88,15 @@ export default function MarkEntry() {
         }
       });
     }
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
   }, []);
 
   // Data States
@@ -648,7 +659,8 @@ export default function MarkEntry() {
       try {
         // 1. Fetch Students
         const progKey = formatProgrammeKey(programme);
-        const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
         const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
         const studentSnapshot = await getDoc(studentRef); // Use getDoc for Firestore
         const studentData = studentSnapshot.data(); // Use .data() for Firestore documents
@@ -670,7 +682,8 @@ export default function MarkEntry() {
 
         // Check course enrollments for this subject and semester
         if (subject) {
-          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${subject}`;
+          const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${subject}${sectionSuffix}`;
           const enrollSnap = await getDoc(doc(db, 'course_enrollments', enrollDocId)); // Firestore doc reference
           const enrolled = {};
           if (enrollSnap.exists()) {
@@ -687,7 +700,7 @@ export default function MarkEntry() {
 
         const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
           .map(sanitizeKey)
-          .join('_');
+          .join('_') + (section ? `_${sanitizeKey(section)}` : '');
         
         const marksDocRef = doc(db, 'marks', marksKey);
         const marksSnapshot = await getDoc(marksDocRef);
@@ -910,7 +923,7 @@ export default function MarkEntry() {
     const marksDocId = [batch, programme, department, subject, exam, academicYear, semester, markType]
       .filter(Boolean)
       .map(sanitizeKey)
-      .join('_');
+      .join('_') + (section ? `_${sanitizeKey(section)}` : '');
     
     const meta = {
       programme,
@@ -1020,7 +1033,7 @@ export default function MarkEntry() {
       await setDoc(doc(db, 'marks', marksDocId), payload); // Use setDoc for Firestore
       
       // Calculate and update CO attainment for this specific exam only
-      const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_');
+      const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
       const examDocId = sanitizeKey(exam || (meta.qpaper_meta?.qpaper_name || 'exam'));
 
       // Determine CO max marks for this exam
@@ -1339,6 +1352,17 @@ export default function MarkEntry() {
   const qnosB = useMemo(() => getPartQuestions(partB), [partB]);
   const qnosC = useMemo(() => getPartQuestions(partC), [partC]);
 
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
+
   return (
     <Layout title="Mark Entry">
       <div className="p-6 md:p-10 max-w-[98%] mx-auto">
@@ -1359,7 +1383,7 @@ export default function MarkEntry() {
               <div className="relative">
                 <select 
                   value={programme}
-                  onChange={(e) => { setProgramme(e.target.value); setDepartment(""); }}
+                  onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
                   <option value="">Select Program</option>
@@ -1377,7 +1401,7 @@ export default function MarkEntry() {
                 <select 
                   disabled={!programme}
                   value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
+                  onChange={(e) => { setDepartment(e.target.value); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Department</option>
@@ -1395,7 +1419,7 @@ export default function MarkEntry() {
                 <select 
                   disabled={!department}
                   value={batch}
-                  onChange={(e) => setBatch(e.target.value)}
+                  onChange={(e) => { setBatch(e.target.value); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Batch</option>
@@ -1439,6 +1463,22 @@ export default function MarkEntry() {
                   {semesters.map(sem => (
                     <option key={sem} value={sem}>{sem}</option>
                   ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+              <div className="relative">
+                <select 
+                  disabled={!department || !batch || availableSections.length === 0}
+                  value={section}
+                  onChange={(e) => setSection(e.target.value)}
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                >
+                  <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>

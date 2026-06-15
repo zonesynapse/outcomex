@@ -1,19 +1,28 @@
-import { Navigate } from "react-router-dom";
-import { auth } from "../firebase";
+import { Navigate, useLocation } from "react-router-dom";
+import { auth, db } from "../firebase";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
-/**
- * A wrapper for routes that require authentication.
- * Redirects to /login if the user is not signed in.
- */
 export default function ProtectedRoute({ children }) {
   const [user, setUser] = useState(null);
+  const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        try {
+          const snap = await getDoc(doc(db, "users", currentUser.uid));
+          setUserRole(snap.exists() ? snap.data().role : null);
+        } catch {
+          setUserRole(null);
+        }
+      } else {
+        setUserRole(null);
+      }
       setLoading(false);
     });
 
@@ -30,6 +39,16 @@ export default function ProtectedRoute({ children }) {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  const isStudentRoute = location.pathname.startsWith("/student/");
+
+  if (userRole === "Student" && !isStudentRoute) {
+    return <Navigate to="/student/dashboard" replace />;
+  }
+
+  if (userRole !== "Student" && isStudentRoute) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return children;

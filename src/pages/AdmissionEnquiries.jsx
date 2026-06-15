@@ -5,7 +5,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
 import EnquiryTable from "../components/EnquiryTable";
 import AddEnquiryModal from "../components/AddEnquiryModal";
-import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById } from "../services/enquiryService";
+import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries } from "../services/enquiryService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission"];
@@ -28,6 +28,7 @@ export default function AdmissionEnquiries() {
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [programmeFilter, setProgrammeFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [formModal, setFormModal] = useState({ open: false, mode: "add", enquiry: null });
@@ -40,6 +41,8 @@ export default function AdmissionEnquiries() {
   const [hasMore, setHasMore] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0 });
+  const [searchResults, setSearchResults] = useState(null);
+  const [filterResults, setFilterResults] = useState(null);
   const PAGE_SIZE = 20;
 
   const loadPage = async (page, cursor) => {
@@ -86,30 +89,80 @@ export default function AdmissionEnquiries() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const all = await getAllEnquiries();
+        const q = searchTerm.trim().toLowerCase();
+        const filtered = all.filter((enquiry) =>
+          [enquiry.enquiryId, enquiry.applicationNo, enquiry.studentName, enquiry.firstName, enquiry.lastName, enquiry.mobile]
+            .filter(Boolean)
+            .some((field) => String(field).toLowerCase().includes(q))
+        );
+        setSearchResults(filtered);
+      } catch (err) {
+        console.error("Search failed:", err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const hasDropdownFilter = programmeFilter || departmentFilter || statusFilter !== "All";
+
+  useEffect(() => {
+    if (searchTerm.trim()) return;
+    if (!hasDropdownFilter) {
+      setFilterResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const all = await getAllEnquiries();
+        setFilterResults(all);
+      } catch (err) {
+        console.error("Filter fetch failed:", err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [programmeFilter, departmentFilter, statusFilter, searchTerm]);
+
+  const programmeOptions = useMemo(() => {
+    return Object.keys(deptMap || {}).sort();
+  }, [deptMap]);
+
   const departmentOptions = useMemo(() => {
-    const fromConfig = Object.values(deptMap || {}).flat();
+    let fromConfig;
+    if (programmeFilter) {
+      fromConfig = deptMap?.[programmeFilter] || [];
+    } else {
+      fromConfig = Object.values(deptMap || {}).flat();
+    }
     const options = fromConfig.filter((dept) => {
       const config = seatConfigs[dept];
       return hasQuotaSeats(config);
     });
     return (options.length > 0 ? options : fromConfig)
       .sort((left, right) => left.localeCompare(right));
-  }, [deptMap, seatConfigs]);
+  }, [deptMap, seatConfigs, programmeFilter]);
 
   const filteredEnquiries = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
+    const source = searchResults !== null ? searchResults : (filterResults !== null ? filterResults : enquiries);
+    const progDeptList = programmeFilter ? (deptMap?.[programmeFilter] || []) : [];
 
-    return enquiries.filter((enquiry) => {
-      const matchesSearch = !query || [enquiry.enquiryId, enquiry.applicationNo, enquiry.studentName, enquiry.firstName, enquiry.lastName, enquiry.mobile]
-        .filter(Boolean)
-        .some((field) => String(field).toLowerCase().includes(query));
-
+    return source.filter((enquiry) => {
+      const matchesProgramme = !programmeFilter ||
+        progDeptList.includes(enquiry.department) ||
+        progDeptList.includes(enquiry.department2) ||
+        progDeptList.includes(enquiry.department3);
       const matchesDepartment = !departmentFilter || [enquiry.department, enquiry.department2, enquiry.department3].includes(departmentFilter);
       const matchesStatus = statusFilter === "All" || enquiry.status === statusFilter;
-
-      return matchesSearch && matchesDepartment && matchesStatus;
+      return matchesProgramme && matchesDepartment && matchesStatus;
     });
-  }, [enquiries, searchTerm, departmentFilter, statusFilter]);
+  }, [enquiries, searchResults, filterResults, programmeFilter, departmentFilter, statusFilter, deptMap]);
 
   // stats now come from getEnquiriesStats (aggregation queries on the entire dataset)
 
@@ -197,12 +250,13 @@ export default function AdmissionEnquiries() {
 
   const clearFilters = () => {
     setSearchTerm("");
+    setProgrammeFilter("");
     setDepartmentFilter("");
     setStatusFilter("All");
   };
 
   const isEmpty = !loading && totalCount === 0;
-  const noFilteredResults = !loading && enquiries.length > 0 && filteredEnquiries.length === 0;
+  const noFilteredResults = !loading && (searchResults !== null || filterResults !== null) && filteredEnquiries.length === 0;
 
   const refreshPage = () => goToPage(currentPage);
 
@@ -213,7 +267,7 @@ export default function AdmissionEnquiries() {
         <DashboardCards loading={loading} stats={stats} />
 
         <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm md:p-5">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_0.8fr_0.8fr_auto]">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr_auto]">
             <label className="block">
               <span className="mb-2 block text-sm font-semibold text-zinc-700">Search</span>
               <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 focus-within:border-[#120c7a] focus-within:ring-2 focus-within:ring-[#120c7a]/10">
@@ -224,6 +278,22 @@ export default function AdmissionEnquiries() {
                   className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
                   placeholder="Search by student name, mobile, or ID"
                 />
+              </div>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-zinc-700">Programme</span>
+              <div className="relative">
+                <select
+                  value={programmeFilter}
+                  onChange={(event) => { setProgrammeFilter(event.target.value); setDepartmentFilter(""); }}
+                  className="w-full appearance-none rounded-xl border border-zinc-200 bg-white px-4 py-3 pr-10 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
+                >
+                  <option value="">All Programmes</option>
+                  {programmeOptions.map((prog) => (
+                    <option key={prog} value={prog}>{prog}</option>
+                  ))}
+                </select>
               </div>
             </label>
 
@@ -321,7 +391,7 @@ export default function AdmissionEnquiries() {
             />
           )}
 
-          {!isEmpty && !noFilteredResults && (
+          {!isEmpty && !noFilteredResults && searchResults === null && filterResults === null && (
             <div className="mt-4 flex items-center justify-between">
               <span className="text-sm text-zinc-500">
                 Page {currentPage} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))} ({totalCount} total)

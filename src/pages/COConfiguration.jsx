@@ -23,30 +23,45 @@ const COConfiguration = () => {
   const [userRole, setUserRole] = useState(null);
   const [assignedProgs, setAssignedProgs] = useState([]);
   const [assignedDepts, setAssignedDepts] = useState([]);
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
 
   useEffect(() => {
+    let unsubUser, unsubAssignments;
     const user = auth.currentUser;
     if (user) {
-      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
-      onSnapshot(userRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const userRef = doc(db, 'users', user.uid);
+      unsubUser = onSnapshot(userRef, (snapshot) => {
         if (snapshot.exists()) {
-          const userData = snapshot.data(); // Use .data() for Firestore documents
+          const userData = snapshot.data();
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
-            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
+            const assignmentsRef = collection(db, 'subject_assignments');
+            unsubAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
               if (!assignSnap.empty) {
-                const data = {}; // Convert QuerySnapshot to object
-                assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
                 const depts = new Set();
-                Object.entries(data).forEach(([progKey, deptData]) => {
-                  Object.entries(deptData).forEach(([deptKey, batchData]) => {
-                    if (JSON.stringify(batchData).includes(user.uid)) {
-                      progs.add(progKey);
-                      depts.add(deptKey);
-                    }
-                  });
+                assignSnap.forEach(d => {
+                  const idParts = d.id.split('_');
+                  let sectionExtracted = '';
+                  let semKey = idParts.pop();
+                  if (!/^\d+$/.test(semKey) && idParts.length >= 5) {
+                    sectionExtracted = semKey;
+                    semKey = idParts.pop();
+                  }
+                  const ayKey = idParts.pop();
+                  const batchKey = idParts.pop();
+                  const progKey = idParts[0];
+                  const deptKey = idParts.slice(1).join('_');
+                  const assignmentsData = d.data();
+                  const userFound = Object.values(assignmentsData).some(userAssignments =>
+                    Array.isArray(userAssignments) && userAssignments.length > 0 &&
+                    JSON.stringify(assignmentsData).includes(user.uid)
+                  );
+                  if (userFound) {
+                    progs.add(progKey);
+                    depts.add(deptKey);
+                  }
                 });
                 setAssignedProgs(Array.from(progs));
                 setAssignedDepts(Array.from(depts));
@@ -59,6 +74,20 @@ const COConfiguration = () => {
         }
       });
     }
+
+    return () => {
+      if (unsubUser) unsubUser();
+      if (unsubAssignments) unsubAssignments();
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
   }, []);
 
 const sanitizeKey = (key) => {
@@ -332,6 +361,17 @@ Return an exhaustive list of all plausible mappings.`;
     return assignedDepts.includes(sanitizeKey(dept));
   });
 
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
+
   // Fetch Subjects from Syllabus
   useEffect(() => {
     const fetchSubjects = async () => {
@@ -385,7 +425,8 @@ Return an exhaustive list of all plausible mappings.`;
         const userSnap = await getDoc(userRef);
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}`;
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}${sectionSuffix}`;
         console.log('[COCONFIG] looking for assignment doc:', assignmentCompositeKey);
         // DEBUG: list all subject_assignments doc IDs
         getDocs(collection(db, 'subject_assignments'))
@@ -429,24 +470,27 @@ Return an exhaustive list of all plausible mappings.`;
     };
 
     fetchSubjects();
-  }, [programme, department, batch, academicYear, semester, regulation, getRegulationForBatch]);
+  }, [programme, department, batch, academicYear, semester, regulation, section, getRegulationForBatch]);
 
   // Fetch COs and PO/PSO data
   useEffect(() => {
+    let unsubCo, unsubPoPso, unsubMapping;
+    
     if (batch && programme && regulation && department && academicYear && subject) {
       const progKey = formatProgrammeKey(programme);
       
       // Path for COs
       const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
-      const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
+      const coRef = doc(db, 'course_outcomes', coDocId);
       
       // Path for PO/PSO (using the key format from POConfiguration)
       const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
-      const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
+      const poPsoRef = doc(db, 'po_pso', poPsoDocId);
 
       // Path for saved mapping
-      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
-      const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
+      const mappingRef = doc(db, 'mapping_summary', mappingDocId);
 
       const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
       const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
@@ -457,29 +501,30 @@ Return an exhaustive list of all plausible mappings.`;
 
       const checkCourseBank = async () => {
         try {
-          const snap = await getDoc(courseRef); // Use getDoc for Firestore
+          const snap = await getDoc(courseRef);
           if (snap.exists()) {
             setIsCourseBankSubject(true);
             return;
           }
-          const overallSnap = await getDoc(overallCourseRef); // Use getDoc for Firestore
+          const overallSnap = await getDoc(overallCourseRef);
           if (overallSnap.exists()) {
             setIsCourseBankSubject(true);
           } else {
             setIsCourseBankSubject(false);
           }
         } catch (e) {
-          setIsCourseBankSubject(false); // Ensure state is reset on error
+          setIsCourseBankSubject(false);
         }
       };
 
       checkCourseBank();
 
       // Fetch COs
-      onSnapshot(coRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
+      unsubCo = onSnapshot(coRef, async (snapshot) => {
+        const data = snapshot.data();
         if (data) {
           const loadedCOs = Object.entries(data)
+            .filter(([code]) => code.startsWith('CO'))
             .map(([code, val]) => {
               if (typeof val === 'object' && val !== null) {
                 return { 
@@ -491,21 +536,58 @@ Return an exhaustive list of all plausible mappings.`;
               }
               return { code, description: val, domain: "", level: "" };
             })
-            .sort((a, b) => parseInt(a.code.replace("CO", "")) - parseInt(b.code.replace("CO", "")));
+            .sort((a, b) => {
+              const numA = parseInt(String(a.code || "").replace(/\D/g, "")) || 0;
+              const numB = parseInt(String(b.code || "").replace(/\D/g, "")) || 0;
+              return numA - numB;
+            });
           setCoData(loadedCOs.length > 0 ? loadedCOs : [{ code: "CO1", description: "", domain: "", level: "" }]);
         } else {
+          // Fallback to Course Bank data if document not found in course_outcomes
+          try {
+            const progKey = formatProgrammeKey(programme);
+            const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+            const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+            
+            let bankSnap = await getDoc(doc(db, 'courses', flatCourseKey));
+            if (!bankSnap.exists()) {
+              bankSnap = await getDoc(doc(db, 'courses', flatOverallKey));
+            }
+
+            if (bankSnap.exists()) {
+              const bankData = bankSnap.data();
+              if (bankData.co && Array.isArray(bankData.co)) {
+                const bankCOs = bankData.co.map(c => ({
+                  code: c.id,
+                  description: c.description || "",
+                  domain: c.domain || "",
+                  level: c.level || ""
+                })).sort((a, b) => {
+                  const numA = parseInt(String(a.code || "").replace(/\D/g, "")) || 0;
+                  const numB = parseInt(String(b.code || "").replace(/\D/g, "")) || 0;
+                  return numA - numB;
+                });
+                if (bankCOs.length > 0) {
+                  setCoData(bankCOs);
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Course bank fallback fetch error:", e);
+          }
           setCoData([{ code: "CO1", description: "", domain: "", level: "" }]);
         }
       });
 
       // Fetch PO/PSO
-      onSnapshot(poPsoRef, (snapshot) => { // Use onSnapshot for real-time updates
-        setPoPsoData(snapshot.data()); // Use .data() for Firestore documents
+      unsubPoPso = onSnapshot(poPsoRef, (snapshot) => {
+        setPoPsoData(snapshot.data());
       });
 
       // Fetch Mapping
-      onSnapshot(mappingRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
+      unsubMapping = onSnapshot(mappingRef, (snapshot) => {
+        const data = snapshot.data();
         
         // Reset to defaults first
         setMapping({});
@@ -560,7 +642,13 @@ Return an exhaustive list of all plausible mappings.`;
         setLoading(false);
       });
     }
-  }, [batch, programme, regulation, department, academicYear, subject, semester]);
+
+    return () => {
+      if (unsubCo) unsubCo();
+      if (unsubPoPso) unsubPoPso();
+      if (unsubMapping) unsubMapping();
+    };
+  }, [batch, programme, regulation, department, academicYear, subject, semester, section]);
 
   const handleAddCO = () => {
     const nextNum = coData.length + 1;
@@ -621,7 +709,8 @@ Return an exhaustive list of all plausible mappings.`;
     }
 
     const progKey = formatProgrammeKey(programme);
-    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
     
     const summary = {};
     
@@ -709,7 +798,8 @@ Return an exhaustive list of all plausible mappings.`;
     }
 
     const progKey = formatProgrammeKey(programme);
-    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
 
     try {
       await updateDoc(doc(db, 'mapping_summary', mappingDocId), { // Use updateDoc for Firestore
@@ -839,7 +929,7 @@ Return an exhaustive list of all plausible mappings.`;
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600">Programme Name</label>
                 <div className="relative">
-                  <select value={programme} onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setBatch(""); }} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium">
+                  <select value={programme} onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setBatch(""); setSection(""); }} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium">
                     <option value="">Select Programme</option>
                     {filteredProgrammes.map(progKey => (
                       <option key={progKey} value={progKey}>{formatProgDisplay(progKey)}</option>
@@ -852,7 +942,7 @@ Return an exhaustive list of all plausible mappings.`;
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600">Batch</label>
                 <div className="relative">
-                  <select disabled={!programme} value={batch} onChange={(e) => setBatch(e.target.value)} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50">
+                  <select disabled={!programme} value={batch} onChange={(e) => { setBatch(e.target.value); setSection(""); }} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50">
                     <option value="">Select Batch</option>
                     {batches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
                   </select>
@@ -892,7 +982,7 @@ Return an exhaustive list of all plausible mappings.`;
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600">Department</label>
                 <div className="relative">
-                  <select disabled={!programme} value={department} onChange={(e) => setDepartment(e.target.value)} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50">
+                  <select disabled={!programme} value={department} onChange={(e) => { setDepartment(e.target.value); setSection(""); }} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50">
                     <option value="">Select Department</option>
                     {filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
@@ -900,7 +990,18 @@ Return an exhaustive list of all plausible mappings.`;
                 </div>
               </div>
 
-              <div className="md:col-span-2 space-y-2">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600">Section</label>
+                <div className="relative">
+                  <select disabled={!department || !batch || availableSections.length === 0} value={section} onChange={(e) => setSection(e.target.value)} className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50">
+                    <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                    {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600">Subject *</label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">

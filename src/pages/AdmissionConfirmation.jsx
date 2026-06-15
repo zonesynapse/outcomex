@@ -47,8 +47,16 @@ export default function AdmissionConfirmation() {
   const [hasMore, setHasMore] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0 });
+  const [searchResults, setSearchResults] = useState(null);
   const { departments: allDeptMap } = useDepartments();
   const PAGE_SIZE = 20;
+
+  const [paymentReportModalOpen, setPaymentReportModalOpen] = useState(false);
+  const [reportDateFrom, setReportDateFrom] = useState("");
+  const [reportDateTo, setReportDateTo] = useState("");
+  const [feeCategoryOptions, setFeeCategoryOptions] = useState([]);
+  const [selectedFeeCategories, setSelectedFeeCategories] = useState([]);
+  const [reportGenerating, setReportGenerating] = useState(false);
 
   const loadPage = async (page, cursor) => {
     setAppsLoading(true);
@@ -103,6 +111,30 @@ export default function AdmissionConfirmation() {
     getEnquiriesStats().then(setStats).catch(() => {});
   }, [enquiryId]);
 
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const all = await getAllEnquiries();
+        const q = searchTerm.trim().toLowerCase();
+        const filtered = all.filter((e) =>
+          e.status === "Application" || e.status === "Rejected"
+        ).filter((app) =>
+          [app.enquiryId, app.applicationNo, app.studentName, app.firstName, app.lastName, app.mobile]
+            .filter(Boolean)
+            .some((field) => String(field).toLowerCase().includes(q))
+        );
+        setSearchResults(filtered);
+      } catch (err) {
+        console.error("Search failed:", err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
   const departmentOptions = useMemo(() => {
     const set = new Set();
     applications.forEach((app) => {
@@ -111,19 +143,15 @@ export default function AdmissionConfirmation() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [applications]);
 
-  const applicationItems = useMemo(() => applications, [applications]);
+  const applicationItems = useMemo(() => searchResults !== null ? searchResults : applications, [applications, searchResults]);
 
   const filteredApplications = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return applicationItems
-      .filter((app) => {
-        const matchesSearch = !query || [app.enquiryId, app.applicationNo, app.studentName, app.firstName, app.lastName, app.mobile]
-          .filter(Boolean)
-          .some((field) => String(field).toLowerCase().includes(query));
-        const matchesDepartment = !departmentFilter || [app.department, app.department2, app.department3].includes(departmentFilter);
-        return matchesSearch && matchesDepartment;
-      });
-  }, [applications, searchTerm, departmentFilter]);
+    const source = searchResults !== null ? searchResults : applications;
+    return source.filter((app) => {
+      const matchesDepartment = !departmentFilter || [app.department, app.department2, app.department3].includes(departmentFilter);
+      return matchesDepartment;
+    });
+  }, [applications, searchResults, departmentFilter]);
 
   // stats now come from getEnquiriesStats (aggregation queries on the entire dataset)
 
@@ -217,15 +245,74 @@ export default function AdmissionConfirmation() {
     }
   };
 
-  const generatePaymentReport = async () => {
+  const openPaymentReportModal = async () => {
+    setPaymentReportModalOpen(true);
+    setReportGenerating(true);
     try {
-      showToast("Generating payment report...", "success");
+      const all = await getAllEnquiries();
+      const cats = new Set();
+      all.forEach((e) => {
+        if (!Array.isArray(e.payments)) return;
+        e.payments.forEach((p) => {
+          if (p.feeCategory) cats.add(p.feeCategory);
+        });
+      });
+      const sorted = Array.from(cats).sort();
+      setFeeCategoryOptions(sorted);
+      setSelectedFeeCategories(sorted);
+    } catch (err) {
+      console.error("Failed to load fee categories:", err);
+      showToast("Failed to load payment data", "error");
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
+  const handleSelectAllFeeCategories = (checked) => {
+    setSelectedFeeCategories(checked ? [...feeCategoryOptions] : []);
+  };
+
+  const handleToggleFeeCategory = (cat) => {
+    setSelectedFeeCategories((prev) =>
+      prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const parsePaymentDate = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    const parts = dateStr.split(/[-/]/);
+    if (parts.length === 3) {
+      const parsed = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return null;
+  };
+
+  const handleGeneratePaymentReport = async () => {
+    if (selectedFeeCategories.length === 0) {
+      showToast("Select at least one fee category", "error");
+      return;
+    }
+    setReportGenerating(true);
+    try {
       const allEnquiries = await getAllEnquiries();
       const rows = [];
+      const dateFrom = reportDateFrom ? new Date(reportDateFrom + "T00:00:00") : null;
+      const dateTo = reportDateTo ? new Date(reportDateTo + "T23:59:59") : null;
       allEnquiries.forEach((e) => {
         if (!Array.isArray(e.payments)) return;
         e.payments.forEach((p) => {
           if (!p.feeCategory && !p.feeAmount) return;
+          if (!selectedFeeCategories.includes(p.feeCategory)) return;
+          if (p.paymentDate) {
+            const pd = parsePaymentDate(p.paymentDate);
+            if (pd) {
+              if (dateFrom && pd < dateFrom) return;
+              if (dateTo && pd > dateTo) return;
+            }
+          }
           rows.push([
             e.applicationNo || e.enquiryId || "-",
             e.firstName || e.lastName
@@ -240,7 +327,8 @@ export default function AdmissionConfirmation() {
         });
       });
       if (rows.length === 0) {
-        showToast("No payment records found", "error");
+        showToast("No payment records match the filters", "error");
+        setReportGenerating(false);
         return;
       }
       const doc = new jsPDF({ orientation: "portrait", format: "a4" });
@@ -262,24 +350,37 @@ export default function AdmissionConfirmation() {
         yPos += logoHeight + 10;
       }
       doc.setFontSize(16);
-      doc.text("Payment Consolidation Report", pageWidth / 2, yPos, { align: "center" });
+      const title =
+        selectedFeeCategories.length === feeCategoryOptions.length
+          ? "Overall Payment Report"
+          : `Payment Report: ${selectedFeeCategories.join(" + ")}`;
+      doc.text(title, pageWidth / 2, yPos, { align: "center" });
       yPos += 8;
       doc.setFontSize(10);
-      doc.text(`Generated on: ${new Date().toLocaleDateString("en-IN")}`, pageWidth / 2, yPos, { align: "center" });
-      yPos += 6;
+      let dateInfo = "All time";
+      if (dateFrom && dateTo) dateInfo = `${dateFrom.toLocaleDateString("en-IN")} - ${dateTo.toLocaleDateString("en-IN")}`;
+      else if (dateFrom) dateInfo = `From ${dateFrom.toLocaleDateString("en-IN")}`;
+      else if (dateTo) dateInfo = `Till ${dateTo.toLocaleDateString("en-IN")}`;
+      doc.text(`Generated: ${new Date().toLocaleDateString("en-IN")} | ${dateInfo}`, pageWidth / 2, yPos, { align: "center" });
+      yPos += 8;
       autoTable(doc, {
         startY: yPos,
         head: [["Application ID", "Student Name", "Fee Category", "Amount", "Date", "Mode", "UTR Number"]],
         body: rows,
         styles: { fontSize: 8 },
         headStyles: { fillColor: [18, 12, 122] },
+        foot: [["", "", "Total", rows.reduce((s, r) => s + (parseFloat(r[3]) || 0), 0).toFixed(2), "", "", ""]],
+        footStyles: { fillColor: [240, 240, 240], fontStyle: "bold", fontSize: 8, halign: "right" },
       });
       doc.autoPrint();
       window.open(doc.output("bloburl"), "_blank");
-      showToast("Payment report opened for printing", "success");
+      setPaymentReportModalOpen(false);
+      showToast("Payment report generated", "success");
     } catch (err) {
       console.error("Payment report error:", err);
       showToast("Failed to generate report", "error");
+    } finally {
+      setReportGenerating(false);
     }
   };
 
@@ -365,8 +466,8 @@ export default function AdmissionConfirmation() {
                 </button>
                 <button
                   type="button"
-                  onClick={generatePaymentReport}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md"
+                  onClick={openPaymentReportModal}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md border border-emerald-600"
                 >
                   <CreditCard size={16} />
                   Payment Report
@@ -523,7 +624,7 @@ export default function AdmissionConfirmation() {
             </div>
           )}
 
-          {applicationItems.length > 0 && (
+          {applicationItems.length > 0 && searchResults === null && (
             <div className="mt-4 flex items-center justify-between">
               <span className="text-sm text-zinc-500">
                 Page {currentPage} of {Math.max(1, Math.ceil(totalCount / PAGE_SIZE))} ({totalCount} total)
@@ -556,6 +657,78 @@ export default function AdmissionConfirmation() {
           </div>
         )}
       </Layout>
+
+      {paymentReportModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-2 rounded-xl bg-emerald-100 text-emerald-600">
+                  <CreditCard size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-zinc-900">Payment Report</h3>
+                  <p className="text-xs text-zinc-500">Apply filters to generate a custom payment report</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-5">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-600 uppercase tracking-wider mb-1.5">From Date</label>
+                  <input type="date" value={reportDateFrom} onChange={(e) => setReportDateFrom(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-600 uppercase tracking-wider mb-1.5">To Date</label>
+                  <input type="date" value={reportDateTo} onChange={(e) => setReportDateTo(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-sm outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10" />
+                </div>
+              </div>
+
+              <div className="mb-5">
+                <label className="block text-xs font-bold text-zinc-600 uppercase tracking-wider mb-2">Fee Categories</label>
+                <label className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200 cursor-pointer hover:bg-zinc-100 transition-colors mb-2">
+                  <input type="checkbox" checked={selectedFeeCategories.length === feeCategoryOptions.length}
+                    onChange={(e) => handleSelectAllFeeCategories(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]" />
+                  <span className="text-sm font-semibold text-zinc-700">Select All</span>
+                </label>
+                <div className="max-h-44 overflow-y-auto space-y-1 rounded-xl border border-zinc-200 p-2">
+                  {feeCategoryOptions.length === 0 ? (
+                    <p className="text-xs text-zinc-400 text-center py-4">No fee categories found</p>
+                  ) : (
+                    feeCategoryOptions.map((cat) => (
+                      <label key={cat} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-zinc-50 transition-colors">
+                        <input type="checkbox" checked={selectedFeeCategories.includes(cat)}
+                          onChange={() => handleToggleFeeCategory(cat)}
+                          className="h-4 w-4 rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]" />
+                        <span className="text-sm text-zinc-700">{cat}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <p className="text-xs text-zinc-500 mt-1.5">{selectedFeeCategories.length} of {feeCategoryOptions.length} selected</p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-zinc-100">
+                <button type="button" onClick={() => setPaymentReportModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50">
+                  Cancel
+                </button>
+                <button type="button" onClick={handleGeneratePaymentReport}
+                  disabled={reportGenerating || selectedFeeCategories.length === 0}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 text-sm font-semibold text-white transition-all hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                  {reportGenerating ? (
+                    <><div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating...</>
+                  ) : (
+                    <><CreditCard size={16} /> Generate Report</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddEnquiryModal
         open={editModal.open}

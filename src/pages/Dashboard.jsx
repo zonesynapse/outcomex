@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [selectedSubject, setSelectedSubject] = useState("");
   const [extraSubject, setExtraSubject] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
 
   // Student List States
   const [students, setStudents] = useState([]);
@@ -125,6 +127,27 @@ export default function Dashboard() {
       });
     }
   }, []);
+
+  // Section Configs Listener
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -554,7 +577,8 @@ export default function Dashboard() {
   useEffect(() => {
     if ((module === "students" || module === "consolidation" || module === "log-report") && programme && department && batch) {
       const progKey = formatProgrammeKey(programme);
-      const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
       const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
       
       const unsubscribe = onSnapshot(studentRef, (snapshot) => { // Use onSnapshot for real-time updates
@@ -586,7 +610,7 @@ export default function Dashboard() {
 
       return () => unsubscribe();
     }
-  }, [module, programme, department, batch]);
+  }, [module, programme, department, batch, section]);
 
   // Fetch Syllabus when filters change
   useEffect(() => {
@@ -1216,7 +1240,8 @@ export default function Dashboard() {
     if (!batch || !programme || !department) return;
     
     const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
-    const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
     const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
 
     const dataToSave = {
@@ -1433,6 +1458,25 @@ export default function Dashboard() {
                   <option value="">Choose Batch</option>
                   {getActiveBatches(formatProgrammeKey(programme)).map(b => (
                     <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+              </div>
+            </div>
+
+            {/* Section */}
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-zinc-600 ml-1">Select Section</label>
+              <div className="relative">
+                <select 
+                  disabled={!batch}
+                  value={section}
+                  onChange={(e) => setSection(e.target.value)}
+                  className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                >
+                  <option value="">{batch && availableSections.length === 0 ? "No sections configured" : "No Section"}</option>
+                  {availableSections.map(s => (
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />

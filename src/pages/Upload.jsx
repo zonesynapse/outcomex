@@ -136,6 +136,9 @@ export default function Upload() {
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
 
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
+
   const [availableBatches, setAvailableBatches] = useState([]);
 
   useEffect(() => {
@@ -157,7 +160,27 @@ export default function Upload() {
       setStudentRegulation("");
     }
   }, [batch, programme, getRegulationForBatch]);
-  
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
+
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
@@ -357,14 +380,16 @@ export default function Upload() {
             }
 
             const progKey = formatProgrammeKey(programme);
-            const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+            const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+            const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
             const studentsRef = doc(db, 'students', studentDocId); // Firestore doc reference
 
             const payload = {
               _meta: {
-                batch, // Include batch in _meta
+                batch,
                 programme_name: programme,
                 department,
+                section: section || '',
                 count: Object.keys(studentsMap).length
               },
               ...studentsMap
@@ -664,7 +689,7 @@ export default function Upload() {
 
           {uploadType === "studentList" && (
             <div className="space-y-6 p-6 bg-zinc-50 rounded-lg border border-zinc-200">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 mb-1">Programme Name*</label>
                   <select 
@@ -674,6 +699,7 @@ export default function Upload() {
                       setProgramme(e.target.value);
                       setDepartment("");
                       setBatch("");
+                      setSection("");
                     }}
                   >
                     <option value="">Select Programme</option>
@@ -687,7 +713,7 @@ export default function Upload() {
                   <select 
                     className="w-full px-4 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a] focus:border-blue-500 outline-none disabled:opacity-50"
                     value={batch}
-                    onChange={(e) => setBatch(e.target.value)}
+                    onChange={(e) => { setBatch(e.target.value); setSection(""); }}
                     disabled={!programme}
                   >
                     <option value="">Select Batch</option>
@@ -709,13 +735,25 @@ export default function Upload() {
                   <select 
                     className="w-full px-4 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a] focus:border-blue-500 outline-none"
                     value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
+                    onChange={(e) => { setDepartment(e.target.value); setSection(""); }}
                     disabled={!programme}
                   >
                     <option value="">Select Department</option>
                     {programme && PROGRAMME_DEPARTMENTS[programme]?.map(dept => (
                       <option key={dept} value={dept}>{dept}</option>
                     ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Section</label>
+                  <select 
+                    className="w-full px-4 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-[#120c7a] focus:border-blue-500 outline-none disabled:opacity-50"
+                    value={section}
+                    onChange={(e) => setSection(e.target.value)}
+                    disabled={!department || !batch || availableSections.length === 0}
+                  >
+                    <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                    {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               </div>

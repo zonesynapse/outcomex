@@ -115,7 +115,21 @@ export default function AdminRoleConfig() {
     { id: "markk", label: "Marks Entry", path: "/markk" },
     { id: "attendance", label: "Attendance", path: "/attendance" },
     { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar" },
-    { id: "timetable", label: "Timetable", path: "/tt" }
+    { id: "timetable", label: "Timetable", path: "/tt" },
+    { id: "library-catalog", label: "Library — Catalog", path: "/library/catalog" },
+    { id: "library-circulation", label: "Library — Circulation", path: "/library/circulation" },
+    { id: "library-reports", label: "Library — Reports", path: "/library/reports" },
+    { id: "library-categories", label: "Library — Categories", path: "/library/categories" },
+    { id: "library-entry-exit", label: "Library — Entry / Exit", path: "/library/entry-exit" },
+    { id: "placement-dashboard", label: "Placement — Dashboard", path: "/placement/dashboard" },
+    { id: "placement-companies", label: "Placement — Companies", path: "/placement/companies" },
+    { id: "placement-drives", label: "Placement — Drives", path: "/placement/drives" },
+    { id: "placement-students", label: "Placement — Students", path: "/placement/students" },
+    { id: "placement-applications", label: "Placement — Applications", path: "/placement/applications" },
+    { id: "placement-interviews", label: "Placement — Interviews", path: "/placement/interviews" },
+    { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers" },
+    { id: "placement-training", label: "Placement — Training", path: "/placement/training" },
+    { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports" }
   ];
 
   useEffect(() => {

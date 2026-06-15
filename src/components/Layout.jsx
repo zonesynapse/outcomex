@@ -27,7 +27,19 @@ import {
   CheckCircle2,
   ChevronDown,
   Trash2,
-  Wallet
+  Wallet,
+  ScanLine,
+  Library,
+  ArrowLeftRight,
+  Tags,
+  Building2,
+  Briefcase,
+  GraduationCap,
+  ClipboardList,
+  CalendarDays,
+  Award,
+  IndianRupee,
+  ShieldAlert
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -49,7 +61,10 @@ const allPossibleItems = [
   { id: "course-enrolment", icon: Users, label: "Course Enrolment", path: "/course-enrolment" },
   { id: "admission-enquiries", icon: Users, label: "Admission Enquiries", path: "/admissions/enquiries" },
   { id: "seat-management", icon: Settings2, label: "Seat Management", path: "/admissions/seats" },
-  { id: "fee-config", icon: Wallet, label: "Fee Configuration", path: "/admissions/fees" },
+
+  { id: "fee-dashboard", icon: BarChart3, label: "Fee Dashboard", path: "/fee/dashboard" },
+  { id: "fee-operations", icon: IndianRupee, label: "Fee Operations", path: "/fee/operations" },
+  { id: "fee-control", icon: ShieldAlert, label: "Fee Control", path: "/fee/control" },
   { id: "admission-confirmation", icon: CheckCircle2, label: "Admission Confirmation", path: "/admissions/confirm" },
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
@@ -60,7 +75,16 @@ const allPossibleItems = [
   { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
   { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
   { id: "questionpaper", icon: BookOpen, label: "Question Paper Generator", path: "/question-paper-generator" },
-  { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" }
+  { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
+  { id: "library-catalog", icon: BookOpen, label: "Catalog", path: "/library/catalog" },
+  { id: "library-circulation", icon: ArrowLeftRight, label: "Circulation", path: "/library/circulation" },
+  { id: "library-reports", icon: BarChart3, label: "Reports", path: "/library/reports" },
+  { id: "library-categories", icon: Tags, label: "Categories", path: "/library/categories" },
+  { id: "library-entry-exit", icon: ScanLine, label: "Entry / Exit", path: "/library/entry-exit" },
+  { id: "placement-dashboard", icon: LayoutDashboard, label: "Placement Dashboard", path: "/placement/dashboard" },
+  { id: "placement-drives", icon: Briefcase, label: "Drives & Apps", path: "/placement/drives" },
+  { id: "placement-students", icon: Users, label: "Students & Offers", path: "/placement/students" },
+  { id: "placement-activities", icon: CalendarDays, label: "Interviews & Training", path: "/placement/activities" }
 ];
 
 const modules = [
@@ -86,7 +110,7 @@ const modules = [
     id: "fee",
     label: "Fee",
     icon: Wallet,
-    itemIds: ["fee-config"]
+    itemIds: ["fee-dashboard", "fee-operations", "fee-control"]
   },
   {
     id: "academics",
@@ -100,6 +124,18 @@ const modules = [
     icon: Settings2,
     // itemIds: ["info-configuration", "regulation-formation", "admin-roles", "curriculum"]
     itemIds: ["info-configuration", "admin-roles", "curriculum"]
+  },
+  {
+    id: "library",
+    label: "Library",
+    icon: Library,
+    itemIds: ["library-catalog", "library-circulation", "library-reports", "library-categories", "library-entry-exit"]
+  },
+  {
+    id: "placement",
+    label: "Placement",
+    icon: Briefcase,
+    itemIds: ["placement-dashboard", "placement-drives", "placement-students", "placement-activities"]
   }
 ];
 
@@ -401,6 +437,19 @@ export default function Layout({ children, title }) {
           color: white;
           letter-spacing: 0.5px;
         }
+        .sidebar-scrollbar::-webkit-scrollbar {
+          width: 3px;
+        }
+        .sidebar-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .sidebar-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.15);
+          border-radius: 10px;
+        }
+        .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.25);
+        }
         .custom-scrollbar::-webkit-scrollbar {
           width: 4px;
         }
@@ -414,7 +463,7 @@ export default function Layout({ children, title }) {
       `}</style>
 
       {/* Navbar */}
-      <nav className="bg-[#120c7a] h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-sm border-b border-white/10 no-print">
+      <nav className="bg-gradient-to-r from-[#120c7a] to-[#15108a] h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-sm border-b border-white/10 no-print">
         <button 
           onClick={() => setIsSidebarOpen(true)}
           className="p-2 hover:bg-blue-600 rounded-lg text-white transition-colors"
@@ -601,29 +650,27 @@ export default function Layout({ children, title }) {
       </nav>
 
       {/* Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-[60] backdrop-blur-sm transition-opacity"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
+      <div 
+        className={`fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm transition-all duration-300 ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        onClick={() => setIsSidebarOpen(false)}
+      />
 
       {/* Sidebar */}
-      <aside className={`fixed top-0 left-0 h-full w-64 bg-[#120c7a] z-[70] transform transition-transform duration-300 ease-in-out shadow-2xl overflow-y-auto scrollbar-hide no-print ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-4 flex justify-between items-center border-b border-blue-400/30">
-          <div className="flex-grow pr-2">
+      <aside className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-[#120c7a] via-[#120c7a] to-[#0d075a] z-[70] transform transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] shadow-2xl overflow-y-auto sidebar-scrollbar no-print ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full shadow-none'}`}>
+        <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-white/10">
+          <div className="flex-1 min-w-0">
             <img 
               src="https://ckcet.edu.in/images/uploads/logo-1765369701693967650f8f6.png" 
-              alt="CKCET Logo" 
-              className="w-full h-auto rounded-lg bg-white p-1"
+              alt="CKCET" 
+              className="w-full h-auto rounded-lg bg-white/90 p-1"
               referrerPolicy="no-referrer"
             />
           </div>
-          <button onClick={() => setIsSidebarOpen(false)} className="text-white hover:bg-blue-600 p-1 rounded-lg shrink-0">
-            <X size={24} />
+          <button onClick={() => setIsSidebarOpen(false)} className="text-white/60 hover:text-white hover:bg-white/10 p-1.5 rounded-lg shrink-0 transition-all">
+            <X size={18} />
           </button>
         </div>
-        <nav className="p-4 space-y-2">
+        <nav className="px-3 py-3 space-y-0.5">
           {/* Global Items */}
           {globalItems.map((item) => {
             const isActive = location.pathname === item.path;
@@ -631,47 +678,66 @@ export default function Layout({ children, title }) {
               <Link 
                 key={item.label}
                 to={item.path}
-                className={`flex items-center gap-3 w-full text-white px-4 py-3 rounded-xl transition-colors text-sm font-medium sidebar-link ${isActive ? 'bg-blue-700 shadow-inner' : 'hover:bg-blue-700'}`}
+                className={`relative flex items-center gap-3 w-full text-white px-4 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium sidebar-link group ${isActive ? 'bg-white/12 text-white shadow-sm' : 'hover:bg-white/8 text-white/85 hover:text-white'}`}
                 onClick={() => setIsSidebarOpen(false)}
               >
-                <item.icon size={18} />
-                <span className="flex-grow">{item.label}</span>
+                {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-full" />}
+                <span className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${isActive ? 'bg-white/20' : 'bg-white/6 group-hover:bg-white/12'}`}>
+                  <item.icon size={16} className={isActive ? 'text-white' : 'text-white/80'} />
+                </span>
+                <span className="flex-grow truncate">{item.label}</span>
               </Link>
             );
           })}
 
+          {/* Divider between global and module items */}
+          {globalItems.length > 0 && moduleGroups.length > 0 && (
+            <div className="my-2 mx-4 border-t border-white/8" />
+          )}
+
           {/* Module Based Groups */}
-          {moduleGroups.map((module) => (
-            <div key={module.id} className="space-y-1">
+          {moduleGroups.map((module) => {
+            const moduleActive = module.items.some(item => location.pathname === item.path);
+            return (
+            <div key={module.id} className="space-y-0.5">
               <button
                 onClick={() => toggleModule(module.id)}
-                className={`flex items-center gap-3 w-full text-white px-4 py-3 rounded-xl transition-colors text-sm font-bold uppercase tracking-wider hover:bg-blue-700/50 ${expandedModules[module.id] ? 'bg-blue-800/40' : ''}`}
+                className={`relative flex items-center gap-3 w-full text-white px-4 py-2.5 rounded-xl transition-all duration-200 text-xs font-bold uppercase tracking-wider sidebar-link group ${expandedModules[module.id] ? 'bg-white/8 text-white' : 'text-white/75 hover:text-white hover:bg-white/6'}`}
               >
-                <module.icon size={18} className="text-white" />
+                <span className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${expandedModules[module.id] ? 'bg-white/20' : 'bg-white/6 group-hover:bg-white/12'}`}>
+                  <module.icon size={16} className={expandedModules[module.id] ? 'text-white' : 'text-white/75'} />
+                </span>
                 <span className="flex-grow text-left">{module.label}</span>
-                {expandedModules[module.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className={`transition-transform duration-200 ${expandedModules[module.id] ? 'rotate-90' : ''}`}>
+                  <ChevronRight size={13} className="text-white/50" />
+                </span>
               </button>
               
-              {expandedModules[module.id] && (
-                <div className="ml-4 pl-4 border-l border-blue-400/20 space-y-1 animate-in slide-in-from-top-2 duration-200">
+              <div className={`overflow-hidden transition-all duration-250 ease-[cubic-bezier(0.4,0,0.2,1)] ${expandedModules[module.id] ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                <div className="ml-4 pl-4 border-l border-white/10 space-y-0.5 py-0.5">
                   {module.items.map((item) => {
                     const isActive = location.pathname === item.path;
                     return (
                       <Link 
                         key={item.label}
                         to={item.path}
-                        className={`flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-colors text-[11px] font-bold sidebar-link ${isActive ? 'bg-white/20 text-white shadow-sm' : 'text-white hover:bg-white/10'}`}
+                        className={`relative flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-all duration-200 text-[12px] font-semibold sidebar-link group ${isActive ? 'bg-white/15 text-white' : 'text-white hover:text-white/80 hover:bg-white/8'}`}
                         onClick={() => setIsSidebarOpen(false)}
                       >
-                        <item.icon size={14} className="text-white" />
-                        <span className="flex-grow">{item.label}</span>
+                        {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white rounded-r-full" />}
+                        <span className={`w-1.5 h-1.5 rounded-full transition-all duration-200 ${isActive ? 'bg-white' : 'bg-white/40 group-hover:bg-white/70'}`} />
+                        <span className="flex-grow truncate">{item.label}</span>
                       </Link>
                     );
                   })}
                 </div>
-              )}
+              </div>
             </div>
-          ))}
+            );
+          })}
+
+          {/* Bottom spacer */}
+          <div className="h-4" />
         </nav>
       </aside>
 

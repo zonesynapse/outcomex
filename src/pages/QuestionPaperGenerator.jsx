@@ -41,6 +41,8 @@ export default function QuestionPaperGenerator() {
   const [academicYear, setAcademicYear] = useState('');
   const globalSemesterType = useSemesterType();
   const [selectedSemester, setSelectedSemester] = useState('');
+  const [section, setSection] = useState('');
+  const [sectionConfigs, setSectionConfigs] = useState({});
   const [subject, setSubject] = useState('');
   const [courseOutcomes, setCourseOutcomes] = useState([]);
   const [coPiMapping, setCoPiMapping] = useState({});
@@ -150,6 +152,15 @@ export default function QuestionPaperGenerator() {
       console.error('initAssignmentEditor', e);
     }
   }, []); // Empty deps to avoid re-init on question change
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (assessmentType !== 'Assignment' || !showParts) return;
@@ -853,18 +864,45 @@ export default function QuestionPaperGenerator() {
   });
 
   const displayedBatches = useMemo(() => {
-    if (assessmentType !== 'Assignment') return batches;
-    if (!program || !department) return batches; // Don't filter if context is missing
+    if (!program || !department) return batches;
+
+    const norm = (v) => String(v || '').trim().toLowerCase();
+    const progKey = formatProgrammeKey(program);
+    const progKeyNorm = norm(progKey);
+    const deptNorm = norm(department);
+
+    if (assessmentType === 'Assignment') {
+      return batches.filter(b => {
+        const reg = getRegulationForBatch(progKey, b);
+        if (!reg) return false;
+        return ciaConfigs.some(config =>
+          config.isAssignment === true &&
+          (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
+          (!norm(config.department) || norm(config.department) === deptNorm) &&
+          (!norm(config.regulation) || norm(config.regulation) === norm(reg))
+        );
+      });
+    }
+
+    // For Exam mode: if Indirect Assessment configs exist for this prog/dept, filter by regulation
+    const indirectRegs = new Set();
+    ciaConfigs.forEach(config => {
+      if (config.isIndirectAssessment === true &&
+          (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
+          (!norm(config.department) || norm(config.department) === deptNorm) &&
+          config.regulation
+      ) {
+        indirectRegs.add(norm(config.regulation));
+      }
+    });
+
+    if (indirectRegs.size === 0) return batches;
 
     return batches.filter(b => {
-      return ciaConfigs.some(config => 
-        formatProgDisplay(config.program) === formatProgDisplay(program) &&
-        config.department === department &&
-        config.batch === b &&
-        config.isAssignment === true
-      );
+      const reg = getRegulationForBatch(progKey, b);
+      return reg && indirectRegs.has(norm(reg));
     });
-  }, [batches, assessmentType, ciaConfigs, program, department]);
+  }, [batches, assessmentType, ciaConfigs, program, department, getRegulationForBatch]);
 
   const filteredDepartments = useMemo(() => {
   const depts = programToDepartments[formatProgrammeKey(program)] || [];
@@ -873,6 +911,17 @@ export default function QuestionPaperGenerator() {
     return assignedDepts.includes(sanitizeKey(dept));
   });
 }, [program, userRole, assignedDepts, programToDepartments]);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !program) return [];
+    const progKey = formatProgrammeKey(program);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, program, sectionConfigs]);
 
   useEffect(() => {
     if (exam && exam !== 'custom') {
@@ -1224,8 +1273,9 @@ export default function QuestionPaperGenerator() {
     const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
     const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
 
-    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}`;
-    const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
+      const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
     const unsubscribePoPso = onSnapshot(poPsoRef, (snap) => { // Use onSnapshot for real-time updates
       const data = snap.data() || {}; // Use .data() for Firestore documents
@@ -1287,7 +1337,7 @@ export default function QuestionPaperGenerator() {
       unsubscribeCO();
       unsubscribeMapping();
     };
-  }, [department, batch, subject, academicYear, program, selectedSemester, getRegulationForBatch]);
+  }, [department, batch, subject, academicYear, program, selectedSemester, section, getRegulationForBatch]);
 
   useEffect(() => {
     hasLoadedRef.current = false;
@@ -1317,7 +1367,8 @@ export default function QuestionPaperGenerator() {
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
-    const docId = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const docId = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
 
     const checkExisting = async () => {
       try {
@@ -1595,7 +1646,9 @@ export default function QuestionPaperGenerator() {
         const userSnap = await getDoc(userRef); // Use getDoc for Firestore
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentRef = doc(db, 'subject_assignments', progKey, deptKey, sanitizeKey(batch), sanitizeKey(academicYear), semNum); // Firestore subcollection path
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}${sectionSuffix}`;
+        const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey);
         const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
         
         if (assignmentSnap.exists()) {
@@ -1626,7 +1679,7 @@ export default function QuestionPaperGenerator() {
     };
 
     fetchSubjects();
-  }, [program, department, batch, selectedSemester, academicYear, getRegulationForBatch]);
+  }, [program, department, batch, selectedSemester, academicYear, section, getRegulationForBatch]);
 
   useEffect(() => {
     // Load CKEditor script dynamically
@@ -2406,7 +2459,8 @@ const initEditor = useCallback(() => {
     };
 
     // Use stable composite key not including examDisplay
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
     const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
 
@@ -2697,7 +2751,8 @@ const initEditor = useCallback(() => {
 
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use stable composite key not including examDisplay
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpDocId that includes set suffix so multiple sets do not overwrite each other when forwarded. This is the document ID.
     const qpDocId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
 
@@ -3362,7 +3417,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               <select 
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
                 value={program} 
-                onChange={e => { setProgram(e.target.value); setDepartment(''); setQbAvailableQNos([]); }}
+                onChange={e => { setProgram(e.target.value); setDepartment(''); setSection(''); setQbAvailableQNos([]); }}
               >
                 <option value="">Select Program</option>
                 {filteredProgrammes.map(progKey => (
@@ -3379,7 +3434,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               <select 
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
                 value={department} 
-                onChange={e => setDepartment(e.target.value)} 
+                onChange={e => { setDepartment(e.target.value); setSection(''); }} 
                 disabled={!filteredDepartments.length}
               >
                 <option value="">Select Department</option>
@@ -3395,7 +3450,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               <select 
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
                 value={batch} 
-                onChange={e => setBatch(e.target.value)} 
+                onChange={e => { setBatch(e.target.value); setSection(''); }} 
                 disabled={!displayedBatches.length}
               >
                 <option value="">Select Batch</option>
@@ -3422,7 +3477,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
           <div className="space-y-2.5">
             <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
             <div className="relative">
@@ -3434,6 +3489,22 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               >
                 <option value="">Select Semester</option>
                 {semesters.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+            <div className="relative">
+              <select 
+                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
+                value={section} 
+                onChange={e => setSection(e.target.value)} 
+                disabled={!department || !batch || availableSections.length === 0}
+              >
+                <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>

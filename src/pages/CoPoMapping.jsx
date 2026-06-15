@@ -45,6 +45,8 @@ export default function CoPoMapping() {
   const [userRole, setUserRole] = useState(null);
   const [assignedProgs, setAssignedProgs] = useState([]);
   const [assignedDepts, setAssignedDepts] = useState([]);
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
 
   useEffect(() => {
     let unsubscribeAssignments = null;
@@ -86,6 +88,15 @@ export default function CoPoMapping() {
         unsubscribeAssignments();
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
   }, []);
 
   const [poList, setPoList] = useState([]);
@@ -139,8 +150,9 @@ export default function CoPoMapping() {
     const deptKey = sanitizeKey(department);
     const batchKey = sanitizeKey(batch);
     const regKey = sanitizeKey(regulation);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     
-    const actionsRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
+    const actionsRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`);
 
     const unsubscribe = onSnapshot(actionsRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (snapshot.exists()) {
@@ -151,7 +163,7 @@ export default function CoPoMapping() {
     });
 
     return () => unsubscribe();
-  }, [batch, programme, department, regulation]);
+  }, [batch, programme, department, regulation, section]);
 
   const handleOpenActionModal = (outcomeCode, name, currentValue, targetValue) => {
     setSelectedOutcome({ code: outcomeCode, name: name, value: currentValue, targetValue: targetValue });
@@ -167,8 +179,9 @@ export default function CoPoMapping() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
 
-      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
+      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`);
 
       await setDoc(actionRef, {
         [selectedOutcome.code]: {
@@ -195,8 +208,9 @@ export default function CoPoMapping() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
 
-      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}`);
+      const actionRef = doc(db, 'po_actions_taken', `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`);
       await updateDoc(actionRef, { [outcomeCode]: deleteField() });
     } catch (error) {
       console.error("Error deleting action plan:", error);
@@ -227,8 +241,9 @@ export default function CoPoMapping() {
   const summaryKey = useMemo(() => {
     if (!batch || !programme || !regulation || !subject || !academicYear || !semester) return "";
     const progKey = formatProgrammeKey(programme);
-    return `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
-  }, [batch, programme, regulation, subject, academicYear, semester]);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    return `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
+  }, [batch, programme, regulation, subject, academicYear, semester, section]);
 
   const getSemesters = () => {
     if (!academicYear || !batch) return [];
@@ -247,6 +262,17 @@ export default function CoPoMapping() {
     if (userRole !== 'Faculty') return true;
     return assignedDepts.includes(sanitizeKey(dept));
   });
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
 
   const deriveSemesterNumber = (label) => {
     if (!label) return '';
@@ -296,7 +322,8 @@ export default function CoPoMapping() {
         const userSnap = await getDoc(userRef); // Use getDoc for Firestore
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear || '')}_${semNum}`;
+        const sectionSuffixAssignment = section ? `_${sanitizeKey(section)}` : '';
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear || '')}_${semNum}${sectionSuffixAssignment}`;
         const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey); // Firestore flat key path
         const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
         
@@ -328,7 +355,7 @@ export default function CoPoMapping() {
     };
 
     fetchSubjects();
-  }, [programme, department, batch, regulation, semester, academicYear, getRegulationForBatch]);
+  }, [programme, department, batch, regulation, semester, academicYear, section, getRegulationForBatch]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -408,7 +435,7 @@ export default function CoPoMapping() {
     };
 
     fetchData();
-  }, [batch, programme, department, regulation, subject, academicYear, semester, summaryKey]);
+  }, [batch, programme, department, regulation, subject, academicYear, semester, section, summaryKey]);
 
   // Compute final CO attainment (Direct + Indirect) for this subject so PO attainment can be calculated
   useEffect(() => {
@@ -422,7 +449,7 @@ export default function CoPoMapping() {
 
       setLoadingFinal(true);
       try {
-        const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_');
+        const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
         const coAttainmentRef = doc(db, 'co_attainment', coAttainmentDocId); // Firestore doc reference
         const snap = await getDoc(coAttainmentRef); // Use getDoc for Firestore
         const data = snap.data(); // Use .data() for Firestore documents
@@ -585,7 +612,7 @@ export default function CoPoMapping() {
     };
 
     computeFinalAttainment();
-  }, [batch, programme, department, subject, academicYear, semester, mappingDirectIndirectSplit, mappingThresholds, mappingCutoff, ciaConfigs]);
+  }, [batch, programme, department, subject, academicYear, semester, section, mappingDirectIndirectSplit, mappingThresholds, mappingCutoff, ciaConfigs]);
 
   const calculateMappingGrade = (marked, total) => {
     if (!total || total === 0) return 0;
@@ -789,7 +816,7 @@ export default function CoPoMapping() {
               <div className="relative">
                 <select 
                   value={programme}
-                  onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setBatch(""); }}
+                  onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setBatch(""); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
                   <option value="">Select Programme</option>
@@ -807,7 +834,7 @@ export default function CoPoMapping() {
                 <select 
                   disabled={!programme}
                   value={batch}
-                  onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); }}
+                  onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Batch</option>
@@ -862,7 +889,7 @@ export default function CoPoMapping() {
                 <select 
                   disabled={!programme}
                   value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
+                  onChange={(e) => { setDepartment(e.target.value); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Department</option>
@@ -874,7 +901,23 @@ export default function CoPoMapping() {
               </div>
             </div>
 
-            <div className="space-y-1.5 lg:col-span-2">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+              <div className="relative">
+                <select 
+                  disabled={!department || !batch || availableSections.length === 0}
+                  value={section}
+                  onChange={(e) => setSection(e.target.value)}
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                >
+                  <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject *</label>
               <div className="relative">
                 <select 

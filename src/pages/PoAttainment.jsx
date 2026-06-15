@@ -45,6 +45,8 @@ export default function PoAttainment() {
   const [batch, setBatch] = useState("");
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
   const [loading, setLoading] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [userRole, setUserRole] = useState(null);
@@ -89,8 +91,9 @@ export default function PoAttainment() {
     const deptKey = sanitizeKey(department);
     const batchKey = sanitizeKey(batch);
     const regKey = sanitizeKey(regulation);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     
-    const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+    const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`;
     const actionsRef = doc(db, "po_actions_taken", compositeKey);
 
     const unsubscribe = onSnapshot(actionsRef, (snapshot) => {
@@ -102,7 +105,7 @@ export default function PoAttainment() {
     });
 
     return () => unsubscribe();
-  }, [batch, programme, department, regulation]);
+  }, [batch, programme, department, regulation, section]);
 
   const handleOpenActionModal = (res) => {
     setSelectedOutcome(res);
@@ -118,8 +121,9 @@ export default function PoAttainment() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       
-      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`;
       
       await setDoc(doc(db, "po_actions_taken", compositeKey), {
         [selectedOutcome.name]: {
@@ -149,8 +153,9 @@ export default function PoAttainment() {
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       
-      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`;
       await updateDoc(doc(db, "po_actions_taken", compositeKey), {
         [outcomeCode]: deleteField()
       });
@@ -178,7 +183,8 @@ export default function PoAttainment() {
       const batchKey = sanitizeKey(batch);
       const regKey = sanitizeKey(regulation);
       
-      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}`;
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`;
       await setDoc(doc(db, "survey_scores", compositeKey), surveyScores);
       alert("Survey scores saved successfully!");
     } catch (error) {
@@ -207,6 +213,26 @@ export default function PoAttainment() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
 
   useEffect(() => {
     const fetchAndCompute = async () => {
@@ -244,13 +270,19 @@ export default function PoAttainment() {
           const key = doc_.id;
           const summaryData = doc_.data();
           if (key.startsWith(prefix)) {
-             summariesMap[key] = summaryData;
-             if (summaryData.summary) {
-               Object.keys(summaryData.summary).forEach(outcomeCode => {
-                 if (outcomeCode.startsWith('PO')) posSet.add(outcomeCode);
-                 if (outcomeCode.startsWith('PSO')) psosSet.add(outcomeCode);
-               });
-             }
+            if (section) {
+              if (!key.endsWith(`_${sanitizeKey(section)}`)) return;
+            } else {
+              const lastPart = key.split('_').pop();
+              if (!/^\d+$/.test(lastPart)) return;
+            }
+            summariesMap[key] = summaryData;
+            if (summaryData.summary) {
+              Object.keys(summaryData.summary).forEach(outcomeCode => {
+                if (outcomeCode.startsWith('PO')) posSet.add(outcomeCode);
+                if (outcomeCode.startsWith('PSO')) psosSet.add(outcomeCode);
+              });
+            }
           }
         });
         
@@ -272,7 +304,8 @@ export default function PoAttainment() {
         setAttainmentConfig({ directWeight: dWeight, indirectWeight: iWeight, surveys: survs });
 
         // Fetch existing survey scores
-        const surveyScoresRef = doc(db, "survey_scores", `${progKey}_${deptKey}_${batchKey}_${regKey}`);
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const surveyScoresRef = doc(db, "survey_scores", `${progKey}_${deptKey}_${batchKey}_${regKey}${sectionSuffix}`);
         const surveyScoresSnap = await getDoc(surveyScoresRef);
         setSurveyScores(surveyScoresSnap.data() || {});
 
@@ -325,10 +358,11 @@ export default function PoAttainment() {
               const [key, summaryData] = summaryEntry;
               const rest = key.substring(prefix.length);
               const parts = rest.split('_');
+              if (section) parts.pop();
               const semKey = parts.pop();
               const ayKey = parts.pop();
               
-              const coAttKey = `${batchKey}_${sanitizeKey(programme)}_${deptKey}_${subCode}_${ayKey}_${semKey}`;
+              const coAttKey = `${batchKey}_${sanitizeKey(programme)}_${deptKey}_${subCode}_${ayKey}_${semKey}${sectionSuffix}`;
               
               const promise = getDoc(doc(db, "co_attainment", coAttKey)).then(coAttSnap => {
                    const coAttData = coAttSnap.data();
@@ -622,7 +656,7 @@ export default function PoAttainment() {
     };
 
     fetchAndCompute();
-  }, [programme, department, batch, regulation]);
+  }, [programme, department, batch, regulation, section]);
 
 
   const computedResults = useMemo(() => {
@@ -726,7 +760,7 @@ export default function PoAttainment() {
               <select 
                 disabled={!programme}
                 value={department}
-                onChange={(e) => setDepartment(e.target.value)}
+                onChange={(e) => { setDepartment(e.target.value); }}
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
               >
                 <option value="">Select Department</option>
@@ -739,11 +773,25 @@ export default function PoAttainment() {
               <select 
                 disabled={!programme}
                 value={batch}
-                onChange={(e) => setBatch(e.target.value)}
+                onChange={(e) => { setBatch(e.target.value); }}
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
               >
                 <option value="">Select Batch</option>
                 {batches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+              <select 
+                disabled={!batch || availableSections.length === 0}
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+              >
+                {availableSections.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
               </select>
             </div>
           </div>

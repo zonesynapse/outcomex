@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { 
   CalendarCheck2, 
@@ -17,7 +17,13 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+
+// Sanitize key matching HODRoleConfig's local version
+function sanitizeKey(key) {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+}
 
 // Helper functions (adapted from TimetableSetup.jsx)
 function formatTime(date) {
@@ -56,6 +62,8 @@ export default function Attendance() {
   const [subjectContexts, setSubjectContexts] = useState([]); // Stores mapping contexts for subjects
 
   const [semesters, setSemesters] = useState([]);
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState("");
   const [totalConducted, setTotalConducted] = useState("");
@@ -96,6 +104,17 @@ export default function Attendance() {
 
   const aYears = useMemo(() => batch ? getAcademicYears(batch) : [], [batch]);
 
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
+
   useEffect(() => {
     if (batch && academicYear) {
       const years = getAcademicYears(batch);
@@ -109,39 +128,55 @@ export default function Attendance() {
     } else setSemesters([]);
   }, [batch, academicYear]);
 
+  // Listen for section configurations
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const configs = {};
+      snap.forEach(docSnap => {
+        configs[docSnap.id] = docSnap.data();
+      });
+      setSectionConfigs(configs);
+    });
+    return () => unsub();
+  }, []);
+
   // New Logic: Fetch subjects based on Programme and Department assignments
   useEffect(() => {
     if (!programme || !department || !currentUid || !userRole) return;
 
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
-    const assignmentsRef = doc(db, "subject_assignments", `${progKey}_${deptKey}`);
+    const prefix = `${progKey}_${deptKey}_`;
+    const assignmentsRef = collection(db, "subject_assignments");
 
     const unsubscribe = onSnapshot(assignmentsRef, async (snapshot) => {
-      const data = snapshot.data() || {};
       const contexts = [];
       const batchesToFetchSyllabus = new Set();
 
-      Object.entries(data).forEach(([b, ays]) => {
-        Object.entries(ays).forEach(([ay, sems]) => {
-          Object.entries(sems).forEach(([sem, uids]) => {
-            Object.entries(uids).forEach(([uid, codes]) => {
-              if (userRole === 'Faculty' && uid !== currentUid) return;
-              if (Array.isArray(codes)) {
-                codes.forEach(code => {
-                  contexts.push({ code, batch: b, ay, sem, uid });
-                  batchesToFetchSyllabus.add(b);
-                });
-              }
+      snapshot.docs.forEach(doc => {
+        if (!doc.id.startsWith(prefix)) return;
+        const remaining = doc.id.slice(prefix.length);
+        const parts = remaining.split('_');
+        const batch = parts[0];
+        const ay = parts[1];
+        const sem = parts[2];
+        const secSuffix = parts.length > 3 ? parts.slice(3).join('_') : '';
+        const data = doc.data();
+
+        Object.entries(data).forEach(([uid, codes]) => {
+          if (userRole === 'Faculty' && uid !== currentUid) return;
+          if (Array.isArray(codes)) {
+            codes.forEach(code => {
+              contexts.push({ code, batch, ay, sem, section: secSuffix, uid });
+              batchesToFetchSyllabus.add(batch);
             });
-          });
+          }
         });
       });
 
       const namesMap = {};
       for (const b of Array.from(batchesToFetchSyllabus)) {
         const reg = getRegulationForBatch(progKey, b);
-        // Fetch syllabus for all regulations associated with the batches found.
         if (reg) {
           const syllabusKey = `${progKey}_${deptKey}_${sanitizeKey(reg)}`;
           const syllabusSnap = await getDoc(doc(db, "syllabus_data", syllabusKey));
@@ -162,11 +197,11 @@ export default function Attendance() {
       const seenAssignments = new Set();
 
       contexts.forEach(ctx => {
-        const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}`;
+        const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}-${ctx.section}`;
         if (!seenAssignments.has(assignmentIdentifier)) {
           uniqueSubjectAssignments.push({
-            value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem }),
-            text: `${ctx.code} - ${namesMap[ctx.code] || ""}`
+            value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section }),
+            text: `${ctx.code} - ${namesMap[ctx.code] || ""}${ctx.section ? ` (${ctx.section})` : ''}`
           });
           seenAssignments.add(assignmentIdentifier);
         }
@@ -183,6 +218,7 @@ export default function Attendance() {
       setBatch("");
       setAcademicYear("");
       setSemester("");
+      setSection("");
       return;
     }
     setSubject(val);
@@ -190,6 +226,7 @@ export default function Attendance() {
     setBatch(selectedCtx.batch);
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
+    if (selectedCtx.section) setSection(selectedCtx.section);
   };
 
   const computePeriodStart = useCallback((i, config) => {
@@ -212,53 +249,45 @@ export default function Attendance() {
 
   useEffect(() => {
     const fetchTimetableConfig = async () => {
-      if (!programme || !batch) {
+      if (!programme || !department || !batch || !academicYear || !semester) {
         setTimetableConfig(null);
         setAvailablePeriodsWithTiming([]);
         return;
       }
 
       const progKey = formatProgrammeKey(programme);
+      const deptKey = sanitizeKey(department);
+      const batchKey = sanitizeKey(batch);
+      const ayKey = sanitizeKey(academicYear);
+      const semNum = String(semester).match(/\d+/)?.[0] || "1";
+      const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
 
       try {
-        const allocatedSnap = await getDoc(doc(db, "timetables", `${progKey}_${sanitizeKey(batch)}`));
-        if (allocatedSnap.exists()) {
-          const allocatedData = allocatedSnap.data();
-          const templateName = allocatedData.timetableName;
-          if (templateName) {
-            const templateSnap = await getDoc(doc(db, "timetable_templates", sanitizeKey(templateName)));
-            if (templateSnap.exists()) {
-              const templateConfig = templateSnap.data();
-              setTimetableConfig(templateConfig);
+        const allocationSnap = await getDoc(doc(db, "timetable_allocations", compositeKey));
+        if (allocationSnap.exists()) {
+          const allocationData = allocationSnap.data();
+          setTimetableConfig(allocationData);
 
-              const periods = [];
-              const periodsPerDay = parseInt(templateConfig.periodsPerDay, 10) || 0;
-              for (let i = 1; i <= periodsPerDay; i++) {
-                const start = computePeriodStart(i, templateConfig);
-                const dur = parseInt(templateConfig.periodDurations[i] || 0, 10) || 0;
-                if (start && dur > 0) {
-                  const end = new Date(start);
-                  end.setMinutes(end.getMinutes() + dur);
-                  periods.push({
-                    value: String(i),
-                    label: `Period ${i} (${formatTime(start)} - ${formatTime(end)})`
-                  });
-                } else {
-                  periods.push({
-                    value: String(i),
-                    label: `Period ${i} (Duration not set)`
-                  });
-                }
-              }
-              setAvailablePeriodsWithTiming(periods);
+          const periods = [];
+          const periodsPerDay = parseInt(allocationData.periodsPerDay, 10) || 0;
+          for (let i = 1; i <= periodsPerDay; i++) {
+            const start = computePeriodStart(i, allocationData);
+            const dur = parseInt(allocationData.periodDurations[i] || 0, 10) || 0;
+            if (start && dur > 0) {
+              const end = new Date(start);
+              end.setMinutes(end.getMinutes() + dur);
+              periods.push({
+                value: String(i),
+                label: `Period ${i} (${formatTime(start)} - ${formatTime(end)})`
+              });
             } else {
-              setTimetableConfig(null);
-              setAvailablePeriodsWithTiming([]);
+              periods.push({
+                value: String(i),
+                label: `Period ${i} (Duration not set)`
+              });
             }
-          } else {
-            setTimetableConfig(null);
-            setAvailablePeriodsWithTiming([]);
           }
+          setAvailablePeriodsWithTiming(periods);
         } else {
           setTimetableConfig(null);
           setAvailablePeriodsWithTiming([]);
@@ -270,7 +299,7 @@ export default function Attendance() {
       }
     };
     fetchTimetableConfig();
-  }, [programme, batch, computePeriodStart]);
+  }, [programme, department, batch, academicYear, semester, computePeriodStart]);
 
   useEffect(() => {
     if (!programme || !department || !batch || !academicYear || !semester || !subject) {
@@ -283,8 +312,9 @@ export default function Attendance() {
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
-    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
-    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
+    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
     
     const fetchData = async () => {
       try {
@@ -324,7 +354,7 @@ export default function Attendance() {
       setLoading(false);
     };
     fetchData();
-  }, [programme, department, batch, academicYear, semester, subject]);
+  }, [programme, department, batch, academicYear, semester, subject, section]);
 
   const handleStatusChange = (reg, status) => {
     const total = parseInt(totalConducted, 10) || 0;
@@ -360,7 +390,8 @@ export default function Attendance() {
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
-    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
     
     const studentsMap = {};
     students.forEach(s => { studentsMap[s.reg] = s.hours; });
@@ -394,17 +425,17 @@ export default function Attendance() {
       <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
         
         <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-6">
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Programme</label>
-              <select value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(""); setSubject(""); }} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium">
+              <select value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(""); setSubject(""); setSection(""); }} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium">
                 <option value="">Select</option>
                 {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
-              <select value={department} onChange={e => { setDepartment(e.target.value); setSubject(""); }} disabled={!programme} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50">
+              <select value={department} onChange={e => { setDepartment(e.target.value); setSubject(""); setSection(""); }} disabled={!programme} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50">
                 <option value="">Select</option>
                 {programme && PROGRAMME_DEPARTMENTS[programme].map(d => <option key={d} value={d}>{d}</option>)}
               </select>
@@ -437,6 +468,13 @@ export default function Attendance() {
                 {semesters.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+              <select value={section} disabled className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium bg-zinc-100 cursor-not-allowed">
+                <option value="">{section || (availableSections.length === 0 ? "No sections configured" : "Select Section")}</option>
+                {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-6 pt-6 border-t border-slate-100">
@@ -444,10 +482,9 @@ export default function Attendance() {
               <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Date</label>
               <input 
                 type="date"
-                readOnly
                 value={attendanceDate} 
                 onChange={e => setAttendanceDate(e.target.value)} 
-                onClick={(e) => e.target.showPicker?.()}
+                max={new Date().toISOString().split('T')[0]}
                 className="w-full bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a] cursor-pointer" 
               />
             </div>

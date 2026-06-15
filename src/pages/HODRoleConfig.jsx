@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase";
-import { doc, collection, onSnapshot, updateDoc, getDoc, setDoc, deleteDoc, writeBatch } from "firebase/firestore";
+import { doc, collection, onSnapshot, updateDoc, getDoc, setDoc, deleteDoc, writeBatch, getDocs } from "firebase/firestore";
 import { 
   Users, 
   BookOpen, 
@@ -41,6 +41,7 @@ export default function HODRoleConfig() {
   const [syllabusData, setSyllabusData] = useState(null);
   const [assignments, setAssignments] = useState({});
   const [allAssignments, setAllAssignments] = useState({});
+  const [courseNames, setCourseNames] = useState({});
 
   // Request States
   const [incomingRequests, setIncomingRequests] = useState([]);
@@ -48,6 +49,7 @@ export default function HODRoleConfig() {
   const [fulfilledRequests, setFulfilledRequests] = useState([]);
   const [requestModal, setRequestModal] = useState({ open: false, subject: null });
   const [targetDept, setTargetDept] = useState("");
+  const [targetProgramme, setTargetProgramme] = useState("");
   
   // Filter States
   const [programme, setProgramme] = useState("");
@@ -55,6 +57,8 @@ export default function HODRoleConfig() {
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
+  const [section, setSection] = useState("");
+  const [sectionConfigs, setSectionConfigs] = useState({});
   
   // UI States
   const [loading, setLoading] = useState(true);
@@ -111,6 +115,15 @@ export default function HODRoleConfig() {
       return () => unsubscribe();
     }
   }, [currentUserData]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
 
   // 2.1 Fetch Inter-Dept Requests
   useEffect(() => {
@@ -208,11 +221,50 @@ export default function HODRoleConfig() {
     }
   }, [programme, syllabusDept, regulation]);
 
+  // 4b. Fetch Course Names from courses collection globally
+  useEffect(() => {
+    const fetchNames = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'courses'));
+        const names = {};
+        snap.forEach(d => {
+          const docData = d.data();
+          if (docData.code && docData.name) {
+            names[docData.code] = docData.name;
+          } else if (docData.name && d.id.includes('_')) {
+             const code = d.id.split('_').pop();
+             names[code] = docData.name;
+          } else {
+             Object.values(docData).forEach(deptCourses => {
+               if (deptCourses && typeof deptCourses === 'object') {
+                 Object.values(deptCourses).forEach(regCourses => {
+                   if (regCourses && typeof regCourses === 'object') {
+                     Object.entries(regCourses).forEach(([courseCode, courseData]) => {
+                       if (courseData && courseData.name) {
+                         names[courseCode] = courseData.name;
+                       }
+                     });
+                   }
+                 });
+               }
+             });
+          }
+        });
+        setCourseNames(names);
+      } catch (err) {
+        console.error("Failed to fetch course names:", err);
+      }
+    };
+    fetchNames();
+  }, []);
+
   // 5. Fetch Existing Assignments
   useEffect(() => {
     if (programme && syllabusDept && batch && academicYear && semester) {
       const progKey = formatProgrammeKey(programme);
-      const assignmentRef = doc(db, 'subject_assignments', progKey, sanitizeKey(syllabusDept), sanitizeKey(batch), sanitizeKey(academicYear), semester);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const compositeKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}${sectionSuffix}`;
+      const assignmentRef = doc(db, 'subject_assignments', compositeKey);
       
       const unsubscribe = onSnapshot(assignmentRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -225,7 +277,7 @@ export default function HODRoleConfig() {
     } else {
       setAssignments({});
     }
-  }, [programme, syllabusDept, batch, academicYear, semester]);
+  }, [programme, syllabusDept, batch, academicYear, semester, section]);
   
   // 5.1 Fetch All Assignments Globally (All Departments)
   useEffect(() => {
@@ -234,33 +286,53 @@ export default function HODRoleConfig() {
       const globalAssignments = {}; // facultyUid -> Array of assignment objects
 
       snapshot.forEach((doc) => {
-        const progKey = doc.id;
-        const deptsData = doc.data();
-        
-        Object.entries(deptsData).forEach(([deptKey, batchesData]) => {
-          Object.entries(batchesData).forEach(([batchKey, ayData]) => {
-            Object.entries(ayData).forEach(([ayKey, semData]) => {
-              Object.entries(semData).forEach(([semKey, facultyData]) => {
-                Object.entries(facultyData).forEach(([facultyUid, codes]) => {
-                  if (Array.isArray(codes)) {
-                    if (!globalAssignments[facultyUid]) globalAssignments[facultyUid] = [];
-                    codes.forEach(code => {
-                      globalAssignments[facultyUid].push({
-                        code,
-                        progKey,
-                        dept: deptKey,
-                        batch: batchKey,
-                        academicYear: ayKey,
-                        semester: semKey,
-                        key: `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semKey}_${code}`
-                      });
-                    });
-                  }
+        const idParts = doc.id.split('_');
+        if (idParts.length >= 5) {
+          let sectionExtracted = '';
+          let semKey = idParts.pop();
+          if (!/^\d+$/.test(semKey) && idParts.length >= 5) {
+            sectionExtracted = semKey;
+            semKey = idParts.pop();
+          }
+          const ayKey = idParts.pop();
+          const batchKey = idParts.pop();
+          let progKeyExtracted = idParts[0];
+          let deptStartIdx = 1;
+          if (['B', 'M'].includes(idParts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(idParts[1])) {
+            progKeyExtracted = `${idParts[0]}_${idParts[1]}`;
+            deptStartIdx = 2;
+          }
+          let deptKey = idParts.slice(deptStartIdx).join('_');
+          if (deptKey.startsWith('_')) deptKey = deptKey.slice(1);
+
+          const facultyData = doc.data();
+          Object.entries(facultyData).forEach(([facultyUid, codes]) => {
+            if (Array.isArray(codes)) {
+              if (!globalAssignments[facultyUid]) globalAssignments[facultyUid] = [];
+              codes.forEach(code => {
+                const existingIndex = globalAssignments[facultyUid].findIndex(a =>
+                  a.code === code &&
+                  a.batch === batchKey &&
+                  a.semester === semKey &&
+                  (a.section || '') === sectionExtracted &&
+                  a.progKey === progKeyExtracted &&
+                  a.dept === deptKey
+                );
+                if (existingIndex >= 0) return;
+                globalAssignments[facultyUid].push({
+                  code,
+                  progKey: progKeyExtracted,
+                  dept: deptKey,
+                  batch: batchKey,
+                  academicYear: ayKey,
+                  semester: semKey,
+                  section: sectionExtracted,
+                  key: `${doc.id}_${code}`
                 });
               });
-            });
+            }
           });
-        });
+        }
       });
       
       setAllAssignments(globalAssignments);
@@ -318,12 +390,14 @@ export default function HODRoleConfig() {
         id: requestId,
         fromDept: currentUserData.department,
         toDept: targetDept,
+        toProgramme: targetProgramme,
         subjectCode: requestModal.subject.code,
         subjectName: requestModal.subject.name,
         programme,
         batch,
         academicYear,
         semester,
+        section: section || '',
         status: 'pending',
         requestedAt: Date.now()
       };
@@ -353,10 +427,21 @@ export default function HODRoleConfig() {
 
       if (action === 'accept') {
         const progKey = formatProgrammeKey(request.programme);
-        const assignRef = doc(db, 'subject_assignments', progKey, fromKey, sanitizeKey(request.batch), sanitizeKey(request.academicYear), request.semester);
-        const snap = await getDoc(assignRef);
-        const current = snap.exists() ? (snap.data()[facultyUid] || []) : [];
-        batch.set(assignRef, { [facultyUid]: [...new Set([...current, request.subjectCode])] }, { merge: true });
+        const bKey = sanitizeKey(request.batch);
+        const aKey = sanitizeKey(request.academicYear);
+        const sem = request.semester;
+
+        const sectionSuffix = request.section ? `_${sanitizeKey(request.section)}` : '';
+        const saveToDept = async (deptKey) => {
+          const compKey = `${progKey}_${deptKey}_${bKey}_${aKey}_${sem}${sectionSuffix}`;
+          const ref = doc(db, 'subject_assignments', compKey);
+          const s = await getDoc(ref);
+          const curr = s.exists() ? (s.data()[facultyUid] || []) : [];
+          batch.set(ref, { [facultyUid]: [...new Set([...curr, request.subjectCode])] }, { merge: true });
+        };
+
+        // Only save to the requesting department's timetable
+        await saveToDept(fromKey);
       }
 
       const statusUpdate = { 
@@ -394,19 +479,25 @@ export default function HODRoleConfig() {
 
       const batch = writeBatch(db);
 
-      // 1. Remove subject from old faculty's assignments
-      if (request.allocatedFacultyUid) {
-        const oldAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
-        const oldSnap = await getDoc(oldAssignRef);
-        const oldSubs = oldSnap.exists() ? (oldSnap.data()[request.allocatedFacultyUid] || []) : [];
-        batch.set(oldAssignRef, { [request.allocatedFacultyUid]: oldSubs.filter(code => code !== request.subjectCode) }, { merge: true });
-      }
+      const sectionSuffix = request.section ? `_${sanitizeKey(request.section)}` : '';
+      const updateDeptAssignment = async (deptKey, oldUid, newUid) => {
+        const compKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${sem}${sectionSuffix}`;
+        const ref = doc(db, 'subject_assignments', compKey);
+        const snap = await getDoc(ref);
+        const data = snap.exists() ? snap.data() : {};
 
-      // 2. Add subject to new faculty's assignments
-      const newAssignRef = doc(db, 'subject_assignments', progKey, fromKey, batchKey, ayKey, sem);
-      const newSnap = await getDoc(newAssignRef);
-      const newSubs = newSnap.exists() ? (newSnap.data()[newFacultyUid] || []) : [];
-      batch.set(newAssignRef, { [newFacultyUid]: [...new Set([...newSubs, request.subjectCode])] }, { merge: true });
+        if (oldUid) {
+          const oldSubs = (data[oldUid] || []).filter(code => code !== request.subjectCode);
+          batch.set(ref, { [oldUid]: oldSubs }, { merge: true });
+        }
+        if (newUid) {
+          const newSubs = [...new Set([...(data[newUid] || []), request.subjectCode])];
+          batch.set(ref, { [newUid]: newSubs }, { merge: true });
+        }
+      };
+
+      // Only update the requesting department's timetable
+      await updateDeptAssignment(fromKey, request.allocatedFacultyUid, newFacultyUid);
       
       const statusUpdate = { 
         ...request, 
@@ -428,10 +519,23 @@ export default function HODRoleConfig() {
   };
 
   const allOtherDepts = useMemo(() => {
-    const depts = [];
-    Object.values(deptMap).forEach(list => depts.push(...list));
-    return [...new Set(depts)].filter(d => d !== currentUserData?.department);
-  }, [deptMap, currentUserData]);
+    if (!targetProgramme) return [];
+    return deptMap[targetProgramme] || [];
+  }, [deptMap, targetProgramme]);
+
+  const allAvailableProgrammes = Object.keys(deptMap);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !syllabusDept || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, syllabusDept, programme, sectionConfigs]);
+
 
   const handleSaveAssignments = async () => {
     if (!programme || !batch || !academicYear || !semester || !syllabusDept) {
@@ -442,7 +546,9 @@ export default function HODRoleConfig() {
     setSaving(true);
     try {
       const progKey = formatProgrammeKey(programme);
-      const assignmentRef = doc(db, 'subject_assignments', progKey, sanitizeKey(syllabusDept), sanitizeKey(batch), sanitizeKey(academicYear), semester);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const compositeKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}${sectionSuffix}`;
+      const assignmentRef = doc(db, 'subject_assignments', compositeKey);
       
       const updates = {};
       const allAssignedSubjects = new Set();
@@ -612,7 +718,7 @@ export default function HODRoleConfig() {
                           <div>
                             <p className="text-[9px] font-black text-blue-600 uppercase tracking-[0.1em] mb-1">{req.fromDept}</p>
                             <h3 className="font-bold text-slate-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
-                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.programme} • {req.batch} • Sem {req.semester}</p>
+                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.programme} • {req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
                           </div>
                           <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase">Pending</span>
                         </div>
@@ -670,7 +776,7 @@ export default function HODRoleConfig() {
                             <div>
                               <p className="text-[9px] font-black text-emerald-600 uppercase tracking-[0.1em] mb-1">Fulfilled for {req.fromDept}</p>
                               <h6 className="font-bold text-slate-800 text-sm leading-tight">{req.subjectCode} - {req.subjectName}</h6>
-                              <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
+                              <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
                             </div>
                             <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{req.status}</span>
                           </div>
@@ -718,7 +824,7 @@ export default function HODRoleConfig() {
                         <div className="space-y-1">
                           <h3 className="font-bold text-slate-800 text-sm leading-tight">{req.subjectCode}</h3>
                           <p className="text-[10px] font-black text-blue-600 uppercase tracking-tight">Requested to: {req.toDept}</p>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
                         </div>
                         <div className="flex flex-col items-end">
                           <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
@@ -740,14 +846,14 @@ export default function HODRoleConfig() {
           <>
         {/* Filters Section */}
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600">Batch</label>
               <div className="relative">
                 <select 
                   disabled={!programme}
                   value={batch} 
-                  onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); }}
+                  onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); setSection(""); }}
                   className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Batch</option>
@@ -765,7 +871,7 @@ export default function HODRoleConfig() {
                 <select 
                   disabled={!batch}
                   value={academicYear} 
-                  onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); }}
+                  onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); setSection(""); }}
                   className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
                 >
                   <option value="">Select Year</option>
@@ -790,6 +896,22 @@ export default function HODRoleConfig() {
                   {semesters.map(s => (
                     <option key={s} value={s}>{s}{s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Sem</option>
                   ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-zinc-600">Section</label>
+              <div className="relative">
+                <select 
+                  disabled={!syllabusDept || !batch || availableSections.length === 0}
+                  value={section} 
+                  onChange={(e) => setSection(e.target.value)}
+                  className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                >
+                  <option value="">{availableSections.length === 0 && syllabusDept && batch ? "No sections configured" : "Select Section"}</option>
+                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
               </div>
@@ -842,14 +964,14 @@ export default function HODRoleConfig() {
                     {/* Editable Current Selection */}
                     {isFiltersSelected && (
                       <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-[#120c7a] uppercase tracking-wider bg-blue-50 px-1.5 py-0.5 rounded">Current Selection</label>
+                        <label className="text-[9px] font-bold text-[#120c7a] uppercase tracking-wider bg-blue-50 px-1.5 py-0.5 rounded">Current Selection{section ? ` [${section}]` : ''}</label>
                         <div className="flex flex-wrap gap-2">
                           {(assignments[faculty.uid] || []).map(code => {
                             const sub = availableSubjects.find(s => s.code === code);
                             return (
                               <div key={code} className="group flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-xs font-medium text-blue-900">
                                 <span className="font-bold">{code}</span>
-                                <span className="truncate max-w-[100px] text-blue-700">{sub?.name || 'Unknown'}</span>
+                                <span className="truncate max-w-[100px] text-blue-700">{sub?.name || courseNames[code] || 'Unknown'}</span>
                                 <button 
                                   onClick={() => handleRemoveSubject(faculty.uid, code)}
                                   className="text-blue-300 hover:text-red-500 transition-colors"
@@ -880,18 +1002,22 @@ export default function HODRoleConfig() {
                             a.dept === sanitizeKey(syllabusDept) && 
                             a.batch === batch && 
                             a.academicYear === academicYear && 
-                            String(a.semester) === String(semester);
+                            String(a.semester) === String(semester) &&
+                            (a.section || '') === (section || '');
                           return !isCurrentContext;
                         }).map((assignment) => (
                           <div key={assignment.key} className="flex flex-col p-2 bg-zinc-50 border border-zinc-100 rounded-lg text-[9px] space-y-1 min-w-[100px]">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-bold text-zinc-700">{assignment.code}</span>
                               <span className="text-[8px] font-bold px-1.5 bg-zinc-200 text-zinc-600 rounded">
-                                {assignment.dept}
+                                {formatProgDisplay(assignment.progKey)} {assignment.dept.replace(/^(B_E__|B_Tech__|M_E__|M_Tech__|B_E_|M_E_|B_Tech_|M_Tech_)/, '').replace(/_/g, ' ')}
                               </span>
                             </div>
+                            <div className="text-zinc-500 font-medium">
+                              {courseNames[assignment.code] || ''}
+                            </div>
                             <div className="text-zinc-400 font-medium">
-                              {assignment.batch} • S{assignment.semester}
+                              {assignment.batch} • S{assignment.semester}{assignment.section ? ` • ${assignment.section}` : ''}
                             </div>
                           </div>
                         ))}
@@ -900,7 +1026,7 @@ export default function HODRoleConfig() {
                         )}
                         {isFiltersSelected && (allAssignments[faculty.uid] || []).filter(a => {
                           const progKey = formatProgrammeKey(programme);
-                          return !(a.progKey === progKey && a.dept === sanitizeKey(syllabusDept) && a.batch === batch && a.academicYear === academicYear && String(a.semester) === String(semester));
+                          return !(a.progKey === progKey && a.dept === sanitizeKey(syllabusDept) && a.batch === batch && a.academicYear === academicYear && String(a.semester) === String(semester) && (a.section || '') === (section || ''));
                         }).length === 0 && (allAssignments[faculty.uid] || []).length > 0 && (
                           <p className="text-[10px] text-zinc-400 italic pl-1">No assignments in other contexts</p>
                         )}
@@ -978,6 +1104,7 @@ export default function HODRoleConfig() {
                         req.batch === batch &&
                         req.academicYear === academicYear &&
                         req.semester === semester &&
+                        (req.section || '') === (section || '') &&
                         req.status === 'pending'
                       );
                       const hasPendingSentRequest = !!pendingSentRequest;
@@ -1056,32 +1183,51 @@ export default function HODRoleConfig() {
                   <X size={20} />
                 </button>
               </div>
-              <div className="p-6 space-y-5">
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="p-5 space-y-4">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subject to Allocate</p>
-                   <h4 className="font-bold text-zinc-800">{requestModal.subject?.name}</h4>
-                </div>
+                   <h5 className="font-bold text-zinc-800 text-sm">{requestModal.subject?.name}</h5>
+                   <p className="text-[9px] text-zinc-500 font-bold mt-1 uppercase tracking-tight">{batch} • Sem {semester}{section ? ` • ${section}` : ''}</p>
+                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Department HOD</label>
-                  <div className="relative">
-                    <select 
-                      value={targetDept}
-                      onChange={(e) => setTargetDept(e.target.value)}
-                      className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700"
-                    >
-                      <option value="">Choose Department...</option>
-                      {allOtherDepts.map(d => <option key={d} value={d}>{d}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Programme</label>
+                    <div className="relative">
+                      <select 
+                        value={targetProgramme}
+                        onChange={(e) => { setTargetProgramme(e.target.value); setTargetDept(""); }}
+                        className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700 text-sm"
+                      >
+                        <option value="">Choose Programme...</option>
+                        {allAvailableProgrammes.map(p => <option key={p} value={p}>{formatProgDisplay ? formatProgDisplay(p) : p}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                    </div>
                   </div>
-                  <p className="text-[10px] text-zinc-400 italic pl-1">The request will be sent to the HOD of this department.</p>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Department HOD</label>
+                    <div className="relative">
+                      <select 
+                        value={targetDept}
+                        onChange={(e) => setTargetDept(e.target.value)}
+                        disabled={!targetProgramme}
+                        className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700 text-sm disabled:opacity-50"
+                      >
+                        <option value="">Choose Department...</option>
+                        {allOtherDepts.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                    </div>
+                    <p className="text-[10px] text-zinc-400 italic pl-1">The request will be sent to the HOD of this department.</p>
+                  </div>
                 </div>
 
                 <button 
                   onClick={handleSendRequest}
                   disabled={!targetDept || saving}
-                  className="w-full py-3 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl font-black uppercase tracking-widest text-sm shadow-lg shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"
                 >
                   {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
                   Send Request

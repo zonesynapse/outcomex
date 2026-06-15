@@ -9,12 +9,12 @@ import {
   browserLocalPersistence,
   signOut
 } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebase";
-import { Loader2, AlertCircle, CheckCircle2, ChevronDown } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
-import { formatProgDisplay } from "../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
 
 // Utility functions for input validation and sanitization
 const isValidEmail = (email) => {
@@ -65,6 +65,9 @@ export default function Auth() {
   // Form States
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+
+  const [regRole, setRegRole] = useState("faculty"); // "faculty" or "student"
   
   const [regTitle, setRegTitle] = useState("Mr.");
   const [regFacultyName, setRegFacultyName] = useState("");
@@ -75,6 +78,10 @@ export default function Auth() {
   const [regDesignation, setRegDesignation] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
+  const [showRegPassword, setShowRegPassword] = useState(false);
+
+  const [studentRegNo, setStudentRegNo] = useState("");
+  const [studentName, setStudentName] = useState("");
   
   const { departments: PROGRAMME_DEPARTMENTS } = useDepartments();
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
@@ -123,11 +130,16 @@ export default function Auth() {
       const userCredential = await signInWithEmailAndPassword(auth, trimmedEmail, loginPassword);
       const user = userCredential.user;
 
-      // Firestore-ல் பயனர் விவரங்கள் இருக்கிறதா என்று சரிபார்க்கவும்
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        if (!userData.isApproved && 
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      if (!userSnap.exists()) {
+        await signOut(auth);
+        setError("User profile not found. Please register again.");
+        setLoading(false);
+        return;
+      }
+      const userProfile = userSnap.data();
+      if (userProfile.role !== "Student") {
+        if (!userProfile.isApproved && 
             user.email?.toLowerCase() !== defaultAdminEmail?.toLowerCase() && 
             user.email?.toLowerCase() !== masterAdminEmail?.toLowerCase()) {
           await signOut(auth);
@@ -135,16 +147,14 @@ export default function Auth() {
           setLoading(false);
           return;
         }
-      } else {
-        // விவரங்கள் இல்லை என்றால் பதிவு முழுமையடையவில்லை என்று அர்த்தம்
-        await signOut(auth);
-        setError("User profile not found. Please register again.");
-        setLoading(false);
-        return;
       }
 
       setIsNavigating(true);
-      navigate("/dashboard");
+      if (userProfile.role === "Student") {
+        navigate("/student/dashboard");
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       if (err.code === 'auth/operation-not-allowed') {
@@ -161,6 +171,76 @@ export default function Auth() {
   const handleSignup = async (e) => {
     e.preventDefault();
     setError("");
+
+    if (regRole === "student") {
+      const sanitizedRegNo = sanitizeText(studentRegNo, 50);
+      const sanitizedSName = sanitizeText(studentName, 100);
+      if (!sanitizedRegNo) { setError("Register Number is required."); return; }
+      if (!sanitizedSName) { setError("Student name is required."); return; }
+      if (regPassword.length < 6) { setError("Password must be at least 6 characters."); return; }
+      if (regPassword.length > 128) { setError("Password is too long."); return; }
+
+      setLoading(true);
+      try {
+        const studentEmail = `${sanitizedRegNo.toLowerCase()}@student.ckcet.edu`;
+
+        // Step 1: Create auth user first
+        const userCredential = await createUserWithEmailAndPassword(auth, studentEmail, regPassword);
+        const user = userCredential.user;
+        await updateProfile(user, { displayName: sanitizedSName });
+
+        // Step 2: Write user doc with isApproved immediately
+        await setDoc(doc(db, "users", user.uid), {
+          uid: user.uid,
+          email: studentEmail,
+          regNo: sanitizedRegNo,
+          studentName: sanitizedSName,
+          displayName: sanitizedSName,
+          programme: "unknown",
+          department: "unknown",
+          batch: "unknown",
+          role: "Student",
+          isApproved: true,
+          createdAt: new Date().toISOString()
+        }, { merge: true });
+
+        // Step 3: Now read students collection (user is auth'd + approved)
+        let matchedDocId = "";
+        const studentsSnap = await getDocs(collection(db, "students"));
+        for (const docSnap of studentsSnap.docs) {
+          const data = docSnap.data();
+          if (data[sanitizedRegNo]) {
+            matchedDocId = docSnap.id;
+            break;
+          }
+        }
+
+        if (matchedDocId) {
+          // Extract batch, programme, department from doc ID
+          const parts = matchedDocId.split("_");
+          const batchRaw = parts[0];
+          const progKey = parts[1];
+          const dept = parts[2];
+          await setDoc(doc(db, "users", user.uid), {
+            programme: progKey,
+            department: dept,
+            batch: batchRaw,
+          }, { merge: true });
+        }
+
+        setIsNavigating(true);
+        navigate("/student/dashboard");
+      } catch (err) {
+        console.error(err);
+        if (err.code === 'auth/email-already-in-use') {
+          setError("This Register Number is already registered. Please login.");
+        } else {
+          setError(err.message || "Failed to create account.");
+        }
+        setLoading(false);
+      }
+      return;
+    }
     
     // Validate all required fields
     if (!regFacultyName.trim()) {
@@ -367,7 +447,7 @@ export default function Auth() {
 
             <div className="relative my-7 input-box">
               <input
-                type="password"
+                type={showLoginPassword ? "text" : "password"}
                 placeholder="Password"
                 maxLength="128"
                 className="w-full py-3.5 pl-5 pr-12 bg-[#eee] rounded-lg border-none outline-none text-base font-medium text-zinc-800 placeholder:text-zinc-400 placeholder:font-normal focus:ring-2 focus:ring-[#120c7a]"
@@ -375,7 +455,9 @@ export default function Auth() {
                 onChange={(e) => setLoginPassword(e.target.value)}
                 required
               />
-              <i className='bx bxs-lock-alt absolute right-5 top-1/2 -translate-y-1/2 text-zinc-800 text-xl pointer-events-none'></i>
+              <button type="button" onClick={() => setShowLoginPassword(!showLoginPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-800 hover:text-[#120c7a] transition-colors" tabIndex={-1}>
+                {showLoginPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
             </div>
 
             <div className="text-center -mt-4 mb-4 forgot-link">
@@ -387,13 +469,14 @@ export default function Auth() {
             <button type="submit" disabled={loading} className="w-full h-12 bg-[#120c7a] rounded-full shadow-[0_0_10px_rgba(0,0,0,0.1)] border-none cursor-pointer text-base text-white font-semibold hover:bg-blue-600 transition-all flex items-center justify-center gap-2">
               {loading ? <Loader2 className="animate-spin" size={20} /> : "Login"}
             </button>
+            <p className="mt-5 text-[10px] text-zinc-400">Students: Use your Register Number with @student.ckcet.edu (e.g. 420722104001@student.ckcet.edu)</p>
           </form>
         </div>
 
         {/* Register Form */}
         <div className="absolute left-0 w-full md:w-1/2 h-full bg-white flex items-center text-center px-8 py-6 z-[1] transition-all duration-300 ease-in-out form-box register overflow-y-auto">
           <form onSubmit={handleSignup} className="w-full py-4">
-            <h1 className="text-3xl font-bold mb-6 text-zinc-800">Registration</h1>
+            <h1 className="text-3xl font-bold mb-4 text-zinc-800">Registration</h1>
             
             {error && isActive && (
               <div className="my-3 flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-medium text-red-600 border border-red-100">
@@ -401,7 +484,27 @@ export default function Auth() {
               </div>
             )}
 
-            <div className="flex gap-3 mb-4">
+            {/* Role Toggle */}
+            <div className="flex border border-zinc-200 rounded-lg overflow-hidden mb-4">
+              <button type="button" className={`flex-1 py-2.5 text-sm font-bold transition-all ${regRole === 'faculty' ? 'bg-[#120c7a] text-white' : 'bg-white text-zinc-600 hover:bg-zinc-50'}`} onClick={() => setRegRole('faculty')}>
+                <i className='bx bxs-graduation mr-1'></i> Faculty
+              </button>
+              <button type="button" className={`flex-1 py-2.5 text-sm font-bold transition-all ${regRole === 'student' ? 'bg-[#120c7a] text-white' : 'bg-white text-zinc-600 hover:bg-zinc-50'}`} onClick={() => setRegRole('student')}>
+                <GraduationCap size={16} className="inline mr-1" /> Student
+              </button>
+            </div>
+
+            {regRole === "student" ? (
+              <div className="space-y-4 mb-4">
+                <div className="relative">
+                  <input type="text" placeholder="Register Number" maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
+                </div>
+                <div className="relative">
+                  <input type="text" placeholder="Full Name" maxLength="100" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentName} onChange={e => setStudentName(e.target.value)} required />
+                </div>
+              </div>
+            ) : (
+            <><div className="flex gap-3 mb-4">
               <div className="relative w-1/3">
                 <select
                   value={regTitle}
@@ -504,32 +607,21 @@ export default function Auth() {
               </div>
             </div>
 
+            </>)}
+
             <div className="relative mb-4">
-              <input
-                type="email"
-                placeholder="Email"
-                maxLength="254"
-                className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
-                value={regEmail}
-                onChange={(e) => setRegEmail(e.target.value)}
-                required
-              />
+              <input type="email" placeholder={regRole === "student" ? "Email (optional)" : "Email"} maxLength="254" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regEmail} onChange={e => setRegEmail(e.target.value)} required={regRole !== "student"} />
             </div>
 
             <div className="relative mb-6">
-              <input
-                type="password"
-                placeholder="Password"
-                maxLength="128"
-                className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
-                value={regPassword}
-                onChange={(e) => setRegPassword(e.target.value)}
-                required
-              />
+              <input type={showRegPassword ? "text" : "password"} placeholder="Password" maxLength="128" className="w-full h-[50px] pl-4 pr-12 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regPassword} onChange={e => setRegPassword(e.target.value)} required />
+              <button type="button" onClick={() => setShowRegPassword(!showRegPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-800 hover:text-[#120c7a] transition-colors" tabIndex={-1}>
+                {showRegPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
 
             <button type="submit" disabled={loading} className="w-full h-12 bg-[#120c7a] rounded-full shadow-[0_0_10px_rgba(0,0,0,0.1)] border-none cursor-pointer text-base text-white font-semibold hover:bg-blue-600 transition-all flex items-center justify-center gap-2">
-              {loading ? <Loader2 className="animate-spin" size={20} /> : "Register"}
+              {loading ? <Loader2 className="animate-spin" size={20} /> : (regRole === "student" ? "Register as Student" : "Register")}
             </button>
           </form>
         </div>

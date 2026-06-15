@@ -83,7 +83,7 @@ service cloud.firestore {
     }
 
     match /students/{studentDocId} {
-      allow read: if isApproved();
+      allow read: if isAuthenticated();
       allow write: if isApproved();
     }
 
@@ -96,6 +96,34 @@ service cloud.firestore {
       allow read: if isApproved();
       allow write: if isApproved();
     }
+
+    // Library module — disabled until verified
+    match /books/{docId} { allow read, write: if false; }
+    match /book_categories/{docId} { allow read, write: if false; }
+    match /book_issues/{docId} { allow read, write: if false; }
+    match /library_entry_logs/{docId} { allow read, write: if false; }
+
+    // Placement module — disabled until verified
+    match /placement_companies/{docId} { allow read, write: if false; }
+    match /placement_drives/{docId} { allow read, write: if false; }
+    match /placement_students/{docId} { allow read, write: if false; }
+    match /placement_applications/{docId} { allow read, write: if false; }
+    match /placement_interview_rounds/{docId} { allow read, write: if false; }
+    match /placement_offers/{docId} { allow read, write: if false; }
+    match /placement_training_sessions/{docId} { allow read, write: if false; }
+
+    // Fee Categories — enabled (used as master list of fee heads)
+    match /fee_categories/{docId} {
+      allow read: if isApproved();
+      allow write: if isApproved();
+    }
+
+    // New Fee collections — disabled until verified
+    match /fee_payments/{docId} { allow read, write: if false; }
+    match /fee_receipts/{docId} { allow read, write: if false; }
+    match /fee_concessions/{docId} { allow read, write: if false; }
+    match /fee_heads/{docId} { allow read, write: if false; }
+    match /fee_defaulters_cache/{docId} { allow read, write: if false; }
 
     match /{document=**} {
       allow read: if isApproved();
