@@ -10,7 +10,7 @@ import "bootstrap-icons/font/bootstrap-icons.css";
 
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
-import { formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
 
 export default function VisionMission() {
   const { departments: deptMap } = useDepartments();
@@ -31,8 +31,8 @@ export default function VisionMission() {
   const fetchVisionMission = (prog, dept) => {
     if (!prog || !dept) return;
     const progKey = formatProgrammeKey(prog);
-    const sanitizedDept = sanitizeKey(dept); // Use sanitizeKey for department
-    const deptRef = doc(db, 'vision_mission', progKey, sanitizedDept); // Firestore subcollection path
+    const sanitizedDept = sanitizeKey(dept);
+    const deptRef = doc(db, 'vision_mission', `${progKey}_${sanitizedDept}`);
     onSnapshot(deptRef, (snapshot) => { // Use onSnapshot for real-time updates
       const data = snapshot.data(); // Use .data() for Firestore documents
       if (data) {
@@ -59,8 +59,8 @@ export default function VisionMission() {
     }
 
     const progKey = formatProgrammeKey(programme);
-    const sanitizedDept = sanitizeKey(department); // Use sanitizeKey for department
-    const deptRef = doc(db, 'vision_mission', progKey, sanitizedDept); // Firestore subcollection path
+    const sanitizedDept = sanitizeKey(department);
+    const deptRef = doc(db, 'vision_mission', `${progKey}_${sanitizedDept}`);
     try {
       await setDoc(deptRef, { // Use setDoc for Firestore
         vision: visions.filter(v => v.trim() !== ""),

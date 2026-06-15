@@ -6,7 +6,7 @@ import { Trash2, Save, Plus, ChevronDown, CheckCircle2, Download } from "lucide-
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, sanitizeKey as sharedSanitizeKey } from "../lib/utils";
 
 const COConfiguration = () => {
   const { departments: deptMap, durations } = useDepartments();
@@ -153,6 +153,9 @@ const deriveSemesterNumber = (label) => {
       const courseRef = doc(db, 'courses', compositeKey);
       const overallCompositeKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
       const overallCourseRef = doc(db, 'courses', overallCompositeKey);
+      // CourseBank 3-part key format (no regulation in key, uses shared sanitizeKey that replaces spaces)
+      const bankCourseKey = `${sharedSanitizeKey(programme)}_${sharedSanitizeKey(department)}_${sharedSanitizeKey(subject)}`;
+      const bankCourseRef = doc(db, 'courses', bankCourseKey);
 
       let courseDataObj = null;
       try {
@@ -163,6 +166,11 @@ const deriveSemesterNumber = (label) => {
           const overallSnap = await getDoc(overallCourseRef);
           if (overallSnap.exists()) {
             courseDataObj = overallSnap.data();
+          } else {
+            const bankSnap = await getDoc(bankCourseRef);
+            if (bankSnap.exists()) {
+              courseDataObj = bankSnap.data();
+            }
           }
         }
       } catch (e) {
@@ -509,6 +517,13 @@ Return an exhaustive list of all plausible mappings.`;
           const overallSnap = await getDoc(overallCourseRef);
           if (overallSnap.exists()) {
             setIsCourseBankSubject(true);
+            return;
+          }
+          // Also try CourseBank's 3-part key format: progKey_deptKey_subjectCode (uses shared sanitizeKey that replaces spaces)
+          const bankCourseKey = `${sharedSanitizeKey(programme)}_${sharedSanitizeKey(department)}_${sharedSanitizeKey(subject)}`;
+          const bankSnap = await getDoc(doc(db, 'courses', bankCourseKey));
+          if (bankSnap.exists()) {
+            setIsCourseBankSubject(true);
           } else {
             setIsCourseBankSubject(false);
           }
@@ -548,10 +563,15 @@ Return an exhaustive list of all plausible mappings.`;
             const progKey = formatProgrammeKey(programme);
             const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
             const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
+            // CourseBank 3-part key format (no regulation in key, uses shared sanitizeKey that replaces spaces)
+            const bankCourseKey = `${sharedSanitizeKey(programme)}_${sharedSanitizeKey(department)}_${sharedSanitizeKey(subject)}`;
             
             let bankSnap = await getDoc(doc(db, 'courses', flatCourseKey));
             if (!bankSnap.exists()) {
               bankSnap = await getDoc(doc(db, 'courses', flatOverallKey));
+            }
+            if (!bankSnap.exists()) {
+              bankSnap = await getDoc(doc(db, 'courses', bankCourseKey));
             }
 
             if (bankSnap.exists()) {
