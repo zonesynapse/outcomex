@@ -8,7 +8,7 @@ import AddEnquiryModal from "../components/AddEnquiryModal";
 import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries } from "../services/enquiryService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
-const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission"];
+const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission", "Approved"];
 
 const hasQuotaSeats = (config) => {
   if (!config || !config.quotas) return false;
@@ -200,11 +200,11 @@ export default function AdmissionEnquiries() {
   };
 
   const handleMove = (enquiry) => {
-    if (enquiry.status !== "Enquiry") return;
-    openEditModal({
-      ...enquiry,
-      status: "Application"
-    });
+    if (enquiry.status === "Enquiry") {
+      openEditModal({ ...enquiry, status: "Application" });
+    } else if (enquiry.status === "Approved") {
+      openEditModal({ ...enquiry });
+    }
   };
 
   const handleSave = async (values) => {

@@ -41,7 +41,7 @@ export default function StudentProfile() {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-emerald-600" size={40} /></div>
+    <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-[#120c7a]" size={40} /></div>
   );
 
   if (!userData) return (
@@ -59,7 +59,7 @@ export default function StudentProfile() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-gradient-to-r from-emerald-700 to-emerald-500 rounded-2xl p-8 text-white mb-8 shadow-lg">
+      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-8 text-white mb-8 shadow-lg">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
             <span className="text-2xl font-bold">
@@ -68,7 +68,7 @@ export default function StudentProfile() {
           </div>
           <div>
             <h1 className="text-2xl font-bold">{userData.studentName}</h1>
-            <p className="text-emerald-100 text-sm mt-1">{userData.regNo}</p>
+            <p className="text-blue-200 text-sm mt-1">{userData.regNo}</p>
           </div>
         </div>
       </div>
@@ -76,7 +76,7 @@ export default function StudentProfile() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-zinc-100 p-6">
           <h2 className="text-base font-bold text-zinc-700 mb-4 flex items-center gap-2">
-            <User size={18} className="text-emerald-600" /> Personal Details
+            <User size={18} className="text-[#120c7a]" /> Personal Details
           </h2>
           <div className="space-y-4">
             {infoRows.map((row, i) => (
@@ -95,12 +95,12 @@ export default function StudentProfile() {
 
         <div className="bg-white rounded-xl shadow-sm border border-zinc-100 p-6">
           <h2 className="text-base font-bold text-zinc-700 mb-4 flex items-center gap-2">
-            <Edit3 size={18} className="text-emerald-600" /> Digital Signature
+            <Edit3 size={18} className="text-[#120c7a]" /> Digital Signature
           </h2>
           {editSig ? (
             <div className="space-y-3">
               <input type="file" accept="image/*" className="hidden" ref={fileRef} onChange={handleSigUpload} />
-              <div onClick={() => fileRef.current.click()} className="border-2 border-dashed border-zinc-200 rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 transition-all">
+              <div onClick={() => fileRef.current.click()} className="border-2 border-dashed border-zinc-200 rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[#120c7a]/40 hover:bg-[#120c7a]/5 transition-all">
                 {sigUrl || userData.signatureUrl ? (
                   <img src={sigUrl || userData.signatureUrl} alt="Signature" className="max-h-16 object-contain" />
                 ) : (
@@ -112,7 +112,7 @@ export default function StudentProfile() {
               </div>
               <p className="text-[10px] text-zinc-400 italic">Max 100KB, PNG with transparent background</p>
               <div className="flex gap-2">
-                <button onClick={handleSaveSig} className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors flex items-center justify-center gap-1">
+                <button onClick={handleSaveSig} className="flex-1 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-lg hover:bg-[#0e095e] transition-colors flex items-center justify-center gap-1">
                   <Check size={14} /> Save
                 </button>
                 <button onClick={() => { setEditSig(false); setSigUrl(""); }} className="flex-1 py-2 bg-zinc-100 text-zinc-600 text-xs font-bold rounded-lg hover:bg-zinc-200 transition-colors flex items-center justify-center gap-1">

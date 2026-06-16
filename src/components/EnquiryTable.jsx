@@ -104,7 +104,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                       <CheckCircle2 size={12} className="text-green-600" />
                       Admitted
                     </span>
-                  ) : enquiry.status === "Enquiry" ? (
+                  ) : enquiry.status === "Enquiry" || enquiry.status === "Approved" ? (
                     <button
                       type="button"
                       onClick={() => onMove?.(enquiry)}

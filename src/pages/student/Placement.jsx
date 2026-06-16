@@ -186,7 +186,7 @@ export default function Placement() {
             </div>
 
             <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-              <div className="bg-indigo-600 px-8 py-5 flex items-center gap-3">
+              <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
                 <GraduationCap size={20} className="text-white" />
                 <h2 className="text-white font-bold text-xl">My Applications</h2>
               </div>
@@ -218,7 +218,7 @@ export default function Placement() {
           <div className="space-y-6">
             {offers.length > 0 && (
               <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-                <div className="bg-emerald-600 px-8 py-5 flex items-center gap-3">
+                <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
                   <Award size={20} className="text-white" />
                   <h2 className="text-white font-bold text-lg">My Offers</h2>
                 </div>

@@ -23,6 +23,11 @@ import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatProgrammeKey, getRecentBatches as getRecentBatchesUtil, formatBatchDisplay } from "../lib/utils";
 
+function sanitizeKey(key) {
+  if (!key) return "";
+  return String(key).replace(/[.#$[\]/]/g, '_');
+}
+
 export default function Curriculum() {
   const { departments, durations, addDepartment, removeDepartment, removeProgram, renameProgram, renameDepartment, setDuration } = useDepartments();
   const { regulations, batchRegulations, addRegulation, mapBatchToRegulation } = useRegulations();
@@ -352,11 +357,6 @@ export default function Curriculum() {
     setSuccessMessage("Grade removed successfully!");
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
-  };
-
-  const sanitizeKey = (key) => {
-    if (!key) return '';
-    return String(key).replace(/[.#$[\]]/g, '_');
   };
 
   const getRecentBatches = (prog) => {

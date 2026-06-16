@@ -26,6 +26,32 @@ input, select, textarea, button {
   font-size: 14px;
 }
 
+aside a,
+aside a:hover,
+aside a:focus,
+aside a:active,
+aside a:visited {
+  text-decoration: none !important;
+  -webkit-text-decoration: none !important;
+}
+
+.sidebar-link,
+.sidebar-link:hover,
+.sidebar-link:focus,
+.sidebar-link:active,
+.sidebar-link:visited,
+.sidebar-link span,
+.sidebar-link span:hover {
+  text-decoration: none !important;
+  -webkit-text-decoration: none !important;
+}
+
+/* Hide native password reveal toggle (prevents duplicate eye icon) */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
 /* Hide number input arrows globally */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {

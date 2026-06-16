@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 /* Custom styles can be added here */
+aside a,
+.sidebar-link {
+  text-decoration: none !important;
+  -webkit-text-decoration: none !important;
+}
+
 .animate-in {
   animation-duration: 300ms;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);

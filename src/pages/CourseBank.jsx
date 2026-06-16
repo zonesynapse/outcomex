@@ -260,14 +260,15 @@ export default function CreateCourse() {
       }
       const filtered = Object.entries(data)
         .filter(([, course]) => {
-          const courseProg = normalize(course?._outerKey || course?.programme || '');
+          const courseProg = normalize(course?.programme || '');
           const courseReg = normalize(course?.regulation || '');
           const courseDept = normalize(course?.department || '');
-          const matchProg = courseProg === progKey || normalize(course?.programme || '') === progKey;
+          const matchProg = courseProg === progKey;
           const matchReg = courseReg === normalize(regulation);
+          const normDept = normalize(department || '');
           const matchDept = department
-            ? courseDept === normalize(department) || courseDept === "Overall"
-            : courseDept === "Overall";
+            ? courseDept === normDept || courseDept === "Overall" || (normDept && courseDept.endsWith("_" + normDept))
+            : courseDept === "Overall" || !courseDept;
           return matchProg && matchReg && matchDept;
         })
         .map(([key, course]) => ({
@@ -286,9 +287,35 @@ export default function CreateCourse() {
     return () => unsub();
   }, [programme, department, regulation]);
 
-  const loadExistingCourseIntoForm = (compositeKey) => {
+  const loadExistingCourseIntoForm = async (compositeKey) => {
     if (!compositeKey) return;
-    const match = existingCourses.find(c => `${c._sourceDept}:${c.key}` === compositeKey);
+    let match = existingCourses.find(c => `${c._sourceDept}:${c.key}` === compositeKey);
+
+    // Fallback: always fetch from Firestore to ensure CO data is fresh
+    const [, docId] = compositeKey.split(':');
+    if (docId) {
+      try {
+        const snap = await getDoc(doc(db, 'courses', docId));
+        if (snap.exists()) {
+          const docData = snap.data();
+          const co = Array.isArray(docData.co) ? docData.co : [];
+          if (co.length > 0 || !match) {
+            match = {
+              key: docId,
+              code: docData.code || docId,
+              name: docData.name || "",
+              credits: docData.credits,
+              type: docData.type,
+              periods: docData.periods || { l: 0, t: 0, p: 0 },
+              co,
+              _sourceDept: docData.department || "Overall",
+            };
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch course directly:', e);
+      }
+    }
     if (!match) return;
 
     setShowCreate(true);
@@ -299,18 +326,21 @@ export default function CreateCourse() {
     setCourseType(match.type || "Program Course");
 
     const cos = Array.isArray(match.co) ? match.co : [];
-    setCoDefs(cos.map(co => co?.description || ""));
+    setCoDefs(cos.map(co => co?.description || co?.name || ""));
     setCoContents(cos.map(co => co?.content || ""));
     setCoDomains(cos.map(co => co?.domain || ""));
     setCoLevels(cos.map(co => co?.level || ""));
   };
 
-  // Hide the form until a dropdown selection is made
+  // Hide the form until a dropdown selection is made, and re-load when existingCourses arrives
   useEffect(() => {
     if (!selectedExistingCourseKey) {
       setShowCreate(false);
+      return;
     }
-  }, [selectedExistingCourseKey]);
+    if (selectedExistingCourseKey === "__new__") return;
+    loadExistingCourseIntoForm(selectedExistingCourseKey);
+  }, [selectedExistingCourseKey, existingCourses]);
 
   // Programs are the keys defined in Curriculum (durations / departments), e.g., B_E, B_Tech
   const programmes = Object.keys(durations || allDepartments || {});

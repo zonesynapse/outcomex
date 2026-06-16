@@ -681,7 +681,6 @@ export default function Layout({ children, title }) {
                 className={`relative flex items-center gap-3 w-full text-white px-4 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium sidebar-link group ${isActive ? 'bg-white/12 text-white shadow-sm' : 'hover:bg-white/8 text-white/85 hover:text-white'}`}
                 onClick={() => setIsSidebarOpen(false)}
               >
-                {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-white rounded-r-full" />}
                 <span className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-200 ${isActive ? 'bg-white/20' : 'bg-white/6 group-hover:bg-white/12'}`}>
                   <item.icon size={16} className={isActive ? 'text-white' : 'text-white/80'} />
                 </span>
@@ -724,7 +723,6 @@ export default function Layout({ children, title }) {
                         className={`relative flex items-center gap-3 w-full px-4 py-2 rounded-lg transition-all duration-200 text-[12px] font-semibold sidebar-link group ${isActive ? 'bg-white/15 text-white' : 'text-white hover:text-white/80 hover:bg-white/8'}`}
                         onClick={() => setIsSidebarOpen(false)}
                       >
-                        {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white rounded-r-full" />}
                         <span className={`w-1.5 h-1.5 rounded-full transition-all duration-200 ${isActive ? 'bg-white' : 'bg-white/40 group-hover:bg-white/70'}`} />
                         <span className="flex-grow truncate">{item.label}</span>
                       </Link>

@@ -346,11 +346,37 @@ export default function HODRoleConfig() {
     return (syllabusData.semesters?.[semester] || []).filter(sub => sub != null && sub.isActive !== false);
   }, [syllabusData, semester]);
 
+  // 6.1 Allocated subject codes (from current context + global assignments)
+  const allocatedSubjectCodes = useMemo(() => {
+    const codes = new Set();
+    Object.values(assignments).forEach(subs => {
+      if (Array.isArray(subs)) subs.forEach(code => codes.add(code));
+    });
+    if (!programme || !syllabusDept || !batch || !academicYear || !semester) return codes;
+    const progKey = formatProgrammeKey(programme);
+    const deptKey = sanitizeKey(syllabusDept);
+    Object.values(allAssignments).forEach(facultyAssignments => {
+      facultyAssignments.forEach(a => {
+        if (
+          a.progKey === progKey &&
+          a.dept === deptKey &&
+          a.batch === batch &&
+          a.academicYear === academicYear &&
+          String(a.semester) === String(semester) &&
+          (!section || (a.section || '') === section)
+        ) {
+          codes.add(a.code);
+        }
+      });
+    });
+    return codes;
+  }, [assignments, allAssignments, programme, syllabusDept, batch, academicYear, semester, section]);
+
   const handleAssignSubject = (facultyUid, subjectCode) => {
     if (!subjectCode) return;
     
     // Check if subject is already assigned to ANYONE
-    const assignedTo = Object.entries(assignments).find(([, subs]) => subs.includes(subjectCode));
+    const assignedTo = Object.entries(assignments).find(([, subs]) => subs?.includes(subjectCode));
     
     if (assignedTo) {
       const [uid] = assignedTo;
@@ -556,7 +582,7 @@ export default function HODRoleConfig() {
       facultyList.forEach(f => {
         updates[f.uid] = assignments[f.uid] || null;
         if (assignments[f.uid]) {
-          assignments[f.uid].forEach(code => allAssignedSubjects.add(code));
+          (assignments[f.uid] || []).forEach(code => allAssignedSubjects.add(code));
         }
       });
 
@@ -1046,7 +1072,7 @@ export default function HODRoleConfig() {
                       >
                         <option value="">+ Assign Subject</option>
                         {availableSubjects.map(sub => {
-                          const isAssigned = Object.values(assignments).some(subs => subs.includes(sub.code));
+                          const isAssigned = Object.values(assignments).some(subs => subs?.includes(sub.code));
                           return (
                             <option key={sub.code} value={sub.code} disabled={isAssigned}>
                               {sub.code} - {sub.name} {isAssigned ? '(Assigned)' : ''}
@@ -1094,9 +1120,9 @@ export default function HODRoleConfig() {
                   </div>
                   <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                     {availableSubjects.map(sub => {
+                      const isAllocated = allocatedSubjectCodes.has(sub.code);
                       const allocatedFacultyUid = Object.keys(assignments).find(uid => assignments[uid]?.includes(sub.code));
                       const allocatedFaculty = allocatedFacultyUid ? usersMap[allocatedFacultyUid] : null;
-                      const isAllocated = !!allocatedFacultyUid;
 
                       const pendingSentRequest = sentRequests.find(req => 
                         req.subjectCode === sub.code && 

@@ -450,6 +450,7 @@ export default function Auth() {
                 type={showLoginPassword ? "text" : "password"}
                 placeholder="Password"
                 maxLength="128"
+                autoComplete="off"
                 className="w-full py-3.5 pl-5 pr-12 bg-[#eee] rounded-lg border-none outline-none text-base font-medium text-zinc-800 placeholder:text-zinc-400 placeholder:font-normal focus:ring-2 focus:ring-[#120c7a]"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
@@ -614,7 +615,7 @@ export default function Auth() {
             </div>
 
             <div className="relative mb-6">
-              <input type={showRegPassword ? "text" : "password"} placeholder="Password" maxLength="128" className="w-full h-[50px] pl-4 pr-12 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regPassword} onChange={e => setRegPassword(e.target.value)} required />
+              <input type={showRegPassword ? "text" : "password"} placeholder="Password" maxLength="128" autoComplete="off" className="w-full h-[50px] pl-4 pr-12 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regPassword} onChange={e => setRegPassword(e.target.value)} required />
               <button type="button" onClick={() => setShowRegPassword(!showRegPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-800 hover:text-[#120c7a] transition-colors" tabIndex={-1}>
                 {showRegPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>

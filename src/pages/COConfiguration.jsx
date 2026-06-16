@@ -833,7 +833,9 @@ Return an exhaustive list of all plausible mappings.`;
           direct: Number(directIndirectSplit.direct || 0),
           indirect: Number(directIndirectSplit.indirect || 0)
         },
-        "meta/updatedAt": new Date().toISOString()
+        meta: {
+          updatedAt: new Date().toISOString()
+        }
       });
       setSuccessMessage("Thresholds and cutoff saved successfully!");
       setShowSuccess(true);

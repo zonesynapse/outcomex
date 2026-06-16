@@ -5,7 +5,7 @@ import {
   CheckCircle2, XCircle, Eye, Send, AlertTriangle, ArrowRight,
   UserCheck, Library, Activity, Zap, FileText, Clock,
   Calendar, DollarSign, Target, Award, BarChart3, Bell,
-  ChevronRight, School
+  ChevronRight, School, MapPin, X, User
 } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
@@ -13,7 +13,8 @@ import AddEnquiryModal from "../components/AddEnquiryModal";
 import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
-import { collection, getDocs, query, where, getCountFromServer } from "firebase/firestore";
+import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc } from "firebase/firestore";
+import { formatProgrammeKey, sanitizeKey } from "../lib/utils";
 
 const formatDate = (value) => {
   if (!value) return "-";
@@ -42,6 +43,8 @@ export default function PrincipalDashboard() {
   const [viewModal, setViewModal] = useState({ open: false, enquiry: null, loading: false });
   const [rejectModal, setRejectModal] = useState({ open: false, enquiry: null, saving: false, reason: "" });
   const [rejectError, setRejectError] = useState("");
+  const [detailModal, setDetailModal] = useState({ open: false, enquiry: null });
+  const [pendingPopup, setPendingPopup] = useState({ open: false });
 
   const [studentCount, setStudentCount] = useState(0);
   const [feeTotal, setFeeTotal] = useState(0);
@@ -148,9 +151,31 @@ export default function PrincipalDashboard() {
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
   };
 
+  const addStudentToNamelist = async (app) => {
+    try {
+      const regNo = app.applicationNo || app.enquiryId;
+      if (!regNo) return;
+      const name = [app.firstName, app.lastName].filter(Boolean).join(" ").trim() || app.studentName || "-";
+      const progKey = formatProgrammeKey(app.programme);
+      if (!app.batch || !progKey || !app.department) return;
+      const studentDocId = `${sanitizeKey(app.batch)}_${progKey}_${sanitizeKey(app.department)}`;
+      const studentRef = doc(db, 'students', studentDocId);
+      const snap = await getDoc(studentRef);
+      const existingData = snap.exists() ? snap.data() : {};
+      const order = existingData._order || [];
+      if (!existingData[regNo]) {
+        order.push(regNo);
+      }
+      await setDoc(studentRef, { ...existingData, [regNo]: name, _order: order });
+    } catch (err) {
+      console.error("Failed to add student to namelist:", err);
+    }
+  };
+
   const handleApprove = async (app) => {
     try {
       await updateEnquiry(app.enquiryId, { ...app, status: "Approved" });
+      await addStudentToNamelist(app);
       showToast("Admission approved successfully");
     } catch (err) {
       console.error("Approve error:", err);
@@ -167,6 +192,23 @@ export default function PrincipalDashboard() {
     setRejectModal({ open: false, enquiry: null, saving: false, reason: "" });
     setRejectError("");
   };
+
+  const openPendingPopup = () => setPendingPopup({ open: true });
+  const closePendingPopup = () => setPendingPopup({ open: false });
+
+  const openDetailModal = async (app) => {
+    setDetailModal({ open: true, enquiry: null });
+    if (app?.enquiryId) {
+      try {
+        const fresh = await getEnquiryById(app.enquiryId);
+        setDetailModal({ open: true, enquiry: fresh || app });
+        return;
+      } catch (e) { console.error(e); }
+    }
+    setDetailModal({ open: true, enquiry: app });
+  };
+
+  const closeDetailModal = () => setDetailModal({ open: false, enquiry: null });
 
   const handleConfirmReject = async () => {
     const app = rejectModal.enquiry;
@@ -189,7 +231,7 @@ export default function PrincipalDashboard() {
 
   const kpiCards = [
     { key: "students", label: "Total Students", value: studentCount, icon: GraduationCap, color: "blue", href: "/course-enrolment", format: (v) => v.toLocaleString() },
-    { key: "pending", label: "Pending Approvals", value: stats.admission, icon: Clock, color: "amber", href: null, format: (v) => String(v) },
+    { key: "pending", label: "Admission Pending Approvals", value: stats.admission, icon: Clock, color: "amber", href: null, onClick: "pendingPopup", format: (v) => String(v) },
     { key: "enquiries", label: "Total Enquiries", value: stats.total, icon: FileText, color: "indigo", href: "/admissions/enquiries", format: (v) => v.toLocaleString() },
     { key: "placed", label: "Students Placed", value: placedCount, icon: Briefcase, color: "emerald", href: "/placement/dashboard", format: (v) => v.toLocaleString() },
     { key: "fee", label: "Fee Collected", value: feeTotal, icon: CreditCard, color: "violet", href: "/fee/dashboard", format: (v) => formatCurrency(v) },
@@ -219,7 +261,7 @@ export default function PrincipalDashboard() {
   const moduleCards = [
     {
       title: "Admissions", icon: UserCheck, color: "emerald",
-      href: "/admissions/enquiries",
+      href: "/admissions/seats",
       stats: [
         { label: "Today", value: stats.today },
         { label: "Enquiries", value: stats.new },
@@ -261,7 +303,7 @@ export default function PrincipalDashboard() {
     },
     {
       title: "Outcome Based Edu.", icon: Target, color: "cyan",
-      href: "/co_configuration",
+      href: "/po-attainment",
       stats: [
         { label: "CO's", value: "-" },
         { label: "PO's", value: "-" },
@@ -314,10 +356,15 @@ export default function PrincipalDashboard() {
               const c = colorMap[kpi.color];
               const Icon = kpi.icon;
               const navHref = kpi.href;
+              const handleClick = () => {
+                if (kpi.onClick === "pendingPopup") openPendingPopup();
+                else if (navHref) navigate(navHref);
+              };
+              const clickable = !!(navHref || kpi.onClick);
               return (
                 <div key={kpi.key}
-                  onClick={() => navHref && navigate(navHref)}
-                  className={`relative bg-white rounded-2xl border ${c.border} shadow-sm p-5 transition-all duration-200 ${navHref ? "cursor-pointer hover:shadow-md hover:-translate-y-0.5" : ""}`}
+                  onClick={handleClick}
+                  className={`relative bg-white rounded-2xl border ${c.border} shadow-sm p-5 transition-all duration-200 ${clickable ? "cursor-pointer hover:shadow-md hover:-translate-y-0.5" : ""}`}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className={`p-2.5 rounded-xl ${c.iconBg}`}>
@@ -363,12 +410,12 @@ export default function PrincipalDashboard() {
             </div>
           </div>
 
-          {/* Pending Approvals */}
+          {/* Admission Pending Approvals */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
                 <Clock size={20} className="text-amber-500" />
-                Pending Approvals
+                Admission Pending Approvals
                 {stats.admission > 0 && (
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{stats.admission}</span>
                 )}
@@ -408,7 +455,7 @@ export default function PrincipalDashboard() {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {pendingApprovals.map((app) => (
-                        <tr key={app.enquiryId} className="hover:bg-zinc-50/50 transition-colors">
+                        <tr key={app.enquiryId} onClick={() => openDetailModal(app)} className="hover:bg-zinc-50/50 transition-colors cursor-pointer">
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full bg-[#120c7a]/10 text-[#120c7a] flex items-center justify-center text-xs font-bold">
@@ -433,22 +480,22 @@ export default function PrincipalDashboard() {
                           <td className="px-5 py-4 text-sm text-zinc-600">{formatDate(app.enquiryDate || app.createdAt)}</td>
                           <td className="px-5 py-4">
                             <div className="flex items-center justify-center gap-1.5">
-                              <button onClick={() => handleApprove(app)}
+                              <button onClick={(e) => { e.stopPropagation(); handleApprove(app); }}
                                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100 transition-colors"
                                 title="Approve">
                                 <CheckCircle2 size={12} /> Approve
                               </button>
-                              <button onClick={() => openRejectModal(app)}
+                              <button onClick={(e) => { e.stopPropagation(); openRejectModal(app); }}
                                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold border border-red-200 hover:bg-red-100 transition-colors"
                                 title="Reject">
                                 <XCircle size={12} /> Reject
                               </button>
-                              <button onClick={() => openViewModal(app)}
+                              <button onClick={(e) => { e.stopPropagation(); openViewModal(app); }}
                                 className="p-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:border-[#120c7a] hover:text-[#120c7a] transition-colors"
                                 title="View">
                                 <Eye size={14} />
                               </button>
-                              <button onClick={() => openEditModal(app)}
+                              <button onClick={(e) => { e.stopPropagation(); openEditModal(app); }}
                                 className="p-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:border-blue-500 hover:text-blue-600 transition-colors"
                                 title="Edit">
                                 <Send size={14} />
@@ -560,6 +607,255 @@ export default function PrincipalDashboard() {
                 className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50">
                 {rejectModal.saving ? "Rejecting..." : "Confirm Reject"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingPopup.open && (
+        <div className="fixed inset-0 z-[190] flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={closePendingPopup} />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-200">
+              <div className="flex items-center gap-3">
+                <Clock size={20} className="text-amber-500" />
+                <h3 className="text-lg font-bold text-zinc-900">Admission Pending Approvals</h3>
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{admissionItems.length}</span>
+              </div>
+              <button onClick={closePendingPopup} className="p-1.5 rounded-lg hover:bg-zinc-100 transition-colors">
+                <X size={18} className="text-zinc-500" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {admissionItems.length === 0 ? (
+                <div className="text-center py-12">
+                  <CheckCircle2 size={40} className="mx-auto text-emerald-400 mb-3" />
+                  <p className="text-zinc-500 font-medium">No pending approvals</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {admissionItems.map((app) => {
+                    const name = app.firstName || app.lastName
+                      ? `${app.firstName || ""} ${app.lastName || ""}`.trim()
+                      : app.studentName || "-";
+                    return (
+                      <div key={app.enquiryId} className="flex items-center justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-200 hover:bg-zinc-100 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-full bg-[#120c7a]/10 text-[#120c7a] flex items-center justify-center text-xs font-bold shrink-0">
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-zinc-900 truncate">{name}</p>
+                            <p className="text-[11px] text-zinc-500 truncate">
+                              {app.applicationNo || app.enquiryId} | {app.department || app.department2 || app.department3 || "-"} | {app.mobile || "-"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-3">
+                          <button onClick={(e) => { e.stopPropagation(); handleApprove(app); closePendingPopup(); }}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                            title="Approve">
+                            <CheckCircle2 size={12} /> Approve
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); navigate(`/admissions/confirm/${app.enquiryId}`); }}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold border border-red-200 hover:bg-red-100 transition-colors"
+                            title="Reject">
+                            <XCircle size={12} /> Reject
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detailModal.open && detailModal.enquiry && (
+        <div className="fixed inset-0 z-[180] flex items-start justify-center pt-10 pb-10 overflow-y-auto">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={closeDetailModal} />
+          <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+                    <User size={22} className="text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      {detailModal.enquiry.firstName || detailModal.enquiry.lastName
+                        ? `${detailModal.enquiry.firstName || ""} ${detailModal.enquiry.lastName || ""}`.trim()
+                        : detailModal.enquiry.studentName || "Applicant"}
+                    </h2>
+                    <p className="text-blue-200 text-xs">
+                      {detailModal.enquiry.gender && `${detailModal.enquiry.gender} | `}
+                      App No: {detailModal.enquiry.applicationNo || "N/A"}
+                    </p>
+                  </div>
+                </div>
+                <button onClick={closeDetailModal} className="p-1.5 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-5 max-h-[70vh] overflow-y-auto space-y-5">
+              {/* Personal Information */}
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border-b border-zinc-200">
+                  <User size={15} className="text-[#120c7a]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Personal Information</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                  {[
+                    ["Applicant Name", detailModal.enquiry.firstName || detailModal.enquiry.lastName
+                      ? `${detailModal.enquiry.firstName || ""} ${detailModal.enquiry.lastName || ""}`.trim()
+                      : detailModal.enquiry.studentName],
+                    ["Father / Guardian", detailModal.enquiry.fatherGuardianName],
+                    ["Mother Name", detailModal.enquiry.motherName],
+                    ["Date of Birth", detailModal.enquiry.dateOfBirth],
+                    ["Gender", detailModal.enquiry.gender],
+                    ["Nationality", detailModal.enquiry.nationality],
+                    ["Religion", detailModal.enquiry.religion],
+                    ["Community / Caste", [detailModal.enquiry.community, detailModal.enquiry.caste].filter(Boolean).join(" / ")],
+                    ["Mother Tongue", detailModal.enquiry.motherTongue],
+                    ["Blood Group", detailModal.enquiry.bloodGroup],
+                    ["Aadhar No", detailModal.enquiry.aadharNo],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between gap-2">
+                      <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wider shrink-0">{label}</span>
+                      <span className="text-zinc-800 font-medium text-right">{value || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Contact & Address */}
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border-b border-zinc-200">
+                  <MapPin size={15} className="text-[#120c7a]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Contact & Address</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                  {[
+                    ["Mobile", detailModal.enquiry.mobile],
+                    ["Parent Mobile", detailModal.enquiry.parentMobile],
+                    ["Email", detailModal.enquiry.emailId],
+                    ["Present Address", [detailModal.enquiry.presentAddress, detailModal.enquiry.presentCity, detailModal.enquiry.presentDistrict, detailModal.enquiry.presentState, detailModal.enquiry.presentPincode].filter(Boolean).join(", ")],
+                    ["Permanent Address", [detailModal.enquiry.permanentAddress, detailModal.enquiry.permanentCity, detailModal.enquiry.permanentDistrict, detailModal.enquiry.permanentState, detailModal.enquiry.permanentPincode].filter(Boolean).join(", ")],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between gap-2">
+                      <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wider shrink-0">{label}</span>
+                      <span className="text-zinc-800 font-medium text-right">{value || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Academic Details */}
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border-b border-zinc-200">
+                  <GraduationCap size={15} className="text-[#120c7a]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Academic Details</span>
+                </div>
+                <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                  {[
+                    ["Programme", detailModal.enquiry.programme],
+                    ["Batch", detailModal.enquiry.batch],
+                    ["Qualifying Exam", detailModal.enquiry.qualifyingExamProgrammes],
+                    ["Institute", detailModal.enquiry.qualifyingExamInstitute],
+                    ["Board / University", detailModal.enquiry.qualifyingExamBoardUniversity],
+                    ["Maths Mark", detailModal.enquiry.mathsMark],
+                    ["Physics Mark", detailModal.enquiry.physicsMark],
+                    ["Chemistry Mark", detailModal.enquiry.chemistryMark],
+                    ["Total Marks", detailModal.enquiry.totalMarks],
+                    ["Cutoff", detailModal.enquiry.cutoff],
+                    ["Eligibility", detailModal.enquiry.eligibility],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between gap-2">
+                      <span className="text-zinc-400 text-xs font-semibold uppercase tracking-wider shrink-0">{label}</span>
+                      <span className="text-zinc-800 font-medium text-right">{value || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Department Choices */}
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border-b border-zinc-200">
+                  <FileText size={15} className="text-[#120c7a]" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Department Choices</span>
+                </div>
+                <div className="p-4 grid grid-cols-3 gap-3">
+                  {[
+                    ["Choice 1", detailModal.enquiry.department],
+                    ["Choice 2", detailModal.enquiry.department2],
+                    ["Choice 3", detailModal.enquiry.department3],
+                  ].filter(([, v]) => v).map(([label, value]) => (
+                    <div key={label} className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-center">
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">{label}</p>
+                      <p className="text-sm font-semibold text-[#120c7a] mt-0.5">{value}</p>
+                    </div>
+                  ))}
+                  {[detailModal.enquiry.department, detailModal.enquiry.department2, detailModal.enquiry.department3].filter(Boolean).length === 0 && (
+                    <p className="col-span-3 text-sm text-zinc-400 text-center py-2">No departments chosen</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Payments */}
+              {detailModal.enquiry.payments && detailModal.enquiry.payments.length > 0 && (
+                <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border-b border-zinc-200">
+                    <CreditCard size={15} className="text-[#120c7a]" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Payments</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {detailModal.enquiry.payments.map((p, i) => (
+                      <div key={i} className="grid grid-cols-4 gap-3 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
+                        <div>
+                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Category</p>
+                          <p className="text-xs font-semibold text-zinc-700">{p.feeCategory || "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Amount</p>
+                          <p className="text-xs font-semibold text-zinc-700">{p.feeAmount || "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Mode</p>
+                          <p className="text-xs font-semibold text-zinc-700">{p.paymentMode || "-"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Date</p>
+                          <p className="text-xs font-semibold text-zinc-700">{p.paymentDate || "-"}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer - Actions */}
+            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-200 flex items-center justify-between">
+              <button onClick={closeDetailModal}
+                className="rounded-xl border border-zinc-200 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-100">
+                Close
+              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={(e) => { e.stopPropagation(); handleApprove(detailModal.enquiry); closeDetailModal(); }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md">
+                  <CheckCircle2 size={16} /> Approve Admission
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); openRejectModal(detailModal.enquiry); closeDetailModal(); }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 hover:shadow-md">
+                  <XCircle size={16} /> Reject
+                </button>
+              </div>
             </div>
           </div>
         </div>

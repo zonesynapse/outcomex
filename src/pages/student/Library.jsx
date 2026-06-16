@@ -189,7 +189,7 @@ export default function LibraryPage() {
 
         <div className="space-y-6">
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-emerald-600 px-8 py-5 flex items-center gap-3">
+            <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
               <BookOpen size={20} className="text-white" />
               <h2 className="text-white font-bold text-lg">My Issues</h2>
             </div>

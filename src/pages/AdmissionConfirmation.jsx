@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, CheckCircle2, User, MapPin, GraduationCap, FileText, CreditCard, AlertCircle, Inbox, Search, Filter, X, Eye, Edit2, Send, MessageCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, User, MapPin, GraduationCap, FileText, CreditCard, AlertCircle, Inbox, Search, Filter, X, Eye, Edit2, Send, MessageCircle, Clock, XCircle } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
 import DashboardCards from "../components/DashboardCards";
@@ -9,6 +9,9 @@ import { getEnquiryById, updateEnquiry, getEnquiriesPaginated, getEnquiriesCount
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useDepartments } from "../hooks/useDepartments";
+import { db } from "../firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { formatProgrammeKey, sanitizeKey } from "../lib/utils";
 
 const formatDate = (value) => {
   if (!value) return "-";
@@ -34,6 +37,9 @@ export default function AdmissionConfirmation() {
   const [enquiry, setEnquiry] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectError, setRejectError] = useState("");
+  const [showReject, setShowReject] = useState(false);
   const [selectedDept, setSelectedDept] = useState("");
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
   const [applications, setApplications] = useState([]);
@@ -68,7 +74,7 @@ export default function AdmissionConfirmation() {
         startAfterDoc: cursor
       });
       const filtered = result.items.filter(
-        (e) => e.status === "Application" || e.status === "Rejected"
+        (e) => e.status === "Application" || e.status === "Admission" || e.status === "Rejected" || e.status === "Approved"
       );
       setApplications(filtered);
       setHasMore(result.hasMore);
@@ -121,7 +127,7 @@ export default function AdmissionConfirmation() {
         const all = await getAllEnquiries();
         const q = searchTerm.trim().toLowerCase();
         const filtered = all.filter((e) =>
-          e.status === "Application" || e.status === "Rejected"
+          e.status === "Application" || e.status === "Admission" || e.status === "Rejected"
         ).filter((app) =>
           [app.enquiryId, app.applicationNo, app.studentName, app.firstName, app.lastName, app.mobile]
             .filter(Boolean)
@@ -178,6 +184,7 @@ export default function AdmissionConfirmation() {
   };
 
   const openEditModal = (app) => {
+    if (app?.status === "Admission") return;
     setEditModal({ open: true, enquiry: app, saving: false });
   };
 
@@ -221,6 +228,66 @@ export default function AdmissionConfirmation() {
     } catch (err) {
       console.error("Move to Principal error:", err);
       showToast("Failed to move to Principal", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addStudentToNamelist = async (data) => {
+    try {
+      const regNo = data.applicationNo || data.enquiryId;
+      if (!regNo) return;
+      const name = [data.firstName, data.lastName].filter(Boolean).join(" ").trim() || data.studentName || "-";
+      const progKey = formatProgrammeKey(data.programme);
+      if (!data.batch || !progKey || !data.department) return;
+      const studentDocId = `${sanitizeKey(data.batch)}_${progKey}_${sanitizeKey(data.department)}`;
+      const studentRef = doc(db, 'students', studentDocId);
+      const snap = await getDoc(studentRef);
+      const existingData = snap.exists() ? snap.data() : {};
+      const order = existingData._order || [];
+      if (!existingData[regNo]) {
+        order.push(regNo);
+      }
+      await setDoc(studentRef, { ...existingData, [regNo]: name, _order: order });
+    } catch (err) {
+      console.error("Failed to add student to namelist:", err);
+    }
+  };
+
+  const handlePrincipalApprove = async () => {
+    if (!enquiry?.enquiryId) return;
+    setSaving(true);
+    try {
+      await updateEnquiry(enquiry.enquiryId, {
+        ...enquiry,
+        status: "Approved",
+      });
+      await addStudentToNamelist(enquiry);
+      showToast("Admission approved successfully");
+      setTimeout(() => navigate("/admissions/confirm"), 1500);
+    } catch (err) {
+      console.error("Approve error:", err);
+      showToast("Failed to approve admission", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePrincipalReject = async () => {
+    if (!enquiry?.enquiryId) return;
+    if (!rejectReason.trim()) { setRejectError("Please enter a reason"); return; }
+    setSaving(true);
+    try {
+      await updateEnquiry(enquiry.enquiryId, {
+        ...enquiry,
+        status: "Rejected",
+        remarks: rejectReason,
+      });
+      showToast("Admission rejected");
+      setTimeout(() => navigate("/admissions/confirm"), 1500);
+    } catch (err) {
+      console.error("Reject error:", err);
+      showToast("Failed to reject admission", "error");
     } finally {
       setSaving(false);
     }
@@ -584,6 +651,21 @@ export default function AdmissionConfirmation() {
                                 <AlertCircle size={10} />
                                 Rejected by Principal
                               </button>
+                            ) : app.status === "Approved" ? (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                                <CheckCircle2 size={10} />
+                                Approved
+                              </span>
+                            ) : app.status === "Admission" ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admissions/confirm/${app.enquiryId}`)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                                title="Pending principal approval"
+                              >
+                                <Clock size={10} />
+                                Pending Approval
+                              </button>
                             ) : (
                               <button
                                 type="button"
@@ -609,8 +691,13 @@ export default function AdmissionConfirmation() {
                             <button
                               type="button"
                               onClick={() => openEditModal(app)}
-                              className="inline-flex items-center justify-center rounded-xl border border-zinc-200 p-2 text-zinc-600 transition-all hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50"
-                              title="Edit Application"
+                              disabled={app?.status === "Admission"}
+                              className={`inline-flex items-center justify-center rounded-xl border p-2 transition-all ${
+                                app?.status === "Admission"
+                                  ? "border-zinc-100 text-zinc-300 cursor-not-allowed"
+                                  : "border-zinc-200 text-zinc-600 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50"
+                              }`}
+                              title={app?.status === "Admission" ? "Cannot edit while pending principal approval" : "Edit Application"}
                             >
                               <Edit2 size={16} />
                             </button>
@@ -787,8 +874,13 @@ export default function AdmissionConfirmation() {
           </div>
           <div className="flex items-center gap-3">
             {enquiry.status === "Admission" && (
+              <span className="inline-flex items-center gap-2 rounded-xl bg-amber-100 px-4 py-2 text-sm font-bold text-amber-700">
+                <Clock size={18} /> Pending Principal Approval
+              </span>
+            )}
+            {enquiry.status === "Approved" && (
               <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-100 px-4 py-2 text-sm font-bold text-emerald-700">
-                <CheckCircle2 size={18} /> Admitted
+                <CheckCircle2 size={18} /> Approved
               </span>
             )}
             <button
@@ -895,6 +987,89 @@ export default function AdmissionConfirmation() {
                 </div>
               ))}
             </SectionCard>
+          )}
+
+          {enquiry.status === "Admission" && (
+            <div className="rounded-2xl border-2 border-amber-200 bg-amber-50/30 p-6 shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600">
+                  <Clock size={22} />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-zinc-900">Principal Approval Required</h3>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Review the applicant's details and approve or reject this admission request.
+                  </p>
+
+                  <div className="mt-6 flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={handlePrincipalApprove}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md disabled:opacity-50"
+                    >
+                      {saving ? "Processing..." : <><CheckCircle2 size={16} /> Approve Admission</>}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setShowReject(true)}
+                      className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 hover:shadow-md disabled:opacity-50"
+                    >
+                      <XCircle size={16} /> Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/admissions/confirm")}
+                      className="rounded-xl border border-zinc-200 px-5 py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+                    >
+                      Back to List
+                    </button>
+                  </div>
+
+                  {showReject && (
+                    <div className="mt-5 p-5 rounded-xl bg-white border border-red-200 shadow-sm">
+                      <label className="block">
+                        <span className="mb-2 flex items-center gap-2 text-sm font-bold text-red-700">
+                          <AlertCircle size={16} /> Reason for Rejection
+                        </span>
+                        <textarea
+                          value={rejectReason}
+                          onChange={(e) => { setRejectReason(e.target.value); setRejectError(""); }}
+                          rows={3}
+                          className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition-all resize-none ${
+                            rejectError ? "border-red-400 ring-2 ring-red-100" : "border-zinc-200 focus:border-red-400 focus:ring-2 focus:ring-red-100"
+                          }`}
+                          placeholder="Enter the reason for rejecting this admission..."
+                        />
+                        {rejectError && (
+                          <p className="mt-1.5 flex items-center gap-1 text-xs font-semibold text-red-600">
+                            <AlertCircle size={12} /> {rejectError}
+                          </p>
+                        )}
+                      </label>
+                      <div className="mt-4 flex items-center gap-3 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => { setShowReject(false); setRejectReason(""); setRejectError(""); }}
+                          className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={handlePrincipalReject}
+                          className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {saving ? "Rejecting..." : "Confirm Reject"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
 
           {enquiry.status === "Application" && (

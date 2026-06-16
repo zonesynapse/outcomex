@@ -31,7 +31,7 @@ export default function StudentDashboard() {
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
-      <Loader2 className="animate-spin text-emerald-600" size={40} />
+      <Loader2 className="animate-spin text-[#120c7a]" size={40} />
     </div>
   );
 
@@ -55,14 +55,14 @@ export default function StudentDashboard() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Welcome Section */}
-      <div className="bg-gradient-to-r from-emerald-700 to-emerald-500 rounded-2xl p-8 text-white mb-8 shadow-lg">
+      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-8 text-white mb-8 shadow-lg">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
             <GraduationCap size={32} />
           </div>
           <div>
             <h1 className="text-2xl font-bold">Welcome, {userData?.studentName || "Student"}</h1>
-            <p className="text-emerald-100 text-sm mt-1">
+            <p className="text-blue-200 text-sm mt-1">
               {userData?.regNo} • {userData?.programme} • {userData?.department} • Batch {userData?.batch}
             </p>
           </div>
@@ -100,8 +100,8 @@ export default function StudentDashboard() {
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm border border-zinc-100">
           <div className="flex items-center justify-between mb-3">
-            <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
-              <Bell size={20} className="text-emerald-600" />
+            <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+              <Bell size={20} className="text-blue-600" />
             </div>
           </div>
           <p className="text-2xl font-bold text-zinc-800">--</p>
@@ -118,7 +118,7 @@ export default function StudentDashboard() {
               <link.icon size={20} className={link.color.replace('bg-', 'text-')} />
             </div>
             <p className="text-sm font-semibold text-zinc-700">{link.label}</p>
-            <div className="flex items-center gap-1 mt-1 text-[10px] text-zinc-400 group-hover:text-emerald-600 transition-colors">
+            <div className="flex items-center gap-1 mt-1 text-[10px] text-zinc-400 group-hover:text-blue-600 transition-colors">
               View <ArrowRight size={10} />
             </div>
           </button>

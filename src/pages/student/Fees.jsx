@@ -164,7 +164,7 @@ export default function Fees() {
         </div>
 
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-          <div className="bg-emerald-600 px-8 py-5 flex items-center gap-3">
+          <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
             <Receipt size={20} className="text-white" />
             <h2 className="text-white font-bold text-xl">Payment History</h2>
           </div>

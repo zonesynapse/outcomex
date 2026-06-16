@@ -105,8 +105,8 @@ export default function StudentLayout({ children, title }) {
   return (
     <div className="min-h-screen bg-[#f0f4f8] font-sans text-zinc-900">
       {/* Navbar */}
-      <nav className="bg-gradient-to-r from-emerald-700 to-emerald-600 h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-sm">
-        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-emerald-600 rounded-lg text-white transition-colors">
+      <nav className="bg-gradient-to-r from-[#120c7a] to-[#15108a] h-16 flex items-center px-4 md:px-6 sticky top-0 z-50 shadow-sm border-b border-white/10">
+        <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-blue-600 rounded-lg text-white transition-colors">
           <Menu size={24} />
         </button>
         <h3 className="flex-grow text-center text-white text-xl font-bold tracking-tight uppercase">{title || "Student Portal"}</h3>
@@ -118,7 +118,7 @@ export default function StudentLayout({ children, title }) {
           </button>
           {isProfileOpen && (
             <div className="absolute right-0 mt-3 w-72 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden">
-              <div className="bg-gradient-to-br from-emerald-700 to-emerald-500 p-5 text-white">
+              <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-5 text-white">
                 <div className="flex items-center gap-3">
                   <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
                     <span className="text-xl font-bold">
@@ -127,7 +127,7 @@ export default function StudentLayout({ children, title }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-base font-bold truncate">{userData?.studentName || "Student"}</h3>
-                    <p className="text-emerald-100 text-xs mt-0.5">{userData?.regNo}</p>
+                    <p className="text-blue-200 text-xs mt-0.5">{userData?.regNo}</p>
                   </div>
                 </div>
               </div>
@@ -147,7 +147,7 @@ export default function StudentLayout({ children, title }) {
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Role</p>
-                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700">
+                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700">
                       Student
                     </span>
                   </div>
@@ -171,10 +171,10 @@ export default function StudentLayout({ children, title }) {
       <div className={`fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm transition-all duration-300 ${isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsSidebarOpen(false)} />
 
       {/* Sidebar */}
-      <aside className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-emerald-800 to-emerald-900 z-[70] transform transition-all duration-300 shadow-2xl overflow-y-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-[#120c7a] via-[#120c7a] to-[#0d075a] z-[70] transform transition-all duration-300 shadow-2xl overflow-y-auto sidebar-scrollbar no-print ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-white/10">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <GraduationCap size={28} className="text-emerald-300 shrink-0" />
+            <GraduationCap size={28} className="text-blue-200 shrink-0" />
             <span className="text-white font-bold text-lg truncate">Student Portal</span>
           </div>
           <button onClick={() => setIsSidebarOpen(false)} className="text-white/60 hover:text-white hover:bg-white/10 p-1.5 rounded-lg shrink-0 transition-all">
@@ -185,10 +185,9 @@ export default function StudentLayout({ children, title }) {
           {studentMenuItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
-              <Link key={item.id} to={item.path} className={`relative flex items-center gap-3 w-full text-white px-4 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium sidebar-link group ${isActive ? 'bg-white/15 text-white shadow-sm' : 'hover:bg-white/8 text-white/85'}`} onClick={() => setIsSidebarOpen(false)}>
-                {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-emerald-400 rounded-r-full" />}
-                <span className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${isActive ? 'bg-emerald-500/30' : 'bg-white/8 group-hover:bg-white/15'}`}>
-                  <item.icon size={16} className={isActive ? 'text-emerald-300' : 'text-white/80'} />
+              <Link key={item.id} to={item.path} style={{textDecoration:'none'}} className={`no-underline relative flex items-center gap-3 w-full text-white px-4 py-2.5 rounded-xl transition-all duration-200 text-sm font-medium sidebar-link group ${isActive ? 'bg-white/15 text-white shadow-sm' : 'hover:bg-white/8 text-white/85'}`} onClick={() => setIsSidebarOpen(false)}>
+                <span className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${isActive ? 'bg-white/20' : 'bg-white/8 group-hover:bg-white/15'}`}>
+                  <item.icon size={16} className={isActive ? 'text-white' : 'text-white/80'} />
                 </span>
                 <span className="flex-grow truncate">{item.label}</span>
               </Link>

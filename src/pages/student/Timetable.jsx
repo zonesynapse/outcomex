@@ -221,7 +221,7 @@ export default function Timetable() {
 
           {timetable.subjects?.length > 0 && (
             <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-              <div className="bg-emerald-600 px-8 py-5 flex items-center gap-3">
+              <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
                 <BookOpen size={20} className="text-white" />
                 <h2 className="text-white font-bold text-xl">Subjects</h2>
               </div>
@@ -235,7 +235,7 @@ export default function Timetable() {
                       <div>
                         <p className="text-sm font-bold text-slate-700">{s.code || s.name}</p>
                         {s.name && <p className="text-xs text-slate-400">{s.name}</p>}
-                        {s.periods > 0 && <p className="text-[10px] font-bold text-emerald-600">{s.periods}p/week</p>}
+                        {s.periods > 0 && <p className="text-[10px] font-bold text-blue-600">{s.periods}p/week</p>}
                       </div>
                     </div>
                   ))}
