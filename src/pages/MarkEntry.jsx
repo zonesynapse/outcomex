@@ -63,19 +63,22 @@ export default function MarkEntry() {
           setUserRole(userData.role);
           if (userData.role === 'Faculty') {
             const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
-            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
+            const unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
               if (!assignSnap.empty) {
-                const data = {}; // Convert QuerySnapshot to object
-                assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
                 const depts = new Set();
-                Object.entries(data).forEach(([progKey, deptData]) => {
-                  Object.entries(deptData).forEach(([deptKey, batchData]) => {
-                    if (JSON.stringify(batchData).includes(user.uid)) {
-                      progs.add(progKey);
-                      depts.add(deptKey);
+                assignSnap.forEach(d => {
+                  const assignmentData = d.data();
+                  // Check if this faculty member has any assignments in this document
+                  if (assignmentData[user.uid]) {
+                    // doc.id format: progKey_deptKey_batchKey_ayKey_semNum[_section]
+                    // Use regex to correctly handle progKeys with underscores (e.g. B_Tech)
+                    const match = d.id.match(/^(.+)_([A-Z]+)_(\d{4}-\d{4})_(\d{4}-\d{4})_(\d+)(?:_(.+))?$/);
+                    if (match) {
+                      progs.add(match[1]);       // progKey
+                      depts.add(match[2]);       // deptKey
                     }
-                  });
+                  }
                 });
                 setAssignedProgs(Array.from(progs));
                 setAssignedDepts(Array.from(depts));
@@ -84,6 +87,7 @@ export default function MarkEntry() {
                 setAssignedDepts([]);
               }
             });
+            return () => unsubscribeAssignments();
           }
         }
       });
@@ -250,28 +254,28 @@ export default function MarkEntry() {
 
   // Fetch all generated QPs once to use for filtering
   useEffect(() => {
-    const fetchAllQPs = async () => {
-      try { // Firestore collection reference
-        const qpRef = collection(db, 'generated_qps');
-        const snapshot = await getDocs(qpRef); // Use getDocs for collection
-        const root = {}; // Convert QuerySnapshot to object
-        snapshot.forEach(doc => { root[doc.id] = doc.data(); });
-        const list = [];
-        for (const groupingKey in root) {
-          const entries = root[groupingKey];
-          if (typeof entries === 'object') {
-            for (const recKey in entries) {
-              list.push(entries[recKey]);
-            }
+    const qpRef = collection(db, 'generated_qps');
+    const unsub = onSnapshot(qpRef, (snapshot) => {
+      const list = [];
+      snapshot.forEach(doc => {
+        const docData = doc.data();
+        // Flatten summaries stored as fields in the document
+        Object.entries(docData).forEach(([fieldKey, summary]) => {
+          if (summary && typeof summary === 'object' && (summary.subject || summary.batch)) {
+            list.push({
+              ...summary,
+              _id: fieldKey, // The specific version ID (e.g., 'Exam' or 'Assignment' or 'DCA-I')
+              _compositeKey: doc.id // The parent doc ID used for subcollection path
+            });
           }
-        }
-        setAllQPs(list);
-      } catch (error) {
-        console.error("Error fetching all QPs:", error);
-        setAllQPs([]);
-      }
-    };
-    fetchAllQPs();
+        });
+      });
+      setAllQPs(list);
+    }, (error) => {
+      console.error("Error fetching all QPs:", error);
+      setAllQPs([]);
+    });
+    return () => unsub();
   }, []);
 
   // Filter Available Batches based on generated QPs
@@ -398,7 +402,8 @@ export default function MarkEntry() {
         const userSnap = await getDoc(userRef);
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
-        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}`;
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}${sectionSuffix}`;
         const assignmentDocRef = doc(db, 'subject_assignments', assignmentCompositeKey);
         const assignmentSnap = await getDoc(assignmentDocRef);
         
@@ -443,7 +448,7 @@ export default function MarkEntry() {
       setSubject("");
     };
     fetchSubjectNames();
-  }, [batch, academicYear, semester, programme, department, getRegulationForBatch, allQPs]);
+  }, [batch, academicYear, semester, programme, department, section, getRegulationForBatch, allQPs]);
 
   // Filter Available Exams based on generated QPs and University Configs
   useEffect(() => {
@@ -569,9 +574,6 @@ export default function MarkEntry() {
 
       setLoading(true);
       try {
-        const snapshot = await getDocs(collection(db, 'generated_qps')); // Use getDocs for collection
-        const root = {}; snapshot.forEach(doc => { root[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
-        
         const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-'); // Normalize string for comparison
         const needDept = norm(department);
         const needAy = norm(academicYear);
@@ -579,37 +581,28 @@ export default function MarkEntry() {
         const targetExam = norm(exam);
         const targetSem = deriveSemesterNumber(semester);
 
-        let match = null;
-        const targetAssessmentType = markType === 'Assignment' ? 'Assignment' : 'Exam';
-
-        for (const groupingKey in root) {
-          const entries = root[groupingKey];
-          for (const recKey in entries) {
-            const rec = entries[recKey];
-            const recDept = norm(rec.department || rec.dept || '');
-            const recAy = norm(rec.academic_year || rec.academicYear || '');
-            const recSub = norm(rec.subject || rec.course || '');
-            const recExam = norm(rec.qpaper_name || rec.qpaperName || '');
-            const recSem = String(rec.semester || '').trim();
-            const recType = rec.assessment_type || 'Exam';
-
-            if (recSub === needSub &&
-                recAy === needAy && 
-                recDept === needDept && 
-                recExam === targetExam && 
-                recType === targetAssessmentType) {
-              if (recSem === targetSem || !match) {
-                match = rec;
-              }
-            }
-          }
-        }
+        // Find matching summary in allQPs to get composite keys
+        const match = allQPs.find(qp => {
+          const qpDept = norm(qp.department || qp.dept || '');
+          const qpAy = norm(qp.academic_year || qp.academicYear || '');
+          const qpSub = norm(qp.subject || qp.course || '');
+          const qpExam = norm(qp.qpaper_name || qp.qpaperName || '');
+          const qpSem = String(qp.semester || '').trim();
+          
+          return qpSub === needSub && 
+                 qpAy === needAy && 
+                 qpDept === needDept && 
+                 qpExam === targetExam && 
+                 qpSem === targetSem;
+        });
 
         if (match) {
+          // Full data already in match (parent doc stores full payload)
           setQpParts(Array.isArray(match.parts) ? match.parts : []);
           setAssignmentConfig(Array.isArray(match.assignment_config) ? match.assignment_config : []);
+          
           setQpMeta({ 
-            qpaper_name: match.qpaper_name, // Use qpaper_name from the matched QP
+            qpaper_name: match.qpaper_name,
             semester: match.semester,
             co_weightage: match.co_weightage || {}
           });
@@ -626,7 +619,7 @@ export default function MarkEntry() {
     };
 
     fetchQP();
-  }, [department, academicYear, subject, exam, semester, markType]);
+  }, [department, academicYear, subject, exam, semester, markType, allQPs]);
 
   // Fetch Grade Configs when regulation changes
   useEffect(() => {

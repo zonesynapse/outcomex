@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase"; // Import db for Firestore
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
+import { doc, collection, onSnapshot, setDoc, getDoc } from "firebase/firestore"; // Firestore imports
 import { 
   ChevronDown, 
   Plus, 
@@ -693,38 +693,16 @@ export default function Dashboard() {
 
       const fetchSubCollections = async (snapshot) => {
         const allQPs = [];
-        const seen = new Set();
 
         for (const docSnap of snapshot.docs) {
           const parentId = docSnap.id;
           const parentData = docSnap.data();
 
-          // Read from subcollection first (full data takes priority)
-          try {
-            const vSnap = await getDocs(collection(db, 'generated_qps', parentId, 'versions'));
-            vSnap.forEach(vDoc => {
-              const qp = vDoc.data();
-              if (qp && qp.programme === programme && qp.department === department) {
-                const key = `${parentId}_${vDoc.id}`;
-                if (!seen.has(key)) {
-                  seen.add(key);
-                  allQPs.push({ ...qp, id: vDoc.id, compositeKey: parentId });
-                }
-              }
-            });
-          } catch (e) {
-            // Ignore if subcollection doesn't exist
-          }
-
-          // Fallback: read from parent doc fields (summary for listing)
+          // Read from parent doc fields (full data stored here)
           if (parentData) {
             Object.entries(parentData).forEach(([vId, qp]) => {
-              if (qp && qp.programme === programme && qp.department === department) {
-                const key = `${parentId}_${vId}`;
-                if (!seen.has(key)) {
-                  seen.add(key);
-                  allQPs.push({ ...qp, id: vId, compositeKey: parentId });
-                }
+              if (qp && typeof qp === 'object' && qp.programme === programme && qp.department === department) {
+                allQPs.push({ ...qp, id: vId, compositeKey: parentId });
               }
             });
           }
@@ -751,102 +729,111 @@ export default function Dashboard() {
 
   // Fetch Consolidation Data
   useEffect(() => {
-    if ((module === "consolidation" || module === "log-report") && programme && department && batch && academicYear && semester && extraSubject && students.length > 0) {
-      const subjectKeyParts = [batch, programme, department, extraSubject, academicYear, semester].map(sanitizeKey);
-      const coAttainmentDocId = subjectKeyParts.join('_');
-      const attainmentRef = doc(db, 'co_attainment', coAttainmentDocId); // Firestore doc reference
-      
-      const unsubscribe = onSnapshot(attainmentRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
-        if (!data) {
-          setConsolidationChildren([]);
-          setConsolidationData(null);
-          setLoadingConsolidation(false);
-          return;
-        }
+    if (!(module === "consolidation" || module === "log-report") || !programme || !department || !batch || !academicYear || !semester || !extraSubject || !students.length) {
+      setConsolidationChildren([]);
+      setConsolidationData(null);
+      setLoadingConsolidation(false);
+      return;
+    }
 
-        // If data already contains students/co_max_marks at root (legacy format), use it
-        if (data.co_max_marks || data.students) { // This is a single document with direct data
-          const isUniversity = !!data._meta?.is_university; // Check if it's a university exam
-          setConsolidationChildren([{ key: '_legacy', data, isUniversity, label: data._meta?.exam || 'Legacy' }]); // Add to children list
-          setConsolidationData({
-            studentTotals: data.students || {},
-            maxMarks: data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 }
-          });
-          setLoadingConsolidation(false);
-          return;
-        }
+    const subjectKeyParts = [batch, programme, department, extraSubject, academicYear, semester].map(sanitizeKey);
+    const coAttainmentDocId = subjectKeyParts.join('_') + (section ? `_${sanitizeKey(section)}` : '');
+    let rootData = null;
+    let examDocs = [];
 
-        // Otherwise assume per-exam children exist as subcollections or map within the document
-        // This part needs careful handling for Firestore structure. Assuming 'exams' subcollection.
-        try {
-          const entries = Object.entries(data).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v }));
-          if (entries.length === 0) {
-            setConsolidationChildren([]);
-            setConsolidationData(null);
-            setLoadingConsolidation(false);
-            return;
-          }
+    const buildChildren = () => {
+      let children = [];
 
-          // Build children list with metadata and label
-          const children = entries.map(e => {
-            const m = e.data._meta || {};
-            // Resolve friendly exam label: prefer explicit meta.exam (mapped via ciaConfigs if needed),
-            // then resolve qpaper_name via ciaConfigs, else fallback to key
-            let label = m.exam || m.qpaper_name || e.key;
-            // If exam field is actually a config id, prefer its examName
-            if (m.exam && ciaConfigs[m.exam] && ciaConfigs[m.exam].examName) {
-              label = ciaConfigs[m.exam].examName;
-            } else if (m.qpaper_name && ciaConfigs[m.qpaper_name] && ciaConfigs[m.qpaper_name].examName) {
-              label = ciaConfigs[m.qpaper_name].examName;
-            }
-            const isUniversity = !!(
-              m.is_university ||
-              (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-              (m.exam && ciaConfigs[m.exam] && (ciaConfigs[m.exam].is_university || ciaConfigs[m.exam].isUniversity)) ||
-              String(m.exam || '').toLowerCase().includes('uni') ||
-              String(m.qpaper_name || '').toLowerCase().includes('uni')
-            );
-            const isIndirect = !!(
-              m.isIndirectAssessment ||
-              (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-              (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
-            );
-            return { key: e.key, data: e.data, isUniversity, isIndirect, label };
-          });
+      // Add subcollection exam docs (new format from MarkEntry)
+      examDocs.forEach(eDoc => {
+        const eData = eDoc.data();
+        const m = eData._meta || {};
+        let label = m.exam || m.qpaper_name || eDoc.id;
+        if (m.exam && ciaConfigs[m.exam]?.examName) label = ciaConfigs[m.exam].examName;
+        else if (m.qpaper_name && ciaConfigs[m.qpaper_name]?.examName) label = ciaConfigs[m.qpaper_name].examName;
 
-          // sort by updated_at/saved_at desc
-          children.sort((a, b) => {
-            const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
-            const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
-            return tb - ta;
-          });
-
-          setConsolidationChildren(children);
-
-          // Default: if current consolidationView is 'latest' or not set, pick latest INTERNAL child if available
-          if (!consolidationView || consolidationView === 'latest') {
-            const latestInternal = children.find(c => !c.isUniversity) || children[0];
-            if (latestInternal) {
-              setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } });
-              // Set consolidation view to the actual exam key so dropdown shows the exam name instead of a 'Latest' placeholder
-              setConsolidationView(latestInternal.key);
-            }
-          }
-        } catch (err) {
-          console.error('Consolidation parse error:', err);
-          setConsolidationChildren([]);
-          setConsolidationData(null);
-        }
-        setLoadingConsolidation(false);
-      }, (error) => {
-        console.error("Consolidation Fetch Error:", error);
-        setLoadingConsolidation(false);
+        const isUniversity = !!(
+          m.is_university ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+          (m.exam && ciaConfigs[m.exam] && (ciaConfigs[m.exam].is_university || ciaConfigs[m.exam].isUniversity)) ||
+          String(m.exam || '').toLowerCase().includes('uni') ||
+          String(m.qpaper_name || '').toLowerCase().includes('uni')
+        );
+        const isIndirect = !!(
+          m.isIndirectAssessment ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+        );
+        children.push({ key: eDoc.id, data: eData, isUniversity, isIndirect, label });
       });
 
-      return () => unsubscribe();
-    }
-  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, consolidationView]);
+      // Add legacy root doc data if exists
+      if (rootData?.co_max_marks || rootData?.students) {
+        const m = rootData._meta || {};
+        let label = m.exam || 'Legacy';
+        const isUniversity = !!(
+          m.is_university ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+          (m.exam && ciaConfigs[m.exam] && (ciaConfigs[m.exam].is_university || ciaConfigs[m.exam].isUniversity)) ||
+          String(m.exam || '').toLowerCase().includes('uni') ||
+          String(m.qpaper_name || '').toLowerCase().includes('uni')
+        );
+        const isIndirect = !!(
+          m.isIndirectAssessment ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+        );
+        children.push({ key: '_legacy', data: rootData, isUniversity, isIndirect, label });
+      }
+
+      if (children.length === 0) {
+        setConsolidationChildren([]);
+        setConsolidationData(null);
+        setLoadingConsolidation(false);
+        return;
+      }
+
+      // sort by updated_at/saved_at desc
+      children.sort((a, b) => {
+        const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
+        const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
+        return tb - ta;
+      });
+
+      setConsolidationChildren(children);
+
+      // Default: if current consolidationView is 'latest' or not set, pick latest INTERNAL child if available
+      if (!consolidationView || consolidationView === 'latest') {
+        const latestInternal = children.find(c => !c.isUniversity) || children[0];
+        if (latestInternal) {
+          setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } });
+          setConsolidationView(latestInternal.key);
+        }
+      }
+      setLoadingConsolidation(false);
+    };
+
+    // Listen to root doc (legacy format)
+    const unsubRoot = onSnapshot(doc(db, 'co_attainment', coAttainmentDocId), (snapshot) => {
+      rootData = snapshot.data();
+      buildChildren();
+    }, (error) => {
+      console.error("Consolidation root doc fetch error:", error);
+    });
+
+    // Listen to exams subcollection (new format from MarkEntry)
+    const unsubExams = onSnapshot(collection(db, 'co_attainment', coAttainmentDocId, 'exams'), (snap) => {
+      examDocs = snap.docs;
+      buildChildren();
+    }, (error) => {
+      console.error("Consolidation exams fetch error:", error);
+    });
+
+    return () => {
+      unsubRoot();
+      unsubExams();
+    };
+  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, consolidationView, section]);
 
   // Fetch mapping_summary for final attainment computation
   useEffect(() => {

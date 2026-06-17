@@ -272,10 +272,8 @@ export default function PoAttainment() {
           if (key.startsWith(prefix)) {
             if (section) {
               if (!key.endsWith(`_${sanitizeKey(section)}`)) return;
-            } else {
-              const lastPart = key.split('_').pop();
-              if (!/^\d+$/.test(lastPart)) return;
             }
+            // When section is empty, include all matching docs (section-suffixed or not)
             summariesMap[key] = summaryData;
             if (summaryData.summary) {
               Object.keys(summaryData.summary).forEach(outcomeCode => {
@@ -358,78 +356,104 @@ export default function PoAttainment() {
               const [key, summaryData] = summaryEntry;
               const rest = key.substring(prefix.length);
               const parts = rest.split('_');
-              if (section) parts.pop();
+              // Strip section suffix if present (last part starts with "Sec-")
+              if (parts.length > 2 && /^Sec-/i.test(parts[parts.length - 1])) parts.pop();
               const semKey = parts.pop();
               const ayKey = parts.pop();
               
-              const coAttKey = `${batchKey}_${sanitizeKey(programme)}_${deptKey}_${subCode}_${ayKey}_${semKey}${sectionSuffix}`;
-              
-              const promise = getDoc(doc(db, "co_attainment", coAttKey)).then(coAttSnap => {
-                   const coAttData = coAttSnap.data();
-                   
-                   // 1. Calculate Mapping Averages (Targets) regardless of attainment existence
-                   const subMappingResults = {};
-                   if (summaryData.summary) {
-                     Object.entries(summaryData.summary).forEach(([outcomeCode, summaryItem]) => {
-                       const totalPIs = summaryItem.total_pis || 0;
-                       let sumMappingGrades = 0;
-                       let countMappingGrades = 0;
+               const coAttKey = `${batchKey}_${sanitizeKey(programme)}_${deptKey}_${subCode}_${ayKey}_${semKey}${sectionSuffix}`;
 
-                       // Need to know COs for this subject to validate mapping
-                       // Actually we can just use the keys in summaryItem.co_counts
-                       if (summaryItem.co_counts) {
-                         Object.values(summaryItem.co_counts).forEach((mc) => {
-                           const grade = (mc / totalPIs) * 100 >= 66 ? 3 : (mc / totalPIs) * 100 >= 33 ? 2 : (mc / totalPIs) * 100 >= 1 ? 1 : 0;
-                           if (grade > 0) {
-                             sumMappingGrades += grade;
-                             countMappingGrades++;
-                           }
-                         });
-                       }
+               const promise = getDoc(doc(db, "co_attainment", coAttKey)).then(async coAttSnap => {
+                    const coAttData = coAttSnap.data();
 
-                       if (countMappingGrades > 0) {
-                          subMappingResults[outcomeCode] = Number((sumMappingGrades / countMappingGrades).toFixed(2));
-                       }
-                     });
-                   }
-                   subjectMappingOutcomes[subCode] = subMappingResults;
+                    // 1. Calculate Mapping Averages (Targets) regardless of attainment existence
+                    const subMappingResults = {};
+                    if (summaryData.summary) {
+                      Object.entries(summaryData.summary).forEach(([outcomeCode, summaryItem]) => {
+                        const totalPIs = summaryItem.total_pis || 0;
+                        let sumMappingGrades = 0;
+                        let countMappingGrades = 0;
 
-                   // 2. Calculate Attainment if data exists
-                   if (!coAttData) return;
+                        // Need to know COs for this subject to validate mapping
+                        // Actually we can just use the keys in summaryItem.co_counts
+                        if (summaryItem.co_counts) {
+                          Object.values(summaryItem.co_counts).forEach((mc) => {
+                            const grade = (mc / totalPIs) * 100 >= 66 ? 3 : (mc / totalPIs) * 100 >= 33 ? 2 : (mc / totalPIs) * 100 >= 1 ? 1 : 0;
+                            if (grade > 0) {
+                              sumMappingGrades += grade;
+                              countMappingGrades++;
+                            }
+                          });
+                        }
 
-                   let children = [];
-                   if (coAttData.co_max_marks || coAttData.students) {
-                     const m = coAttData._meta || {};
-                     const isUniversity = !!(
-                       m.is_university ||
-                       (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-                       String(m.exam || '').toLowerCase().includes('uni') ||
-                       String(m.qpaper_name || '').toLowerCase().includes('uni')
-                     );
-                     const isIndirect = !!(
-                       m.isIndirectAssessment ||
-                       (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-                       (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
-                     );
-                     children = [{ key: '_legacy', data: coAttData, isUniversity, isIndirect }];
-                   } else {
-                     const entries = Object.entries(coAttData).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v }));
-                     children = entries.map(e => {
-                       const m = e.data._meta || {};
-                       const isUniversity = !!(
-                         m.is_university ||
-                         (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-                         String(m.exam || '').toLowerCase().includes('uni') ||
-                         String(m.qpaper_name || '').toLowerCase().includes('uni')
-                       );
-                       const isIndirect = !!(
-                         m.isIndirectAssessment ||
-                         (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-                         (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
-                       );
-                       return { key: e.key, data: e.data, isUniversity, isIndirect };
-                     });
-                   }
+                        if (countMappingGrades > 0) {
+                           subMappingResults[outcomeCode] = Number((sumMappingGrades / countMappingGrades).toFixed(2));
+                        }
+                      });
+                    }
+                    subjectMappingOutcomes[subCode] = subMappingResults;
+
+                    // 2. Calculate Attainment if data exists
+                    let children = [];
+
+                    // Try subcollection docs (new format from MarkEntry)
+                    try {
+                      const examsSnap = await getDocs(collection(db, "co_attainment", coAttKey, "exams"));
+                      children = examsSnap.docs.map(d => {
+                        const data = d.data();
+                        const m = data._meta || {};
+                        const isUniversity = !!(
+                          m.is_university ||
+                          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+                          String(m.exam || '').toLowerCase().includes('uni') ||
+                          String(m.qpaper_name || '').toLowerCase().includes('uni')
+                        );
+                        const isIndirect = !!(
+                          m.isIndirectAssessment ||
+                          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+                          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                        );
+                        return { key: d.id, data, isUniversity, isIndirect };
+                      });
+                    } catch (_) {}
+
+                    // Fallback to root doc (legacy format)
+                    if (children.length === 0 && coAttData) {
+                      if (coAttData.co_max_marks || coAttData.students) {
+                        const m = coAttData._meta || {};
+                        const isUniversity = !!(
+                          m.is_university ||
+                          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+                          String(m.exam || '').toLowerCase().includes('uni') ||
+                          String(m.qpaper_name || '').toLowerCase().includes('uni')
+                        );
+                        const isIndirect = !!(
+                          m.isIndirectAssessment ||
+                          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+                          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                        );
+                        children = [{ key: '_legacy', data: coAttData, isUniversity, isIndirect }];
+                      } else {
+                        const entries = Object.entries(coAttData).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v }));
+                        children = entries.map(e => {
+                          const m = e.data._meta || {};
+                          const isUniversity = !!(
+                            m.is_university ||
+                            (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+                            String(m.exam || '').toLowerCase().includes('uni') ||
+                            String(m.qpaper_name || '').toLowerCase().includes('uni')
+                          );
+                          const isIndirect = !!(
+                            m.isIndirectAssessment ||
+                            (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+                            (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                          );
+                          return { key: e.key, data: e.data, isUniversity, isIndirect };
+                        });
+                      }
+                    }
+
+                    if (children.length === 0) return;
                    children.sort((a, b) => {
                      const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
                      const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
@@ -789,6 +813,7 @@ export default function PoAttainment() {
                 onChange={(e) => setSection(e.target.value)}
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
               >
+                <option value="">{availableSections.length === 0 && batch ? "No sections configured" : "Select Section"}</option>
                 {availableSections.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}

@@ -61,19 +61,23 @@ export default function CoPoMapping() {
           if (userData.role === 'Faculty') {
             const assignmentsRef = collection(db, 'subject_assignments');
             const unsubscribe = onSnapshot(assignmentsRef, (assignSnap) => {
-              const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
               const progs = new Set();
               const depts = new Set();
 
-              Object.entries(data).forEach(([progKey, deptData]) => {
-                Object.entries(deptData || {}).forEach(([deptKey, batchData]) => {
-                  if (JSON.stringify(batchData).includes(user.uid)) {
-                    progs.add(progKey);
+              assignSnap.forEach(d => {
+                const assignmentData = d.data();
+                if (assignmentData[user.uid]) {
+                  const idParts = d.id.split('_');
+                  if (idParts.length >= 5) {
+                    progs.add(idParts[0]);
+                    // structure: PROG_DEPT_BATCH_AY_SEM[_SEC]
+                    // if SEC exists, length is 6+, else 5
+                    const hasSec = idParts.length > 5;
+                    const deptKey = idParts.slice(1, hasSec ? -4 : -3).join('_');
                     depts.add(deptKey);
                   }
-                });
+                }
               });
-
               setAssignedProgs(Array.from(progs));
               setAssignedDepts(Array.from(depts));
             });
@@ -439,179 +443,174 @@ export default function CoPoMapping() {
 
   // Compute final CO attainment (Direct + Indirect) for this subject so PO attainment can be calculated
   useEffect(() => {
-    
+    if (!batch || !programme || !department || !subject || !academicYear || !semester) {
+      setFinalOverallAtt({});
+      return;
+    }
 
-    const computeFinalAttainment = async () => {
-      if (!batch || !programme || !department || !subject || !academicYear || !semester) {
+    setLoadingFinal(true);
+    const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
+
+    // One-time root doc read (legacy format fallback)
+    const rootDataPromise = getDoc(doc(db, 'co_attainment', coAttainmentDocId)).then(s => s.data()).catch(() => null);
+
+    // Real-time listener for exams subcollection (new format from MarkEntry)
+    const unsub = onSnapshot(collection(db, 'co_attainment', coAttainmentDocId, 'exams'), async (snap) => {
+      const rootData = await rootDataPromise;
+
+      let children = [];
+
+      snap.forEach(eDoc => {
+        const eData = eDoc.data();
+        const m = eData._meta || {};
+        let label = m.exam || m.qpaper_name || eDoc.id;
+        if (m.exam && ciaConfigs[m.exam]?.examName) label = ciaConfigs[m.exam].examName;
+        if (m.qpaper_name && ciaConfigs[m.qpaper_name]?.examName) label = ciaConfigs[m.qpaper_name].examName;
+
+        const isUniversity = !!(
+          m.is_university ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+          String(m.exam || '').toLowerCase().includes('uni')
+        );
+        const isIndirect = !!(m.isIndirectAssessment || (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) || (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment));
+        children.push({ key: eDoc.id, data: eData, isUniversity, isIndirect, label });
+      });
+
+      // Add legacy root doc data if exists
+      if (rootData?.co_max_marks || rootData?.students) {
+        const m = rootData._meta || {};
+        const isUniversity = !!(
+          m.is_university ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+          String(m.exam || '').toLowerCase().includes('uni')
+        );
+        const isIndirect = !!(
+          m.isIndirectAssessment ||
+          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+        );
+        children.push({ key: '_legacy', data: rootData, isUniversity, isIndirect, label: m.exam || 'Legacy' });
+      }
+
+      if (children.length === 0) {
         setFinalOverallAtt({});
+        setLoadingFinal(false);
         return;
       }
 
-      setLoadingFinal(true);
-      try {
-        const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
-        const coAttainmentRef = doc(db, 'co_attainment', coAttainmentDocId); // Firestore doc reference
-        const snap = await getDoc(coAttainmentRef); // Use getDoc for Firestore
-        const data = snap.data(); // Use .data() for Firestore documents
-        if (!data) {
-          setFinalOverallAtt({});
-          setLoadingFinal(false);
-          return;
-        }
+      // sort by saved/updated desc
+      children.sort((a, b) => {
+        const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
+        const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
+        return tb - ta;
+      });
 
-        // Build children list (legacy or per-exam)
-        let children = [];
-        if (data.co_max_marks || data.students) {
-          const m = data._meta || {};
-          const isUniversity = !!(
-            m.is_university ||
-            (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-            String(m.exam || '').toLowerCase().includes('uni') ||
-            String(m.qpaper_name || '').toLowerCase().includes('uni')
-          );
-          const isIndirect = !!(
-            m.isIndirectAssessment ||
-            (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-            (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
-          );
-          children = [{ key: '_legacy', data, isUniversity, isIndirect, label: m.exam || 'Legacy' }];
-        } else { // Assuming data contains sub-documents for each exam
-          // In Firestore, if data is a document, and its fields are exam IDs, then we need to iterate its fields.
-          const entries = Object.entries(data).filter(([, v]) => v && (v.students || v.co_max_marks)).map(([k, v]) => ({ key: k, data: v })); // This assumes data is an object of exam documents
-          children = entries.map(e => {
-            const m = e.data._meta || {};
-            let label = m.exam || m.qpaper_name || e.key;
-            if (m.exam && ciaConfigs[m.exam] && ciaConfigs[m.exam].examName) label = ciaConfigs[m.exam].examName;
-            if (m.qpaper_name && ciaConfigs[m.qpaper_name] && ciaConfigs[m.qpaper_name].examName) label = ciaConfigs[m.qpaper_name].examName;
-            const isUniversity = !!(
-              m.is_university ||
-              (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-              String(m.exam || '').toLowerCase().includes('uni') ||
-              String(m.qpaper_name || '').toLowerCase().includes('uni')
-            );
-            const isIndirect = !!(
-              m.isIndirectAssessment ||
-              (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-              (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
-            );
-            return { key: e.key, data: e.data, isUniversity, isIndirect, label };
-          });
-        }
+      // Collect ALL unique CO keys from all internal children
+      const internalChildren = children.filter(c => !c.isUniversity && !c.isIndirect);
+      const directChildren = internalChildren.length > 0 ? internalChildren : children;
 
-        // sort by saved/updated desc
-        children.sort((a, b) => {
-          const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
-          const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
-          return tb - ta;
+      const allCoKeysSet = new Set();
+      directChildren.forEach(child => {
+        Object.keys(child.data.co_max_marks || {}).forEach(k => {
+          allCoKeysSet.add(k);
         });
+      });
 
-        // Collect ALL unique CO keys from all internal children (not just the latest)
-        const internalChildren = children.filter(c => !c.isUniversity && !c.isIndirect);
-        const directChildren = internalChildren.length > 0 ? internalChildren : children;
+      const coKeysLocal = Array.from(allCoKeysSet).sort((a, b) => {
+        const na = Number(a.replace(/[^0-9]/g, '')) || 0;
+        const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
+        return na - nb;
+      });
 
-        const allCoKeysSet = new Set();
+      const attainmentStats = {};
+      coKeysLocal.forEach(co => {
+        const mergedStudentMarks = {};
+        let totalMaxMark = 0;
+
         directChildren.forEach(child => {
-          Object.keys(child.data.co_max_marks || {}).forEach(k => {
-            allCoKeysSet.add(k);
+          const childMax = Number(child.data.co_max_marks?.[co] || 0);
+          totalMaxMark += childMax;
+          Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
+            const mark = Number(marks?.[co] || 0);
+            mergedStudentMarks[studentId] = (mergedStudentMarks[studentId] || 0) + mark;
           });
         });
 
-        const coKeysLocal = Array.from(allCoKeysSet).sort((a, b) => {
-          const na = Number(a.replace(/[^0-9]/g, '')) || 0;
-          const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
-          return na - nb;
+        let countGreaterEqual = 0;
+        let countLess = 0;
+        const totalStudents = Object.keys(mergedStudentMarks).length;
+
+        Object.values(mergedStudentMarks).forEach(total => {
+          const markPct = totalMaxMark > 0 ? (total / totalMaxMark) * 100 : 0;
+          if (markPct >= Number(mappingCutoff || 0)) {
+            countGreaterEqual++;
+          } else {
+            countLess++;
+          }
         });
 
-        const attainmentStats = {};
-        coKeysLocal.forEach(co => {
-          // Aggregate student marks and max marks for this CO across all direct children
-          const mergedStudentMarks = {};
-          let totalMaxMark = 0;
+        const percentage = totalStudents > 0 ? (countGreaterEqual / totalStudents) * 100 : 0;
+        let attainmentLevel = 0;
+        const threshold = (mappingThresholds || []).find(t => percentage >= t.min && percentage <= t.max);
+        if (threshold) attainmentLevel = threshold.level;
 
-          directChildren.forEach(child => {
-            const childMax = Number(child.data.co_max_marks?.[co] || 0);
-            totalMaxMark += childMax;
-            Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
-              const mark = Number(marks?.[co] || 0);
-              mergedStudentMarks[studentId] = (mergedStudentMarks[studentId] || 0) + mark;
-            });
-          });
+        attainmentStats[co] = {
+          countGreaterEqual,
+          countLess,
+          percentage: percentage.toFixed(2),
+          attainmentLevel
+        };
+      });
 
-          let countGreaterEqual = 0;
-          let countLess = 0;
-          const totalStudents = Object.keys(mergedStudentMarks).length;
+      // Compute indirect mean
+      const indirectChildren = children.filter(c => c.isIndirect);
+      const stats = {};
+      const diSplit = mappingDirectIndirectSplit || { direct: 100, indirect: 0 };
+      const pctDirectTotal = (diSplit.direct || 100) / 100;
+      const pctIndirectTotal = (diSplit.indirect || 0) / 100;
 
-          Object.values(mergedStudentMarks).forEach(total => {
-            const markPct = totalMaxMark > 0 ? (total / totalMaxMark) * 100 : 0;
-            if (markPct >= Number(mappingCutoff || 0)) {
-              countGreaterEqual++;
-            } else {
-              countLess++;
+      coKeysLocal.forEach(co => {
+        const directLevel = attainmentStats[co]?.attainmentLevel || attainmentStats[String(co).toUpperCase()]?.attainmentLevel || 0;
+
+        let indirectTotalVal = 0;
+        let totalIndirectSubmissions = 0;
+        indirectChildren.forEach(child => {
+          const studs = child.data.students || {};
+          const maxMarksMap = child.data.co_max_marks || {};
+          const mm = Number(maxMarksMap[co] ?? maxMarksMap[co.toLowerCase()] ?? maxMarksMap[co.toUpperCase()] ?? 3);
+          Object.values(studs).forEach(s => {
+            const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
+            if (rawVal !== undefined && rawVal !== null) {
+              const raw = Number(rawVal);
+              const normalized = mm > 0 ? (raw / mm) * 3 : 0;
+              indirectTotalVal += normalized;
+              totalIndirectSubmissions++;
             }
           });
-
-          const percentage = totalStudents > 0 ? (countGreaterEqual / totalStudents) * 100 : 0;
-          let attainmentLevel = 0;
-          const threshold = (mappingThresholds || []).find(t => percentage >= t.min && percentage <= t.max);
-          if (threshold) attainmentLevel = threshold.level;
-
-          attainmentStats[co] = {
-            countGreaterEqual,
-            countLess,
-            percentage: percentage.toFixed(2),
-            attainmentLevel
-          };
         });
 
-        // Compute indirect mean
-        const indirectChildren = children.filter(c => c.isIndirect);
-        const stats = {};
-        const diSplit = mappingDirectIndirectSplit || { direct: 100, indirect: 0 };
-        const pctDirectTotal = (diSplit.direct || 100) / 100;
-        const pctIndirectTotal = (diSplit.indirect || 0) / 100;
+        const indirectMean = totalIndirectSubmissions > 0 ? (indirectTotalVal / totalIndirectSubmissions) : 0;
+        const finalLevel = (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal);
 
-        coKeysLocal.forEach(co => {
-          const directLevel = attainmentStats[co]?.attainmentLevel || attainmentStats[String(co).toUpperCase()]?.attainmentLevel || 0;
+        const coKeyU = String(co).toUpperCase();
+        stats[coKeyU] = {
+          directLevel,
+          indirectMean: Number(indirectMean.toFixed(2)),
+          finalLevel: Number(finalLevel.toFixed(2)),
+          directPct: diSplit.direct,
+          indirectPct: diSplit.indirect
+        };
+      });
 
-          let indirectTotalVal = 0;
-          let totalIndirectSubmissions = 0;
-          indirectChildren.forEach(child => {
-            const studs = child.data.students || {};
-            const maxMarksMap = child.data.co_max_marks || {};
-            const mm = Number(maxMarksMap[co] ?? maxMarksMap[co.toLowerCase()] ?? maxMarksMap[co.toUpperCase()] ?? 3);
-            Object.values(studs).forEach(s => {
-              const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
-              if (rawVal !== undefined && rawVal !== null) {
-                const raw = Number(rawVal);
-                const normalized = mm > 0 ? (raw / mm) * 3 : 0;
-                indirectTotalVal += normalized;
-                totalIndirectSubmissions++;
-              }
-            });
-          });
+      setFinalOverallAtt(stats);
+      setLoadingFinal(false);
+    }, (error) => {
+      console.error('Error listening to co_attainment:', error);
+      setFinalOverallAtt({});
+      setLoadingFinal(false);
+    });
 
-          const indirectMean = totalIndirectSubmissions > 0 ? (indirectTotalVal / totalIndirectSubmissions) : 0;
-          const finalLevel = (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal);
-
-          const coKeyU = String(co).toUpperCase();
-          stats[coKeyU] = {
-            directLevel,
-            indirectMean: Number(indirectMean.toFixed(2)),
-            finalLevel: Number(finalLevel.toFixed(2)),
-            directPct: diSplit.direct,
-            indirectPct: diSplit.indirect
-          };
-        });
-
-        setFinalOverallAtt(stats);
-      } catch (err) {
-        console.error('Error computing final attainment:', err);
-      } finally {
-        setLoadingFinal(false);
-      }
-    };
-
-    computeFinalAttainment();
+    return () => unsub();
   }, [batch, programme, department, subject, academicYear, semester, section, mappingDirectIndirectSplit, mappingThresholds, mappingCutoff, ciaConfigs]);
 
   const calculateMappingGrade = (marked, total) => {
@@ -638,13 +637,15 @@ export default function CoPoMapping() {
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
-  const coCodes = coList.map(co => co.code);
-  if (coCodes.length === 0 && Object.keys(summary).length > 0) {
-    const firstKey = Object.keys(summary)[0];
-    if (summary[firstKey] && summary[firstKey].co_counts) {
-      coCodes.push(...Object.keys(summary[firstKey].co_counts).sort());
-    }
-  }
+  const coCodes = useMemo(() => {
+    const codes = new Set(coList.map(co => co.code));
+    // Ensure any CO with data or mapping is included
+    Object.values(summary || {}).forEach(data => {
+      if (data.co_counts) Object.keys(data.co_counts).forEach(c => codes.add(c));
+    });
+    Object.keys(finalOverallAtt || {}).forEach(c => codes.add(c));
+    return Array.from(codes).sort((a, b) => (parseInt(a.replace(/\D/g, '')) || 0) - (parseInt(b.replace(/\D/g, '')) || 0));
+  }, [coList, summary, finalOverallAtt]);
 
   const renderRow = (label, data) => {
     const totalPIs = data?.total_pis || 0;

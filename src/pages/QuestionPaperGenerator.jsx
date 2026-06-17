@@ -1359,11 +1359,10 @@ export default function QuestionPaperGenerator() {
 
     const checkExisting = async () => {
       try {
-        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`; // This is the document ID
-        const qpRef = doc(db, 'generated_qps', docId, 'versions', existingQpId); // Firestore subcollection path
+        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`; // This is the field key
+        const qpRef = doc(db, 'generated_qps', docId); // Parent doc path
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
-        if (snapshot.exists()) {
-          const qp = snapshot.data(); // Use .data() for Firestore documents
+        const qp = snapshot.data()?.[existingQpId]; // Read from field in parent doc
 
           if (qp && !hasLoadedRef.current) {
             hasLoadedRef.current = true;
@@ -1434,7 +1433,6 @@ export default function QuestionPaperGenerator() {
               }
             }, 500);
           }
-        }
       } catch (error) {
         console.error("Error checking for existing paper:", error);
       }
@@ -1449,9 +1447,9 @@ export default function QuestionPaperGenerator() {
 
       try {
         hasLoadedRef.current = true; // Mark as loaded
-        const qpRef = doc(db, 'generated_qps', compositeKey, 'versions', editId); // Firestore subcollection path
+        const qpRef = doc(db, 'generated_qps', compositeKey); // Parent doc path
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
-        const qp = snapshot.data(); // Use .data() for Firestore documents
+        const qp = snapshot.data()?.[editId]; // Read from field in parent doc
 
         if (qp) {
           setAssessmentType(qp.assessment_type || 'Exam');
@@ -2482,36 +2480,11 @@ const initEditor = useCallback(() => {
       hod_comments: (status === 'recorrected') ? hodComments : null // Clear HOD comments if status changes from recorrected
     };
 
-    const summary = {
-      status: payload.status,
-      forwarded_to: payload.forwarded_to,
-      forwarded_by: payload.forwarded_by,
-      forwarded_at: payload.forwarded_at,
-      subject: payload.subject,
-      subject_name: payload.subject_name,
-      department: payload.department,
-      programme: payload.programme,
-      batch: payload.batch,
-      academic_year: payload.academic_year,
-      semester: payload.semester,
-      exam_name: payload.exam_name,
-      qpaper_name: payload.qpaper_name,
-      total_marks: payload.total_marks,
-      assessment_type: payload.assessment_type,
-      saved_at: payload.saved_at,
-      created_by: payload.created_by,
-      updated_at: payload.updated_at,
-      qp_set: payload.qp_set,
-      hod_comments: payload.hod_comments,
-      assignment_kl_domain: payload.assignment_kl_domain,
-    };
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload);
-        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: summary }, { merge: true });
+        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
       } else {
-        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload);
-        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: summary }, { merge: true });
+        await setDoc(doc(db, 'generated_qps', key), { [qpId]: payload }, { merge: true });
       }
       setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
@@ -2811,39 +2784,16 @@ const initEditor = useCallback(() => {
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
-      hod_comments: (status === 'recorrected') ? hodComments : null
+      hod_comments: (status === 'recorrected') ? hodComments : null,
+      assignment_kl: assignmentKL,
+      assignment_kl_domain: assignmentKLDomain || '',
     };
 
-    const summary = {
-      status: payload.status,
-      forwarded_to: payload.forwarded_to,
-      forwarded_by: payload.forwarded_by,
-      forwarded_at: payload.forwarded_at,
-      subject: payload.subject,
-      subject_name: payload.subject_name,
-      department: payload.department,
-      programme: payload.programme,
-      batch: payload.batch,
-      academic_year: payload.academic_year,
-      semester: payload.semester,
-      exam_name: payload.exam_name,
-      qpaper_name: payload.qpaper_name,
-      total_marks: payload.total_marks,
-      assessment_type: payload.assessment_type,
-      saved_at: payload.saved_at,
-      created_by: payload.created_by,
-      updated_at: payload.updated_at,
-      qp_set: payload.qp_set,
-      hod_comments: payload.hod_comments,
-      assignment_kl_domain: payload.assignment_kl_domain,
-    };
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload);
-        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: summary }, { merge: true });
+        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
       } else {
-        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload);
-        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: summary }, { merge: true });
+        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: payload }, { merge: true });
       }
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);

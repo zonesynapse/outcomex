@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, onSnapshot, updateDoc, getDocs, setDoc } from "firebase/firestore";
+import { doc, collection, getDoc, onSnapshot, getDocs, setDoc } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
@@ -250,17 +250,8 @@ export default function HODDashboard() {
         return;
       }
 
-      // Fetch full QP data from subcollection for rendering
-      if (selectedQP.compositeKey && selectedQP.id) {
-        try {
-          const qpSnap = await getDoc(doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id));
-          if (qpSnap.exists()) {
-            setFullQPForModal({ ...qpSnap.data(), id: selectedQP.id, compositeKey: selectedQP.compositeKey });
-          }
-        } catch (e) {
-          console.error('Error fetching full QP:', e);
-        }
-      }
+      // Full data already in selectedQP (parent doc stores full payload)
+      setFullQPForModal({ ...selectedQP });
 
       const progKey = formatProgrammeKey(selectedQP.programme);
       const regulation = getRegulationForBatch(progKey, selectedQP.batch);
@@ -320,22 +311,14 @@ export default function HODDashboard() {
       return;
     }
     try {
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id);
+      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await updateDoc(qpRef, {
+      await setDoc(qpRef, { [selectedQP.id]: {
         status: 'recorrected',
         forwarded_to: selectedQP.forwarded_by,
         forwarded_by: null,
         hod_comments: recorrectComments.trim(),
         hod_signature_url: null,
-        updated_at: now
-      });
-      const parentSummary = doc(db, 'generated_qps', selectedQP.compositeKey);
-      await setDoc(parentSummary, { [selectedQP.id]: {
-        status: 'recorrected',
-        forwarded_to: selectedQP.forwarded_by,
-        forwarded_by: null,
-        hod_comments: recorrectComments.trim(),
         updated_at: now
       }}, { merge: true });
       showToast("Question paper sent back for recorrection.", "success");
@@ -355,18 +338,9 @@ export default function HODDashboard() {
       return;
     }
     try {
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id);
+      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await updateDoc(qpRef, {
-        status: 'approved_by_hod',
-        hod_signature_url: currentHodSignature,
-        approved_at: now,
-        forwarded_to: null,
-        hod_comments: null,
-        updated_at: now
-      });
-      const parentSummary = doc(db, 'generated_qps', selectedQP.compositeKey);
-      await setDoc(parentSummary, { [selectedQP.id]: {
+      await setDoc(qpRef, { [selectedQP.id]: {
         status: 'approved_by_hod',
         hod_signature_url: currentHodSignature,
         approved_at: now,
