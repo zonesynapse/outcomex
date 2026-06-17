@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Plus, Search, Inbox, X, Trash2 } from "lucide-react";
+import { Filter, Plus, Search, Inbox, X, Trash2, Users, Calendar, Clock, FileText, CheckCircle2 } from "lucide-react";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
@@ -9,6 +9,7 @@ import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginate
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission", "Approved"];
+const STATUS_FILTER_LABELS = { "Approved": "Admitted" };
 
 const hasQuotaSeats = (config) => {
   if (!config || !config.quotas) return false;
@@ -40,7 +41,7 @@ export default function AdmissionEnquiries() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0 });
+  const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0, approved: 0 });
   const [searchResults, setSearchResults] = useState(null);
   const [filterResults, setFilterResults] = useState(null);
   const PAGE_SIZE = 20;
@@ -264,7 +265,13 @@ export default function AdmissionEnquiries() {
     <Layout title="Admission Enquiries">
       <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
 
-        <DashboardCards loading={loading} stats={stats} />
+        <DashboardCards loading={loading} stats={stats} cards={[
+          { key: "total", label: "Total Enquiries", icon: Users, accent: "#120c7a" },
+          { key: "today", label: "Today Enquiries", icon: Calendar, accent: "#120c7a" },
+          { key: "new", label: "Enquiry", icon: Clock, accent: "#120c7a" },
+          { key: "application", label: "Application", icon: FileText, accent: "#120c7a" },
+          { key: "approved", label: "Admitted", icon: CheckCircle2, accent: "#120c7a" },
+        ]} />
 
         <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm md:p-5">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr_auto]">
@@ -321,7 +328,7 @@ export default function AdmissionEnquiries() {
                 className="w-full appearance-none rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
               >
                 {STATUS_FILTERS.map((status) => (
-                  <option key={status} value={status}>{status === "All" ? "All Statuses" : status}</option>
+                  <option key={status} value={status}>{status === "All" ? "All Statuses" : (STATUS_FILTER_LABELS[status] || status)}</option>
                 ))}
               </select>
             </label>

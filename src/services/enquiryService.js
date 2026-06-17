@@ -423,12 +423,13 @@ export async function getEnquiriesStats() {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const [totalSnap, todaySnap, newSnap, appSnap, admSnap] = await Promise.all([
+  const [totalSnap, todaySnap, newSnap, appSnap, admSnap, approvedSnap] = await Promise.all([
     getCountFromServer(baseRef),
     getCountFromServer(query(baseRef, where("createdAt", ">=", todayStart.getTime()))),
     getCountFromServer(query(baseRef, where("status", "==", "Enquiry"))),
     getCountFromServer(query(baseRef, where("status", "==", "Application"))),
     getCountFromServer(query(baseRef, where("status", "==", "Admission"))),
+    getCountFromServer(query(baseRef, where("status", "==", "Approved"))),
   ]);
 
   return {
@@ -437,5 +438,6 @@ export async function getEnquiriesStats() {
     new: newSnap.data().count,
     application: appSnap.data().count,
     admission: admSnap.data().count,
+    approved: approvedSnap.data().count,
   };
 }

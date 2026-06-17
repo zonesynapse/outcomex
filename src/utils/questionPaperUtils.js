@@ -32,18 +32,6 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
 
   let html = `
 <div class="qp-preview-container" style="font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.4;">
-<table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3;">
-  <tr>
-    <td style="text-align: left; padding: 4px;">
-      CO Assessment - Direct Assessment Tool - ${isAssignment ? 'Assignment' : 'Descriptive Continuous Assessment (DCA)'}
-    </td>
-    <td style="text-align: right; padding: 4px;">
-      <div style="border: 2px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
-        EXAMINATION CELL
-      </div>
-    </td>
-  </tr>
-</table>
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; width:100%; border:1.5px solid #000; margin-bottom: 10px;">
   <tbody>
     <tr>
@@ -236,18 +224,58 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     });
   }
 
+  const getBaseQno = (qno) => {
+    let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
+    raw = raw.replace(/\(?[ab]\)/gi, '');
+    return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
+  };
+
+  const activeCOs = new Set();
+  const coWeightage = {};
+
+  if (qp.assessment_type === 'Assignment') {
+    (qp.assignment_config || []).forEach((q) => {
+      (q.mappings || []).forEach(m => {
+        const co = String(m?.co || '').trim();
+        if (!co || !co.toUpperCase().startsWith('CO')) return;
+        const mapMarks = parseInt(m?.marks, 10) || 0;
+        activeCOs.add(co);
+        coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
+      });
+    });
+  } else {
+    const groups = {};
+    (qp.parts || []).forEach((part) => {
+      (part?.questions || []).forEach((q) => {
+        const co = String(q?.co || '').trim();
+        const marks = parseInt(q?.marks, 10) || 0;
+        if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
+        const base = getBaseQno(q?.qno);
+        if (!base) return;
+        activeCOs.add(co);
+        if (!groups[base]) groups[base] = { marks, cos: new Set() };
+        if (marks > 0) groups[base].marks = marks;
+        groups[base].cos.add(co);
+      });
+    });
+    Object.values(groups).forEach((group) => {
+      group.cos.forEach((co) => {
+        coWeightage[co] = (coWeightage[co] || 0) + group.marks;
+      });
+    });
+  }
+
   let coRows = '';
   if (cos && cos.length > 0) {
-    // This part needs to derive activeCOs and coWeightage from the qp object itself
-    // as Dashboard doesn't have these states readily available.
-    // For simplicity in Dashboard preview, we'll just list all COs.
     coRows = cos.map((co) => {
+      const tick = activeCOs.has(co.code) ? '✓' : '';
+      const w = coWeightage[co.code] || '';
       return `
         <tr>
           <td style="padding: 4px;">${co.code}</td>
           <td style="padding: 4px;">${co.description}</td>
-          <td style="text-align: center; padding: 4px;"></td>
-          <td style="text-align: center; padding: 4px;"></td>
+          <td style="text-align: center; padding: 4px;">${tick}</td>
+          <td style="text-align: center; padding: 4px;">${w || ''}</td>
         </tr>
       `;
     }).join('');

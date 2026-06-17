@@ -822,7 +822,7 @@ Return an exhaustive list of all plausible mappings.`;
     const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
 
     try {
-      await updateDoc(doc(db, 'mapping_summary', mappingDocId), { // Use updateDoc for Firestore
+      await setDoc(doc(db, 'mapping_summary', mappingDocId), {
         thresholds,
         cutoff: cutoff === "" ? "" : Number(cutoff),
         percentageSplit: {
@@ -836,7 +836,7 @@ Return an exhaustive list of all plausible mappings.`;
         meta: {
           updatedAt: new Date().toISOString()
         }
-      });
+      }, { merge: true });
       setSuccessMessage("Thresholds and cutoff saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -1040,111 +1040,43 @@ Return an exhaustive list of all plausible mappings.`;
         </div>
 
         {/* CO Configuration Card */}
-        <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
-          <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
+        {subject && (<div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
+          <div className="bg-[#120c7a] px-6 py-2">
             <h4 className="text-white font-bold text-sm">CO - Configuration</h4>
-            {regulation && subject && !isCourseBankSubject && (
-              <button 
-                onClick={handleLoadExisting}
-                className="flex items-center gap-2 px-3 py-1 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all border border-white/20"
-              >
-                <Download size={14} /> Load from Previous Year / Batch
-              </button>
-            )}
           </div>
-          <div className="p-8 space-y-6">
-            <div className="space-y-6">
-              {coData.map((co, idx) => (
-                <div key={idx} className="bg-zinc-50 p-5 rounded-xl border border-zinc-200 shadow-sm space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="w-8 h-8 flex items-center justify-center bg-[#120c7a] text-white rounded-lg font-bold text-xs shadow-sm">
-                        {co.code}
-                      </span>
-                      <h5 className="text-sm font-bold text-zinc-700">Course Outcome Details</h5>
-                    </div>
-                    <button 
-                      onClick={() => handleRemoveCO(idx)} 
-                      className={`text-zinc-400 p-1.5 rounded-lg transition-all ${isCourseBankSubject ? 'opacity-50 cursor-not-allowed hidden' : 'hover:text-red-500 hover:bg-red-50'}`}
-                      disabled={isCourseBankSubject}
-                      title="Remove CO"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    <div className="lg:col-span-6 space-y-2">
-                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Description</label>
-                      <textarea
-                        className="w-full bg-white border border-zinc-300 rounded-lg px-4 py-2.5 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm min-h-[100px] disabled:opacity-50 disabled:bg-zinc-100"
-                        placeholder="Enter the course outcome description..."
-                        value={co.description}
-                        onChange={(e) => handleCOChange(idx, 'description', e.target.value)}
-                        disabled={isCourseBankSubject}
-                      />
-                    </div>
-
-                    <div className="lg:col-span-3 space-y-2">
-                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Domain</label>
-                      <div className="relative">
-                        <select
-                          value={co.domain}
-                          onChange={(e) => {
-                            handleCOChange(idx, 'domain', e.target.value);
-                            handleCOChange(idx, 'level', ''); // Reset level when domain changes
-                          }}
-                          className="w-full appearance-none bg-white border border-zinc-300 rounded-lg px-4 py-2.5 pr-10 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm font-medium disabled:opacity-50 disabled:bg-zinc-100"
-                          disabled={isCourseBankSubject}
-                        >
-                          <option value="">Select Domain</option>
-                          {domains.map(d => (
-                            <option key={d} value={d}>{d}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={16} />
-                      </div>
-                      <p className="text-[10px] text-zinc-400 italic">e.g., Cognitive, Affective</p>
-                    </div>
-
-                    <div className="lg:col-span-3 space-y-2">
-                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Level</label>
-                      <div className="relative">
-                        <select
-                          value={co.level}
-                          onChange={(e) => handleCOChange(idx, 'level', e.target.value)}
-                          className="w-full appearance-none bg-white border border-zinc-300 rounded-lg px-4 py-2.5 pr-10 outline-none focus:border-[#120c7a] focus:ring-4 focus:ring-blue-50 transition-all text-sm font-medium disabled:opacity-50 disabled:bg-zinc-100"
-                          disabled={isCourseBankSubject}
-                        >
-                          <option value="">Select Level</option>
-                          {getLevelsForDomain(co.domain).map(l => (
-                            <option key={l.code || l.name} value={l.code || l.name}>
-                              {l.code ? `${l.code} - ${l.name}` : l.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={16} />
-                      </div>
-                      <p className="text-[10px] text-zinc-400 italic">e.g., K3: Apply, K4: Analyze</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {!isCourseBankSubject && (
-              <button onClick={handleAddCO} className="flex items-center gap-2 px-4 py-2 bg-[#120c7a] hover:bg-[#100b6e] text-white font-bold rounded-lg shadow transition-all">
-                <Plus size={18} /> Add CO
-              </button>
-            )}
-            {!isCourseBankSubject && (
-              <div className="flex justify-end gap-4 pt-4 border-t border-zinc-100">
-                <button onClick={handleSaveCOs} className="px-8 py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg shadow-md transition-all flex items-center gap-2">
-                  <Save size={18} /> Save COs
-                </button>
+          <div className="p-8">
+            {coData.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50">
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200">CO Code</th>
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200">Description</th>
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200">Domain</th>
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200">Level</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coData.map((co, idx) => (
+                      <tr key={idx} className="border-b border-zinc-100 hover:bg-zinc-50/50">
+                        <td className="p-4">
+                          <span className="inline-flex items-center justify-center w-8 h-8 bg-[#120c7a] text-white rounded-lg font-bold text-xs">{co.code}</span>
+                        </td>
+                        <td className="p-4 text-sm text-zinc-700">{co.description || "-"}</td>
+                        <td className="p-4 text-sm text-zinc-700">{co.domain || "-"}</td>
+                        <td className="p-4 text-sm text-zinc-700">{co.level || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-zinc-400 italic">
+                No course outcomes found. Define COs in Course Bank.
               </div>
             )}
           </div>
-        </div>
+        </div>)}
 
         {/* Threshold Configuration Card */}
         {poPsoData && coData.length > 0 && (

@@ -964,27 +964,14 @@ export default function QuestionPaperGenerator() {
 
     // Placeholder for HOD signature (will be filled when approved)
     let hodSignatureHtml = '';
-    if (qp.status === 'approved' && qp.hod_signature_url) {
+    if (qp.hod_signature_url) {
       hodSignatureHtml = `<img src="${qp.hod_signature_url}" alt="HOD Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
     } else {
       hodSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
     }
 
     let html = `
-<!-- Row 1: CO Assessment + Examination Cell -->
-<table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3;">
-  <tr>
-    <td style="text-align: left; padding: 4px;">
-      CO Assessment - Direct Assessment Tool - ${isAssignment ? 'Assignment' : 'Descriptive Continuous Assessment (DCA)'}
-    </td>
-    <td style="text-align: right; padding: 4px;">
-      <div style="border: 2px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
-        EXAMINATION CELL
-      </div>
-    </td>
-  </tr>
-</table>
-<!-- Row 2: Logo + College Info -->
+<!-- Logo + College Info -->
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; height:80px; width:100%; border:1px solid #000;">
   <tbody>
     <tr>
@@ -1233,9 +1220,9 @@ export default function QuestionPaperGenerator() {
         </div>
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px;">
   <tr>
+    <td style="height: 60px; width: 33.33%;">${facultySignatureHtml}</td>
     <td style="height: 60px; width: 33.33%;"></td>
-    <td style="height: 60px; width: 33.33%;"></td>
-    <td style="height: 60px; width: 33.33%;"></td>
+    <td style="height: 60px; width: 33.33%;">${hodSignatureHtml}</td>
   </tr>
   <tr>
     <td style="text-align: center; padding: 6px;">Subject Faculty Signature</td>
@@ -2495,12 +2482,36 @@ const initEditor = useCallback(() => {
       hod_comments: (status === 'recorrected') ? hodComments : null // Clear HOD comments if status changes from recorrected
     };
 
+    const summary = {
+      status: payload.status,
+      forwarded_to: payload.forwarded_to,
+      forwarded_by: payload.forwarded_by,
+      forwarded_at: payload.forwarded_at,
+      subject: payload.subject,
+      subject_name: payload.subject_name,
+      department: payload.department,
+      programme: payload.programme,
+      batch: payload.batch,
+      academic_year: payload.academic_year,
+      semester: payload.semester,
+      exam_name: payload.exam_name,
+      qpaper_name: payload.qpaper_name,
+      total_marks: payload.total_marks,
+      assessment_type: payload.assessment_type,
+      saved_at: payload.saved_at,
+      created_by: payload.created_by,
+      updated_at: payload.updated_at,
+      qp_set: payload.qp_set,
+      hod_comments: payload.hod_comments,
+      assignment_kl_domain: payload.assignment_kl_domain,
+    };
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload); // Firestore subcollection path
+        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload);
+        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: summary }, { merge: true });
       } else {
-        // For new papers (draft or forwarded) use qpDocId which includes set suffix
-        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload); // Firestore subcollection path
+        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload);
+        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: summary }, { merge: true });
       }
       setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
@@ -2534,8 +2545,8 @@ const initEditor = useCallback(() => {
     // Extract data from HTML
     const extractedData = {};
     const parser = new DOMParser();
-    const doc = parser.parseFromString(content, 'text/html');
-    const tables = doc.querySelectorAll('table');
+    const contentDoc = parser.parseFromString(content, 'text/html');
+    const tables = contentDoc.querySelectorAll('table');
     
     const invalidEntries = [];
 
@@ -2761,7 +2772,7 @@ const initEditor = useCallback(() => {
 
     // Extract CO weightage from summary table
     const co_weightage = {};
-    const summarySection = doc.querySelector('.outcomes-summary-section');
+    const summarySection = contentDoc.querySelector('.outcomes-summary-section');
     if (summarySection) {
       const rows = summarySection.querySelectorAll('tbody tr');
       rows.forEach(row => {
@@ -2803,12 +2814,36 @@ const initEditor = useCallback(() => {
       hod_comments: (status === 'recorrected') ? hodComments : null
     };
 
+    const summary = {
+      status: payload.status,
+      forwarded_to: payload.forwarded_to,
+      forwarded_by: payload.forwarded_by,
+      forwarded_at: payload.forwarded_at,
+      subject: payload.subject,
+      subject_name: payload.subject_name,
+      department: payload.department,
+      programme: payload.programme,
+      batch: payload.batch,
+      academic_year: payload.academic_year,
+      semester: payload.semester,
+      exam_name: payload.exam_name,
+      qpaper_name: payload.qpaper_name,
+      total_marks: payload.total_marks,
+      assessment_type: payload.assessment_type,
+      saved_at: payload.saved_at,
+      created_by: payload.created_by,
+      updated_at: payload.updated_at,
+      qp_set: payload.qp_set,
+      hod_comments: payload.hod_comments,
+      assignment_kl_domain: payload.assignment_kl_domain,
+    };
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload); // Firestore subcollection path
+        await setDoc(doc(db, 'generated_qps', compositeKey, 'versions', editId), payload);
+        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: summary }, { merge: true });
       } else {
-        // For new papers (draft or forwarded) use qpDocId which includes set suffix
-        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload); // Firestore subcollection path
+        await setDoc(doc(db, 'generated_qps', key, 'versions', qpDocId), payload);
+        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: summary }, { merge: true });
       }
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);
@@ -2901,7 +2936,7 @@ const initEditor = useCallback(() => {
     try {
         const usersRef = collection(db, 'users'); // Firestore collection reference
         const usersSnapshot = await getDocs(usersRef); // Use getDocs for collection
-        if (usersSnapshot.exists()) {
+        if (!usersSnapshot.empty) {
             const allUsers = {}; usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); }); // Convert QuerySnapshot to object
             const hods = Object.values(allUsers).filter(
                 user => user.role === 'HOD' && user.department === department && user.isApproved

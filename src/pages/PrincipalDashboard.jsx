@@ -14,7 +14,12 @@ import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
 import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc } from "firebase/firestore";
-import { formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils } from "../lib/utils";
+
+const sanitizeKey = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+};
 
 const formatDate = (value) => {
   if (!value) return "-";
@@ -159,7 +164,7 @@ export default function PrincipalDashboard() {
       const progKey = formatProgrammeKey(app.programme);
       if (!app.batch || !progKey || !app.department) return;
       const studentDocId = `${sanitizeKey(app.batch)}_${progKey}_${sanitizeKey(app.department)}`;
-      const studentRef = doc(db, 'students', studentDocId);
+      const studentRef = doc(db, 'approved_admissions', studentDocId);
       const snap = await getDoc(studentRef);
       const existingData = snap.exists() ? snap.data() : {};
       const order = existingData._order || [];
@@ -176,7 +181,7 @@ export default function PrincipalDashboard() {
     try {
       await updateEnquiry(app.enquiryId, { ...app, status: "Approved" });
       await addStudentToNamelist(app);
-      showToast("Admission approved successfully");
+      showToast("Admitted successfully");
     } catch (err) {
       console.error("Approve error:", err);
       showToast("Failed to approve admission", "error");
@@ -266,7 +271,7 @@ export default function PrincipalDashboard() {
         { label: "Today", value: stats.today },
         { label: "Enquiries", value: stats.new },
         { label: "Applications", value: stats.application },
-        { label: "Approved", value: stats.approved },
+        { label: "Admitted", value: stats.approved },
       ]
     },
     {
@@ -482,8 +487,8 @@ export default function PrincipalDashboard() {
                             <div className="flex items-center justify-center gap-1.5">
                               <button onClick={(e) => { e.stopPropagation(); handleApprove(app); }}
                                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                                title="Approve">
-                                <CheckCircle2 size={12} /> Approve
+                                title="Admit">
+                                <CheckCircle2 size={12} /> Admit
                               </button>
                               <button onClick={(e) => { e.stopPropagation(); openRejectModal(app); }}
                                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold border border-red-200 hover:bg-red-100 transition-colors"
@@ -654,8 +659,8 @@ export default function PrincipalDashboard() {
                         <div className="flex items-center gap-1.5 shrink-0 ml-3">
                           <button onClick={(e) => { e.stopPropagation(); handleApprove(app); closePendingPopup(); }}
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200 hover:bg-emerald-100 transition-colors"
-                            title="Approve">
-                            <CheckCircle2 size={12} /> Approve
+                            title="Admit">
+                            <CheckCircle2 size={12} /> Admit
                           </button>
                           <button onClick={(e) => { e.stopPropagation(); navigate(`/admissions/confirm/${app.enquiryId}`); }}
                             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold border border-red-200 hover:bg-red-100 transition-colors"
@@ -849,7 +854,7 @@ export default function PrincipalDashboard() {
               <div className="flex items-center gap-3">
                 <button onClick={(e) => { e.stopPropagation(); handleApprove(detailModal.enquiry); closeDetailModal(); }}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md">
-                  <CheckCircle2 size={16} /> Approve Admission
+                  <CheckCircle2 size={16} /> Admit
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); openRejectModal(detailModal.enquiry); closeDetailModal(); }}
                   className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 hover:shadow-md">

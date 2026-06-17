@@ -146,7 +146,7 @@ export default function SeatManagement() {
   const filledSeatsByDept = useMemo(() => {
     const counts = {};
     enquiries.forEach((enq) => {
-      if (enq.status !== "Admission") return;
+      if (enq.status !== "Admission" && enq.status !== "Approved") return;
 
       const dept = enq.department;
       if (!dept) return;

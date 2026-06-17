@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase"; // Import db for Firestore
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
@@ -55,6 +55,8 @@ export default function Dashboard() {
   const [selectedExam, setSelectedExam] = useState("");
   const [section, setSection] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
+  const userCleanupRef = useRef(null);
+  const assignCleanupRef = useRef(null);
 
   // Student List States
   const [students, setStudents] = useState([]);
@@ -93,17 +95,18 @@ export default function Dashboard() {
   useEffect(() => {
     const user = auth.currentUser;
     if (user) {
-      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
-      onSnapshot(userRef, (snapshot) => { // Use onSnapshot for real-time updates
+      const userRef = doc(db, 'users', user.uid);
+      const unsub1 = onSnapshot(userRef, (snapshot) => {
+        if (assignCleanupRef.current) assignCleanupRef.current();
         if (snapshot.exists()) {
-          const userData = snapshot.data(); // Use .data() for Firestore documents
+          const userData = snapshot.data();
           setUserRole(userData.role);
 
           if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
-            onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
-              if (assignSnap.exists()) {
-                const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); }); // Convert QuerySnapshot to object
+            const assignmentsRef = collection(db, 'subject_assignments');
+            const unsub2 = onSnapshot(assignmentsRef, (assignSnap) => {
+              if (!assignSnap.empty) {
+                const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
                 const progs = new Set();
                 const depts = new Set();
 
@@ -121,11 +124,17 @@ export default function Dashboard() {
                 setAssignedProgs([]);
                 setAssignedDepts([]);
               }
-            });
+            }, (err) => console.error("Assignments fetch error:", err));
+            assignCleanupRef.current = unsub2;
           }
         }
-      });
+      }, (err) => console.error("User fetch error:", err));
+      userCleanupRef.current = unsub1;
     }
+    return () => {
+      if (userCleanupRef.current) userCleanupRef.current();
+      if (assignCleanupRef.current) assignCleanupRef.current();
+    };
   }, []);
 
   // Section Configs Listener
@@ -134,7 +143,7 @@ export default function Dashboard() {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setSectionConfigs(data);
-    });
+    }, (err) => console.error("Section configs fetch error:", err));
     return () => unsub();
   }, []);
 
@@ -387,20 +396,7 @@ export default function Dashboard() {
 
     let html = `
 <div style="font-family: Arial, sans-serif; font-size: 11px; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background: white;">
-  <!-- Row 1: CO Assessment + Examination Cell -->
-  <table style="width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.3; margin-bottom: 10px;">
-    <tr>
-      <td style="text-align: left; padding: 4px;">
-        CO Assessment - Direct Assessment Tool - Descriptive Continuous Assessment (DCA)
-      </td>
-      <td style="text-align: right; padding: 4px;">
-        <div style="border: 1px solid black; padding: 6px; font-weight: bold; font-size: 11px; display: inline-block;">
-          Examination Cell
-        </div>
-      </td>
-    </tr>
-  </table>
-  <!-- Row 2: Logo + College Info -->
+  <!-- Logo + College Info -->
   <div style="text-align: center; margin-bottom: 15px;">
     <img alt="logo" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="width: 100%; height: auto; display: block;" />
   </div>
@@ -506,18 +502,69 @@ export default function Dashboard() {
   </div>
 
   <div style="margin-top: 30px;">
-    <h3 style="font-size: 14px; margin-bottom: 10px;">Subject Outcomes Details</h3>
+    <h3 style="font-size: 14px; margin-bottom: 10px;">Details of Course Outcomes</h3>
     <table border="1" style="border-collapse: collapse; width: 100%; font-size: 10px;">
       <thead>
         <tr style="background: #f9f9f9;">
-          <th style="padding: 4px; border: 1px solid #333;">Subject Outcome Code</th>
+          <th style="padding: 4px; border: 1px solid #333;">Outcome Code</th>
           <th style="padding: 4px; border: 1px solid #333;">Description</th>
-          <th style="padding: 4px; border: 1px solid #333;">COs covered</th>
+          <th style="padding: 4px; border: 1px solid #333;">Tick Covered COs</th>
           <th style="padding: 4px; border: 1px solid #333;">Weightage</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td></tr>
+        ${(() => {
+          const activeCOs = new Set();
+          const coWeightage = {};
+          const getBaseQno = (qno) => {
+            let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
+            raw = raw.replace(/\(?[ab]\)/gi, '');
+            return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
+          };
+          if (qp.assessment_type === 'Assignment') {
+            (qp.assignment_config || []).forEach((q) => {
+              (q.mappings || []).forEach(m => {
+                const co = String(m?.co || '').trim();
+                if (!co || !co.toUpperCase().startsWith('CO')) return;
+                const mapMarks = parseInt(m?.marks, 10) || 0;
+                activeCOs.add(co);
+                coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
+              });
+            });
+          } else {
+            const groups = {};
+            (qp.parts || []).forEach((part) => {
+              (part?.questions || []).forEach((q) => {
+                const co = String(q?.co || '').trim();
+                const marks = parseInt(q?.marks, 10) || 0;
+                if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
+                const base = getBaseQno(q?.qno);
+                if (!base) return;
+                activeCOs.add(co);
+                if (!groups[base]) groups[base] = { marks, cos: new Set() };
+                if (marks > 0) groups[base].marks = marks;
+                groups[base].cos.add(co);
+              });
+            });
+            Object.values(groups).forEach((group) => {
+              group.cos.forEach((co) => {
+                coWeightage[co] = (coWeightage[co] || 0) + group.marks;
+              });
+            });
+          }
+          const sorted = Array.from(activeCOs).sort((a, b) => {
+            const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
+            const nb = parseInt(b.replace(/\D/g, ''), 10) || 0;
+            return na - nb;
+          });
+          if (sorted.length > 0) {
+            return sorted.map(co => {
+              const w = coWeightage[co] || '';
+              return `<tr><td style="padding: 4px; border: 1px solid #333;">${co}</td><td style="padding: 4px; border: 1px solid #333;"></td><td style="text-align: center; padding: 4px; border: 1px solid #333;">✓</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">${w || ''}</td></tr>`;
+            }).join('');
+          }
+          return '<tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;"></td></tr>';
+        })()}
       </tbody>
     </table>
   </div>
@@ -614,7 +661,7 @@ export default function Dashboard() {
 
   // Fetch Syllabus when filters change
   useEffect(() => {
-    if ((module === "syllabus" || module === "consolidation" || module === "log-report") && programme && department && batch && semester) {
+    if ((module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") && programme && department && batch && semester) {
       const progKey = formatProgrammeKey(programme);
       const regulation = getRegulationForBatch(progKey, batch);
       if (!regulation) return; // Wait until regulation is loaded // Ensure regulation is available
@@ -641,33 +688,64 @@ export default function Dashboard() {
   // Fetch Question Papers when filters change
   useEffect(() => {
     if (module === "question-paper-generator" && programme && department) {
-      const qpRef = collection(db, 'generated_qps'); // Firestore collection reference
-      
-      const unsubscribe = onSnapshot(qpRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
-        if (data) {
-          const allQPs = [];
-          Object.entries(data).forEach(([key, versions]) => {
-            Object.entries(versions).forEach(([vId, qp]) => {
-              if (qp.programme === programme && qp.department === department) {
-                allQPs.push({ ...qp, id: vId, compositeKey: key });
+      const qpRef = collection(db, 'generated_qps');
+      const subUnsubs = [];
+
+      const fetchSubCollections = async (snapshot) => {
+        const allQPs = [];
+        const seen = new Set();
+
+        for (const docSnap of snapshot.docs) {
+          const parentId = docSnap.id;
+          const parentData = docSnap.data();
+
+          // Read from subcollection first (full data takes priority)
+          try {
+            const vSnap = await getDocs(collection(db, 'generated_qps', parentId, 'versions'));
+            vSnap.forEach(vDoc => {
+              const qp = vDoc.data();
+              if (qp && qp.programme === programme && qp.department === department) {
+                const key = `${parentId}_${vDoc.id}`;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  allQPs.push({ ...qp, id: vDoc.id, compositeKey: parentId });
+                }
               }
             });
-          });
-          
-          // Sort by saved_at descending
-          allQPs.sort((a, b) => new Date(b.saved_at) - new Date(a.saved_at));
-          setQuestionPapers(allQPs);
-        } else {
-          setQuestionPapers([]);
+          } catch (e) {
+            // Ignore if subcollection doesn't exist
+          }
+
+          // Fallback: read from parent doc fields (summary for listing)
+          if (parentData) {
+            Object.entries(parentData).forEach(([vId, qp]) => {
+              if (qp && qp.programme === programme && qp.department === department) {
+                const key = `${parentId}_${vId}`;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  allQPs.push({ ...qp, id: vId, compositeKey: parentId });
+                }
+              }
+            });
+          }
         }
+
+        allQPs.sort((a, b) => new Date(b.saved_at) - new Date(a.saved_at));
+        setQuestionPapers(allQPs);
         setLoadingQPs(false);
+      };
+
+      const unsubscribe = onSnapshot(qpRef, (snapshot) => {
+        fetchSubCollections(snapshot);
       }, (error) => {
         console.error("QP Fetch Error:", error);
         setLoadingQPs(false);
       });
 
-      return () => unsubscribe();
+      return () => {
+        unsubscribe();
+        subUnsubs.forEach(u => u());
+      };
     }
   }, [module, programme, department]);
 
@@ -1355,7 +1433,7 @@ export default function Dashboard() {
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
-                    if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
+                    if (module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") setLoadingSyllabus(true);
                     if (module === "question-paper-generator") setLoadingQPs(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
@@ -1387,7 +1465,7 @@ export default function Dashboard() {
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
-                    if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
+                    if (module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") setLoadingSyllabus(true);
                     if (module === "question-paper-generator") setLoadingQPs(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
@@ -1418,7 +1496,7 @@ export default function Dashboard() {
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (e.target.value === "students") setLoadingStudents(true);
-                    if (e.target.value === "syllabus" || e.target.value === "consolidation" || e.target.value === "log-report") setLoadingSyllabus(true);
+                    if (e.target.value === "syllabus" || e.target.value === "consolidation" || e.target.value === "log-report" || e.target.value === "question-paper-generator") setLoadingSyllabus(true);
                     if (e.target.value === "question-paper-generator") setLoadingQPs(true);
                     if (e.target.value === "consolidation" || e.target.value === "log-report") setLoadingConsolidation(true);
                   }}
@@ -1451,7 +1529,7 @@ export default function Dashboard() {
                     setSyllabusData(null);
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
-                    if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
+                    if (module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") setLoadingSyllabus(true);
                   }}
                   className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
@@ -1499,7 +1577,7 @@ export default function Dashboard() {
                       setSelectedExam("");
                       setSyllabusData(null);
                       setConsolidationData(null);
-                      if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
+                      if (module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") setLoadingSyllabus(true);
                     }}
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   >
@@ -1528,7 +1606,7 @@ export default function Dashboard() {
                       setSelectedExam("");
                       setSyllabusData(null);
                       setConsolidationData(null);
-                      if (module === "syllabus" || module === "consolidation") setLoadingSyllabus(true);
+                      if (module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") setLoadingSyllabus(true);
                     }}
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   >
@@ -1614,7 +1692,13 @@ export default function Dashboard() {
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   >
                     <option value="">Choose Subject</option>
-                    {getQPFilterOptions('subject').map(sub => (
+                    {Array.from(new Set([
+                      ...(syllabusData?.semesters?.[deriveSemesterNumber(semester)]
+                        ?.filter(sub => sub != null && sub.isActive !== false)
+                        ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
+                        ?.map(sub => `${sub.code} - ${sub.name}`) || []),
+                      ...getQPFilterOptions('subject')
+                    ])).map(sub => (
                       <option key={sub} value={sub}>{sub}</option>
                     ))}
                   </select>
@@ -1635,7 +1719,10 @@ export default function Dashboard() {
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   >
                     <option value="">Choose Exam</option>
-                    {getQPFilterOptions('exam').map(ex => (
+                    {Array.from(new Set([
+                      ...expectedExams.map(ex => ex.examName),
+                      ...getQPFilterOptions('exam')
+                    ])).map(ex => (
                       <option key={ex} value={ex}>{ex}</option>
                     ))}
                   </select>

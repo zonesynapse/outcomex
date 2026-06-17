@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, CheckCircle2, User, MapPin, GraduationCap, FileText, CreditCard, AlertCircle, Inbox, Search, Filter, X, Eye, Edit2, Send, MessageCircle, Clock, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, User, MapPin, GraduationCap, FileText, CreditCard, AlertCircle, Inbox, Search, Filter, X, Eye, Edit2, Send, MessageCircle, Clock, XCircle, Users, Calendar } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
 import DashboardCards from "../components/DashboardCards";
@@ -45,6 +45,7 @@ export default function AdmissionConfirmation() {
   const [applications, setApplications] = useState([]);
   const [appsLoading, setAppsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [programmeFilter, setProgrammeFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [editModal, setEditModal] = useState({ open: false, enquiry: null, saving: false });
   const [viewModal, setViewModal] = useState({ open: false, enquiry: null, loading: false });
@@ -52,7 +53,7 @@ export default function AdmissionConfirmation() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0 });
+  const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0, approved: 0 });
   const [searchResults, setSearchResults] = useState(null);
   const { departments: allDeptMap } = useDepartments();
   const PAGE_SIZE = 20;
@@ -141,23 +142,34 @@ export default function AdmissionConfirmation() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  const programmeOptions = useMemo(() => {
+    return Object.keys(allDeptMap || {}).sort();
+  }, [allDeptMap]);
+
   const departmentOptions = useMemo(() => {
-    const set = new Set();
-    applications.forEach((app) => {
-      [app.department, app.department2, app.department3].filter(Boolean).forEach((d) => set.add(d));
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [applications]);
+    let fromConfig;
+    if (programmeFilter) {
+      fromConfig = allDeptMap?.[programmeFilter] || [];
+    } else {
+      fromConfig = Object.values(allDeptMap || {}).flat();
+    }
+    return fromConfig.sort((left, right) => left.localeCompare(right));
+  }, [allDeptMap, programmeFilter]);
 
   const applicationItems = useMemo(() => searchResults !== null ? searchResults : applications, [applications, searchResults]);
 
   const filteredApplications = useMemo(() => {
     const source = searchResults !== null ? searchResults : applications;
+    const progDeptList = programmeFilter ? (allDeptMap?.[programmeFilter] || []) : [];
     return source.filter((app) => {
+      const matchesProgramme = !programmeFilter ||
+        progDeptList.includes(app.department) ||
+        progDeptList.includes(app.department2) ||
+        progDeptList.includes(app.department3);
       const matchesDepartment = !departmentFilter || [app.department, app.department2, app.department3].includes(departmentFilter);
-      return matchesDepartment;
+      return matchesProgramme && matchesDepartment;
     });
-  }, [applications, searchResults, departmentFilter]);
+  }, [applications, searchResults, programmeFilter, departmentFilter, allDeptMap]);
 
   // stats now come from getEnquiriesStats (aggregation queries on the entire dataset)
 
@@ -263,7 +275,7 @@ export default function AdmissionConfirmation() {
         status: "Approved",
       });
       await addStudentToNamelist(enquiry);
-      showToast("Admission approved successfully");
+      showToast("Admitted successfully");
       setTimeout(() => navigate("/admissions/confirm"), 1500);
     } catch (err) {
       console.error("Approve error:", err);
@@ -488,11 +500,17 @@ export default function AdmissionConfirmation() {
         <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
 
           <div className="mb-6">
-            <DashboardCards loading={appsLoading} stats={stats} />
+            <DashboardCards loading={appsLoading} stats={stats} cards={[
+              { key: "total", label: "Total Enquiries", icon: Users, accent: "#120c7a" },
+              { key: "today", label: "Today Enquiries", icon: Calendar, accent: "#120c7a" },
+              { key: "new", label: "Enquiry", icon: Clock, accent: "#120c7a" },
+              { key: "application", label: "Application", icon: FileText, accent: "#120c7a" },
+              { key: "approved", label: "Admitted", icon: CheckCircle2, accent: "#120c7a" },
+            ]} />
           </div>
 
           <div className="mb-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm md:p-5">
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_0.8fr_auto]">
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.4fr_0.8fr_0.8fr_auto]">
               <label className="block">
                 <span className="mb-2 block text-sm font-semibold text-zinc-700">Search</span>
                 <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 focus-within:border-[#120c7a] focus-within:ring-2 focus-within:ring-[#120c7a]/10">
@@ -503,6 +521,22 @@ export default function AdmissionConfirmation() {
                     className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
                     placeholder="Search by student name, mobile, or ID"
                   />
+                </div>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-zinc-700">Programme</span>
+                <div className="relative">
+                  <select
+                    value={programmeFilter}
+                    onChange={(event) => { setProgrammeFilter(event.target.value); setDepartmentFilter(""); }}
+                    className="w-full appearance-none rounded-xl border border-zinc-200 bg-white px-4 py-3 pr-10 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
+                  >
+                    <option value="">All Programmes</option>
+                    {programmeOptions.map((prog) => (
+                      <option key={prog} value={prog}>{prog}</option>
+                    ))}
+                  </select>
                 </div>
               </label>
 
@@ -525,7 +559,7 @@ export default function AdmissionConfirmation() {
               <div className="flex items-end gap-3">
                 <button
                   type="button"
-                  onClick={() => { setSearchTerm(""); setDepartmentFilter(""); }}
+                  onClick={() => { setSearchTerm(""); setProgrammeFilter(""); setDepartmentFilter(""); }}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 px-4 py-3 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
                 >
                   <Filter size={16} />
@@ -654,7 +688,7 @@ export default function AdmissionConfirmation() {
                             ) : app.status === "Approved" ? (
                               <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
                                 <CheckCircle2 size={10} />
-                                Approved
+                                Admitted
                               </span>
                             ) : app.status === "Admission" ? (
                               <button
@@ -880,7 +914,7 @@ export default function AdmissionConfirmation() {
             )}
             {enquiry.status === "Approved" && (
               <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-100 px-4 py-2 text-sm font-bold text-emerald-700">
-                <CheckCircle2 size={18} /> Approved
+                <CheckCircle2 size={18} /> Admitted
               </span>
             )}
             <button
@@ -1008,7 +1042,7 @@ export default function AdmissionConfirmation() {
                       onClick={handlePrincipalApprove}
                       className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md disabled:opacity-50"
                     >
-                      {saving ? "Processing..." : <><CheckCircle2 size={16} /> Approve Admission</>}
+                      {saving ? "Processing..." : <><CheckCircle2 size={16} /> Admit</>}
                     </button>
                     <button
                       type="button"

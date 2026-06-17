@@ -104,7 +104,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                       <CheckCircle2 size={12} className="text-green-600" />
                       Admitted
                     </span>
-                  ) : enquiry.status === "Enquiry" || enquiry.status === "Approved" ? (
+                  ) : enquiry.status === "Enquiry" ? (
                     <button
                       type="button"
                       onClick={() => onMove?.(enquiry)}
@@ -134,7 +134,7 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                         <Edit2 size={16} />
                       </button>
                     )}
-                    {enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
+                    {enquiry.status !== "Application" && enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
                       <button
                         type="button"
                         title="Delete"

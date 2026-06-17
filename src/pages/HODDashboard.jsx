@@ -13,7 +13,7 @@ import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
-import { formatProgrammeKey } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey } from "../lib/utils";
 
 function bsKey(key) {
   if (!key) return "";
@@ -62,6 +62,7 @@ export default function HODDashboard() {
   const [facultySignatureForQP, setFacultySignatureForQP] = useState('');
   const [selectedQPHodSignature, setSelectedQPHodSignature] = useState('');
   const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
+  const [fullQPForModal, setFullQPForModal] = useState(null);
   const [ciaConfigs, setCiaConfigs] = useState({});
   const [showRecorrectModal, setShowRecorrectModal] = useState(false);
   const [recorrectComments, setRecorrectComments] = useState('');
@@ -174,14 +175,15 @@ export default function HODDashboard() {
       return;
     }
     setStudentsLoading(true);
-    const deptKey = sanitizeKey(hodDepartment);
+    const deptKeySpace = bsKey(hodDepartment);
+    const deptKeyNoSpace = sanitizeKey(hodDepartment);
     const unsub = onSnapshot(
-      collection(db, 'students'),
+      collection(db, 'approved_admissions'),
       (snap) => {
         const all = [];
         snap.forEach(docSnap => {
           const docId = docSnap.id;
-          if (!docId.endsWith(`_${deptKey}`)) return;
+          if (!docId.endsWith(`_${deptKeySpace}`) && !docId.endsWith(`_${deptKeyNoSpace}`)) return;
           const data = docSnap.data();
           Object.entries(data).forEach(([key, val]) => {
             if (key === '_order' || key.startsWith('_')) return;
@@ -244,8 +246,22 @@ export default function HODDashboard() {
         setModalCourseOutcomes([]);
         setFacultySignatureForQP('');
         setSelectedQPHodSignature('');
+        setFullQPForModal(null);
         return;
       }
+
+      // Fetch full QP data from subcollection for rendering
+      if (selectedQP.compositeKey && selectedQP.id) {
+        try {
+          const qpSnap = await getDoc(doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id));
+          if (qpSnap.exists()) {
+            setFullQPForModal({ ...qpSnap.data(), id: selectedQP.id, compositeKey: selectedQP.compositeKey });
+          }
+        } catch (e) {
+          console.error('Error fetching full QP:', e);
+        }
+      }
+
       const progKey = formatProgrammeKey(selectedQP.programme);
       const regulation = getRegulationForBatch(progKey, selectedQP.batch);
       if (regulation) {
@@ -305,14 +321,23 @@ export default function HODDashboard() {
     }
     try {
       const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id);
+      const now = new Date().toISOString();
       await updateDoc(qpRef, {
         status: 'recorrected',
         forwarded_to: selectedQP.forwarded_by,
         forwarded_by: null,
         hod_comments: recorrectComments.trim(),
         hod_signature_url: null,
-        updated_at: new Date().toISOString()
+        updated_at: now
       });
+      const parentSummary = doc(db, 'generated_qps', selectedQP.compositeKey);
+      await setDoc(parentSummary, { [selectedQP.id]: {
+        status: 'recorrected',
+        forwarded_to: selectedQP.forwarded_by,
+        forwarded_by: null,
+        hod_comments: recorrectComments.trim(),
+        updated_at: now
+      }}, { merge: true });
       showToast("Question paper sent back for recorrection.", "success");
       setShowRecorrectModal(false);
       setShowQPModal(false);
@@ -331,14 +356,24 @@ export default function HODDashboard() {
     }
     try {
       const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey, 'versions', selectedQP.id);
+      const now = new Date().toISOString();
       await updateDoc(qpRef, {
         status: 'approved_by_hod',
         hod_signature_url: currentHodSignature,
-        approved_at: new Date().toISOString(),
+        approved_at: now,
         forwarded_to: null,
         hod_comments: null,
-        updated_at: new Date().toISOString()
+        updated_at: now
       });
+      const parentSummary = doc(db, 'generated_qps', selectedQP.compositeKey);
+      await setDoc(parentSummary, { [selectedQP.id]: {
+        status: 'approved_by_hod',
+        hod_signature_url: currentHodSignature,
+        approved_at: now,
+        forwarded_to: null,
+        hod_comments: null,
+        updated_at: now
+      }}, { merge: true });
       showToast("Question paper approved and forwarded to COE.", "success");
       setShowQPModal(false);
     } catch (error) {
@@ -658,7 +693,7 @@ export default function HODDashboard() {
               `}</style>
               <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
                 style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}>
-                <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
+                <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(fullQPForModal || selectedQP) }} />
               </div>
             </div>
           </div>
@@ -757,12 +792,12 @@ export default function HODDashboard() {
                                   if (!sec) { showToast("Please select a section", "error"); return; }
                                   setSavingSection(true);
                                   try {
-                                    const currentSnap = await getDoc(doc(db, 'students', s.docId));
+                                    const currentSnap = await getDoc(doc(db, 'approved_admissions', s.docId));
                                     if (!currentSnap.exists()) { showToast("Student doc not found", "error"); setSavingSection(false); return; }
                                     const currentData = currentSnap.data();
                                     const { [s.reg]: studentVal, ...rest } = currentData;
                                     const newOrder = (currentData._order || []).filter(r => r !== s.reg);
-                                    await setDoc(doc(db, 'students', s.docId), { ...rest, _order: newOrder });
+                                    await setDoc(doc(db, 'approved_admissions', s.docId), { ...rest, _order: newOrder });
 
                                     const secDocId = `${s.docId}_${sanitizeKey(sec)}`;
                                     const secSnap = await getDoc(doc(db, 'students', secDocId));

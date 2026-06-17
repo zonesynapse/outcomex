@@ -3,11 +3,15 @@ const STATUS_STYLES = {
   Application: "border-amber-200 bg-amber-50 text-amber-700",
   Admission: "border-emerald-200 bg-emerald-50 text-emerald-700",
   Approved: "border-green-200 bg-green-50 text-green-700",
+  Admitted: "border-green-200 bg-green-50 text-green-700",
   Rejected: "border-red-200 bg-red-50 text-red-700",
 };
 
+const DISPLAY_LABELS = { Approved: "Admitted" };
+
 export default function StatusBadge({ status = "Enquiry" }) {
-  const label = String(status || "Enquiry").trim() || "Enquiry";
+  const raw = String(status || "Enquiry").trim() || "Enquiry";
+  const label = DISPLAY_LABELS[raw] || raw;
   const badgeClass = STATUS_STYLES[label] || STATUS_STYLES.Enquiry;
 
   return (
