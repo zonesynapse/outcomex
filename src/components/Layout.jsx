@@ -45,7 +45,7 @@ import { useDepartments } from "../hooks/useDepartments";
 
 // All possible menu items with their IDs
 const allPossibleItems = [
-  { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
+  { id: "reports", icon: LayoutDashboard, label: "Reports", path: "/reports" },
   { id: "faculty-dashboard", icon: LayoutDashboard, label: "Faculty Dashboard", path: "/faculty-dashboard" },
   { id: "hod-dashboard", icon: LayoutDashboard, label: "HOD Dashboard", path: "/hod-dashboard" },
   { id: "principal-dashboard", icon: LayoutDashboard, label: "Principal Dashboard", path: "/principal-dashboard" },

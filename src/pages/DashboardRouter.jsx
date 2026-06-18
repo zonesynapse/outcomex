@@ -4,7 +4,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import FacultyDashboard from "./FacultyDashboard";
 import HODDashboard from "./HODDashboard";
-import Dashboard from "./Dashboard";
+import Reports from "./Reports";
 
 export default function DashboardRouter() {
   const [role, setRole] = useState(null);
@@ -49,5 +49,5 @@ export default function DashboardRouter() {
   if (role === "Faculty") return <FacultyDashboard />;
   if (role === "HOD") return <HODDashboard />;
 
-  return <Dashboard />;
+  return <Reports />;
 }

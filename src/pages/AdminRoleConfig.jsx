@@ -88,7 +88,7 @@ export default function AdminRoleConfig() {
 
   // All available system pages
   const ALL_PAGES = [
-    { id: "dashboard", label: "Dashboard", path: "/dashboard" },
+    { id: "reports", label: "Reports", path: "/reports" },
     { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard" },
     { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard" },
     { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard" },
@@ -308,7 +308,7 @@ export default function AdminRoleConfig() {
   };
 
   const handleDeleteRole = async (roleName) => {
-    if (["Admin", "Faculty"].includes(roleName)) {
+    if (["Admin", "Faculty", "HOD", "Principal"].includes(roleName)) {
       showNotification("Core roles cannot be deleted");
       return;
     }
@@ -776,7 +776,7 @@ export default function AdminRoleConfig() {
                         <th key={role} className="px-6 py-4 text-sm font-bold text-zinc-600 text-center min-w-[120px]">
                           <div className="flex flex-col items-center gap-1">
                             <span>{role}</span>
-                            {!["Admin", "Faculty"].includes(role) && (
+                            {!["Admin", "Faculty", "HOD", "Principal"].includes(role) && (
                               <button 
                                 onClick={() => handleDeleteRole(role)}
                                 className="text-[9px] text-red-400 hover:text-red-600 uppercase tracking-tighter"

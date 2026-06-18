@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import Auth from "./pages/Auth";
-import Dashboard from "./pages/Dashboard";
+import Reports from "./pages/Reports";
 import VisionMission from "./pages/VisionMission";
 import InfoConfiguration from "./pages/InfoConfiguration";
 import AdminRoleConfig from "./pages/AdminRoleConfig";
@@ -59,7 +59,7 @@ import PlacementStudents from "./pages/PlacementStudents";
 import PlacementActivities from "./pages/PlacementActivities";
 
 function RootRedirect() {
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to="/reports" replace />;
 }
 
 export default function App() {
@@ -71,7 +71,7 @@ export default function App() {
         <Route path="/signup" element={<Auth />} />
 
         {/* Protected Routes */}
-        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
         <Route path="/faculty-dashboard" element={<ProtectedRoute><FacultyDashboard /></ProtectedRoute>} />
         <Route path="/hod-dashboard" element={<ProtectedRoute><HODDashboard /></ProtectedRoute>} />
         <Route path="/principal-dashboard" element={<ProtectedRoute><PrincipalDashboard /></ProtectedRoute>} />
@@ -140,6 +140,7 @@ export default function App() {
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<Navigate to="/reports" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>

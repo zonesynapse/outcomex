@@ -7,7 +7,8 @@ import {
   updateProfile,
   setPersistence,
   browserLocalPersistence,
-  signOut
+  signOut,
+  onAuthStateChanged
 } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { auth, db } from "../firebase";
@@ -99,6 +100,25 @@ export default function Auth() {
     setMessage("");
   }, [location.pathname]);
 
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        const snap = await getDoc(doc(db, "users", user.uid));
+        if (!snap.exists()) return;
+        const role = snap.data().role;
+        if (role === "Student") {
+          navigate("/student/dashboard", { replace: true });
+        } else {
+          navigate("/reports", { replace: true });
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+    return unsub;
+  }, [navigate]);
+
   const handleToggle = (toSignup) => {
     setIsActive(toSignup);
     navigate(toSignup ? "/signup" : "/login", { replace: true });
@@ -153,7 +173,7 @@ export default function Auth() {
       if (userProfile.role === "Student") {
         navigate("/student/dashboard");
       } else {
-        navigate("/dashboard");
+        navigate("/reports");
       }
     } catch (err) {
       console.error(err);
@@ -348,7 +368,7 @@ export default function Auth() {
       }
 
       setIsNavigating(true);
-      navigate("/dashboard");
+      navigate("/reports");
     } catch (err) {
       console.error(err);
       if (err.code === 'auth/operation-not-allowed') {
