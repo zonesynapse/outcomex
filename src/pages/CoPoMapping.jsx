@@ -258,13 +258,13 @@ export default function CoPoMapping() {
   };
 
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole !== 'Faculty') return true;
-    return assignedProgs.includes(formatProgrammeKey(prog));
+    if (userRole === 'Faculty') return assignedProgs.includes(formatProgrammeKey(prog));
+    return true;
   });
 
   const filteredDepartments = (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
-    if (userRole !== 'Faculty') return true;
-    return assignedDepts.includes(sanitizeKey(dept));
+    if (userRole === 'Faculty') return assignedDepts.includes(sanitizeKey(dept));
+    return true;
   });
 
   const availableSections = useMemo(() => {
@@ -334,7 +334,7 @@ export default function CoPoMapping() {
         if (assignmentSnap.exists()) {
           const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
           
-          if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
+          if (userRole === 'Admin' || userRole === 'Principal') {
             // Show all subjects that have at least one allocation to ANY faculty
             const allAllocatedCodes = new Set();
             Object.values(assignments).forEach(userAssignments => {

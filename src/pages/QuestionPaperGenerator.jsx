@@ -68,9 +68,9 @@ export default function QuestionPaperGenerator() {
   const [partsConfig, setPartsConfig] = useState([]);
   const [assignmentConfig, setAssignmentConfig] = useState([]);
   const [savedAssignmentConfig, setSavedAssignmentConfig] = useState([]);
+  const [assignmentQuestionCount, setAssignmentQuestionCount] = useState(1);
+  const [assignmentTotalMarks, setAssignmentTotalMarks] = useState(0);
 
-  const [assignmentKL, setAssignmentKL] = useState('L1');
-  const [assignmentKLDomain, setAssignmentKLDomain] = useState('');
   // Question Builder states
   const [qpQuestions, setQpQuestions] = useState([]);
   const [qbQuestion, setQbQuestion] = useState('');
@@ -115,44 +115,6 @@ export default function QuestionPaperGenerator() {
     }
   }, [qbQuestion, qbEditorData]);
 
-  const initAssignmentEditor = useCallback(() => {
-    try {
-      if (!window.CKEDITOR) return;
-      if (window.CKEDITOR.instances && window.CKEDITOR.instances.assignmentEditor) {
-        try { window.CKEDITOR.instances.assignmentEditor.destroy(true); } catch { /* ignore */ }
-      }
-      const editor = window.CKEDITOR.replace('assignmentEditor', {
-        removePlugins: 'elementspath',
-        resize_enabled: false,
-        extraPlugins: 'uploadimage',
-        filebrowserUploadUrl: '',
-        height: 200,
-        contentsCss: [window.CKEDITOR.basePath + 'contents.css']
-      });
-
-      editor.on('instanceReady', function () {
-        try { 
-          editor.setData(assignmentConfig[0]?.question || ''); 
-        } catch { /* ignore */ }
-      });
-
-      editor.on('change', function() {
-        const data = editor.getData();
-        setAssignmentConfig(prev => {
-          if (!prev || !prev.length) return prev;
-          const updated = [...prev];
-          if (updated[0].question !== data) {
-            updated[0] = { ...updated[0], question: data };
-            return updated;
-          }
-          return prev;
-        });
-      });
-    } catch (e) {
-      console.error('initAssignmentEditor', e);
-    }
-  }, []); // Empty deps to avoid re-init on question change
-
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
       const data = {};
@@ -162,28 +124,33 @@ export default function QuestionPaperGenerator() {
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    if (assessmentType !== 'Assignment' || !showParts) return;
-    let cancelled = false;
-    const attemptInit = () => {
-      if (cancelled) return;
-      const el = document.getElementById('assignmentEditor');
-      if (el && window.CKEDITOR) {
-        initAssignmentEditor();
-      } else {
-        setTimeout(attemptInit, 200);
-      }
-    };
-    attemptInit();
-    return () => { cancelled = true; };
-  }, [assessmentType, showParts, initAssignmentEditor]);
-
   // Keep default Q.No as next index when questions change (only if not editing)
   useEffect(() => {
-    if (isEditingQbRef.current) return;  // Don't auto-increment while editing
-    const next = (qpQuestions && qpQuestions.length) ? (qpQuestions.length + 1) : 1;
-    setQbQNo(String(next));
-  }, [qpQuestions]);
+    if (isEditingQbRef.current) return;
+
+    // Prioritize the expected list of Q.Nos from the layout
+    if (qbAvailableQNos && qbAvailableQNos.length > 0) {
+      const existingQnosSet = new Set(qpQuestions.map(q => q.qno));
+      const nextAvailable = qbAvailableQNos.find(qno => !existingQnosSet.has(qno));
+      if (nextAvailable) {
+        setQbQNo(nextAvailable);
+        return;
+      }
+      // If all expected Q.Nos are filled, suggest the next sequential number after the last expected Q.No
+      // This handles cases where the user might want to add questions beyond the defined structure
+      const lastExpectedNumMatch = qbAvailableQNos[qbAvailableQNos.length - 1].match(/\d+/);
+      if (lastExpectedNumMatch) {
+        setQbQNo(String(parseInt(lastExpectedNumMatch[0], 10) + 1));
+        return;
+      }
+    }
+
+    // Fallback: if no expected Q.Nos (e.g., before "Generate Layout" is clicked)
+    // or if qbAvailableQNos is empty, calculate based on existing qpQuestions
+    if (!qpQuestions || qpQuestions.length === 0) { setQbQNo('1'); return; }
+    const maxNum = qpQuestions.reduce((max, q) => { const m = String(q?.qno || '').match(/\d+/); return m ? Math.max(max, parseInt(m[0], 10)) : max; }, 0);
+    setQbQNo(String(maxNum + 1));
+  }, [qpQuestions, qbAvailableQNos, isEditingQbRef]); // Add qbAvailableQNos to dependencies
 
   // Added Effect: Sync qbMarks with partsConfig when qbQNo changes
   useEffect(() => {
@@ -205,13 +172,6 @@ export default function QuestionPaperGenerator() {
       currentTotal += count;
     }
   }, [qbQNo, partsConfig, assessmentType]);
-
-  // If editor-generated table provides Q.No list, prefer that for the dropdown
-  useEffect(() => {
-    if (qbAvailableQNos && qbAvailableQNos.length) {
-      if (!qbAvailableQNos.includes(qbQNo)) setQbQNo(qbAvailableQNos[0]);
-    }
-  }, [qbAvailableQNos, qbQNo]);
 
   // Ensure editor initializes as soon as modal opens (wait for DOM & CKEditor)
   useEffect(() => {
@@ -469,8 +429,7 @@ export default function QuestionPaperGenerator() {
 
   const getCurrentStructureTotalMarks = useCallback(() => {
     if (assessmentType === 'Assignment') {
-      // Assignment has one question with a configured total mark
-      return parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
+      return (assignmentConfig || []).reduce((sum, q) => sum + (parseInt(q?.marks, 10) || 0), 0);
     }
     return (partsConfig || []).reduce((sum, part) => {
       const count = parseInt(part?.numQuestions, 10) || 0;
@@ -588,11 +547,12 @@ export default function QuestionPaperGenerator() {
     );
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
 
-  const assignmentMarksMeta = useMemo(() => {
-    const total = parseInt(assignmentConfig?.[0]?.marks, 10) || 0;
-    const used = (assignmentConfig?.[0]?.mappings || []).reduce((sum, m) => sum + (parseInt(m?.marks, 10) || 0), 0);
+  const getAssignmentMarksMeta = useCallback((qIdx) => {
+    const idx = qIdx || 0;
+    const total = parseInt(assignmentConfig?.[idx]?.marks, 10) || 0;
+    const used = (assignmentConfig?.[idx]?.mappings || []).reduce((sum, m) => sum + (parseInt(m?.marks, 10) || 0), 0);
     const remaining = Math.max(total - used, 0);
-    const exceeded = Math.max(used - total, 0); // Not used, but good to keep
+    const exceeded = Math.max(used - total, 0);
     return { total, used, remaining, exceeded, balanced: used === total };
   }, [assignmentConfig]);
 
@@ -982,7 +942,7 @@ export default function QuestionPaperGenerator() {
 <table style="width: 100%; border-collapse: collapse; margin-top: 10px;" border="1">
   <tr>
     <td style="padding: 4px;"><strong>${isAssignment ? 'Assignment' : 'Internal Assessment Test'}</strong></td>
-    <td colspan="3" style="padding: 4px;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
+    <td colspan="3" style="padding: 4px;">${examDisplay}</td>
     <td style="padding: 4px;"><strong>Academic Year</strong></td>
     <td style="padding: 4px;">${qp.academic_year}</td>
   </tr>
@@ -1037,7 +997,7 @@ export default function QuestionPaperGenerator() {
             <tr>
               <td style="text-align: center; padding: 4px;">${idx + 1}</td>
               <td style="padding: 4px;">${q.question || ''}</td>
-              <td contenteditable="true" style="text-align: center; padding: 4px;">${qp.assignment_kl || ''}</td>
+              <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
               <td contenteditable="true" style="text-align: center; padding: 4px;">${allCOs}</td>
               <td contenteditable="true" style="text-align: center; padding: 4px;">${allPIs}</td>
               <td style="text-align: center; padding: 4px;">${q.marks}</td>
@@ -1203,7 +1163,7 @@ export default function QuestionPaperGenerator() {
 
     html += `
         <div class="outcomes-summary-section">
-          <h3>Details of Course Outcomes</h3>
+                  <h3>Details of Course Outcomes</h3>
           <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px;">
               <thead>
                   <tr>
@@ -1218,6 +1178,64 @@ export default function QuestionPaperGenerator() {
               </tbody>
           </table>
         </div>
+${(() => {
+  if (isAssignment && qp.assignment_config && qp.assignment_config.length > 0) {
+    const summaryEntries = Object.entries(poSummaryMapping || {});
+    if (summaryEntries.length > 0) {
+      const poMarks = {};
+      qp.assignment_config.forEach((q) => {
+        (q?.mappings || []).forEach((m) => {
+          const coCode = String(m?.co || '').trim().toUpperCase();
+          const selectedPis = Array.isArray(m?.pis) ? m.pis : [];
+          const mapMarks = Number(m?.marks) || 0;
+          if (!coCode || mapMarks <= 0 || selectedPis.length === 0) return;
+          summaryEntries.forEach(([poCode, poData]) => {
+            const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
+            if (!Array.isArray(mappedPis) || mappedPis.length === 0) return;
+            if (selectedPis.some(pi => mappedPis.includes(pi))) {
+              poMarks[poCode] = (poMarks[poCode] || 0) + mapMarks;
+            }
+          });
+        });
+      });
+      const poCodes = Object.keys(poMarks);
+      if (poCodes.length === 0) return '';
+      poCodes.sort((a, b) => {
+        const ma = String(a).match(/^PO(\d+)$/i);
+        const mb = String(b).match(/^PO(\d+)$/i);
+        if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
+        if (ma) return -1;
+        if (mb) return 1;
+        const psa = String(a).match(/^PSO(\d+)$/i);
+        const psb = String(b).match(/^PSO(\d+)$/i);
+        if (psa && psb) return parseInt(psa[1]) - parseInt(psb[1]);
+        return 0;
+      });
+      return `
+<div style="margin-top: 20px;">
+  <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 8px;">Overall Mapped PO / PSO</h3>
+  <table border="1" style="border-collapse: collapse; width: auto; font-size: 11px; border: 1px solid #000;">
+    <thead>
+      <tr>
+        ${poCodes.map(pc => `<th style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-size: 11px;">${pc.toUpperCase()}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        ${poCodes.map(pc => {
+          const m = poMarks[pc] || 0;
+          const color = m > 0 ? '#15803d' : '#dc2626';
+          return `<td style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-weight: bold; color: ${color};">${m}</td>`;
+        }).join('')}
+      </tr>
+    </tbody>
+  </table>
+</div>
+`;
+    }
+  }
+  return '';
+})()}
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px;">
   <tr>
     <td style="height: 60px; width: 33.33%;">${facultySignatureHtml}</td>
@@ -1232,7 +1250,7 @@ export default function QuestionPaperGenerator() {
 </table>
     `;
     return html; // Removed facultySignatureUrl from deps because it's passed as an arg
-  }, [courseOutcomes, ciaConfigs, deriveCOSummaryFromQp]); // Add facultySignatureUrl to deps if it's a state
+  }, [courseOutcomes, ciaConfigs, deriveCOSummaryFromQp, poSummaryMapping]);
 
   useEffect(() => {
     if (program) {
@@ -1337,8 +1355,7 @@ export default function QuestionPaperGenerator() {
       setShowParts(false);
       setShowFinalPreview(false);
       setNumParts('');
-      setAssignmentKL('L1');
-      setAssignmentKLDomain('');
+      setQbAvailableQNos([]); // Clear available Q.Nos when config changes
       setHodComments(''); // Clear HOD comments when starting a new paper
       setLoadedExamName('');
     }
@@ -1902,17 +1919,20 @@ const initEditor = useCallback(() => {
       return;
     }
 
-    const count = assessmentType === 'Assignment' ? 1 : parseInt(numParts, 10);
-    setQpQuestions([]);
+    const count = assessmentType === 'Assignment' ? assignmentQuestionCount : parseInt(numParts, 10);
     if (assessmentType === 'Assignment') {
       const selectedConfig = ciaConfigs.find(c => c.id === exam);
       const totalMarks = selectedConfig?.totalMarks || 0;
-      
-      setAssignmentConfig([{ 
-        question: '', 
-        marks: totalMarks,
-        mappings: []
-      }]);
+      setAssignmentTotalMarks(totalMarks);
+      const perQuestionMarks = Math.floor(totalMarks / count);
+      const keys = Object.keys(bloomsDomains || {});
+      setAssignmentConfig(Array.from({ length: count }, (_, i) => ({
+        question: '',
+        marks: i === count - 1 ? totalMarks - perQuestionMarks * (count - 1) : perQuestionMarks,
+        mappings: [],
+        kl: 'L1',
+        kldomain: keys.length ? keys[0] : ''
+      })));
     } else {
       const newPartsConfig = [];
       for (let i = 0; i < count; i++) {
@@ -1936,58 +1956,58 @@ const initEditor = useCallback(() => {
   };
 
 
-  const handleAddCOAssignment = (coCode) => {
+  const handleAddCOAssignment = (qIdx, coCode) => {
     if (!coCode) return;
     const updated = [...assignmentConfig];
-    if (!updated[0].mappings) updated[0].mappings = [];
+    if (!updated[qIdx].mappings) updated[qIdx].mappings = [];
     
-    if (!updated[0].mappings.some(m => m.co === coCode)) {
-      updated[0].mappings.push({ co: coCode, pis: [], marks: '' });
+    if (!updated[qIdx].mappings.some(m => m.co === coCode)) {
+      updated[qIdx].mappings.push({ co: coCode, pis: [], marks: '' });
       setAssignmentConfig(updated);
     }
   };
 
-  const handleRemoveCOAssignment = (coIndex) => {
+  const handleRemoveCOAssignment = (qIdx, coIndex) => {
     const updated = [...assignmentConfig];
-    updated[0].mappings = updated[0].mappings.filter((_, i) => i !== coIndex);
+    updated[qIdx].mappings = updated[qIdx].mappings.filter((_, i) => i !== coIndex);
     setAssignmentConfig(updated);
   };
 
-  const handleMappingMarksChange = (coIndex, markValue) => {
+  const handleMappingMarksChange = (qIdx, coIndex, markValue) => {
     const updated = [...assignmentConfig];
     const parsed = parseInt(markValue, 10);
     const nextMark = Number.isNaN(parsed) ? 0 : Math.max(parsed, 0);
-    const totalAllowed = parseInt(updated?.[0]?.marks, 10) || 0;
+    const totalAllowed = parseInt(updated?.[qIdx]?.marks, 10) || 0;
 
-    const usedWithoutCurrent = (updated[0].mappings || []).reduce((sum, m, idx) => {
+    const usedWithoutCurrent = (updated[qIdx].mappings || []).reduce((sum, m, idx) => {
       if (idx === coIndex) return sum;
       return sum + (parseInt(m?.marks, 10) || 0);
     }, 0);
 
     if (usedWithoutCurrent + nextMark > totalAllowed) {
-      alert(`Entered mark exceeds the total assignment mark (${totalAllowed}). Value cleared.`);
-      updated[0].mappings[coIndex].marks = '';
+      alert(`Entered mark exceeds the total marks for Question ${qIdx + 1} (${totalAllowed}). Value cleared.`);
+      updated[qIdx].mappings[coIndex].marks = '';
       setAssignmentConfig(updated);
       return;
     }
 
-    updated[0].mappings[coIndex].marks = nextMark;
+    updated[qIdx].mappings[coIndex].marks = nextMark;
     setAssignmentConfig(updated);
   };
 
-  const handleAddPIAssignment = (coIndex, piValue) => {
+  const handleAddPIAssignment = (qIdx, coIndex, piValue) => {
     if (!piValue) return;
     const updated = [...assignmentConfig];
-    const mappings = updated[0].mappings;
+    const mappings = updated[qIdx].mappings;
     if (!mappings[coIndex].pis.includes(piValue)) {
       mappings[coIndex].pis.push(piValue);
       setAssignmentConfig(updated);
     }
   };
 
-  const handleRemovePIAssignment = (coIndex, piIndex) => {
+  const handleRemovePIAssignment = (qIdx, coIndex, piIndex) => {
     const updated = [...assignmentConfig];
-    updated[0].mappings[coIndex].pis = updated[0].mappings[coIndex].pis.filter((_, i) => i !== piIndex);
+    updated[qIdx].mappings[coIndex].pis = updated[qIdx].mappings[coIndex].pis.filter((_, i) => i !== piIndex);
     setAssignmentConfig(updated);
   };
 
@@ -2229,8 +2249,8 @@ const initEditor = useCallback(() => {
       assessment_type: assessmentType,
       parts: finalizedParts,
       assignment_config: assignmentConfig,
-      assignment_kl: assignmentKL,
-      assignment_kl_domain: assignmentKLDomain
+      assignment_kl: '',
+      assignment_kl_domain: ''
     };
 
     const coSummary = deriveCOSummaryFromQp(qpDataForFinalize);
@@ -2459,8 +2479,8 @@ const initEditor = useCallback(() => {
       batch: batch,
       parts: [],
       assignment_config: assignmentConfig,
-      assignment_kl: assignmentKL,
-      assignment_kl_domain: assignmentKLDomain,
+      assignment_kl: '',
+      assignment_kl_domain: '',
       assessment_type: assessmentType,
       qpaper_name: exam === 'custom' ? examDisplay : exam,
       exam_name: examDisplay,
@@ -2785,8 +2805,8 @@ const initEditor = useCallback(() => {
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
       hod_comments: (status === 'recorrected') ? hodComments : null,
-      assignment_kl: assignmentKL,
-      assignment_kl_domain: assignmentKLDomain || '',
+      assignment_kl: '',
+      assignment_kl_domain: '',
     };
 
     try {
@@ -2875,8 +2895,8 @@ const initEditor = useCallback(() => {
         assessment_type: assessmentType,
         parts: finalizedParts,
         assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
-        assignment_kl: assignmentKL,
-        assignment_kl_domain: assignmentKLDomain
+        assignment_kl: '',
+        assignment_kl_domain: ''
     };
 
     const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, currentUserSignatureUrl);
@@ -3560,20 +3580,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           )}
 
           <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Assignment' ? 'Questions (Fixed to 1)' : 'Parts'}</label>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Assignment' ? 'Questions' : 'Parts'}</label>
             <div className="relative">
               <select 
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={assessmentType === 'Assignment' ? '1' : numParts} 
-                onChange={e => setNumParts(e.target.value)}
-                disabled={assessmentType === 'Assignment'}
+                value={assessmentType === 'Assignment' ? assignmentQuestionCount : numParts} 
+                onChange={e => assessmentType === 'Assignment' ? setAssignmentQuestionCount(parseInt(e.target.value, 10)) : setNumParts(e.target.value)}
               >
                 <option value="">Select</option>
-                {assessmentType === 'Assignment' ? (
-                  <option value="1">1 Question</option>
-                ) : (
-                  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)
-                )}
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}{assessmentType === 'Assignment' ? ' Question' : ''}</option>)}
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
@@ -3675,59 +3690,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
         </div>
       )}
 
-      {showParts && assessmentType === 'Assignment' && assignmentConfig[0] && (
+      {showParts && assessmentType === 'Assignment' && assignmentConfig.length > 0 && (
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-bold text-[#120c7a] flex items-center gap-2">
               <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
-              Assignment Configuration (Single Question)
+              Assignment Questions ({assignmentConfig.length})
             </h3>
-            
-            <div className="flex gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Domain</label>
-                <div className="relative">
-                  <select 
-                    value={assignmentKLDomain} 
-                    onChange={e => { setAssignmentKLDomain(e.target.value); setAssignmentKL(''); }} 
-                    className="w-40 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                  >
-                    <option value="">Select domain</option>
-                    {Object.keys(bloomsDomains || {}).map(key => (
-                      <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">KL</label>
-                <div className="relative">
-                  <select 
-                    value={assignmentKL} 
-                    onChange={e => setAssignmentKL(e.target.value)} 
-                    className="w-32 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                    disabled={!assignmentKLDomain}
-                  >
-                    {(() => {
-                      const domain = bloomsDomains[assignmentKLDomain];
-                      if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
-                        return (
-                          <>
-                            <option value="">Select KL</option>
-                            {domain.levels.map((lvl, i) => (
-                              <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
-                            ))}
-                          </>
-                        );
-                      }
-                      return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
-                    })()}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                </div>
-              </div>
+            <div className="flex gap-4 items-start">
+              <span className="text-xs text-slate-400 font-medium mt-2">Each question has its own Domain &amp; KL below</span>
             </div>
           </div>
 
@@ -3760,121 +3731,193 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               </div>
             )}
 
-            <div className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
-              <div className="flex justify-between items-start">
-                <h4 className="font-bold text-slate-700 text-lg">Assignment Question</h4>
-                <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Marks:</span>
-                  <span className="font-bold text-[#120c7a]">{assignmentConfig[0].marks}</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Assignment Question Content</label>
-                <div className="border border-slate-200 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 transition-all bg-white shadow-sm">
-                  <div id="assignmentEditor" className="min-h-[200px]"></div>
-                </div>
-              </div>
-
-              <div className="space-y-4 pt-4 border-t border-slate-200">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <h5 className="font-bold text-slate-700 text-sm">CO-wise Mark Distribution</h5>
-                    <p className="text-[10px] text-slate-400 font-medium">Split the total marks ({assignmentConfig[0].marks}) across mapped COs</p>
+            {assignmentConfig.map((q, qIdx) => {
+              const qMeta = getAssignmentMarksMeta(qIdx);
+              return (
+              <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
+                <div className="flex justify-between items-start">
+                  <h4 className="font-bold text-slate-700 text-lg">Question {qIdx + 1}</h4>
+                  <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Marks:</span>
+                    <input 
+                      type="number" min="1"
+                      value={assignmentConfig[qIdx].marks}
+                      onChange={e => {
+                        const updated = [...assignmentConfig];
+                        updated[qIdx] = { ...updated[qIdx], marks: parseInt(e.target.value, 10) || 0 };
+                        setAssignmentConfig(updated);
+                      }}
+                      className="w-20 text-center font-bold text-[#120c7a] bg-transparent border border-slate-200 rounded-lg px-2 py-1"
+                    />
                   </div>
-                  
-                  <div className="flex items-center gap-4">
-                    <div className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-2 ${assignmentMarksMeta.balanced ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
-                      {assignmentMarksMeta.balanced ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                      <span>Remaining Mark: {assignmentMarksMeta.remaining}</span>
-                    </div>
-                    
+                </div>
+
+                <div className="flex gap-4 items-start mb-2">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Domain</label>
                     <div className="relative">
-                      <button className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-[#0e0960] transition-all shadow-sm">
-                        <Plus size={14} /> Add CO Mapping
-                      </button>
-                      <select
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        value=""
-                        onChange={e => handleAddCOAssignment(e.target.value)}
+                      <select 
+                        value={assignmentConfig[qIdx].kldomain || ''} 
+                        onChange={e => {
+                          const updated = [...assignmentConfig];
+                          updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
+                          setAssignmentConfig(updated);
+                        }} 
+                        className="w-40 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
                       >
-                        <option value="">Select CO to add</option>
-                        {courseOutcomes.map(co => (
-                          <option key={co.code} value={co.code}>{co.code}</option>
+                        <option value="">Select domain</option>
+                        {Object.keys(bloomsDomains || {}).map(key => (
+                          <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
                         ))}
                       </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">KL</label>
+                    <div className="relative">
+                      <select 
+                        value={assignmentConfig[qIdx].kl || ''} 
+                        onChange={e => {
+                          const updated = [...assignmentConfig];
+                          updated[qIdx] = { ...updated[qIdx], kl: e.target.value };
+                          setAssignmentConfig(updated);
+                        }} 
+                        className="w-32 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
+                        disabled={!assignmentConfig[qIdx].kldomain}
+                      >
+                        {(() => {
+                          const domain = bloomsDomains[assignmentConfig[qIdx].kldomain];
+                          if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
+                            return (
+                              <>
+                                <option value="">Select KL</option>
+                                {domain.levels.map((lvl, i) => (
+                                  <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
+                                ))}
+                              </>
+                            );
+                          }
+                          return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
+                        })()}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {(assignmentConfig[0].mappings || []).map((mapping, coIdx) => (
-                    <div key={coIdx} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all space-y-4">
-                      <div className="flex justify-between items-center">
-                        <span className="px-3 py-1 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 uppercase">
-                          {mapping.co}
-                        </span>
-                        <button 
-                          onClick={() => handleRemoveCOAssignment(coIdx)}
-                          className="text-slate-300 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Assigned Marks</label>
-                        <div className="relative">
-                          <input 
-                            type="number"
-                            min="0"
-                            max={assignmentConfig[0].marks}
-                            value={mapping.marks === 0 || mapping.marks === '0' || mapping.marks === '' || mapping.marks === null || mapping.marks === undefined ? '' : mapping.marks}
-                            onChange={(e) => handleMappingMarksChange(coIdx, e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-sm text-[#120c7a]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="relative">
-                          <button className="w-full px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all border border-blue-100">
-                            <Plus size={12} /> Add PI for {mapping.co}
-                          </button>
-                          <select
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            value=""
-                            onChange={e => handleAddPIAssignment(coIdx, e.target.value)}
-                          >
-                            <option value="">Select PI</option>
-                            {coPiMapping[mapping.co]?.map(pi => (
-                              <option key={pi} value={pi}>{pi}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="flex flex-wrap gap-1.5">
-                          {(mapping.pis || []).map((pi, piIdx) => (
-                            <span key={piIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold border border-slate-200 group">
-                              {pi}
-                              <button onClick={() => handleRemovePIAssignment(coIdx, piIdx)}>
-                                <XCircle size={10} className="text-slate-300 group-hover:text-red-500 transition-colors" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {(assignmentConfig[0].mappings || []).length === 0 && (
-                    <div className="md:col-span-2 py-8 text-center border-2 border-dashed border-slate-100 rounded-2xl text-slate-400 text-sm">
-                      No Course Outcomes mapped yet. Select a CO above.
-                    </div>
-                  )}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Question Content</label>
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 transition-all bg-white shadow-sm">
+                    <textarea id={`assignmentEditor_${qIdx}`} className="min-h-[150px]" defaultValue={assignmentConfig[qIdx].question} onChange={e => {
+                      const updated = [...assignmentConfig];
+                      updated[qIdx] = { ...updated[qIdx], question: e.target.value };
+                      setAssignmentConfig(updated);
+                    }} />
+                  </div>
                 </div>
 
+                <div className="space-y-4 pt-4 border-t border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h5 className="font-bold text-slate-700 text-sm">CO-wise Mark Distribution</h5>
+                      <p className="text-[10px] text-slate-400 font-medium">Split the marks ({assignmentConfig[qIdx].marks}) across mapped COs</p>
+                    </div>
+                    
+                    <div className="flex items-center gap-4">
+                      <div className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-2 ${qMeta.balanced ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                        {qMeta.balanced ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                        <span>Remaining Mark: {qMeta.remaining}</span>
+                      </div>
+                      
+                      <div className="relative">
+                        <button className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-[#0e0960] transition-all shadow-sm">
+                          <Plus size={14} /> Add CO Mapping
+                        </button>
+                        <select
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          value=""
+                          onChange={e => handleAddCOAssignment(qIdx, e.target.value)}
+                        >
+                          <option value="">Select CO to add</option>
+                          {courseOutcomes.map(co => (
+                            <option key={co.code} value={co.code}>{co.code}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {(assignmentConfig[qIdx].mappings || []).map((mapping, coIdx) => (
+                      <div key={coIdx} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="px-3 py-1 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 uppercase">
+                            {mapping.co}
+                          </span>
+                          <button 
+                            onClick={() => handleRemoveCOAssignment(qIdx, coIdx)}
+                            className="text-slate-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Assigned Marks</label>
+                          <div className="relative">
+                            <input 
+                              type="number"
+                              min="0"
+                              max={assignmentConfig[qIdx].marks}
+                              value={mapping.marks === 0 || mapping.marks === '0' || mapping.marks === '' || mapping.marks === null || mapping.marks === undefined ? '' : mapping.marks}
+                              onChange={(e) => handleMappingMarksChange(qIdx, coIdx, e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-sm text-[#120c7a]"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="relative">
+                            <button className="w-full px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all border border-blue-100">
+                              <Plus size={12} /> Add PI for {mapping.co}
+                            </button>
+                            <select
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              value=""
+                              onChange={e => handleAddPIAssignment(qIdx, coIdx, e.target.value)}
+                            >
+                              <option value="">Select PI</option>
+                              {coPiMapping[mapping.co]?.map(pi => (
+                                <option key={pi} value={pi}>{pi}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {(mapping.pis || []).map((pi, piIdx) => (
+                              <span key={piIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold border border-slate-200 group">
+                                {pi}
+                                <button onClick={() => handleRemovePIAssignment(qIdx, coIdx, piIdx)}>
+                                  <XCircle size={10} className="text-slate-300 group-hover:text-red-500 transition-colors" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {(assignmentConfig[qIdx].mappings || []).length === 0 && (
+                      <div className="md:col-span-2 py-8 text-center border-2 border-dashed border-slate-100 rounded-2xl text-slate-400 text-sm">
+                        No Course Outcomes mapped yet. Select a CO above.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+              );
+            })}
           </div>
           
           <div className="flex flex-wrap justify-center gap-4 mt-8">
@@ -3916,7 +3959,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           {sortedPoCodes && sortedPoCodes.length > 0 && (
             <div className="mb-8 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
               <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO (Persisted in DB)</h3>
+                <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO</h3>
               </div>
               <div className="p-2 overflow-auto">
                 <table className="min-w-full text-sm">

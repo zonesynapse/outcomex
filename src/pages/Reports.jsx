@@ -265,13 +265,13 @@ export default function Reports() {
   };
 
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole !== 'Faculty') return true;
-    return assignedProgs.includes(formatProgrammeKey(prog));
+    if (userRole === 'Faculty') return assignedProgs.includes(formatProgrammeKey(prog));
+    return true;
   });
 
   const filteredDepartments = (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
-    if (userRole !== 'Faculty') return true;
-    return assignedDepts.includes(sanitizeKey(dept));
+    if (userRole === 'Faculty') return assignedDepts.includes(sanitizeKey(dept));
+    return true;
   });
 
   const getSemesters = () => {

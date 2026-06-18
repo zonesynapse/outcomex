@@ -1,6 +1,6 @@
 import { formatProgDisplay } from '../lib/utils';
 
-export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}) => {
+export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}, poMarks = null) => {
   // Compute exam display name (resolve config ID to name)
   let examDisplay = qp.exam_name;
   if (!examDisplay) {
@@ -307,6 +307,45 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
             </tbody>
         </table>
       </div>
+${(() => {
+  if (qp.assessment_type === 'Assignment' && poMarks && typeof poMarks === 'object') {
+    const poCodes = Object.keys(poMarks);
+    if (poCodes.length === 0) return '';
+    poCodes.sort((a, b) => {
+      const ma = String(a).match(/^PO(\d+)$/i);
+      const mb = String(b).match(/^PO(\d+)$/i);
+      if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
+      if (ma) return -1;
+      if (mb) return 1;
+      const psa = String(a).match(/^PSO(\d+)$/i);
+      const psb = String(b).match(/^PSO(\d+)$/i);
+      if (psa && psb) return parseInt(psa[1]) - parseInt(psb[1]);
+      return 0;
+    });
+    return `
+<div style="margin-top: 20px;">
+  <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 8px;">Overall Mapped PO / PSO</h3>
+  <table border="1" style="border-collapse: collapse; width: auto; font-size: 11px; border: 1px solid #000;">
+    <thead>
+      <tr>
+        ${poCodes.map(pc => `<th style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-size: 11px;">${pc.toUpperCase()}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        ${poCodes.map(pc => {
+          const m = poMarks[pc] || 0;
+          const color = m > 0 ? '#15803d' : '#dc2626';
+          return `<td style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-weight: bold; color: ${color};">${m}</td>`;
+        }).join('')}
+      </tr>
+    </tbody>
+  </table>
+</div>
+`;
+  }
+  return '';
+})()}
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 40px; font-size: 11px; border: 1.5px solid #000;">
   <tr>
     <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>

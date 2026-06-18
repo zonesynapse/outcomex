@@ -223,6 +223,19 @@ export default function PoAttainment() {
     return () => unsub();
   }, []);
 
+  const filteredProgrammes = useMemo(() => {
+    return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
+      return true;
+    });
+  }, [PROGRAMME_DEPARTMENTS]);
+
+  const filteredDepartments = useMemo(() => {
+    if (!programme) return [];
+    return (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
+      return true;
+    });
+  }, [programme, PROGRAMME_DEPARTMENTS]);
+
   const availableSections = useMemo(() => {
     if (!batch || !department || !programme) return [];
     const progKey = formatProgrammeKey(programme);
@@ -775,7 +788,7 @@ export default function PoAttainment() {
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
               >
                 <option value="">Select Programme</option>
-                {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
+                {filteredProgrammes.map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
               </select>
             </div>
 
@@ -788,7 +801,7 @@ export default function PoAttainment() {
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
               >
                 <option value="">Select Department</option>
-                {programme && PROGRAMME_DEPARTMENTS[programme].map(d => <option key={d} value={d}>{d}</option>)}
+                {programme && filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
 
