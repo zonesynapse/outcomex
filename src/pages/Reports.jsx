@@ -54,6 +54,7 @@ export default function Reports() {
   const [extraSubject, setExtraSubject] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
   const [section, setSection] = useState("");
+  const [internalDivision, setInternalDivision] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
   const userCleanupRef = useRef(null);
   const assignCleanupRef = useRef(null);
@@ -1492,7 +1493,8 @@ export default function Reports() {
                   <option value="">Choose Module</option>
                   <option value="syllabus">Syllabus</option>
                   <option value="students">Student Name List</option>
-                  <option value="question-paper-generator">Question Paper Generator</option>
+                  <option value="question-paper-generator">Question Bank</option>
+                  <option value="internal">Internal</option>
                   <option value="timetable">Time Table</option>
                   <option value="consolidation">Consolidation</option>
                 </select>
@@ -1661,6 +1663,28 @@ export default function Reports() {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Internal Division Selector */}
+            {module === "internal" && (
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600 ml-1">Internal Division</label>
+                <div className="relative">
+                  <select
+                    value={internalDivision}
+                    onChange={(e) => setInternalDivision(e.target.value)}
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  >
+                    <option value="">Choose Division</option>
+                    <option value="continuous-assessment">Continuous Assessment</option>
+                    <option value="activity">Activity</option>
+                    <option value="attendance">Attendance</option>
+                    <option value="practical">Practical</option>
+                    <option value="project">Project</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
               </div>
             )}
 

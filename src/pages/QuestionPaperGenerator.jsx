@@ -427,8 +427,10 @@ export default function QuestionPaperGenerator() {
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
   };
 
+  const isAssignmentOrProject = useMemo(() => assessmentType === 'Assignment' || assessmentType === 'Project', [assessmentType]);
+
   const getCurrentStructureTotalMarks = useCallback(() => {
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       return (assignmentConfig || []).reduce((sum, q) => sum + (parseInt(q?.marks, 10) || 0), 0);
     }
     return (partsConfig || []).reduce((sum, part) => {
@@ -542,7 +544,7 @@ export default function QuestionPaperGenerator() {
       (!norm(config.academicYear) || norm(config.academicYear) === selectedAy) &&
       (!config.semester || String(config.semester) === semNum) &&
       (!norm(config.regulation) || norm(config.regulation) === selectedReg) &&
-      (assessmentType === 'Assignment' ? config.isAssignment : !config.isAssignment) &&
+      (assessmentType === 'Assignment' ? config.isAssignment : assessmentType === 'Project' ? config.isProject : !config.isAssignment && !config.isProject) &&
       (!courseType || !config.courseTypes || config.courseTypes.includes(courseType))
     );
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
@@ -569,8 +571,8 @@ export default function QuestionPaperGenerator() {
 
     if (!qp) return { activeCOs, coWeightage };
 
-    // Assignment: each mapping contributes marks directly to its CO
-    if (qp.assessment_type === 'Assignment') {
+    // Assignment/Project: each mapping contributes marks directly to its CO
+    if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
       (qp.assignment_config || []).forEach((q) => {
         const marks = parseInt(q?.marks, 10) || 0;
         if (marks <= 0) return;
@@ -675,14 +677,14 @@ export default function QuestionPaperGenerator() {
   // Marks calculation helper
   const calculatePoMarks = useCallback((questionsSource) => {
     if (!questionsSource || !Array.isArray(questionsSource) || questionsSource.length === 0) return {};
-    if (assessmentType !== 'Exam' && assessmentType !== 'Assignment') return {};
+    if (assessmentType !== 'Exam' && !isAssignmentOrProject) return {};
 
     const summaryEntries = Object.entries(poSummaryMapping || {});
     if (!summaryEntries.length) return {};
 
     const poMarks = {};
 
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       questionsSource.forEach((q) => {
         (q?.mappings || []).forEach((m) => {
           const coCode = String(m?.co || '').trim().toUpperCase();
@@ -742,7 +744,7 @@ export default function QuestionPaperGenerator() {
 
   // Marks strictly from saved/loaded state
   const savedPoMarks = useMemo(() => {
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       return calculatePoMarks(savedAssignmentConfig);
     } else {
       const questions = [];
@@ -757,7 +759,7 @@ export default function QuestionPaperGenerator() {
 
   // Marks strictly from the current in-memory editor qpQuestions
   const activePoMarks = useMemo(() => {
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       return calculatePoMarks(assignmentConfig);
     }
     return calculatePoMarks(qpQuestions);
@@ -831,12 +833,12 @@ export default function QuestionPaperGenerator() {
     const progKeyNorm = norm(progKey);
     const deptNorm = norm(department);
 
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       return batches.filter(b => {
         const reg = getRegulationForBatch(progKey, b);
         if (!reg) return false;
         return ciaConfigs.some(config =>
-          config.isAssignment === true &&
+          (assessmentType === 'Project' ? config.isProject : config.isAssignment) === true &&
           (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
           (!norm(config.department) || norm(config.department) === deptNorm) &&
           (!norm(config.regulation) || norm(config.regulation) === norm(reg))
@@ -884,6 +886,7 @@ export default function QuestionPaperGenerator() {
   }, [batch, department, program, sectionConfigs]);
 
   useEffect(() => {
+    if (isAssignmentOrProject) return; // Don't load exam parts for Activity/Project
     if (exam && exam !== 'custom') {
       const config = ciaConfigs.find(c => c.id === exam);
       if (config && config.parts && config.parts.length > 0) {
@@ -907,7 +910,7 @@ export default function QuestionPaperGenerator() {
       examDisplay = configObj?.examName || qp.qpaper_name;
     }
 
-    const isAssignment = qp.assessment_type === 'Assignment';
+    const isAssignment = qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project';
 
     const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
     const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
@@ -941,7 +944,7 @@ export default function QuestionPaperGenerator() {
 </table>
 <table style="width: 100%; border-collapse: collapse; margin-top: 10px;" border="1">
   <tr>
-    <td style="padding: 4px;"><strong>${isAssignment ? 'Assignment' : 'Internal Assessment Test'}</strong></td>
+    <td style="padding: 4px;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
     <td colspan="3" style="padding: 4px;">${examDisplay}</td>
     <td style="padding: 4px;"><strong>Academic Year</strong></td>
     <td style="padding: 4px;">${qp.academic_year}</td>
@@ -1301,7 +1304,7 @@ ${(() => {
             return numA - numB;
           });
         setCourseOutcomes(loadedCOs);
-        if (assessmentType === 'Assignment' && loadedCOs.length > 0 && !numParts) {
+        if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
           setNumParts(String(loadedCOs.length));
         }
         // console.log("Loaded Course Outcomes:", loadedCOs);
@@ -1376,7 +1379,7 @@ ${(() => {
 
     const checkExisting = async () => {
       try {
-        const existingQpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`; // This is the field key
+        const existingQpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`; // This is the field key
         const qpRef = doc(db, 'generated_qps', docId); // Parent doc path
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
         const qp = snapshot.data()?.[existingQpId]; // Read from field in parent doc
@@ -1758,6 +1761,60 @@ ${(() => {
     }
   }, [assessmentType]);
 
+  // Initialize CKEditor for each assignment question
+  useEffect(() => {
+    if (!window.CKEDITOR || !showParts || (!isAssignmentOrProject)) return;
+    let cancelled = false;
+
+    const attemptInit = () => {
+      if (cancelled) return;
+      const allReady = assignmentConfig.every((_, qIdx) => document.getElementById(`editorWrapper_${qIdx}`));
+      if (allReady && window.CKEDITOR) {
+        assignmentConfig.forEach((q, qIdx) => {
+          const editorId = `assignmentEditor_${qIdx}`;
+          if (window.CKEDITOR.instances && window.CKEDITOR.instances[editorId]) {
+            try { window.CKEDITOR.instances[editorId].destroy(true); } catch { }
+          }
+          const wrapper = document.getElementById(`editorWrapper_${qIdx}`);
+          if (!wrapper) return;
+          wrapper.innerHTML = '';
+          const textarea = document.createElement('textarea');
+          textarea.id = editorId;
+          wrapper.appendChild(textarea);
+
+          const editor = window.CKEDITOR.replace(editorId, {
+            removePlugins: 'elementspath',
+            resize_enabled: false,
+            extraPlugins: 'uploadimage',
+            filebrowserUploadUrl: '',
+            height: 200,
+            contentsCss: [window.CKEDITOR.basePath + 'contents.css']
+          });
+
+          editor.on('instanceReady', function () {
+            try { editor.setData(q.question || ''); } catch { }
+          });
+
+          editor.on('change', function () {
+            try {
+              const data = editor.getData();
+              setAssignmentConfig(prev => {
+                const updated = [...prev];
+                if (updated[qIdx]) updated[qIdx] = { ...updated[qIdx], question: data };
+                return updated;
+              });
+            } catch { }
+          });
+        });
+      } else {
+        setTimeout(attemptInit, 120);
+      }
+    };
+
+    attemptInit();
+    return () => { cancelled = true; };
+  }, [assignmentConfig.length, showParts, assessmentType]);
+
 const initEditor = useCallback(() => {
   if (!window.CKEDITOR) return;
   
@@ -1902,7 +1959,7 @@ const initEditor = useCallback(() => {
   }
 }, []);
   const handleGenerateParts = () => {
-    if (assessmentType !== 'Assignment') {
+    if (!isAssignmentOrProject) {
       if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
         showToast("Please fill in all required fields.", "error");
         return;
@@ -1919,8 +1976,8 @@ const initEditor = useCallback(() => {
       return;
     }
 
-    const count = assessmentType === 'Assignment' ? assignmentQuestionCount : parseInt(numParts, 10);
-    if (assessmentType === 'Assignment') {
+    const count = isAssignmentOrProject ? assignmentQuestionCount : parseInt(numParts, 10);
+    if (isAssignmentOrProject) {
       const selectedConfig = ciaConfigs.find(c => c.id === exam);
       const totalMarks = selectedConfig?.totalMarks || 0;
       setAssignmentTotalMarks(totalMarks);
@@ -2048,7 +2105,7 @@ const initEditor = useCallback(() => {
   };
 
   const handleGenerateTable = () => {
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
        const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
        if (!hasMappings) {
          showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
@@ -2063,7 +2120,7 @@ const initEditor = useCallback(() => {
     }
 
     let overallTotal = 0;
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       assignmentConfig.forEach(q => {
         overallTotal += q.marks;
       });
@@ -2142,7 +2199,7 @@ const initEditor = useCallback(() => {
     const subjectDisplay = subjectObj ? subjectObj.text : subject;
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
 
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
       if (!hasMappings) {
         showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
@@ -2467,7 +2524,7 @@ const initEditor = useCallback(() => {
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
-    const qpId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
+    const qpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2691,7 +2748,7 @@ const initEditor = useCallback(() => {
     }
 
     let overallTotal = 0;
-    if (assessmentType === 'Assignment') {
+    if (isAssignmentOrProject) {
       assignmentConfig.forEach(q => {
         overallTotal += q.marks;
       });
@@ -2758,7 +2815,7 @@ const initEditor = useCallback(() => {
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpDocId that includes set suffix so multiple sets do not overwrite each other when forwarded. This is the document ID.
-    const qpDocId = exam === 'custom' ? (assessmentType === 'Assignment' ? 'Assignment' : 'Exam') : `${exam}${setSuffix}`;
+    const qpDocId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject); // Find subject from available subjects
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2894,7 +2951,7 @@ const initEditor = useCallback(() => {
         exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
         assessment_type: assessmentType,
         parts: finalizedParts,
-        assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
+        assignment_config: isAssignmentOrProject ? assignmentConfig : [],
         assignment_kl: '',
         assignment_kl_domain: ''
     };
@@ -3126,7 +3183,7 @@ UNIT & PART CONSTRAINTS:
 ${aiUnitConstraints || 'No specific unit constraints provided. Extract evenly from the syllabus.'}
 
 STRUCTURE TO FOLLOW:
-${JSON.stringify(assessmentType === 'Assignment' ? assignmentConfig : partsConfig, null, 2)}
+${JSON.stringify(isAssignmentOrProject ? assignmentConfig : partsConfig, null, 2)}
 
 COURSE OUTCOMES & PERFORMANCE INDICATORS (MAPPING CONTEXT):
 ${JSON.stringify(mappingContext, null, 2)}
@@ -3410,7 +3467,8 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 onChange={e => { setAssessmentType(e.target.value); setShowParts(false); setQbAvailableQNos([]); }}
               >
                 <option value="Exam">Exam</option>
-                <option value="Assignment">Assignment</option>
+                <option value="Assignment">Activity</option>
+                <option value="Project">Project</option>
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
@@ -3580,15 +3638,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           )}
 
           <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Assignment' ? 'Questions' : 'Parts'}</label>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{isAssignmentOrProject ? 'Questions' : 'Parts'}</label>
             <div className="relative">
               <select 
                 className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={assessmentType === 'Assignment' ? assignmentQuestionCount : numParts} 
-                onChange={e => assessmentType === 'Assignment' ? setAssignmentQuestionCount(parseInt(e.target.value, 10)) : setNumParts(e.target.value)}
+                value={isAssignmentOrProject ? assignmentQuestionCount : numParts} 
+                onChange={e => isAssignmentOrProject ? setAssignmentQuestionCount(parseInt(e.target.value, 10)) : setNumParts(e.target.value)}
               >
                 <option value="">Select</option>
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}{assessmentType === 'Assignment' ? ' Question' : ''}</option>)}
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}{isAssignmentOrProject ? ' Question' : ''}</option>)}
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
@@ -3690,7 +3748,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
         </div>
       )}
 
-      {showParts && assessmentType === 'Assignment' && assignmentConfig.length > 0 && (
+      {showParts && isAssignmentOrProject && assignmentConfig.length > 0 && (
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-bold text-[#120c7a] flex items-center gap-2">
@@ -3736,7 +3794,61 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               return (
               <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
                 <div className="flex justify-between items-start">
-                  <h4 className="font-bold text-slate-700 text-lg">Question {qIdx + 1}</h4>
+                  <div className="flex items-center gap-4">
+                    <h4 className="font-bold text-slate-700 text-lg">Question {qIdx + 1}</h4>
+                    <div className="h-8 w-px bg-slate-200"></div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Domain</label>
+                      <div className="relative">
+                        <select 
+                          value={assignmentConfig[qIdx].kldomain || ''} 
+                          onChange={e => {
+                            const updated = [...assignmentConfig];
+                            updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
+                            setAssignmentConfig(updated);
+                          }} 
+                          className="w-36 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
+                        >
+                          <option value="">Select domain</option>
+                          {Object.keys(bloomsDomains || {}).map(key => (
+                            <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KL</label>
+                      <div className="relative">
+                        <select 
+                          value={assignmentConfig[qIdx].kl || ''} 
+                          onChange={e => {
+                            const updated = [...assignmentConfig];
+                            updated[qIdx] = { ...updated[qIdx], kl: e.target.value };
+                            setAssignmentConfig(updated);
+                          }} 
+                          className="w-28 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
+                          disabled={!assignmentConfig[qIdx].kldomain}
+                        >
+                          {(() => {
+                            const domain = bloomsDomains[assignmentConfig[qIdx].kldomain];
+                            if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
+                              return (
+                                <>
+                                  <option value="">Select KL</option>
+                                  {domain.levels.map((lvl, i) => (
+                                    <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
+                                  ))}
+                                </>
+                              );
+                            }
+                            return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
+                          })()}
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                      </div>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Marks:</span>
                     <input 
@@ -3752,70 +3864,9 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                   </div>
                 </div>
 
-                <div className="flex gap-4 items-start mb-2">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Domain</label>
-                    <div className="relative">
-                      <select 
-                        value={assignmentConfig[qIdx].kldomain || ''} 
-                        onChange={e => {
-                          const updated = [...assignmentConfig];
-                          updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
-                          setAssignmentConfig(updated);
-                        }} 
-                        className="w-40 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                      >
-                        <option value="">Select domain</option>
-                        {Object.keys(bloomsDomains || {}).map(key => (
-                          <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">KL</label>
-                    <div className="relative">
-                      <select 
-                        value={assignmentConfig[qIdx].kl || ''} 
-                        onChange={e => {
-                          const updated = [...assignmentConfig];
-                          updated[qIdx] = { ...updated[qIdx], kl: e.target.value };
-                          setAssignmentConfig(updated);
-                        }} 
-                        className="w-32 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                        disabled={!assignmentConfig[qIdx].kldomain}
-                      >
-                        {(() => {
-                          const domain = bloomsDomains[assignmentConfig[qIdx].kldomain];
-                          if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
-                            return (
-                              <>
-                                <option value="">Select KL</option>
-                                {domain.levels.map((lvl, i) => (
-                                  <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
-                                ))}
-                              </>
-                            );
-                          }
-                          return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
-                        })()}
-                      </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                    </div>
-                  </div>
-                </div>
-
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Question Content</label>
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 transition-all bg-white shadow-sm">
-                    <textarea id={`assignmentEditor_${qIdx}`} className="min-h-[150px]" defaultValue={assignmentConfig[qIdx].question} onChange={e => {
-                      const updated = [...assignmentConfig];
-                      updated[qIdx] = { ...updated[qIdx], question: e.target.value };
-                      setAssignmentConfig(updated);
-                    }} />
-                  </div>
+                  <div id={`editorWrapper_${qIdx}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm min-h-[150px]"></div>
                 </div>
 
                 <div className="space-y-4 pt-4 border-t border-slate-200">

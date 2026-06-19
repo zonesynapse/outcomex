@@ -13,6 +13,7 @@ interface CIAConfig {
   isUniversity: boolean;
   isIndirectAssessment: boolean;
   isAssignment: boolean;
+  isProject: boolean;
   courseTypes: string[];
   numSets?: number;
   createdAt: string;
@@ -39,6 +40,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     isUniversity: false,
     isIndirectAssessment: false,
     isAssignment: false,
+    isProject: false,
     courseTypes: [] as string[]
   });
   const [error, setError] = useState<string | null>(null);
@@ -140,6 +142,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         isUniversity,
         isIndirectAssessment,
         isAssignment: formData.isAssignment,
+        isProject: formData.isProject,
         courseTypes: formData.courseTypes,
         numSets: 1,
         createdAt: new Date().toISOString()
@@ -152,6 +155,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         isUniversity: false,
         isIndirectAssessment: false,
         isAssignment: false,
+        isProject: false,
         courseTypes: []
       });
     } catch (err) {
@@ -287,7 +291,21 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                   className="w-4 h-4 text-[#120c7a] border-slate-300 rounded focus:ring-[#120c7a]"
                 />
                 <label htmlFor="isAssignment" className="text-sm font-medium text-slate-700">
-                  Assignment
+                  Activity
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="isProject"
+                  name="isProject"
+                  checked={formData.isProject}
+                  onChange={handleInputChange}
+                  className="w-4 h-4 text-[#120c7a] border-slate-300 rounded focus:ring-[#120c7a]"
+                />
+                <label htmlFor="isProject" className="text-sm font-medium text-slate-700">
+                  Project
                 </label>
               </div>
             </div>
@@ -420,7 +438,12 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                         )}
                         {config.isAssignment && (
                           <span className="px-2 py-0.5 bg-orange-50 text-orange-700 text-[10px] font-bold rounded flex items-center gap-1">
-                            Assignment
+                            Activity
+                          </span>
+                        )}
+                        {config.isProject && (
+                          <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded flex items-center gap-1">
+                            Project
                           </span>
                         )}
                       </div>
