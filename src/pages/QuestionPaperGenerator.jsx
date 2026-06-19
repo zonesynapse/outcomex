@@ -52,8 +52,7 @@ export default function QuestionPaperGenerator() {
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [ciaConfigsMap, setCiaConfigsMap] = useState({}); // Map for quick lookup
   const [userRole, setUserRole] = useState(null);
-  const [assignedProgs, setAssignedProgs] = useState([]);
-  const [assignedDepts, setAssignedDepts] = useState([]);
+  const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [exam, setExam] = useState('');
   const [customExam, setCustomExam] = useState('');
@@ -384,41 +383,36 @@ export default function QuestionPaperGenerator() {
   }, []);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
-    const userRef = doc(db, 'users', user.uid); // Firestore doc reference
-    getDoc(userRef).then(snapshot => { // Use getDoc for Firestore
+    if (!currentUserId) return;
+    let unsubscribeAssignments = null;
+    const userRef = doc(db, 'users', currentUserId);
+    getDoc(userRef).then(snapshot => {
       if (snapshot.exists()) {
-        const userData = snapshot.data(); // Use .data() for Firestore documents
+        const userData = snapshot.data();
         setUserRole(userData.role);
         if (userData.role === 'Faculty') {
-          const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
-          const unsubscribe = onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
-            if (assignSnap.exists()) {
-              const data = {}; // Convert QuerySnapshot to object
-              assignSnap.forEach(d => { data[d.id] = d.data(); });
-              const progs = new Set();
-              const depts = new Set();
-              Object.entries(data).forEach(([progKey, deptData]) => {
-                Object.entries(deptData).forEach(([deptKey, batchData]) => {
-                  if (JSON.stringify(batchData).includes(user.uid)) {
-                    progs.add(progKey);
-                    depts.add(deptKey);
-                  }
-                });
-              });
-              setAssignedProgs(Array.from(progs));
-              setAssignedDepts(Array.from(depts));
-            } else {
-              setAssignedProgs([]);
-              setAssignedDepts([]);
-            }
+          const assignmentsRef = collection(db, 'subject_assignments');
+          unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
+            const prefixes = [];
+            assignSnap.forEach(d => {
+              if (d.data()?.[currentUserId]) {
+                const yearMatch = d.id.match(/\d{4}-\d{4}/);
+                if (yearMatch && yearMatch.index >= 2) {
+                  prefixes.push(d.id.slice(0, yearMatch.index - 1));
+                }
+              }
+            });
+            setFacultyAssignPrefixes(prefixes);
+          }, (error) => {
+            console.error('[QPG] subject_assignments listener error:', error);
           });
-          return () => unsubscribe();
         }
       }
     });
-  }, []);
+    return () => {
+      if (unsubscribeAssignments) unsubscribeAssignments();
+    };
+  }, [currentUserId]);
 
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
@@ -820,9 +814,34 @@ export default function QuestionPaperGenerator() {
       });
   }, [activePoMarks, poSummaryMapping, getSortMeta, formatPoPsoCode]);
 
+  // Derive assigned programmes/departments from raw doc prefixes
+  const derivedProgs = useMemo(() => {
+    if (!facultyAssignPrefixes.length) return [];
+    const progs = new Set();
+    Object.keys(programToDepartments).forEach(prog => {
+      const progKey = formatProgrammeKey(prog);
+      if (facultyAssignPrefixes.some(p => p.startsWith(progKey))) {
+        progs.add(progKey);
+      }
+    });
+    return Array.from(progs);
+  }, [facultyAssignPrefixes, programToDepartments]);
+
+  const derivedDepts = useMemo(() => {
+    if (!facultyAssignPrefixes.length || !program) return [];
+    const progKey = formatProgrammeKey(program);
+    const depts = new Set();
+    facultyAssignPrefixes.forEach(prefix => {
+      if (prefix.startsWith(progKey)) {
+        depts.add(prefix.slice(progKey.length).trim());
+      }
+    });
+    return Array.from(depts);
+  }, [facultyAssignPrefixes, program, programToDepartments]);
+
   const filteredProgrammes = Object.keys(programToDepartments).filter(prog => {
     if (userRole !== 'Faculty') return true;
-    return assignedProgs.includes(formatProgrammeKey(prog));
+    return derivedProgs.includes(formatProgrammeKey(prog));
   });
 
   const displayedBatches = useMemo(() => {
@@ -868,11 +887,14 @@ export default function QuestionPaperGenerator() {
 
   const filteredDepartments = useMemo(() => {
   const depts = programToDepartments[formatProgrammeKey(program)] || [];
+  if (userRole !== 'Faculty') return depts;
+  const progKey = formatProgrammeKey(program);
+  const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
   return depts.filter(dept => {
-    if (userRole !== 'Faculty') return true;
-    return assignedDepts.includes(sanitizeKey(dept));
+    const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
+    return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
   });
-}, [program, userRole, assignedDepts, programToDepartments]);
+}, [program, userRole, derivedDepts, programToDepartments]);
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !program) return [];
