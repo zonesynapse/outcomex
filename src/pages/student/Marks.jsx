@@ -84,12 +84,12 @@ export default function Marks() {
   const grouped = useMemo(() => {
     const map = {};
     marksList.forEach((r) => {
-      const key = r.subject;
-      if (!map[key]) map[key] = { subject: key, exams: [] };
-      map[key].exams.push(r);
+      const key = r.exam;
+      if (!map[key]) map[key] = { exam: key, subjects: [] };
+      map[key].subjects.push(r);
     });
     Object.values(map).forEach(g => {
-      g.exams.sort((a, b) => (a.exam || '').localeCompare(b.exam || ''));
+      g.subjects.sort((a, b) => (a.subject || '').localeCompare(b.subject || ''));
     });
     return Object.values(map);
   }, [marksList]);
@@ -167,10 +167,10 @@ export default function Marks() {
         grouped.map((group, gi) => (
           <div key={gi} className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
             <div className="bg-[#120c7a] px-8 py-5">
-              <h2 className="text-white font-bold text-xl">{group.subject}</h2>
+              <h2 className="text-white font-bold text-xl">{group.exam}</h2>
             </div>
             <div className="p-6 space-y-6">
-              {group.exams.map((exam, ei) => {
+              {group.subjects.map((exam, ei) => {
                 const details = getExamDetails(exam);
                 const coScores = getCOScores(exam);
                 return (
@@ -178,7 +178,7 @@ export default function Marks() {
                     <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
                       <div>
                         <h3 className="font-bold text-slate-700">
-                          {formatExamName(exam.exam, exam.markType)}
+                          {exam.subject} <span className="text-xs font-normal text-slate-400">({formatExamName(exam.exam, exam.markType)})</span>
                         </h3>
                         <p className="text-[11px] text-slate-400 mt-0.5">
                           {exam.academicYear}{exam.semester ? ` • ${exam.semester}` : ''}

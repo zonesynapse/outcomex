@@ -1157,7 +1157,7 @@ export default function MarkEntry() {
       await setDoc(doc(db, 'co_attainment', coAttainmentDocId, 'exams', examDocId), { // Firestore subcollection path
         _meta: {
           batch, programme, department, subject, academicYear, semester,
-          exam: exam, updated_at: new Date().toISOString()
+          exam: exam, exam_name: matchedAvail?.text || exam, updated_at: new Date().toISOString()
         },
         co_max_marks: coMaxMarks,
         students: studentsCo
