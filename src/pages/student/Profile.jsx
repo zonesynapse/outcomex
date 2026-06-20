@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Trash2, Loader2, X } from "lucide-react";
+import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X } from "lucide-react";
 
 export default function StudentProfile() {
   const [userData, setUserData] = useState(null);
@@ -58,8 +58,8 @@ export default function StudentProfile() {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-8 text-white mb-8 shadow-lg">
+    <div className="max-w-4xl mx-auto px-4 md:px-8 py-8">
+      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-5 md:p-8 text-white mb-8 shadow-lg">
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
             <span className="text-2xl font-bold">

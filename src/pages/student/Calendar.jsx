@@ -1,17 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
-import { db, auth } from "../../firebase";
+import { db } from "../../firebase";
 import { doc, getDoc } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
-import { CalendarDays, AlertCircle, Loader2 } from "lucide-react";
+import { CalendarDays, Loader2 } from "lucide-react";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-
-function formatDate(dateStr) {
-  if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  if (isNaN(d)) return dateStr;
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
 
 function getMonthKey(dateStr) {
   const d = new Date(dateStr);

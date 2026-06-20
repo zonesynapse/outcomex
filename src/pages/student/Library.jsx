@@ -39,7 +39,10 @@ export default function LibraryPage() {
   useEffect(() => {
     if (!studentData) return;
     const { regNo } = studentData;
-    if (!regNo) { setLoading(false); return; }
+    if (!regNo) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchData = async () => {
       try {

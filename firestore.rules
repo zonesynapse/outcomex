@@ -87,6 +87,11 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
+    match /batch_status/{batchId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
     match /syllabus_data/{syllabusId} {
       allow read: if isApproved();
       allow write: if isApproved();

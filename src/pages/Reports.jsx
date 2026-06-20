@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase"; // Import db for Firestore
-import { doc, collection, onSnapshot, setDoc, getDoc } from "firebase/firestore"; // Firestore imports
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, query, where } from "firebase/firestore"; // Firestore imports
 import { 
   ChevronDown, 
   Plus, 
@@ -55,6 +55,7 @@ export default function Reports() {
   const [selectedExam, setSelectedExam] = useState("");
   const [section, setSection] = useState("");
   const [internalDivision, setInternalDivision] = useState("");
+  const [selectedInternalExam, setSelectedInternalExam] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
   const userCleanupRef = useRef(null);
   const assignCleanupRef = useRef(null);
@@ -62,6 +63,8 @@ export default function Reports() {
   // Student List States
   const [students, setStudents] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
+  const showAdmNoCol = useMemo(() => students.some(s => s.admNo), [students]);
+  const showRegNoCol = useMemo(() => students.some(s => s.regNo), [students]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [syllabusData, setSyllabusData] = useState(null);
   const [loadingSyllabus, setLoadingSyllabus] = useState(false);
@@ -78,6 +81,9 @@ export default function Reports() {
   const [assignedProgs, setAssignedProgs] = useState([]);
   const [assignedDepts, setAssignedDepts] = useState([]);
   const [ciaConfigs, setCiaConfigs] = useState({});
+  const [enteredMarksMeta, setEnteredMarksMeta] = useState([]);
+  const [internalMarksRows, setInternalMarksRows] = useState([]);
+  const [loadingInternalMarks, setLoadingInternalMarks] = useState(false);
 
   // Fetch CIA Configs for exam name mapping
   useEffect(() => {
@@ -92,6 +98,76 @@ export default function Reports() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Track which exams have been used in mark entry
+  useEffect(() => {
+    if (module !== 'internal') { setEnteredMarksMeta([]); return; }
+    const unsub = onSnapshot(collection(db, 'marks'), (snapshot) => {
+      const entries = [];
+      snapshot.forEach(doc => {
+        const m = doc.data()._meta || {};
+        if (m.exam && m.programme && m.department && m.batch && m.academic_year && m.semester_label) {
+          entries.push({
+            exam: m.exam,
+            programme: m.programme,
+            department: m.department,
+            batch: m.batch,
+            academicYear: m.academic_year,
+            semester: m.semester_label
+          });
+        }
+      });
+      setEnteredMarksMeta(entries);
+    }, (err) => console.error("Marks fetch error:", err));
+    return () => unsub();
+  }, [module]);
+
+  // Fetch marks data for selected internal exam
+  useEffect(() => {
+    if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester) {
+      setInternalMarksRows([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchMarks = async () => {
+      setLoadingInternalMarks(true);
+      try {
+        const config = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1];
+        const totalMarks = config?.totalMarks || 100;
+        const q = query(collection(db, 'marks'), where('_meta.exam', '==', selectedInternalExam));
+        const snap = await getDocs(q);
+        const rowsMap = {};
+        const studentMap = {};
+        students.forEach(st => { studentMap[st.reg] = st.name; });
+        snap.forEach(doc => {
+          const data = doc.data();
+          const m = data._meta || {};
+          if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester) return;
+          Object.entries(data.students || {}).forEach(([reg, s]) => {
+            const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+            const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
+            if (rawTotal <= 0 && !s.absent) return;
+            const name = studentMap[reg] || reg;
+            if (!rowsMap[reg] || rowsMap[reg].total < rawTotal) {
+              rowsMap[reg] = { reg, name, total: rawTotal };
+            }
+          });
+        });
+        const rows = Object.values(rowsMap).map(r => ({
+          ...r,
+          mark: Math.min(100, Math.round((r.total / totalMarks) * 100))
+        })).sort((a, b) => a.reg.localeCompare(b.reg));
+        if (!cancelled) setInternalMarksRows(rows);
+      } catch (err) {
+        console.error("Fetch internal marks error:", err);
+        if (!cancelled) setInternalMarksRows([]);
+      } finally {
+        if (!cancelled) setLoadingInternalMarks(false);
+      }
+    };
+    fetchMarks();
+    return () => { cancelled = true; };
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, students]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -219,6 +295,29 @@ export default function Reports() {
       String(c.semester) === semNum
     );
   }, [ciaConfigs, programme, department, batch, academicYear, semester]);
+
+  const filteredInternalExams = useMemo(() => {
+    if (!internalDivision || !programme || !department) return [];
+    const progKey = formatProgrammeKey(programme);
+    const enteredSet = new Set(
+      enteredMarksMeta
+        .filter(m => m.programme === programme && m.department === department && m.batch === batch && m.academicYear === academicYear && m.semester === semester)
+        .map(m => m.exam)
+    );
+    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => {
+      const matchesProgramme = !c.program || formatProgrammeKey(c.program) === progKey;
+      const matchesDepartment = !c.department || c.department === department;
+      return matchesProgramme && matchesDepartment && enteredSet.has(c.id);
+    }).filter(ex => {
+      if (internalDivision === 'continuous-assessment') {
+        return !ex.isAssignment && !ex.isProject && !ex.isUniversity && !ex.isIndirectAssessment;
+      }
+      if (internalDivision === 'activity') {
+        return ex.isAssignment === true;
+      }
+      return false;
+    });
+  }, [internalDivision, programme, department, batch, academicYear, semester, ciaConfigs, enteredMarksMeta]);
 
   const allExamsCompleted = useMemo(() => {
     if (expectedExams.length === 0) return false;
@@ -623,40 +722,69 @@ export default function Reports() {
 
   // Fetch Students when filters change
   useEffect(() => {
-    if ((module === "students" || module === "consolidation" || module === "log-report") && programme && department && batch) {
+    if ((module === "students" || module === "consolidation" || module === "log-report" || module === "internal") && programme && department && batch) {
       const progKey = formatProgrammeKey(programme);
       const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
-      const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
-      
-      const unsubscribe = onSnapshot(studentRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
+      const studentRef = doc(db, 'students', studentDocId);
+      const sectionIndexRef = section ? doc(db, 'student_section_index', studentDocId) : null;
+      let cancelled = false;
+
+      const unsubscribe = onSnapshot(studentRef, (snapshot) => {
+        const data = snapshot.data();
         if (data) {
-          // Filter out metadata keys and convert to array
-          const studentList = Object.entries(data)
+          let studentList = Object.entries(data)
             .filter(([key]) => !key.startsWith('_'))
             .map(([reg, name]) => ({ reg, name }));
-            
-          // Sort by order if it exists in the data
+
           const order = data._order || data.order;
           if (order && Array.isArray(order)) {
             studentList.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
           } else {
-            // Default sort by register number
             studentList.sort((a, b) => a.reg.localeCompare(b.reg));
           }
-          
-          setStudents(studentList);
+
+          (async () => {
+            let hasSectionIndex = false;
+            if (sectionIndexRef && !cancelled) {
+              try {
+                const snap = await getDoc(sectionIndexRef);
+                if (snap.exists() && !cancelled) {
+                  hasSectionIndex = true;
+                  const sectionIndexData = snap.data();
+                  studentList = studentList.map(s => ({
+                    ...s,
+                    admNo: s.reg,
+                    regNo: sectionIndexData[s.reg]?.regNo || ""
+                  }));
+                }
+              } catch (e) {}
+            }
+            if (!cancelled) {
+              if (!hasSectionIndex) {
+                studentList = studentList.map(s => ({ ...s, admNo: "", regNo: s.reg }));
+              }
+              setStudents(studentList);
+              setLoadingStudents(false);
+            }
+          })();
         } else {
-          setStudents([]);
+          if (!cancelled) {
+            setStudents([]);
+            setLoadingStudents(false);
+          }
         }
-        setLoadingStudents(false);
       }, (error) => {
-        console.error("RTDB Fetch Error:", error);
-        setLoadingStudents(false);
+        if (!cancelled) {
+          console.error("RTDB Fetch Error:", error);
+          setLoadingStudents(false);
+        }
       });
 
-      return () => unsubscribe();
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
     }
   }, [module, programme, department, batch, section]);
 
@@ -1260,19 +1388,32 @@ export default function Reports() {
 
     const rows = [];
     // Header
-    const header = ['S.No', 'Register Number', 'Name', ...coKeys];
+    const header = ['S.No'];
+    if (showAdmNoCol) header.push('Admission Number');
+    header.push('Name');
+    if (showRegNoCol) header.push('Register Number');
+    header.push(...coKeys);
     rows.push(header);
 
     // Max marks row (show max per CO similar to screenshot)
-    const maxMarksRow = ['', '', 'Max Marks', ...coKeys.map(k => consolidationData.maxMarks?.[k] ?? '')];
+    const maxMarksRow = [''];
+    if (showAdmNoCol) maxMarksRow.push('');
+    maxMarksRow.push('Max Marks');
+    if (showRegNoCol) maxMarksRow.push('');
+    maxMarksRow.push(...coKeys.map(k => consolidationData.maxMarks?.[k] ?? ''));
     rows.push(maxMarksRow);
 
     // Use students array order; fallback to keys from consolidationData
     const studentRegs = students && students.length ? students.map(s => s.reg) : Object.keys(consolidationData.studentTotals || {});
+    const studentMap = students && students.length ? Object.fromEntries(students.map(s => [s.reg, s])) : {};
 
     studentRegs.forEach((reg, idx) => {
       const sdata = consolidationData.studentTotals?.[reg] || {};
-      const row = [idx + 1, reg || '', sdata.name || ''];
+      const student = studentMap[reg] || {};
+      const row = [idx + 1];
+      if (showAdmNoCol) row.push(student.admNo || '');
+      row.push(sdata.name || '');
+      if (showRegNoCol) row.push(student.regNo || '');
       coKeys.forEach(k => {
         const v = sdata[k];
         row.push(v === undefined || v === null ? '' : v);
@@ -1673,7 +1814,7 @@ export default function Reports() {
                 <div className="relative">
                   <select
                     value={internalDivision}
-                    onChange={(e) => setInternalDivision(e.target.value)}
+                    onChange={(e) => { setInternalDivision(e.target.value); setSelectedInternalExam(""); }}
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                   >
                     <option value="">Choose Division</option>
@@ -1682,6 +1823,30 @@ export default function Reports() {
                     <option value="attendance">Attendance</option>
                     <option value="practical">Practical</option>
                     <option value="project">Project</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+            )}
+
+            {/* Internal Exam Marks Selector */}
+            {module === "internal" && (internalDivision === "continuous-assessment" || internalDivision === "activity") && (
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-zinc-600 ml-1">
+                  {internalDivision === "continuous-assessment" ? "Assessment Marks" : "Activity Marks"}
+                </label>
+                <div className="relative">
+                  <select
+                    value={selectedInternalExam}
+                    onChange={(e) => setSelectedInternalExam(e.target.value)}
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  >
+                    <option value="">Choose {internalDivision === "continuous-assessment" ? "Assessment" : "Activity"}</option>
+                    {filteredInternalExams.map(ex => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.examName} - {ex.totalMarks || "N/A"} Marks
+                      </option>
+                    ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
@@ -1743,6 +1908,76 @@ export default function Reports() {
             )}
           </div>
         </div>
+
+        {/* Internal Exam Marks Section */}
+        {module === "internal" && selectedInternalExam && (
+          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-10">
+            <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 shrink-0">
+                  <FileText size={18} />
+                </div>
+                <h3 className="font-bold text-zinc-800 tracking-tight">
+                  {(() => { const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1]; return c?.examName || selectedInternalExam; })()}
+                </h3>
+                <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap">
+                  {internalDivision === "continuous-assessment" ? "Assessment" : "Activity"} Marks
+                </span>
+                <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium whitespace-nowrap hidden sm:inline-block">
+                  {batch} • {programme} • {department} {section ? `(Sec-${section})` : ''}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-8">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50">
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[30%]">Admission Number</th>
+                      <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[40%]">Student Name</th>
+                      <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[30%]">Mark (out of 100)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {loadingInternalMarks ? (
+                      <tr>
+                        <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Loading marks...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : internalMarksRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
+                          No marks found for this exam.
+                        </td>
+                      </tr>
+                    ) : (
+                      internalMarksRows.map((row) => (
+                        <tr key={row.reg} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
+                          <td className="p-4">
+                            <span className="text-sm font-mono text-zinc-700 font-medium">{row.reg}</span>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-sm font-medium text-zinc-800">{row.name}</span>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+                              {row.mark}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Student List Section */}
         {module === "students" && programme && department && batch && (
@@ -1809,7 +2044,8 @@ export default function Reports() {
                     <thead>
                       <tr className="bg-zinc-50">
                         {isEditing && <th className="w-10 p-4"></th>}
-                        <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Register Number</th>
+                        {showAdmNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Admission Number</th>}
+                        {!isEditing && showRegNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Register Number</th>}
                         <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Name</th>
                         {isEditing && <th className="w-24 p-4 text-center text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Actions</th>}
                       </tr>
@@ -1822,18 +2058,23 @@ export default function Reports() {
                               <GripVertical className="text-zinc-300 cursor-grab active:cursor-grabbing" size={18} />
                             </td>
                           )}
-                          <td className="p-4">
+                          {showAdmNoCol && <td className="p-4">
                             {isEditing ? (
                               <input 
                                 value={student.reg}
                                 onChange={(e) => handleStudentChange(idx, "reg", e.target.value)}
                                 className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                placeholder="Reg No"
+                                placeholder="Admission No"
                               />
                             ) : (
-                              <span className="text-sm font-mono text-zinc-600">{student.reg}</span>
+                              <span className="text-sm font-mono text-zinc-600">{student.admNo}</span>
                             )}
-                          </td>
+                          </td>}
+                          {!isEditing && showRegNoCol && (
+                            <td className="p-4">
+                              <span className="text-sm font-mono text-zinc-600">{student.regNo}</span>
+                            </td>
+                          )}
                           <td className="p-4">
                             {isEditing ? (
                               <input 
@@ -2142,13 +2383,15 @@ export default function Reports() {
                     <thead>
                       <tr className="bg-zinc-100/50">
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider w-16 text-center">s.no</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register number</th>
+                        {showAdmNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Admission number</th>}
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">name</th>
+                        {showRegNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register No</th>}
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co1</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co2</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co3</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co4</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co5</th>
+                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-emerald-600 uppercase tracking-wider text-center bg-emerald-50/50">total</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2157,19 +2400,23 @@ export default function Reports() {
                         return (
                           <tr key={student.reg} className="hover:bg-blue-50/30 transition-colors group">
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm text-zinc-500 font-medium">{idx + 1}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.reg}</td>
+                            {showAdmNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.admNo}</td>}
                             <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
+                            {showRegNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.regNo}</td>}
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO1 || 0}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO2 || 0}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO3 || 0}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO4 || 0}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO5 || 0}</td>
+                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30">
+                              {(Number(totals.CO1 || 0) + Number(totals.CO2 || 0) + Number(totals.CO3 || 0) + Number(totals.CO4 || 0) + Number(totals.CO5 || 0))}
+                            </td>
                           </tr>
                         );
                       })}
                       {indirectCoAverages && (
-                        <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={3}>
+                          <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
+                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={1 + (showAdmNoCol ? 1 : 0) + 1 + (showRegNoCol ? 1 : 0)}>
                             CO Average ({indirectCoAverages.totalStudents} Students)
                           </td>
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO1.toFixed(2)}</td>
@@ -2177,6 +2424,9 @@ export default function Reports() {
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO3.toFixed(2)}</td>
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO4.toFixed(2)}</td>
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO5.toFixed(2)}</td>
+                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
+                            {(indirectCoAverages.averages.CO1 + indirectCoAverages.averages.CO2 + indirectCoAverages.averages.CO3 + indirectCoAverages.averages.CO4 + indirectCoAverages.averages.CO5).toFixed(2)}
+                          </td>
                         </tr>
                       )}
                     </tbody>

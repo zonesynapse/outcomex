@@ -124,16 +124,14 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                     >
                       <Eye size={16} />
                     </button>
-                    {enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
-                      <button
-                        type="button"
-                        title="Edit"
-                        onClick={() => onEdit?.(enquiry)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      title="Edit"
+                      onClick={() => onEdit?.(enquiry)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
+                    >
+                      <Edit2 size={16} />
+                    </button>
                     {enquiry.status !== "Application" && enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
                       <button
                         type="button"

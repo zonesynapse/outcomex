@@ -780,6 +780,29 @@ export default function HODDashboard() {
                                     if (!secData[s.reg]) secOrder.push(s.reg);
                                     await setDoc(doc(db, 'students', secDocId), { ...secData, [s.reg]: studentVal, _order: secOrder });
 
+                                    // Write to student_index for dual-ID lookup
+                                    const now = new Date().toISOString();
+                                    await setDoc(doc(db, 'student_index', s.reg), {
+                                      canonicalId: s.reg,
+                                      admissionNo: s.reg,
+                                      regNo: "",
+                                      name: s.name,
+                                      studentDocId: secDocId,
+                                      batch: s.batch,
+                                      _createdAt: now,
+                                      _updatedAt: now
+                                    });
+
+                                    // Update section-level mapping for bulk lookup in MarkEntry
+                                    const sectionIndexRef = doc(db, 'student_section_index', secDocId);
+                                    const sectionIndexSnap = await getDoc(sectionIndexRef);
+                                    const sectionIndexData = sectionIndexSnap.exists() ? sectionIndexSnap.data() : {};
+                                    await setDoc(sectionIndexRef, {
+                                      ...sectionIndexData,
+                                      [s.reg]: { admissionNo: s.reg, regNo: "", name: s.name },
+                                      _updatedAt: now
+                                    });
+
                                     setSectionAssignments(prev => { const n = { ...prev }; delete n[`${s.docId}-${s.reg}`]; return n; });
                                     showToast(`${s.name} assigned to ${sec}`, "success");
                                   } catch (err) {

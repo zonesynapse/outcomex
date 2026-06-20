@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
+import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { Bell, AlertCircle, Loader2, CalendarDays } from "lucide-react";
 
 const sampleNotices = [

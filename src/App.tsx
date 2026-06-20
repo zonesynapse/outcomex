@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "./firebase";
 import Auth from "./pages/Auth";
 import Reports from "./pages/Reports";
 import VisionMission from "./pages/VisionMission";
@@ -59,6 +63,31 @@ import PlacementStudents from "./pages/PlacementStudents";
 import PlacementActivities from "./pages/PlacementActivities";
 
 function RootRedirect() {
+  const [role, setRole] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) { setLoading(false); return; }
+      const snap = await getDoc(doc(db, "users", user.uid));
+      setRole(snap.exists() ? snap.data().role : null);
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-br from-[#f0f0fa] to-[#BBDEFB]">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-[#120c7a]"></div>
+      </div>
+    );
+  }
+
+  if (role === "Student") return <Navigate to="/student/dashboard" replace />;
+  if (role === "HOD") return <Navigate to="/hod-dashboard" replace />;
+  if (role === "Principal") return <Navigate to="/principal-dashboard" replace />;
+  if (role === "Faculty") return <Navigate to="/faculty-dashboard" replace />;
   return <Navigate to="/reports" replace />;
 }
 
@@ -140,7 +169,7 @@ export default function App() {
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />
-        <Route path="/dashboard" element={<Navigate to="/reports" replace />} />
+        <Route path="/dashboard" element={<RootRedirect />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>

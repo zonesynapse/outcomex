@@ -2,17 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../firebase";
 import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { FileText, AlertCircle, Loader2, ChevronDown, Search } from "lucide-react";
+import { FileText, AlertCircle, Loader2, ChevronDown } from "lucide-react";
 import { formatProgDisplay, sanitizeKey } from "../../lib/utils";
-
-const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-function formatDate(ts) {
-  if (!ts) return "-";
-  const d = ts?.toDate ? ts.toDate() : new Date(ts);
-  if (isNaN(d)) return "-";
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
 
 export default function QuestionPapers() {
   const [studentData, setStudentData] = useState(null);
@@ -35,7 +26,10 @@ export default function QuestionPapers() {
   useEffect(() => {
     if (!studentData) return;
     const { programme, department } = studentData;
-    if (!programme || !department) { setLoading(false); return; }
+    if (!programme || !department) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchQPs = async () => {
       try {

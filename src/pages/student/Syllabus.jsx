@@ -36,7 +36,10 @@ export default function Syllabus() {
   useEffect(() => {
     if (!studentData) return;
     const { programme, department, batch } = studentData;
-    if (!programme || !department || !batch) { setLoading(false); return; }
+    if (!programme || !department || !batch) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchSyllabus = async () => {
       try {

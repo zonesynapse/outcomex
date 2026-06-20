@@ -395,10 +395,10 @@ export default function FeeOperations() {
                               {isFirstYearRow ? (
                                 <td className="px-4 py-3 text-sm text-zinc-600 align-middle border border-zinc-200" rowSpan={yearRows}>{yg.academicYear || "—"}</td>
                               ) : null}
+                              <td className="px-4 py-3 text-sm text-zinc-600 border border-zinc-200">{f.semester}</td>
                               {isFirstHeadRow ? (
                                 <td className="px-4 py-3 border border-zinc-200 align-middle" rowSpan={hg.rows.length}><span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[10px] font-bold">{hg.head}</span></td>
                               ) : null}
-                              <td className="px-4 py-3 text-sm text-zinc-600 border border-zinc-200">{f.semester}</td>
                               <td className="px-4 py-3 text-sm text-zinc-600 border border-zinc-200">{f.quota || "All"}</td>
                               <td className="px-4 py-3 text-right text-sm font-black text-zinc-800 border border-zinc-200">₹{(f.amount || 0).toLocaleString()}</td>
                               <td className="px-4 py-3 text-center border border-zinc-200">

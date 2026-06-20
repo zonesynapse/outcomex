@@ -1,31 +1,48 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../firebase";
-import { doc, collection, getDoc, getDocs, query, where } from "firebase/firestore";
+import { doc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { IndianRupee, AlertCircle, Loader2, Wallet, Receipt, Clock } from "lucide-react";
-import { formatBatchDisplay } from "../../lib/utils";
+import { IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2 } from "lucide-react";
+import { formatBatchDisplay, formatProgrammeKey } from "../../lib/utils";
 
 export default function Fees() {
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [feeConfigs, setFeeConfigs] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", mode: "upi" });
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (!user) { setLoading(false); return; }
-      try {
-        const snap = await getDoc(doc(db, "users", user.uid));
-        if (snap.exists()) setStudentData(snap.data());
-      } catch (err) { console.error(err); }
+    let unsubUser = () => {};
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        setLoading(false);
+        setStudentData(null);
+        return;
+      }
+      unsubUser = onSnapshot(doc(db, "users", user.uid), (snap) => {
+        if (snap.exists()) {
+          setStudentData(snap.data());
+        } else {
+          setStudentData(null);
+        }
+      }, (err) => {
+        console.error("User snapshot listen error:", err);
+      });
     });
-    return () => unsub();
+    return () => {
+      unsubAuth();
+      unsubUser();
+    };
   }, []);
 
   useEffect(() => {
     if (!studentData) return;
     const { programme, department, batch } = studentData;
-    if (!programme || !department || !batch) { setLoading(false); return; }
+    if (!programme || !department || !batch) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchData = async () => {
       try {
@@ -35,9 +52,21 @@ export default function Fees() {
         ]);
 
         const configs = [];
+        const normStudentProg = formatProgrammeKey(programme);
+        const normStudentDept = (department || "").trim().toLowerCase();
+        const normStudentBatch = (batch || "").trim().toLowerCase();
+
         feeSnap.forEach((d) => {
           const data = d.data();
-          if (data.programme === programme && data.department === department && data.batch === batch) {
+          const normDataProg = formatProgrammeKey(data.programme);
+          const normDataDept = (data.department || "").trim().toLowerCase();
+          const normDataBatch = (data.batch || "").trim().toLowerCase();
+
+          const isProgMatch = normDataProg && normDataProg === normStudentProg;
+          const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
+          const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
+
+          if (isProgMatch && isDeptMatch && isBatchMatch) {
             configs.push({ id: d.id, ...data });
           }
         });
@@ -62,6 +91,34 @@ export default function Fees() {
 
     fetchData();
   }, [studentData]);
+
+  const groupedFeeConfigs = useMemo(() => {
+    const sorted = [...feeConfigs].sort((a, b) => {
+      const yr = (a.academicYear || '').localeCompare(b.academicYear || '');
+      if (yr) return yr;
+      const semA = a.semester || 'All';
+      const semB = b.semester || 'All';
+      return semA.localeCompare(semB);
+    });
+    const groups = [];
+    let currentYear = null;
+    let currentSem = null;
+    sorted.forEach((cfg) => {
+      const year = cfg.academicYear || '—';
+      const sem = cfg.semester || 'All';
+      if (!currentYear || currentYear.key !== year) {
+        currentSem = null;
+        currentYear = { key: year, academicYear: year, semGroups: [] };
+        groups.push(currentYear);
+      }
+      if (!currentSem || currentSem.key !== sem) {
+        currentSem = { key: sem, semester: sem, rows: [] };
+        currentYear.semGroups.push(currentSem);
+      }
+      currentSem.rows.push(cfg);
+    });
+    return groups;
+  }, [feeConfigs]);
 
   const totalFee = useMemo(() => {
     return feeConfigs.reduce((s, c) => s + (Number(c.amount) || 0), 0);
@@ -128,9 +185,9 @@ export default function Fees() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-          <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+          <div className="bg-[#120c7a] px-6 py-3 flex items-center gap-3">
             <Wallet size={20} className="text-white" />
-            <h2 className="text-white font-bold text-xl">Fee Structure</h2>
+            <h2 className="text-white font-bold text-lg">Fee Structure</h2>
           </div>
           {feeConfigs.length === 0 ? (
             <div className="py-12 text-center">
@@ -139,34 +196,66 @@ export default function Fees() {
             </div>
           ) : (
             <div className="p-6">
+              <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200">
-                    <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Fee Head</th>
-                    <th className="px-4 py-3 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Academic Year</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Sem</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Fee Head</th>
+                    <th className="px-4 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Amount</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {feeConfigs.map((cfg, i) => (
-                    <tr key={i} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 text-sm font-bold text-slate-700">{cfg.head || 'Fee'}</td>
-                      <td className="px-4 py-3 text-right text-sm font-black text-slate-700">{formatCurrency(cfg.amount)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-slate-50 border-t-2 border-slate-300">
-                    <td className="px-4 py-3 text-sm font-black text-slate-800">Total</td>
-                    <td className="px-4 py-3 text-right text-sm font-black text-[#120c7a]">{formatCurrency(totalFee)}</td>
+                <tbody>
+                  {groupedFeeConfigs.flatMap((yearGroup) => {
+                    const totalYearRows = yearGroup.semGroups.reduce((s, sg) => s + sg.rows.length + (sg.rows.length > 1 ? 1 : 0), 0);
+                    let yearRowIdx = 0;
+                    return yearGroup.semGroups.flatMap((semGroup) => {
+                      const isFirstYearRow = yearRowIdx === 0;
+                      const semTotal = semGroup.rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+                      const rows = semGroup.rows.map((cfg, idx) => {
+                        const tr = (
+                          <tr key={cfg.id || idx} className="hover:bg-slate-50 transition-colors">
+                            {isFirstYearRow && idx === 0 ? (
+                              <td className="px-4 py-3 text-xs font-bold text-slate-600 align-top border border-slate-200" rowSpan={totalYearRows}>{yearGroup.academicYear}</td>
+                            ) : null}
+                            {idx === 0 ? (
+                              <td className="px-4 py-3 text-xs font-bold text-slate-600 align-top border border-slate-200" rowSpan={semGroup.rows.length}>{semGroup.semester}</td>
+                            ) : null}
+                            <td className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), mode: "upi" }); }}>{cfg.head || 'Fee'}</td>
+                            <td className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), mode: "upi" }); }}>{formatCurrency(cfg.amount)}</td>
+                          </tr>
+                        );
+                        return tr;
+                      });
+                      if (semGroup.rows.length > 1) {
+                        rows.push(
+                          <tr key={`sem-total-${yearGroup.key}-${semGroup.key}`} className="bg-blue-50/50">
+                            <td className="px-4 py-3 text-[10px] font-bold text-blue-600 text-right border border-slate-200">Sem Total</td>
+                            <td className="px-4 py-3 border border-slate-200" />
+                            <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-slate-200">{formatCurrency(semTotal)}</td>
+                          </tr>
+                        );
+                      }
+                      yearRowIdx += semGroup.rows.length;
+                      return rows;
+                    });
+                  })}
+                  <tr className="bg-slate-50">
+                    <td colSpan={3} className="px-4 py-3 text-sm font-black text-slate-800 border border-slate-200">Total</td>
+                    <td className="px-4 py-3 text-right text-sm font-black text-[#120c7a] border border-slate-200">{formatCurrency(totalFee)}</td>
                   </tr>
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
 
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-          <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+          <div className="bg-[#120c7a] px-6 py-3 flex items-center gap-3">
             <Receipt size={20} className="text-white" />
-            <h2 className="text-white font-bold text-xl">Payment History</h2>
+            <h2 className="text-white font-bold text-lg">Payment History</h2>
           </div>
           {payments.length === 0 ? (
             <div className="py-12 text-center">
@@ -175,6 +264,7 @@ export default function Fees() {
             </div>
           ) : (
             <div className="p-6">
+              <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200">
@@ -203,10 +293,50 @@ export default function Fees() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {payModal.open && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => setPayModal({ ...payModal, open: false })}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+              <h3 className="font-bold text-zinc-800">Pay Fee</h3>
+              <button onClick={() => setPayModal({ ...payModal, open: false })} className="p-2 hover:bg-zinc-100 rounded-xl"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="p-3 bg-zinc-50 rounded-xl">
+                <p className="text-xs text-zinc-500">Fee Head</p>
+                <p className="text-sm font-bold text-zinc-800 mt-0.5">{payModal.feeHead}</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount (₹)</label>
+                <input type="number" value={payModal.amount} onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Mode</label>
+                <select value={payModal.mode} onChange={e => setPayModal({ ...payModal, mode: e.target.value })}
+                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
+                  <option value="upi">UPI</option>
+                  <option value="card">Card</option>
+                  <option value="netbanking">Net Banking</option>
+                  <option value="wallet">Wallet</option>
+                </select>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3">
+              <button onClick={() => setPayModal({ ...payModal, open: false })} className="px-5 py-2.5 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl">Cancel</button>
+              <button onClick={() => { setPayModal({ ...payModal, open: false }); alert("Payment gateway not connected"); }}
+                className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 flex items-center gap-2 shadow-lg shadow-[#120c7a]/20">
+                <CheckCircle2 size={16} /> Pay ₹{Number(payModal.amount).toLocaleString('en-IN')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

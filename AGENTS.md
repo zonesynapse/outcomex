@@ -100,3 +100,70 @@
 - `deriveCOSummaryFromQp` handles `qp.assessment_type === 'Project'`.
 - Parts-loading `useEffect` early-returns when `isAssignmentOrProject` is true.
 - All existing "Exam" and "Activity" functionality unchanged.
+
+---
+
+## Summary of Changes (Student Module — Dual-ID Lookup & Marks)
+
+### Goal
+- Enable dual-ID lookup for students (admission number + register number) across the system
+- Show marks entered by faculty exam-wise per subject in student Marks.jsx
+- Make student module pages mobile-responsive
+
+### Constraints & Preferences
+- Previous batch data (keyed by regNo) must remain completely untouched
+- No re-upload of existing namelists or migration of existing marks data
+- Admission flow (Principal approval → HOD section assign → students collection) stays unchanged
+- MarkEntry.jsx saves marks to both `marks/{docId}` and `co_attainment/{docId}/exams/{examId}` — student Marks.jsx must read correctly from these
+- Students primarily access via mobile — all student pages must be responsive
+
+### Done
+- Added "Total" column to consolidation view table in Reports.jsx (sums CO1–CO5 per student and per average)
+- Created `student_index/{admissionNo}` individual doc written when HOD assigns section (HODDashboard.jsx)
+- Created `student_section_index/{studentDocId}` bulk-lookup doc for section-level mapping (HODDashboard.jsx)
+- MarkEntry.jsx: student loading enriched with regNo from `student_section_index` (read once per section); CSV upload fallback maps regNo → admissionNo for matching; regNo displayed in green parentheses; template/excel download uses regNo when available
+- EnquiryTable.jsx: edit button condition removed entirely — now shown for ALL statuses (no restrictions)
+- FeeOperations.jsx: fixed swapped Sem and Fee Head columns in Fee Structure table body
+- Student Fees.jsx: Fee Structure now shows Academic Year | Sem | Fee Head | Amount columns with grouping (like FeeOperations.jsx), table borders added, Amount header center-aligned
+- Student Fees.jsx: added click-to-pay flow — clicking fee head or amount opens confirm → modal with amount + payment mode → "Payment gateway not connected" alert
+- StudentLayout.jsx: sidebar now shows college logo image instead of GraduationCap icon (matches faculty Layout.jsx)
+- Student pages mobile responsive: added `overflow-x-auto` to both tables in Fees.jsx; added `md:px-8` / `md:p-8` to Dashboard.jsx and Profile.jsx outer containers
+- Upload.jsx old data (keyed by regNo) shows in Register Number column only — Admission Number column hidden until data exists
+- New admission flow data shows Admission Number column — Register Number column hidden until regNo is assigned
+- **Student Marks.jsx**: Rewritten to read from `marks` collection directly — fetches marks per exam per subject entered by faculty in MarkEntry.jsx. Groups by subject, shows exam-wise table with mark types (CO Wise, Overall, Assignment, Internal) each rendered with appropriate detail (CO scores, grade, question-level marks, Part A/B/C). Handles absences, sorting, loading/empty states. (`src/pages/student/Marks.jsx`)
+
+### In Progress
+*(none)*
+
+### Blocked
+- RegNo assignment page (future) — needs to be built to map admissionNo → regNo and update both `student_index` and `student_section_index`
+
+### Key Decisions
+- `student_index/{admissionNo}` stores `{ canonicalId, admissionNo, regNo: "", name, studentDocId, batch }` — one doc per admission number
+- `student_section_index/{studentDocId}` stores all students in a section as fields `{ admissionNo: { admissionNo, regNo, name } }` — single doc per section for efficient bulk lookup
+- When regNo is assigned later, a second `student_index/{regNo}` doc will be created pointing to the same `canonicalId`, plus `student_section_index` updated with the regNo value
+- MarkEntry direct string-match fallback: `const targetReg = newMarksData[regno] ? regno : (sectionIndexLookup[regno] || regno)` — tries exact key first, then index
+- Reports.jsx column visibility: `showAdmNoCol = students.some(s => s.admNo)` and `showRegNoCol = students.some(s => s.regNo)` — column headers and cells only render when at least one student has a value
+- For old Upload.jsx data: `admNo=""` (Admission Number column hidden), `regNo=student.reg` (key treated as register number)
+- For new admission data: `admNo=student.reg` (Admission Number column shown), `regNo` from index or empty (Register Number column hidden until assigned)
+- Stats cards in AdmissionEnquiries are computed by `getEnquiriesStats()` which runs Firestore `getCountFromServer` queries on the `status` field — changing a student's status automatically reverses the counts
+
+### Next Steps
+1. Build RegNo assignment page (admin uploads admissionNo → regNo mapping CSV, updates both indexes)
+2. Update MarkEntry.jsx to add a search input that queries `student_index` for dual-ID lookup
+
+### Relevant Files
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx`: Section assign handler writes `student_index/{s.reg}` and `student_section_index/{secDocId}` (lines 783-804)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx`: Student loading enrichment (line 749-763), CSV upload fallback (line 167-184), regNo display in table, template/excel download uses regNo, saves to `marks` and `co_attainment` collections
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/components/EnquiryTable.jsx`: Edit button shown for all statuses (no condition)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/FeeOperations.jsx`: Fee Structure table column order fixed (Sem before Fee Head)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Fees.jsx`: Fee Structure grouped by Academic Year → Sem, table with borders, click-to-pay modal, overflow-x-auto on both tables
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/components/student/StudentLayout.jsx`: Sidebar shows college logo image (same as faculty sidebar)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Marks.jsx`: Reads from `marks` collection — shows marks exam-wise per subject from faculty MarkEntry data
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Dashboard.jsx`: Added `md:px-8` responsive padding
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Profile.jsx`: Added `md:px-8`, `md:p-8` responsive padding
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdmissionConfirmation.jsx`: "Principal Approval Required" section replaced with "Waiting for Principal Approval" message + Back to List only (lines 1033-1046)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx`: Student loading enriched with `admNo` + `regNo` (lines 722-787); conditional column visibility (showAdmNoCol/showRegNoCol computed at line 66); all tables and CSV download updated
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/Upload.jsx`: Unchanged — old CSV uploads use Exam No as the key, which Reports.jsx now treats as register number (no admission number)
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx`: Has Admit/Reject buttons — correct location for these actions
+- `/Users/ckcollege/Downloads/OBE/outcomex/src/services/enquiryService.js`: `getEnquiriesStats()` at line 421 — queries `getCountFromServer` for each status, stats reverse automatically when status changes

@@ -1030,28 +1030,12 @@ export default function AdmissionConfirmation() {
                   <Clock size={22} />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-bold text-zinc-900">Principal Approval Required</h3>
+                  <h3 className="text-lg font-bold text-zinc-900">Waiting for Principal Approval</h3>
                   <p className="mt-1 text-sm text-zinc-500">
-                    Review the applicant's details and approve or reject this admission request.
+                    This application has been forwarded to the Principal for approval. The Admit/Reject decision can only be made from the Principal Dashboard.
                   </p>
 
                   <div className="mt-6 flex items-center gap-3">
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={handlePrincipalApprove}
-                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md disabled:opacity-50"
-                    >
-                      {saving ? "Processing..." : <><CheckCircle2 size={16} /> Admit</>}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => setShowReject(true)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-red-700 hover:shadow-md disabled:opacity-50"
-                    >
-                      <XCircle size={16} /> Reject
-                    </button>
                     <button
                       type="button"
                       onClick={() => navigate("/admissions/confirm")}

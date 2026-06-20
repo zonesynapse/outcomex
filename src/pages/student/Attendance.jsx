@@ -28,7 +28,10 @@ export default function Attendance() {
   useEffect(() => {
     if (!studentData) return;
     const { regNo, programme, department, batch } = studentData;
-    if (!regNo || !programme || !department || !batch) { setLoading(false); return; }
+    if (!regNo || !programme || !department || !batch) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchAttendance = async () => {
       try {

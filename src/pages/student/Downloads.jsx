@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { Download, AlertCircle, Loader2, FileText, ScrollText, Award, FileCheck } from "lucide-react";
 
 const downloadItems = [

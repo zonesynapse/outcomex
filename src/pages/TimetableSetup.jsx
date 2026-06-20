@@ -383,7 +383,11 @@ export default function TimetableSetup() {
                       <input value={numBreaks} onChange={e => setNumBreaks(e.target.value)} type="number" placeholder="2" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a]" />
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Lunch (min)</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Lunch After Period</label>
+                      <input value={lunchAfterPeriod} onChange={e => setLunchAfterPeriod(e.target.value)} type="number" placeholder="4" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a]" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Lunch Duration (min)</label>
                       <input value={lunchDuration} onChange={e => setLunchDuration(e.target.value)} type="number" placeholder="45" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a]" />
                     </div>
                   </div>

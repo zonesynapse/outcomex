@@ -50,48 +50,40 @@ export default function MarkEntry() {
   const [isUniversityExam, setIsUniversityExam] = useState(false);
   const [isIndirectAssessment, setIsIndirectAssessment] = useState(false);
   const [userRole, setUserRole] = useState(null);
-  const [assignedProgs, setAssignedProgs] = useState([]);
-  const [assignedDepts, setAssignedDepts] = useState([]);
+  const [userProgramme, setUserProgramme] = useState("");
+  const [userDepartment, setUserDepartment] = useState("");
+  const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
 
   useEffect(() => {
-    const user = auth.currentUser;
-    if (user) {
-      const userRef = doc(db, 'users', user.uid); // Firestore doc reference
-      getDoc(userRef).then(snapshot => { // Use getDoc for Firestore
-        if (snapshot.exists()) {
-          const userData = snapshot.data(); // Use .data() for Firestore documents
-          setUserRole(userData.role);
-          if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments'); // Firestore collection reference
-            const unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => { // Use onSnapshot for real-time updates
-              if (!assignSnap.empty) {
-                const progs = new Set();
-                const depts = new Set();
-                assignSnap.forEach(d => {
-                  const assignmentData = d.data();
-                  // Check if this faculty member has any assignments in this document
-                  if (assignmentData[user.uid]) {
-                    // doc.id format: progKey_deptKey_batchKey_ayKey_semNum[_section]
-                    // Use regex to correctly handle progKeys with underscores (e.g. B_Tech)
-                    const match = d.id.match(/^(.+)_([A-Z]+)_(\d{4}-\d{4})_(\d{4}-\d{4})_(\d+)(?:_(.+))?$/);
-                    if (match) {
-                      progs.add(match[1]);       // progKey
-                      depts.add(match[2]);       // deptKey
-                    }
-                  }
-                });
-                setAssignedProgs(Array.from(progs));
-                setAssignedDepts(Array.from(depts));
-              } else {
-                setAssignedProgs([]);
-                setAssignedDepts([]);
+    if (!auth.currentUser) return;
+    let unsubscribeAssignments = null;
+    const userRef = doc(db, 'users', auth.currentUser.uid);
+    getDoc(userRef).then(snapshot => {
+      if (snapshot.exists()) {
+        const userData = snapshot.data();
+        setUserRole(userData.role);
+        setUserProgramme(userData.programme || "");
+        setUserDepartment(userData.department || "");
+        if (userData.role === 'Faculty' || userData.role === 'HOD') {
+          const assignmentsRef = collection(db, 'subject_assignments');
+          unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
+            const prefixes = [];
+            assignSnap.forEach(d => {
+              if (d.data()?.[auth.currentUser.uid]) {
+                const yearMatch = d.id.match(/\d{4}-\d{4}/);
+                if (yearMatch && yearMatch.index >= 2) {
+                  prefixes.push(d.id.slice(0, yearMatch.index - 1));
+                }
               }
             });
-            return () => unsubscribeAssignments();
-          }
+            setFacultyAssignPrefixes(prefixes);
+          });
         }
-      });
-    }
+      }
+    });
+    return () => {
+      if (unsubscribeAssignments) unsubscribeAssignments();
+    };
   }, []);
 
   useEffect(() => {
@@ -140,7 +132,7 @@ export default function MarkEntry() {
     }
 
     const csvData = students.map(s => ({
-      "Register Number": s.reg,
+      "Register Number": s.regNo || s.reg,
       "Name": s.name,
       "CO1": "",
       "CO2": "",
@@ -162,7 +154,7 @@ export default function MarkEntry() {
     showToastMsg("Template downloaded! Fill the CO marks (max 3) and upload.", "success");
   };
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -170,6 +162,25 @@ export default function MarkEntry() {
     if (!subject || !exam) {
       showToastMsg("Please select subject and exam first!", "error");
       return;
+    }
+
+    // Pre-load student_section_index for dual-ID lookup (admissionNo ↔ regNo)
+    let sectionIndexLookup = {};
+    try {
+      const progKey = formatProgrammeKey(programme);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const ssDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+      const ssSnap = await getDoc(doc(db, 'student_section_index', ssDocId));
+      if (ssSnap.exists()) {
+        const idxData = ssSnap.data();
+        Object.entries(idxData).forEach(([key, val]) => {
+          if (key.startsWith('_')) return;
+          sectionIndexLookup[key] = key;
+          if (val?.regNo) sectionIndexLookup[val.regNo] = key;
+        });
+      }
+    } catch (e) {
+      // Non-critical — direct match still works
     }
 
     Papa.parse(file, {
@@ -193,25 +204,31 @@ export default function MarkEntry() {
 
         const newMarksData = { ...marksData };
         let matchCount = 0;
+        let fallbackCount = 0;
 
         data.forEach(row => {
           const regno = String(row[regCol]).trim();
-          if (newMarksData[regno]) {
+          // Try direct match first, then fallback to section index
+          const targetReg = newMarksData[regno] ? regno : (sectionIndexLookup[regno] || regno);
+          if (newMarksData[targetReg]) {
             matchCount++;
+            if (targetReg !== regno) fallbackCount++;
             coCols.forEach(col => {
               const coKey = col.toUpperCase().trim();
               const val = row[col];
               if (val !== undefined && val !== '') {
-                newMarksData[regno][coKey] = Number(val);
+                newMarksData[targetReg][coKey] = Number(val);
               }
             });
             // Also calculate total if needed, although for indirect it's often just CO marks
-            newMarksData[regno].total = calculateTotal(regno, newMarksData);
+            newMarksData[targetReg].total = calculateTotal(targetReg, newMarksData);
           }
         });
 
         setMarksData(newMarksData);
-        showToastMsg(`Successfully updated marks for ${matchCount} students!`, "success");
+        let msg = `Successfully updated marks for ${matchCount} students!`;
+        if (fallbackCount > 0) msg += ` (${fallbackCount} matched via alternate ID)`;
+        showToastMsg(msg, "success");
         if (fileInputRef.current) fileInputRef.current.value = '';
       },
       error: (err) => {
@@ -299,15 +316,53 @@ export default function MarkEntry() {
     setAvailableBatches([...new Set(qpBatches)]);
   }, [programme, department, allQPs]);
 
+  const derivedProgs = useMemo(() => {
+    if (!facultyAssignPrefixes.length) return [];
+    const progs = new Set();
+    Object.keys(PROGRAMME_DEPARTMENTS).forEach(prog => {
+      const progKey = formatProgrammeKey(prog);
+      if (facultyAssignPrefixes.some(p => p.startsWith(progKey))) {
+        progs.add(progKey);
+      }
+    });
+    return Array.from(progs);
+  }, [facultyAssignPrefixes, PROGRAMME_DEPARTMENTS]);
+
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole !== 'Faculty') return true;
-    return assignedProgs.includes(formatProgrammeKey(prog));
+    if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
+    const progKey = formatProgrammeKey(prog);
+    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
+    return derivedProgs.includes(progKey);
   });
 
-  const filteredDepartments = (PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || []).filter(dept => {
-    if (userRole !== 'Faculty') return true;
-    return assignedDepts.includes(sanitizeKey(dept));
-  });
+  const derivedDepts = useMemo(() => {
+    if (!facultyAssignPrefixes.length || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const depts = new Set();
+    facultyAssignPrefixes.forEach(prefix => {
+      if (prefix.startsWith(progKey)) {
+        depts.add(prefix.slice(progKey.length).trim());
+      }
+    });
+    return Array.from(depts);
+  }, [facultyAssignPrefixes, programme, PROGRAMME_DEPARTMENTS]);
+
+  const filteredDepartments = useMemo(() => {
+    const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
+    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+    const progKey = formatProgrammeKey(programme);
+    const allowedDepts = new Set();
+    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey && userDepartment) {
+      allowedDepts.add(sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim());
+    }
+    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
+    normalizedDepts.forEach(d => allowedDepts.add(d));
+
+    return depts.filter(dept => {
+      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
+      return Array.from(allowedDepts).some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    });
+  }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS]);
 
   // Filter Academic Years based on batch and QPs
   useEffect(() => {
@@ -691,6 +746,22 @@ export default function MarkEntry() {
           setEnrolledRegs({});
         }
 
+        // Enrich studentList with regNo from student_section_index
+        try {
+          const sectionIndexRef = doc(db, 'student_section_index', studentDocId);
+          const sectionIndexSnap = await getDoc(sectionIndexRef);
+          if (sectionIndexSnap.exists()) {
+            const sectionIndexData = sectionIndexSnap.data();
+            studentList = studentList.map(s => ({
+              ...s,
+              regNo: sectionIndexData[s.reg]?.regNo || ""
+            }));
+            setStudents(studentList);
+          }
+        } catch (e) {
+          // Non-critical — index may not exist yet
+        }
+
         const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
           .map(sanitizeKey)
           .join('_') + (section ? `_${sanitizeKey(section)}` : '');
@@ -918,6 +989,7 @@ export default function MarkEntry() {
       .map(sanitizeKey)
       .join('_') + (section ? `_${sanitizeKey(section)}` : '');
     
+    const matchedAvail = availableExams.find(e => e.value === exam);
     const meta = {
       programme,
       department,
@@ -926,6 +998,7 @@ export default function MarkEntry() {
       semester_label: semester,
       subject,
       exam,
+      exam_name: matchedAvail?.text || exam,
       mark_type: markType,
       is_university: isUniversityExam,
       entry_mode: isUniversityExam ? markType : 'CO Wise',
@@ -1155,7 +1228,7 @@ export default function MarkEntry() {
     students.forEach(s => {
       const data = marksData[s.reg] || {};
       const isAbsent = data.absent;
-      const row = [s.reg, s.name, isAbsent ? "AB" : ""];
+      const row = [s.regNo || s.reg, s.name, isAbsent ? "AB" : ""];
       
       if (isOverall) {
         row.push(isAbsent ? "AB" : (data.grade || ""));
@@ -1654,7 +1727,10 @@ export default function MarkEntry() {
                     
                     return (
                       <tr key={s.reg} className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${isAbsent ? 'bg-slate-50/50' : ''}`}>
-                        <td className={`px-6 py-3 text-sm font-mono text-slate-600 tabular-nums border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.reg}</td>
+                        <td className={`px-6 py-3 text-sm font-mono text-slate-600 tabular-nums border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
+                          {s.reg}
+                          {s.regNo && <span className="ml-2 text-[10px] text-emerald-600 font-bold">({s.regNo})</span>}
+                        </td>
                         <td className={`px-6 py-3 text-sm font-medium text-slate-800 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.name}</td>
                         {markType !== 'Assignment' && (
                           <td className="px-6 py-3 text-center border-r border-slate-50">

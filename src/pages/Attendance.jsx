@@ -50,6 +50,9 @@ export default function Attendance() {
 
   const [currentUid, setCurrentUid] = useState(null);
   const [userRole, setUserRole] = useState(null);
+  const [userProgramme, setUserProgramme] = useState("");
+  const [userDepartment, setUserDepartment] = useState("");
+  const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
 
   // Filter States
   const [programme, setProgramme] = useState("");
@@ -77,11 +80,41 @@ export default function Attendance() {
       if (user) {
         setCurrentUid(user.uid);
         const snap = await getDoc(doc(db, "users", user.uid));
-        if (snap.exists()) setUserRole(snap.data().role);
+        if (snap.exists()) {
+          const userData = snap.data();
+          setUserRole(userData.role);
+          setUserProgramme(userData.programme || "");
+          setUserDepartment(userData.department || "");
+        }
       }
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (!currentUid || !userRole) return;
+    let unsubscribeAssignments = null;
+    if (userRole === 'Faculty' || userRole === 'HOD') {
+      const assignmentsRef = collection(db, "subject_assignments");
+      unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
+        const prefixes = [];
+        assignSnap.forEach(d => {
+          if (d.data()?.[currentUid]) {
+            const yearMatch = d.id.match(/\d{4}-\d{4}/);
+            if (yearMatch && yearMatch.index >= 2) {
+              prefixes.push(d.id.slice(0, yearMatch.index - 1));
+            }
+          }
+        });
+        setFacultyAssignPrefixes(prefixes);
+      }, (error) => {
+        console.error('[Attendance] subject_assignments listener error:', error);
+      });
+    }
+    return () => {
+      if (unsubscribeAssignments) unsubscribeAssignments();
+    };
+  }, [currentUid, userRole]);
 
   // Data States
   const [attendanceData, setAttendanceData] = useState(null);
@@ -89,6 +122,56 @@ export default function Attendance() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+
+  const derivedProgs = useMemo(() => {
+    if (!facultyAssignPrefixes.length) return [];
+    const progs = new Set();
+    Object.keys(PROGRAMME_DEPARTMENTS).forEach(prog => {
+      const progKey = formatProgrammeKey(prog);
+      if (facultyAssignPrefixes.some(p => p.startsWith(progKey))) {
+        progs.add(progKey);
+      }
+    });
+    return Array.from(progs);
+  }, [facultyAssignPrefixes, PROGRAMME_DEPARTMENTS]);
+
+  const filteredProgrammes = useMemo(() => {
+    return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
+      if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
+      const progKey = formatProgrammeKey(prog);
+      if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
+      return derivedProgs.includes(progKey);
+    });
+  }, [userRole, userProgramme, derivedProgs, PROGRAMME_DEPARTMENTS]);
+
+  const derivedDepts = useMemo(() => {
+    if (!facultyAssignPrefixes.length || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const depts = new Set();
+    facultyAssignPrefixes.forEach(prefix => {
+      if (prefix.startsWith(progKey)) {
+        depts.add(prefix.slice(progKey.length).trim());
+      }
+    });
+    return Array.from(depts);
+  }, [facultyAssignPrefixes, programme]);
+
+  const filteredDepartments = useMemo(() => {
+    const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
+    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+    const progKey = formatProgrammeKey(programme);
+    const allowedDepts = new Set();
+    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey && userDepartment) {
+      allowedDepts.add(sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim());
+    }
+    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
+    normalizedDepts.forEach(d => allowedDepts.add(d));
+
+    return depts.filter(dept => {
+      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
+      return Array.from(allowedDepts).some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    });
+  }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS]);
 
   const batches = useMemo(() => {
     const progKey = formatProgrammeKey(programme);
@@ -430,14 +513,14 @@ export default function Attendance() {
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Programme</label>
               <select value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(""); setSubject(""); setSection(""); }} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium">
                 <option value="">Select</option>
-                {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
+                {filteredProgrammes.map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
               <select value={department} onChange={e => { setDepartment(e.target.value); setSubject(""); setSection(""); }} disabled={!programme} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50">
                 <option value="">Select</option>
-                {programme && PROGRAMME_DEPARTMENTS[programme].map(d => <option key={d} value={d}>{d}</option>)}
+                {programme && filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">

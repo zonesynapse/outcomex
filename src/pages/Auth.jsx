@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { 
   signInWithEmailAndPassword, 
@@ -10,10 +10,11 @@ import {
   signOut,
   onAuthStateChanged
 } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { Loader2, AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
+import { useBatches } from "../hooks/useBatches";
 
 import { formatProgDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
 
@@ -83,8 +84,18 @@ export default function Auth() {
 
   const [studentRegNo, setStudentRegNo] = useState("");
   const [studentName, setStudentName] = useState("");
+  const [studentProgramme, setStudentProgramme] = useState("");
+  const [studentBatch, setStudentBatch] = useState("");
+  const [studentDepartment, setStudentDepartment] = useState("unknown");
+  const [matchingStatus, setMatchingStatus] = useState("");
   
-  const { departments: PROGRAMME_DEPARTMENTS } = useDepartments();
+  const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
+  const { getActiveBatches, batchStatus } = useBatches(durations);
+
+  const activeStudentBatches = useMemo(() => {
+    if (!studentProgramme) return [];
+    return getActiveBatches(formatProgrammeKey(studentProgramme));
+  }, [studentProgramme, getActiveBatches]);
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
   const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
   
@@ -100,6 +111,8 @@ export default function Auth() {
     setMessage("");
   }, [location.pathname]);
 
+
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -109,6 +122,12 @@ export default function Auth() {
         const role = snap.data().role;
         if (role === "Student") {
           navigate("/student/dashboard", { replace: true });
+        } else if (role === "HOD") {
+          navigate("/hod-dashboard", { replace: true });
+        } else if (role === "Principal") {
+          navigate("/principal-dashboard", { replace: true });
+        } else if (role === "Faculty") {
+          navigate("/faculty-dashboard", { replace: true });
         } else {
           navigate("/reports", { replace: true });
         }
@@ -172,6 +191,12 @@ export default function Auth() {
       setIsNavigating(true);
       if (userProfile.role === "Student") {
         navigate("/student/dashboard");
+      } else if (userProfile.role === "HOD") {
+        navigate("/hod-dashboard");
+      } else if (userProfile.role === "Principal") {
+        navigate("/principal-dashboard");
+      } else if (userProfile.role === "Faculty") {
+        navigate("/faculty-dashboard");
       } else {
         navigate("/reports");
       }
@@ -193,16 +218,30 @@ export default function Auth() {
     setError("");
 
     if (regRole === "student") {
-      const sanitizedRegNo = sanitizeText(studentRegNo, 50);
-      const sanitizedSName = sanitizeText(studentName, 100);
-      if (!sanitizedRegNo) { setError("Register Number is required."); return; }
-      if (!sanitizedSName) { setError("Student name is required."); return; }
+      const sanitizedRegNo = studentRegNo.trim();
+      const sanitizedSName = ""; // Empty initially, will auto-fetch on post-login StudentLayout load
+      const trimmedEmail = regEmail.trim();
+
+      if (!studentProgramme) { setError("Programme is required."); return; }
+      if (!studentBatch) { setError("Batch is required."); return; }
+      if (!sanitizedRegNo) { setError("Reg No./ Admission No. is required."); return; }
+      if (!trimmedEmail) { setError("Email is required."); return; }
+      if (!isValidEmail(trimmedEmail)) { setError("Please enter a valid email address."); return; }
       if (regPassword.length < 6) { setError("Password must be at least 6 characters."); return; }
       if (regPassword.length > 128) { setError("Password is too long."); return; }
 
       setLoading(true);
       try {
-        const studentEmail = `${sanitizedRegNo.toLowerCase()}@student.ckcet.edu`;
+        // Check if register number is already taken by another account
+        const existingUsersQuery = query(collection(db, "users"), where("regNo", "==", sanitizedRegNo));
+        const existingUsersSnap = await getDocs(existingUsersQuery);
+        if (!existingUsersSnap.empty) {
+          setError("This Reg No./ Admission No. is already registered. Please login.");
+          setLoading(false);
+          return;
+        }
+
+        const studentEmail = trimmedEmail;
 
         // Step 1: Create auth user first
         const userCredential = await createUserWithEmailAndPassword(auth, studentEmail, regPassword);
@@ -216,44 +255,20 @@ export default function Auth() {
           regNo: sanitizedRegNo,
           studentName: sanitizedSName,
           displayName: sanitizedSName,
-          programme: "unknown",
-          department: "unknown",
-          batch: "unknown",
+          programme: studentProgramme,
+          department: studentDepartment || "unknown",
+          batch: studentBatch,
           role: "Student",
           isApproved: true,
           createdAt: new Date().toISOString()
         }, { merge: true });
-
-        // Step 3: Now read students collection (user is auth'd + approved)
-        let matchedDocId = "";
-        const studentsSnap = await getDocs(collection(db, "students"));
-        for (const docSnap of studentsSnap.docs) {
-          const data = docSnap.data();
-          if (data[sanitizedRegNo]) {
-            matchedDocId = docSnap.id;
-            break;
-          }
-        }
-
-        if (matchedDocId) {
-          // Extract batch, programme, department from doc ID
-          const parts = matchedDocId.split("_");
-          const batchRaw = parts[0];
-          const progKey = parts[1];
-          const dept = parts[2];
-          await setDoc(doc(db, "users", user.uid), {
-            programme: progKey,
-            department: dept,
-            batch: batchRaw,
-          }, { merge: true });
-        }
 
         setIsNavigating(true);
         navigate("/student/dashboard");
       } catch (err) {
         console.error(err);
         if (err.code === 'auth/email-already-in-use') {
-          setError("This Register Number is already registered. Please login.");
+          setError("This Email is already registered. Please login or use a different email.");
         } else {
           setError(err.message || "Failed to create account.");
         }
@@ -490,7 +505,7 @@ export default function Auth() {
             <button type="submit" disabled={loading} className="w-full h-12 bg-[#120c7a] rounded-full shadow-[0_0_10px_rgba(0,0,0,0.1)] border-none cursor-pointer text-base text-white font-semibold hover:bg-blue-600 transition-all flex items-center justify-center gap-2">
               {loading ? <Loader2 className="animate-spin" size={20} /> : "Login"}
             </button>
-            <p className="mt-5 text-[10px] text-zinc-400">Students: Use your Register Number with @student.ckcet.edu (e.g. 420722104001@student.ckcet.edu)</p>
+            <p className="mt-5 text-[10px] text-zinc-400">Students: Use your Reg No. / Admission No. with @student.ckcet.edu (e.g. 420722104001@student.ckcet.edu)</p>
           </form>
         </div>
 
@@ -517,11 +532,42 @@ export default function Auth() {
 
             {regRole === "student" ? (
               <div className="space-y-4 mb-4">
-                <div className="relative">
-                  <input type="text" placeholder="Register Number" maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="relative">
+                    <select
+                      value={studentProgramme}
+                      onChange={(e) => {
+                        setStudentProgramme(e.target.value);
+                        setStudentBatch("");
+                      }}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
+                      required
+                    >
+                      <option value="">Programme</option>
+                      {Object.keys(PROGRAMME_DEPARTMENTS).map(prog => (
+                        <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
+                  <div className="relative">
+                    <select
+                      value={studentBatch}
+                      onChange={(e) => setStudentBatch(e.target.value)}
+                      disabled={!studentProgramme}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
+                      required
+                    >
+                      <option value="">Batch</option>
+                      {activeStudentBatches.map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
                 </div>
                 <div className="relative">
-                  <input type="text" placeholder="Full Name" maxLength="100" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentName} onChange={e => setStudentName(e.target.value)} required />
+                  <input type="text" placeholder="Reg No. / Admission No." maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
                 </div>
               </div>
             ) : (
@@ -553,7 +599,7 @@ export default function Auth() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="relative">
                 <input
                   type="text"
@@ -631,7 +677,7 @@ export default function Auth() {
             </>)}
 
             <div className="relative mb-4">
-              <input type="email" placeholder={regRole === "student" ? "Email (optional)" : "Email"} maxLength="254" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regEmail} onChange={e => setRegEmail(e.target.value)} required={regRole !== "student"} />
+              <input type="email" placeholder="Email" maxLength="254" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regEmail} onChange={e => setRegEmail(e.target.value)} required />
             </div>
 
             <div className="relative mb-6">

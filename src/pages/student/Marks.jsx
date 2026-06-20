@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../firebase";
 import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -9,10 +9,16 @@ const sanitizeKey = (key) => {
   return String(key).replace(/[.#$[\]]/g, '_');
 };
 
+const formatExamName = (exam, markType) => {
+  if (!exam) return markType || "Exam";
+  const name = exam.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return markType ? `${name} (${markType})` : name;
+};
+
 export default function Marks() {
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [examResults, setExamResults] = useState([]);
+  const [marksList, setMarksList] = useState([]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -28,14 +34,17 @@ export default function Marks() {
   useEffect(() => {
     if (!studentData) return;
     const { regNo, programme, department, batch } = studentData;
-    if (!regNo || !programme || !department || !batch) { setLoading(false); return; }
+    if (!regNo || !programme || !department || !batch) {
+      setTimeout(() => setLoading(false), 0);
+      return;
+    }
 
     const fetchMarks = async () => {
       try {
         const progKey = sanitizeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
-        const snapshot = await getDocs(collection(db, "co_attainment"));
+        const snapshot = await getDocs(collection(db, "marks"));
         const results = [];
 
         for (const docSnap of snapshot.docs) {
@@ -43,68 +52,82 @@ export default function Marks() {
           if (!id.startsWith(`${batchKey}_${progKey}_${deptKey}`)) continue;
 
           const data = docSnap.data();
+          const meta = data._meta || {};
+          const studentMarks = data.students?.[regNo];
+          if (!studentMarks) continue;
 
-          if (data.students && data.co_max_marks) {
-            const studentMarks = data.students[regNo];
-            if (studentMarks) {
-              const coEntries = Object.entries(data.co_max_marks);
-              const cos = coEntries.map(([co]) => co);
-              const maxMarks = coEntries.reduce((acc, [co, max]) => ({ ...acc, [co]: max }), {});
-              const scoredMarks = cos.reduce((acc, co) => ({ ...acc, [co]: studentMarks[co] || 0 }), {});
-              const totalScored = cos.reduce((s, co) => s + (scoredMarks[co] || 0), 0);
-              const totalMax = cos.reduce((s, co) => s + (maxMarks[co] || 0), 0);
+          const totalScored = studentMarks.total || 0;
+          const isAbsent = !!studentMarks.absent;
 
-              results.push({
-                docId: id,
-                meta: data._meta || {},
-                cos,
-                maxMarks,
-                scoredMarks,
-                totalScored,
-                totalMax,
-                subject: data._meta?.subject || id.split('_').slice(3).join('_'),
-              });
-            }
-          }
-
-          if (data.exams) {
-            const examEntries = Object.entries(data.exams);
-            for (const [examKey, examData] of examEntries) {
-              if (examData.students && examData.co_max_marks) {
-                const studentMarks = examData.students[regNo];
-                if (studentMarks) {
-                  const coEntries = Object.entries(examData.co_max_marks);
-                  const cos = coEntries.map(([co]) => co);
-                  const maxMarks = coEntries.reduce((acc, [co, max]) => ({ ...acc, [co]: max }), {});
-                  const scoredMarks = cos.reduce((acc, co) => ({ ...acc, [co]: studentMarks[co] || 0 }), {});
-                  const totalScored = cos.reduce((s, co) => s + (scoredMarks[co] || 0), 0);
-                  const totalMax = cos.reduce((s, co) => s + (maxMarks[co] || 0), 0);
-
-                  results.push({
-                    docId: id,
-                    examKey,
-                    meta: examData._meta || {},
-                    cos,
-                    maxMarks,
-                    scoredMarks,
-                    totalScored,
-                    totalMax,
-                    subject: examData._meta?.subject || data._meta?.subject || id.split('_').slice(3).join('_'),
-                    examName: examData._meta?.exam || examKey,
-                  });
-                }
-              }
-            }
-          }
+          results.push({
+            docId: id,
+            subject: meta.subject || id.split('_').slice(3, 5).join('_'),
+            exam: meta.exam_name || meta.exam || '',
+            markType: meta.mark_type || meta.entry_mode || '',
+            academicYear: meta.academic_year || '',
+            semester: meta.semester_label || '',
+            isUniversity: !!meta.is_university,
+            marks: studentMarks,
+            totalScored,
+            isAbsent,
+          });
         }
 
-        setExamResults(results);
+        setMarksList(results);
       } catch (err) { console.error(err); }
       setLoading(false);
     };
 
     fetchMarks();
   }, [studentData]);
+
+  const grouped = useMemo(() => {
+    const map = {};
+    marksList.forEach((r) => {
+      const key = r.subject;
+      if (!map[key]) map[key] = { subject: key, exams: [] };
+      map[key].exams.push(r);
+    });
+    Object.values(map).forEach(g => {
+      g.exams.sort((a, b) => (a.exam || '').localeCompare(b.exam || ''));
+    });
+    return Object.values(map);
+  }, [marksList]);
+
+  const getExamDetails = (exam) => {
+    const { marks, markType, isAbsent } = exam;
+    if (isAbsent) return { label: "Absent", value: "AB" };
+
+    if (markType === "CO Wise" || markType === "CO wise") {
+      const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].filter(co => marks[co] !== undefined && marks[co] !== "");
+      const total = cos.reduce((s, co) => s + (Number(marks[co]) || 0), 0);
+      return { label: `CO Total (${cos.length} COs)`, value: total };
+    }
+
+    if (markType === "Overall") {
+      return { label: "Mark", value: marks.overall || marks.total || 0, grade: marks.grade, gradePoint: marks.gradePoint };
+    }
+
+    if (markType === "Assignment") {
+      const qMarks = Object.values(marks.assignment || {}).filter(m => m !== "").map(Number);
+      const total = qMarks.reduce((s, m) => s + (isNaN(m) ? 0 : m), 0);
+      return { label: `Total (${qMarks.length} Qs)`, value: total };
+    }
+
+    // Internal / default: Part A + B + C
+    const partATotal = Object.values(marks.partA || {}).reduce((s, m) => s + (Number(m) || 0), 0);
+    const partBTotal = Object.values(marks.partB || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
+    const partCTotal = Object.values(marks.partC || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
+    const total = Math.min(partATotal + partBTotal + partCTotal, 100);
+    return { label: "Total", value: total };
+  };
+
+  const getCOScores = (exam) => {
+    const { marks } = exam;
+    return ['CO1', 'CO2', 'CO3', 'CO4', 'CO5']
+      .filter(co => marks[co] !== undefined && marks[co] !== "")
+      .map(co => ({ co, value: Number(marks[co]) || 0 }));
+  };
 
   if (loading) {
     return (
@@ -122,18 +145,6 @@ export default function Marks() {
       </div>
     );
   }
-
-  const groupBySubject = (results) => {
-    const map = {};
-    results.forEach((r) => {
-      const key = r.subject;
-      if (!map[key]) map[key] = { subject: key, exams: [] };
-      map[key].exams.push(r);
-    });
-    return Object.values(map);
-  };
-
-  const grouped = groupBySubject(examResults);
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
@@ -159,49 +170,132 @@ export default function Marks() {
               <h2 className="text-white font-bold text-xl">{group.subject}</h2>
             </div>
             <div className="p-6 space-y-6">
-              {group.exams.map((exam, ei) => (
-                <div key={ei} className="border border-slate-200 rounded-2xl overflow-hidden">
-                  <div className="bg-slate-50 px-6 py-3 border-b border-slate-200">
-                    <h3 className="font-bold text-slate-700">
-                      {exam.examName || exam.examKey || 'Internal Assessment'}
-                      {exam.meta.academicYear && <span className="text-sm font-normal text-slate-400 ml-2">({exam.meta.academicYear})</span>}
-                    </h3>
+              {group.exams.map((exam, ei) => {
+                const details = getExamDetails(exam);
+                const coScores = getCOScores(exam);
+                return (
+                  <div key={ei} className="border border-slate-200 rounded-2xl overflow-hidden">
+                    <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-700">
+                          {formatExamName(exam.exam, exam.markType)}
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {exam.academicYear}{exam.semester ? ` • ${exam.semester}` : ''}
+                        </p>
+                      </div>
+                      {!exam.isAbsent && (
+                        <div className="text-right">
+                          <span className="text-lg font-black text-[#120c7a]">{details.value}</span>
+                          {details.grade && <span className="text-xs font-bold text-slate-400 ml-2">Grade: {details.grade}</span>}
+                          {details.gradePoint && <span className="text-xs font-bold text-slate-400 ml-2">GP: {details.gradePoint}</span>}
+                        </div>
+                      )}
+                      {exam.isAbsent && (
+                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-bold">ABSENT</span>
+                      )}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50/50">
+                            {exam.markType === "CO Wise" || exam.markType === "CO wise" ? (
+                              <>
+                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">CO</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Scored</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</th>
+                              </>
+                            ) : exam.markType === "Overall" ? (
+                              <>
+                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Component</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Mark</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Grade</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Grade Point</th>
+                              </>
+                            ) : exam.markType === "Assignment" ? (
+                              <>
+                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Question</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Mark</th>
+                              </>
+                            ) : (
+                              <>
+                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Part</th>
+                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Scored</th>
+                              </>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {exam.isAbsent ? (
+                            <tr>
+                              <td colSpan={4} className="px-6 py-6 text-center text-sm font-bold text-red-400">Student was absent for this exam</td>
+                            </tr>
+                          ) : exam.markType === "CO Wise" || exam.markType === "CO wise" ? (
+                            coScores.length > 0 ? coScores.map((cs, ci) => (
+                              <tr key={ci} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-6 py-3 text-sm font-bold text-slate-600">{cs.co}</td>
+                                <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{cs.value}</td>
+                                <td className="px-6 py-3 text-center text-sm text-slate-400">—</td>
+                              </tr>
+                            )) : (
+                              <tr>
+                                <td colSpan={3} className="px-6 py-4 text-center text-sm text-slate-400">No CO data available</td>
+                              </tr>
+                            )
+                          ) : exam.markType === "Overall" ? (
+                            <tr className="hover:bg-slate-50 transition-colors">
+                              <td className="px-6 py-3 text-sm font-bold text-slate-600">Overall</td>
+                              <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{exam.marks.overall || exam.marks.total || '—'}</td>
+                              <td className="px-6 py-3 text-center text-sm font-bold text-slate-700">{exam.marks.grade || '—'}</td>
+                              <td className="px-6 py-3 text-center text-sm font-bold text-slate-700">{exam.marks.gradePoint || '—'}</td>
+                            </tr>
+                          ) : exam.markType === "Assignment" ? (
+                            (exam.marks.assignment && Object.keys(exam.marks.assignment).length > 0) ? (
+                              Object.entries(exam.marks.assignment).map(([qKey, mark], ai) => (
+                                <tr key={ai} className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">{qKey}</td>
+                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{mark}</td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={2} className="px-6 py-4 text-center text-sm text-slate-400">No assignment marks</td>
+                              </tr>
+                            )
+                          ) : (
+                            <>
+                              {Object.keys(exam.marks.partA || {}).length > 0 && (
+                                <tr className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part A</td>
+                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
+                                    {Object.values(exam.marks.partA).reduce((s, m) => s + (Number(m) || 0), 0)}
+                                  </td>
+                                </tr>
+                              )}
+                              {Object.keys(exam.marks.partB || {}).length > 0 && (
+                                <tr className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part B</td>
+                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
+                                    {Object.values(exam.marks.partB).reduce((s, m) => s + (Number(m.mark) || 0), 0)}
+                                  </td>
+                                </tr>
+                              )}
+                              {Object.keys(exam.marks.partC || {}).length > 0 && (
+                                <tr className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part C</td>
+                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
+                                    {Object.values(exam.marks.partC).reduce((s, m) => s + (Number(m.mark) || 0), 0)}
+                                  </td>
+                                </tr>
+                              )}
+                            </>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-slate-50/50">
-                          <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">CO</th>
-                          {exam.cos.map((co) => (
-                            <th key={co} className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">{co}</th>
-                          ))}
-                          <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="hover:bg-blue-50/30 transition-colors">
-                          <td className="px-6 py-4 text-sm font-bold text-slate-500">Max Marks</td>
-                          {exam.cos.map((co) => (
-                            <td key={co} className="px-6 py-4 text-center text-sm font-bold text-slate-400">{exam.maxMarks[co]}</td>
-                          ))}
-                          <td className="px-6 py-4 text-center text-sm font-bold text-slate-400">{exam.totalMax}</td>
-                        </tr>
-                        <tr className="bg-blue-50/30">
-                          <td className="px-6 py-4 text-sm font-bold text-slate-700">Scored</td>
-                          {exam.cos.map((co) => (
-                            <td key={co} className={`px-6 py-4 text-center text-sm font-black ${(exam.scoredMarks[co] || 0) >= (exam.maxMarks[co] || 1) * 0.4 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {exam.scoredMarks[co]}
-                            </td>
-                          ))}
-                          <td className={`px-6 py-4 text-center text-sm font-black ${exam.totalScored >= exam.totalMax * 0.4 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {exam.totalScored}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))
