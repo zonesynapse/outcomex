@@ -44,16 +44,39 @@ export default function Marks() {
         const progKey = sanitizeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
+        const prefix = `${batchKey}_${progKey}_${deptKey}`;
+        console.log('Marks prefix:', prefix);
+
+        // Attempt to resolve canonical ID (admission number) from student_index
+        let canonicalId = null;
+        try {
+          const idxRef = doc(db, 'student_index', sanitizeKey(regNo));
+          const idxSnap = await getDoc(idxRef);
+          if (idxSnap.exists()) {
+            canonicalId = idxSnap.data().canonicalId || idxSnap.data().admissionNo || null;
+          }
+        } catch (_) {}
+        const lookupKeys = [regNo, canonicalId].filter(Boolean);
+        console.log('Lookup keys:', lookupKeys);
+
         const snapshot = await getDocs(collection(db, "marks"));
+        let matchedCount = 0;
         const results = [];
 
         for (const docSnap of snapshot.docs) {
           const id = docSnap.id;
-          if (!id.startsWith(`${batchKey}_${progKey}_${deptKey}`)) continue;
+          if (!id.startsWith(prefix)) continue;
+          matchedCount++;
 
           const data = docSnap.data();
           const meta = data._meta || {};
-          const studentMarks = data.students?.[regNo];
+          let studentMarks = null;
+          for (const key of lookupKeys) {
+            if (data.students?.[key]) {
+              studentMarks = data.students[key];
+              break;
+            }
+          }
           if (!studentMarks) continue;
 
           const totalScored = studentMarks.total || 0;
@@ -71,6 +94,14 @@ export default function Marks() {
             totalScored,
             isAbsent,
           });
+        }
+        console.log('Marks docs matched:', matchedCount, 'results:', results.length);
+        if (matchedCount > 0 && results.length === 0) {
+          const sampleDoc = snapshot.docs.find(d => d.id.startsWith(prefix));
+          if (sampleDoc) {
+            const sampleKeys = Object.keys(sampleDoc.data().students || {}).slice(0, 5);
+            console.log('Sample doc students keys:', sampleKeys, 'lookup keys:', lookupKeys);
+          }
         }
 
         setMarksList(results);
