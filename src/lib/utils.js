@@ -116,8 +116,26 @@ export function parseStudentDocId(id, availableProgrammes = []) {
       matchedProgKey = remainingParts.shift() || "";
     }
   }
-  
-  const department = remainingParts.join(' ') || "";
+
+  if (matchedProgKey && remainingParts.length > 0) {
+    const progParts = matchedProgKey.split('_');
+    let progPrefixLen = 0;
+    for (let j = 0; j < progParts.length && j < remainingParts.length; j++) {
+      if (remainingParts[j].toLowerCase() === progParts[j].toLowerCase()) {
+        progPrefixLen++;
+      } else {
+        break;
+      }
+    }
+    if (progPrefixLen > 0) {
+      remainingParts.splice(0, progPrefixLen);
+      while (remainingParts.length > 0 && remainingParts[0] === '') {
+        remainingParts.shift();
+      }
+    }
+  }
+
+  const department = remainingParts.join(' ').replace(/\s{2,}/g, ' ').trim() || "";
   
   return {
     batch,

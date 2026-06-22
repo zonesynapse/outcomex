@@ -67,7 +67,7 @@ export default function StudentDashboard() {
           <div>
             <h1 className="text-2xl font-bold">Welcome, {userData?.studentName || "Student"}</h1>
             <p className="text-blue-200 text-sm mt-1">
-              {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {(userData?.department || '').replace(/_/g, ' ')} • Batch {userData?.batch}
+              {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {(userData?.department || '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim()} • Batch {userData?.batch}
             </p>
           </div>
         </div>
