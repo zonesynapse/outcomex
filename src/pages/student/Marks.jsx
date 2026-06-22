@@ -166,8 +166,8 @@ export default function Marks() {
       ) : (
         grouped.map((group, gi) => (
           <div key={gi} className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5">
-              <h2 className="text-white font-bold text-xl">{group.exam}</h2>
+            <div className="bg-[#120c7a] px-6 py-2.5">
+              <h2 className="text-white font-bold text-base">{group.exam}</h2>
             </div>
             <div className="p-6 space-y-6">
               {group.subjects.map((exam, ei) => {

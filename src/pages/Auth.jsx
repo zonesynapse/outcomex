@@ -241,6 +241,21 @@ export default function Auth() {
           return;
         }
 
+        // Validate regNo/admissionNo exists in student_index
+        const idxRef = doc(db, 'student_index', sanitizeKey(sanitizedRegNo));
+        const idxSnap = await getDoc(idxRef);
+        if (!idxSnap.exists()) {
+          setError("Invalid Reg No./Admission No. This number is not found in our records. Please contact admin.");
+          setLoading(false);
+          return;
+        }
+        const idxData = idxSnap.data();
+        if (idxData.batch && idxData.batch !== studentBatch) {
+          setError(`This number belongs to batch ${idxData.batch}, not ${studentBatch}.`);
+          setLoading(false);
+          return;
+        }
+
         const studentEmail = trimmedEmail;
 
         // Step 1: Create auth user first
