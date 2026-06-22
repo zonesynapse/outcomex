@@ -49,14 +49,26 @@ export default function StudentProfile() {
     <div className="min-h-screen flex items-center justify-center text-zinc-500">Please login.</div>
   );
 
+  const progPrefixMap = [
+    { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
+    { key: 'M_E', display: 'M.E.' }, { key: 'M_Tech', display: 'M.Tech.' },
+    { key: 'B_Sc', display: 'B.Sc.' }, { key: 'M_Sc', display: 'M.Sc.' },
+    { key: 'B_C_A', display: 'B.C.A.' }, { key: 'M_C_A', display: 'M.C.A.' },
+    { key: 'B_B_A', display: 'B.B.A.' }, { key: 'M_B_A', display: 'M.B.A.' },
+    { key: 'B_Com', display: 'B.Com.' }, { key: 'M_Com', display: 'M.Com.' },
+    { key: 'B_A', display: 'B.A.' }, { key: 'M_A', display: 'M.A.' },
+  ];
   const displayDept = (v) => {
     if (typeof v !== 'string') return v || '--';
-    const progKey = userData?.programme || '';
-    return v
-      .replace(new RegExp(`^${progKey.replace(/_/g, '[_ ]')}[_ ]*`, 'i'), '')
-      .replace(/_/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    let result = v;
+    for (const { key, display } of progPrefixMap) {
+      const regex = new RegExp(`^${key.replace(/_/g, '[_ ]')}[_ ]*`, 'i');
+      if (regex.test(result)) {
+        result = result.replace(regex, display + ' ');
+        break;
+      }
+    }
+    return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
   };
 
   const infoRows = [
