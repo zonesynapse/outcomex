@@ -224,6 +224,7 @@ export default function Auth() {
       const trimmedEmail = regEmail.trim();
 
       if (!studentProgramme) { setError("Programme is required."); return; }
+      if (!studentDepartment) { setError("Department is required."); return; }
       if (!studentBatch) { setError("Batch is required."); return; }
       if (!sanitizedRegNo) { setError("Reg No./ Admission No. is required."); return; }
       if (!trimmedEmail) { setError("Email is required."); return; }
@@ -266,11 +267,10 @@ export default function Auth() {
         if (idxSnap.exists()) {
           foundBatch = idxSnap.data().batch || null;
         } else {
-          // Fallback: check students collection for old namelist data
+          // Fallback: check students collection (old namelist data — any department/section)
           const progKey = sanitizeKey(formatProgrammeKey(studentProgramme));
-          const deptKey = sanitizeKey(studentDepartment || "unknown");
           const batchKey = sanitizeKey(studentBatch);
-          const prefix = `${batchKey}_${progKey}_${deptKey}`;
+          const prefix = `${batchKey}_${progKey}_`;
           const allStudentsSnap = await getDocs(collection(db, "students"));
           for (const d of allStudentsSnap.docs) {
             if (!d.id.startsWith(prefix)) continue;
@@ -582,13 +582,14 @@ export default function Auth() {
 
             {regRole === "student" ? (
               <div className="space-y-4 mb-4">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="relative">
                     <select
                       value={studentProgramme}
                       onChange={(e) => {
                         setStudentProgramme(e.target.value);
                         setStudentBatch("");
+                        setStudentDepartment("");
                       }}
                       className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
                       required
@@ -596,6 +597,21 @@ export default function Auth() {
                       <option value="">Programme</option>
                       {Object.keys(PROGRAMME_DEPARTMENTS).map(prog => (
                         <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
+                  <div className="relative">
+                    <select
+                      value={studentDepartment}
+                      onChange={(e) => setStudentDepartment(e.target.value)}
+                      disabled={!studentProgramme}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
+                      required
+                    >
+                      <option value="">Department</option>
+                      {studentProgramme && PROGRAMME_DEPARTMENTS[studentProgramme]?.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
