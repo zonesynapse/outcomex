@@ -102,7 +102,8 @@ export default function AddEnquiryModal({
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "fee_categories", "global"), (snapshot) => {
       if (snapshot.exists()) {
-        setFeeCategoriesOptions(snapshot.data().categories || []);
+        const cats = snapshot.data().categories || [];
+        setFeeCategoriesOptions(cats.map(c => typeof c === 'object' && c !== null ? c.name || '' : String(c)).filter(Boolean));
       } else {
         setFeeCategoriesOptions([]);
       }
