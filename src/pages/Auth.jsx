@@ -17,7 +17,7 @@ import { Loader2, AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, Graduatio
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 
-import { formatProgDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, sanitizeKey, parseStudentDocId } from "../lib/utils";
 
 // Utility functions for input validation and sanitization
 const isValidEmail = (email) => {
@@ -226,7 +226,6 @@ export default function Auth() {
       if (!studentProgramme) { setError("Programme is required."); return; }
       if (!studentBatch) { setError("Batch is required."); return; }
       if (!sanitizedRegNo) { setError("Reg No./ Admission No. is required."); return; }
-      if (!studentDepartment) { setError("Department is required."); return; }
       if (!trimmedEmail) { setError("Email is required."); return; }
       if (!isValidEmail(trimmedEmail)) { setError("Please enter a valid email address."); return; }
       if (regPassword.length < 6) { setError("Password must be at least 6 characters."); return; }
@@ -235,7 +234,6 @@ export default function Auth() {
       setLoading(true);
       const studentEmail = trimmedEmail;
       let createdUser = null;
-      let detectedDept = studentDepartment;
 
       try {
         // Step 1: Create auth user first (so we're authenticated for subsequent reads)
@@ -243,54 +241,88 @@ export default function Auth() {
         createdUser = userCredential.user;
         await updateProfile(createdUser, { displayName: sanitizedSName });
 
-        // Step 2: Check if register number is already taken by another account
-        const existingUsersQuery = query(collection(db, "users"), where("regNo", "==", sanitizedRegNo));
-        const existingUsersSnap = await getDocs(existingUsersQuery);
-        if (!existingUsersSnap.empty) {
-          const staleUser = existingUsersSnap.docs[0];
+        // Step 2: Check if register number or email is already taken by another account
+        const existingRegQuery = query(collection(db, "users"), where("regNo", "==", sanitizedRegNo));
+        const existingRegSnap = await getDocs(existingRegQuery);
+        if (!existingRegSnap.empty) {
+          const staleUser = existingRegSnap.docs[0];
           const staleEmail = staleUser.data().email || '';
-          // Check if the auth account still exists for this email
           const methods = staleEmail ? await fetchSignInMethodsForEmail(auth, staleEmail) : [];
           if (methods.length > 0) {
-            // Auth account still exists — block registration
             await createdUser.delete();
             setError("This Reg No./ Admission No. is already registered. Please login.");
             setLoading(false);
             return;
           }
-          // Auth account deleted — stale record, allow registration
+        }
+        const existingEmailQuery = query(collection(db, "users"), where("email", "==", studentEmail));
+        const existingEmailSnap = await getDocs(existingEmailQuery);
+        if (!existingEmailSnap.empty) {
+          const staleEmailDoc = existingEmailSnap.docs[0];
+          const staleEmail = staleEmailDoc.data().email || '';
+          const methods = staleEmail ? await fetchSignInMethodsForEmail(auth, staleEmail) : [];
+          if (methods.length > 0) {
+            await createdUser.delete();
+            setError("This Email is already registered. Please login or use a different email.");
+            setLoading(false);
+            return;
+          }
         }
 
-        // Step 3: Validate regNo/admissionNo exists in student_index or students collection
+        // Step 3: Validate regNo/admissionNo exists in records
         let foundBatch = null;
+        let foundName = "";
+        let foundDept = "";
+        let foundProg = "";
+
         const idxRef = doc(db, 'student_index', sanitizeKey(sanitizedRegNo));
         const idxSnap = await getDoc(idxRef);
         if (idxSnap.exists()) {
-          foundBatch = idxSnap.data().batch || null;
-          // Auto-detect department from studentDocId: batch_prog_dept[_section]
-          const sDocId = idxSnap.data().studentDocId || '';
-          const parts = sDocId.split('_');
-          if (parts.length >= 3 && !detectedDept) {
-            // parts[0]=batch, parts[1]=progKey, rest is dept (possibly with section)
-            const deptFromDoc = parts.slice(2).filter(p => !p.startsWith('Sec')).join('_');
-            if (deptFromDoc) detectedDept = deptFromDoc;
+          const idxData = idxSnap.data();
+          foundBatch = idxData.batch || null;
+          foundName = idxData.name || "";
+          if (idxData.studentDocId) {
+            const parsed = parseStudentDocId(idxData.studentDocId, Object.keys(PROGRAMME_DEPARTMENTS));
+            foundDept = parsed.department;
+            foundProg = parsed.programme;
           }
         } else {
-          // Fallback: check students collection for old namelist data
+          // Fallback 1: check students collection for namelists or section-assigned admissions
           const progKey = sanitizeKey(formatProgrammeKey(studentProgramme));
-          const deptKey = sanitizeKey(detectedDept || "unknown");
           const batchKey = sanitizeKey(studentBatch);
-          const prefix = `${batchKey}_${progKey}_${deptKey}`;
+          const prefix = `${batchKey}_${progKey}_`;
           const allStudentsSnap = await getDocs(collection(db, "students"));
           for (const d of allStudentsSnap.docs) {
             if (!d.id.startsWith(prefix)) continue;
             const sData = d.data();
             if (sData && typeof sData === 'object' && sanitizedRegNo in sData && !sanitizedRegNo.startsWith('_')) {
               foundBatch = studentBatch;
+              foundName = sData[sanitizedRegNo] || "";
+              const parsed = parseStudentDocId(d.id, Object.keys(PROGRAMME_DEPARTMENTS));
+              foundDept = parsed.department;
+              foundProg = parsed.programme;
               break;
             }
           }
+
+          // Fallback 2: check approved_admissions for pre-section admissions
+          if (!foundBatch) {
+            const allApprovedSnap = await getDocs(collection(db, "approved_admissions"));
+            for (const d of allApprovedSnap.docs) {
+              if (!d.id.startsWith(prefix)) continue;
+              const sData = d.data();
+              if (sData && typeof sData === 'object' && sanitizedRegNo in sData && !sanitizedRegNo.startsWith('_')) {
+                foundBatch = studentBatch;
+                foundName = sData[sanitizedRegNo] || "";
+                const parsed = parseStudentDocId(d.id, Object.keys(PROGRAMME_DEPARTMENTS));
+                foundDept = parsed.department;
+                foundProg = parsed.programme;
+                break;
+              }
+            }
+          }
         }
+
         if (!foundBatch) {
           await createdUser.delete();
           setError("Invalid Reg No./Admission No. This number is not found in our records. Please contact admin.");
@@ -304,20 +336,29 @@ export default function Auth() {
           return;
         }
 
+        const finalName = foundName || sanitizedSName || "Student";
+        const finalDept = foundDept || studentDepartment || "unknown";
+        const finalProg = foundProg || studentProgramme;
+
         // Step 4: Write user doc with isApproved immediately
         await setDoc(doc(db, "users", createdUser.uid), {
           uid: createdUser.uid,
           email: studentEmail,
           regNo: sanitizedRegNo,
-          studentName: sanitizedSName,
-          displayName: sanitizedSName,
-          programme: studentProgramme,
-          department: detectedDept,
+          studentName: finalName,
+          displayName: finalName,
+          programme: finalProg,
+          department: finalDept,
           batch: studentBatch,
           role: "Student",
           isApproved: true,
           createdAt: new Date().toISOString()
         }, { merge: true });
+
+        // Update the Auth display name as well
+        if (createdUser.displayName !== finalName) {
+          await updateProfile(createdUser, { displayName: finalName });
+        }
 
         setIsNavigating(true);
         navigate("/student/dashboard");
@@ -599,7 +640,6 @@ export default function Auth() {
                       onChange={(e) => {
                         setStudentProgramme(e.target.value);
                         setStudentBatch("");
-                        setStudentDepartment("");
                       }}
                       className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
                       required
@@ -627,25 +667,8 @@ export default function Auth() {
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="relative">
-                    <select
-                      value={studentDepartment}
-                      onChange={(e) => setStudentDepartment(e.target.value)}
-                      disabled={!studentProgramme}
-                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
-                      required
-                    >
-                      <option value="">Department</option>
-                      {studentProgramme && PROGRAMME_DEPARTMENTS[studentProgramme]?.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-                  </div>
-                  <div className="relative">
-                    <input type="text" placeholder="Reg No. / Admission No." maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
-                  </div>
+                <div className="relative">
+                  <input type="text" placeholder="Reg No. / Admission No." maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
                 </div>
               </div>
             ) : (

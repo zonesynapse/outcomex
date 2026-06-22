@@ -73,3 +73,57 @@ export function getAcademicYears(batch) {
   const duration = end - start;
   return Array.from({ length: duration }, (_, i) => `${start + i}-${start + i + 1}`);
 }
+
+export function parseStudentDocId(id, availableProgrammes = []) {
+  if (!id) return { batch: "", programme: "", department: "", section: "" };
+  const parts = id.split('_');
+  const batch = parts[0] || "";
+  
+  // Let's strip the batch part
+  const remainingParts = parts.slice(1);
+  if (remainingParts.length === 0) {
+    return { batch, programme: "", department: "", section: "" };
+  }
+  
+  // Check if last part is a section (starts with "Sec")
+  let section = "";
+  if (remainingParts.length > 1 && remainingParts[remainingParts.length - 1].toLowerCase().startsWith("sec")) {
+    section = remainingParts.pop();
+  }
+  
+  const commonProgKeys = ["B_Tech", "B_E", "M_Tech", "M_E", "B_Sc", "M_Sc", "B_C_A", "M_C_A", "B_B_A", "M_B_A", "B_Com", "M_Com", "B_A", "M_A"];
+  const allProgKeys = Array.from(new Set([...commonProgKeys, ...availableProgrammes]));
+  
+  let matchedProgKey = "";
+  for (let i = remainingParts.length - 1; i >= 1; i--) {
+    const candidate = remainingParts.slice(0, i).join('_');
+    if (allProgKeys.includes(candidate)) {
+      matchedProgKey = candidate;
+      remainingParts.splice(0, i);
+      break;
+    }
+  }
+  
+  if (!matchedProgKey) {
+    if (remainingParts.length >= 2) {
+      if (remainingParts[0] === "B" || remainingParts[0] === "M" || remainingParts[0] === "b" || remainingParts[0] === "m") {
+        matchedProgKey = `${remainingParts[0].toUpperCase()}_${remainingParts[1]}`;
+        remainingParts.splice(0, 2);
+      } else {
+        matchedProgKey = remainingParts.shift() || "";
+      }
+    } else {
+      matchedProgKey = remainingParts.shift() || "";
+    }
+  }
+  
+  const department = remainingParts.join('_') || "";
+  
+  return {
+    batch,
+    programme: matchedProgKey,
+    department,
+    section
+  };
+}
+
