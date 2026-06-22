@@ -231,41 +231,45 @@ export default function Auth() {
       if (regPassword.length > 128) { setError("Password is too long."); return; }
 
       setLoading(true);
+      const studentEmail = trimmedEmail;
+      let createdUser = null;
+
       try {
-        // Check if register number is already taken by another account
+        // Step 1: Create auth user first (so we're authenticated for subsequent reads)
+        const userCredential = await createUserWithEmailAndPassword(auth, studentEmail, regPassword);
+        createdUser = userCredential.user;
+        await updateProfile(createdUser, { displayName: sanitizedSName });
+
+        // Step 2: Check if register number is already taken by another account
         const existingUsersQuery = query(collection(db, "users"), where("regNo", "==", sanitizedRegNo));
         const existingUsersSnap = await getDocs(existingUsersQuery);
         if (!existingUsersSnap.empty) {
+          await createdUser.delete();
           setError("This Reg No./ Admission No. is already registered. Please login.");
           setLoading(false);
           return;
         }
 
-        // Validate regNo/admissionNo exists in student_index
+        // Step 3: Validate regNo/admissionNo exists in student_index
         const idxRef = doc(db, 'student_index', sanitizeKey(sanitizedRegNo));
         const idxSnap = await getDoc(idxRef);
         if (!idxSnap.exists()) {
+          await createdUser.delete();
           setError("Invalid Reg No./Admission No. This number is not found in our records. Please contact admin.");
           setLoading(false);
           return;
         }
         const idxData = idxSnap.data();
         if (idxData.batch && idxData.batch !== studentBatch) {
+          await createdUser.delete();
           setError(`This number belongs to batch ${idxData.batch}, not ${studentBatch}.`);
           setLoading(false);
           return;
         }
 
-        const studentEmail = trimmedEmail;
-
-        // Step 1: Create auth user first
-        const userCredential = await createUserWithEmailAndPassword(auth, studentEmail, regPassword);
-        const user = userCredential.user;
-        await updateProfile(user, { displayName: sanitizedSName });
-
-        // Step 2: Write user doc with isApproved immediately
-        await setDoc(doc(db, "users", user.uid), {
-          uid: user.uid,
+        // Step 4: Write user doc with isApproved immediately
+        await setDoc(doc(db, "users", createdUser.uid), {
+          uid: createdUser.uid,
           email: studentEmail,
           regNo: sanitizedRegNo,
           studentName: sanitizedSName,
@@ -282,6 +286,10 @@ export default function Auth() {
         navigate("/student/dashboard");
       } catch (err) {
         console.error(err);
+        // Cleanup auth user if creation succeeded but validation failed
+        if (createdUser) {
+          try { await createdUser.delete(); } catch (_) {}
+        }
         if (err.code === 'auth/email-already-in-use') {
           setError("This Email is already registered. Please login or use a different email.");
         } else {

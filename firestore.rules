@@ -130,6 +130,11 @@ service cloud.firestore {
     match /fee_heads/{docId} { allow read, write: if false; }
     match /fee_defaulters_cache/{docId} { allow read, write: if false; }
 
+    match /student_index/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
     match /{document=**} {
       allow read: if isApproved();
       allow write: if isApproved();
