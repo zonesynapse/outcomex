@@ -10,7 +10,7 @@ export default function Fees() {
   const [loading, setLoading] = useState(true);
   const [feeConfigs, setFeeConfigs] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", mode: "upi" });
+  const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0, mode: "upi" });
 
   useEffect(() => {
     let unsubUser = () => {};
@@ -222,8 +222,8 @@ export default function Fees() {
                             {idx === 0 ? (
                               <td className="px-4 py-3 text-xs font-bold text-slate-600 align-top border border-slate-200" rowSpan={semGroup.rows.length}>{semGroup.semester}</td>
                             ) : null}
-                            <td className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), mode: "upi" }); }}>{cfg.head || 'Fee'}</td>
-                            <td className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), mode: "upi" }); }}>{formatCurrency(cfg.amount)}</td>
+                            <td className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), maxAmount: Number(cfg.amount), mode: "upi" }); }}>{cfg.head || 'Fee'}</td>
+                            <td className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), maxAmount: Number(cfg.amount), mode: "upi" }); }}>{formatCurrency(cfg.amount)}</td>
                           </tr>
                         );
                         return tr;
@@ -313,8 +313,11 @@ export default function Fees() {
               </div>
               <div>
                 <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount (₹)</label>
-                <input type="number" value={payModal.amount} onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
+                <input type="number" min={1} max={payModal.maxAmount} value={payModal.amount} onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
                   className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+                {Number(payModal.amount) > payModal.maxAmount && (
+                  <p className="text-[10px] font-bold text-red-500 mt-1">Cannot exceed ₹{payModal.maxAmount.toLocaleString('en-IN')}</p>
+                )}
               </div>
               <div>
                 <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Mode</label>
@@ -329,7 +332,12 @@ export default function Fees() {
             </div>
             <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3">
               <button onClick={() => setPayModal({ ...payModal, open: false })} className="px-5 py-2.5 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl">Cancel</button>
-              <button onClick={() => { setPayModal({ ...payModal, open: false }); alert("Payment gateway not connected"); }}
+              <button onClick={() => {
+                const val = Number(payModal.amount);
+                if (!val || val < 1) { alert("Enter a valid amount"); return; }
+                if (val > payModal.maxAmount) { alert(`Cannot pay more than ${formatCurrency(payModal.maxAmount)}`); return; }
+                setPayModal({ ...payModal, open: false }); alert("Payment gateway not connected");
+              }}
                 className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 flex items-center gap-2 shadow-lg shadow-[#120c7a]/20">
                 <CheckCircle2 size={16} /> Pay ₹{Number(payModal.amount).toLocaleString('en-IN')}
               </button>
