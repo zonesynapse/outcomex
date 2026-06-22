@@ -256,8 +256,7 @@ export default function Auth() {
             setLoading(false);
             return;
           }
-          // Auth account deleted — clean up stale Firestore doc and continue
-          await setDoc(doc(db, "users", staleUser.id), { regNo: "", deletedAt: new Date().toISOString() }, { merge: true });
+          // Auth account deleted — stale record, allow registration
         }
 
         // Step 3: Validate regNo/admissionNo exists in student_index
