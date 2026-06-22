@@ -3,6 +3,7 @@ import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X } from "lucide-react";
+import { formatProgDisplay } from "../../lib/utils";
 
 export default function StudentProfile() {
   const [userData, setUserData] = useState(null);
@@ -48,11 +49,13 @@ export default function StudentProfile() {
     <div className="min-h-screen flex items-center justify-center text-zinc-500">Please login.</div>
   );
 
+  const displayDept = (v) => typeof v === 'string' ? v.replace(/_/g, ' ') : (v || '--');
+
   const infoRows = [
     { label: "Register Number", value: userData.regNo, icon: GraduationCap },
     { label: "Student Name", value: userData.studentName, icon: User },
-    { label: "Programme", value: userData.programme, icon: GraduationCap },
-    { label: "Department", value: userData.department, icon: GraduationCap },
+    { label: "Programme", value: formatProgDisplay(userData.programme), icon: GraduationCap },
+    { label: "Department", value: displayDept(userData.department), icon: GraduationCap },
     { label: "Batch", value: userData.batch, icon: Calendar },
     { label: "Email", value: userData.email, icon: Mail },
   ];

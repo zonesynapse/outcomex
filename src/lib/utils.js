@@ -117,7 +117,7 @@ export function parseStudentDocId(id, availableProgrammes = []) {
     }
   }
   
-  const department = remainingParts.join('_') || "";
+  const department = remainingParts.join(' ') || "";
   
   return {
     batch,

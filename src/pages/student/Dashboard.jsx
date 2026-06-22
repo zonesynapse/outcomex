@@ -3,6 +3,7 @@ import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import { formatProgDisplay } from "../../lib/utils";
 import { 
   GraduationCap, CheckCircle, BarChart3, Clock, Bell, 
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
@@ -66,7 +67,7 @@ export default function StudentDashboard() {
           <div>
             <h1 className="text-2xl font-bold">Welcome, {userData?.studentName || "Student"}</h1>
             <p className="text-blue-200 text-sm mt-1">
-              {userData?.regNo} • {userData?.programme} • {userData?.department} • Batch {userData?.batch}
+              {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {(userData?.department || '').replace(/_/g, ' ')} • Batch {userData?.batch}
             </p>
           </div>
         </div>
