@@ -259,19 +259,37 @@ export default function Auth() {
           // Auth account deleted — stale record, allow registration
         }
 
-        // Step 3: Validate regNo/admissionNo exists in student_index
+        // Step 3: Validate regNo/admissionNo exists in student_index or students collection
+        let foundBatch = null;
         const idxRef = doc(db, 'student_index', sanitizeKey(sanitizedRegNo));
         const idxSnap = await getDoc(idxRef);
-        if (!idxSnap.exists()) {
+        if (idxSnap.exists()) {
+          foundBatch = idxSnap.data().batch || null;
+        } else {
+          // Fallback: check students collection for old namelist data
+          const progKey = sanitizeKey(formatProgrammeKey(studentProgramme));
+          const deptKey = sanitizeKey(studentDepartment || "unknown");
+          const batchKey = sanitizeKey(studentBatch);
+          const prefix = `${batchKey}_${progKey}_${deptKey}`;
+          const allStudentsSnap = await getDocs(collection(db, "students"));
+          for (const d of allStudentsSnap.docs) {
+            if (!d.id.startsWith(prefix)) continue;
+            const sData = d.data();
+            if (sData && typeof sData === 'object' && sanitizedRegNo in sData && !sanitizedRegNo.startsWith('_')) {
+              foundBatch = studentBatch;
+              break;
+            }
+          }
+        }
+        if (!foundBatch) {
           await createdUser.delete();
           setError("Invalid Reg No./Admission No. This number is not found in our records. Please contact admin.");
           setLoading(false);
           return;
         }
-        const idxData = idxSnap.data();
-        if (idxData.batch && idxData.batch !== studentBatch) {
+        if (foundBatch !== studentBatch) {
           await createdUser.delete();
-          setError(`This number belongs to batch ${idxData.batch}, not ${studentBatch}.`);
+          setError(`This number belongs to batch ${foundBatch}, not ${studentBatch}.`);
           setLoading(false);
           return;
         }
