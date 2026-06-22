@@ -8,7 +8,8 @@ import {
   setPersistence,
   browserLocalPersistence,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  fetchSignInMethodsForEmail
 } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { auth, db } from "../firebase";
@@ -244,10 +245,19 @@ export default function Auth() {
         const existingUsersQuery = query(collection(db, "users"), where("regNo", "==", sanitizedRegNo));
         const existingUsersSnap = await getDocs(existingUsersQuery);
         if (!existingUsersSnap.empty) {
-          await createdUser.delete();
-          setError("This Reg No./ Admission No. is already registered. Please login.");
-          setLoading(false);
-          return;
+          const staleUser = existingUsersSnap.docs[0];
+          const staleEmail = staleUser.data().email || '';
+          // Check if the auth account still exists for this email
+          const methods = staleEmail ? await fetchSignInMethodsForEmail(auth, staleEmail) : [];
+          if (methods.length > 0) {
+            // Auth account still exists — block registration
+            await createdUser.delete();
+            setError("This Reg No./ Admission No. is already registered. Please login.");
+            setLoading(false);
+            return;
+          }
+          // Auth account deleted — clean up stale Firestore doc and continue
+          await setDoc(doc(db, "users", staleUser.id), { regNo: "", deletedAt: new Date().toISOString() }, { merge: true });
         }
 
         // Step 3: Validate regNo/admissionNo exists in student_index
