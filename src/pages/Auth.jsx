@@ -87,7 +87,7 @@ export default function Auth() {
   const [studentName, setStudentName] = useState("");
   const [studentProgramme, setStudentProgramme] = useState("");
   const [studentBatch, setStudentBatch] = useState("");
-  const [studentDepartment, setStudentDepartment] = useState("");
+  const [studentDepartment, setStudentDepartment] = useState("unknown");
   const [matchingStatus, setMatchingStatus] = useState("");
   
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -224,9 +224,9 @@ export default function Auth() {
       const trimmedEmail = regEmail.trim();
 
       if (!studentProgramme) { setError("Programme is required."); return; }
-      if (!studentDepartment) { setError("Department is required."); return; }
       if (!studentBatch) { setError("Batch is required."); return; }
       if (!sanitizedRegNo) { setError("Reg No./ Admission No. is required."); return; }
+      if (!studentDepartment) { setError("Department is required."); return; }
       if (!trimmedEmail) { setError("Email is required."); return; }
       if (!isValidEmail(trimmedEmail)) { setError("Please enter a valid email address."); return; }
       if (regPassword.length < 6) { setError("Password must be at least 6 characters."); return; }
@@ -235,6 +235,7 @@ export default function Auth() {
       setLoading(true);
       const studentEmail = trimmedEmail;
       let createdUser = null;
+      let detectedDept = studentDepartment;
 
       try {
         // Step 1: Create auth user first (so we're authenticated for subsequent reads)
@@ -266,10 +267,18 @@ export default function Auth() {
         const idxSnap = await getDoc(idxRef);
         if (idxSnap.exists()) {
           foundBatch = idxSnap.data().batch || null;
+          // Auto-detect department from studentDocId: batch_prog_dept[_section]
+          const sDocId = idxSnap.data().studentDocId || '';
+          const parts = sDocId.split('_');
+          if (parts.length >= 3 && !detectedDept) {
+            // parts[0]=batch, parts[1]=progKey, rest is dept (possibly with section)
+            const deptFromDoc = parts.slice(2).filter(p => !p.startsWith('Sec')).join('_');
+            if (deptFromDoc) detectedDept = deptFromDoc;
+          }
         } else {
           // Fallback: check students collection for old namelist data
           const progKey = sanitizeKey(formatProgrammeKey(studentProgramme));
-          const deptKey = sanitizeKey(studentDepartment);
+          const deptKey = sanitizeKey(detectedDept || "unknown");
           const batchKey = sanitizeKey(studentBatch);
           const prefix = `${batchKey}_${progKey}_${deptKey}`;
           const allStudentsSnap = await getDocs(collection(db, "students"));
@@ -303,7 +312,7 @@ export default function Auth() {
           studentName: sanitizedSName,
           displayName: sanitizedSName,
           programme: studentProgramme,
-          department: studentDepartment,
+          department: detectedDept,
           batch: studentBatch,
           role: "Student",
           isApproved: true,
@@ -589,8 +598,8 @@ export default function Auth() {
                       value={studentProgramme}
                       onChange={(e) => {
                         setStudentProgramme(e.target.value);
-                        setStudentDepartment("");
                         setStudentBatch("");
+                        setStudentDepartment("");
                       }}
                       className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
                       required
@@ -618,23 +627,25 @@ export default function Auth() {
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
                   </div>
                 </div>
-                <div className="relative">
-                  <select
-                    value={studentDepartment}
-                    onChange={(e) => setStudentDepartment(e.target.value)}
-                    disabled={!studentProgramme}
-                    className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
-                    required
-                  >
-                    <option value="">Department</option>
-                    {studentProgramme && PROGRAMME_DEPARTMENTS[studentProgramme]?.map(dept => (
-                      <option key={dept} value={dept}>{dept}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-                </div>
-                <div className="relative">
-                  <input type="text" placeholder="Reg No. / Admission No." maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="relative">
+                    <select
+                      value={studentDepartment}
+                      onChange={(e) => setStudentDepartment(e.target.value)}
+                      disabled={!studentProgramme}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
+                      required
+                    >
+                      <option value="">Department</option>
+                      {studentProgramme && PROGRAMME_DEPARTMENTS[studentProgramme]?.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
+                  <div className="relative">
+                    <input type="text" placeholder="Reg No. / Admission No." maxLength="50" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={studentRegNo} onChange={e => setStudentRegNo(e.target.value)} required />
+                  </div>
                 </div>
               </div>
             ) : (
