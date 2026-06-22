@@ -147,6 +147,8 @@ export function calculateCutoffFromMarks(data = {}) {
 const normalizeEnquiry = (enquiryId, data = {}) => ({
   enquiryId: data.enquiryId || enquiryId || "",
   studentName: asString(data.studentName),
+  firstName: asString(data.firstName),
+  lastName: asString(data.lastName),
   fatherGuardianName: asString(data.fatherGuardianName),
   motherName: asString(data.motherName),
   guardianName: asString(data.guardianName),
