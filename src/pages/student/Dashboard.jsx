@@ -56,6 +56,11 @@ export default function StudentDashboard() {
     { label: "Notifications", icon: Bell, path: "/student/notices", bgClass: "bg-yellow-50 border border-yellow-100 text-yellow-600", hoverColor: "group-hover:text-yellow-600" },
   ];
 
+  const cleanDept = (dept, prog) => {
+    const s = (dept || '').replace(new RegExp('^' + (prog || '').replace(/_/g, '[_ ]') + '[_ ]*', 'i'), '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    return s || dept || '';
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 md:px-8 py-8">
       {/* Welcome Section */}
@@ -67,7 +72,7 @@ export default function StudentDashboard() {
           <div>
             <h1 className="text-2xl font-bold">Welcome, {userData?.studentName || "Student"}</h1>
             <p className="text-blue-200 text-sm mt-1">
-              {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {(userData?.department || '').replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim()} • Batch {userData?.batch}
+              {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {cleanDept(userData?.department, userData?.programme)} • Batch {userData?.batch}
             </p>
           </div>
         </div>

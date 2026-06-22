@@ -49,7 +49,15 @@ export default function StudentProfile() {
     <div className="min-h-screen flex items-center justify-center text-zinc-500">Please login.</div>
   );
 
-  const displayDept = (v) => typeof v === 'string' ? v.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim() : (v || '--');
+  const displayDept = (v) => {
+    if (typeof v !== 'string') return v || '--';
+    const progKey = userData?.programme || '';
+    return v
+      .replace(new RegExp(`^${progKey.replace(/_/g, '[_ ]')}[_ ]*`, 'i'), '')
+      .replace(/_/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  };
 
   const infoRows = [
     { label: "Register Number", value: userData.regNo, icon: GraduationCap },
