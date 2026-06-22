@@ -117,7 +117,7 @@ export function parseStudentDocId(id, availableProgrammes = []) {
     }
   }
 
-  const department = remainingParts.join(' ').replace(/\s{2,}/g, ' ').trim() || "";
+  const department = remainingParts.join('_') || "";
   
   return {
     batch,

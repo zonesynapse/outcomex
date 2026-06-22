@@ -53,13 +53,13 @@ export default function Fees() {
 
         const configs = [];
         const normStudentProg = formatProgrammeKey(programme);
-        const normStudentDept = (department || "").trim().toLowerCase();
+        const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
         const normStudentBatch = (batch || "").trim().toLowerCase();
 
         feeSnap.forEach((d) => {
           const data = d.data();
           const normDataProg = formatProgrammeKey(data.programme);
-          const normDataDept = (data.department || "").trim().toLowerCase();
+          const normDataDept = (data.department || "").replace(/[_.\s]/g, '').toLowerCase();
           const normDataBatch = (data.batch || "").trim().toLowerCase();
 
           const isProgMatch = normDataProg && normDataProg === normStudentProg;
