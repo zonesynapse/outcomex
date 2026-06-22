@@ -3,6 +3,7 @@ import { auth, db } from "../../firebase";
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot, collection, getDocs, updateDoc } from "firebase/firestore";
 import { useNavigate, Link, useLocation } from "react-router-dom";
+import { formatProgDisplay } from "../../lib/utils";
 import { 
   LayoutDashboard, User, CheckCircle, BarChart3, Clock, IndianRupee,
   BookOpen, FileText, CalendarDays, ClipboardList, Library, Briefcase,
@@ -182,6 +183,28 @@ export default function StudentLayout({ children, title }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const progPrefixMap = [
+    { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
+    { key: 'M_E', display: 'M.E.' }, { key: 'M_Tech', display: 'M.Tech.' },
+    { key: 'B_Sc', display: 'B.Sc.' }, { key: 'M_Sc', display: 'M.Sc.' },
+    { key: 'B_C_A', display: 'B.C.A.' }, { key: 'M_C_A', display: 'M.C.A.' },
+    { key: 'B_B_A', display: 'B.B.A.' }, { key: 'M_B_A', display: 'M.B.A.' },
+    { key: 'B_Com', display: 'B.Com.' }, { key: 'M_Com', display: 'M.Com.' },
+    { key: 'B_A', display: 'B.A.' }, { key: 'M_A', display: 'M.A.' },
+  ];
+  const displayDept = (v) => {
+    if (typeof v !== 'string') return v || '--';
+    let result = v;
+    for (const { key, display } of progPrefixMap) {
+      const regex = new RegExp(`^${key.replace(/_/g, '[_ ]')}[_ ]*`, 'i');
+      if (regex.test(result)) {
+        result = result.replace(regex, display + ' ');
+        break;
+      }
+    }
+    return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -291,11 +314,11 @@ export default function StudentLayout({ children, title }) {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Programme</p>
-                      <p className="text-sm font-semibold text-zinc-700">{userData?.programme || 'N/A'}</p>
+                      <p className="text-sm font-semibold text-zinc-700">{formatProgDisplay(userData?.programme) || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Department</p>
-                      <p className="text-sm font-semibold text-zinc-700">{userData?.department || 'N/A'}</p>
+                      <p className="text-sm font-semibold text-zinc-700">{displayDept(userData?.department) || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Batch</p>

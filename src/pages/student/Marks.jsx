@@ -6,7 +6,7 @@ import { FileText, AlertCircle, Loader2, Award } from "lucide-react";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
 };
 
 const formatExamName = (exam, markType) => {
@@ -45,6 +45,7 @@ export default function Marks() {
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
         const prefix = `${batchKey}_${progKey}_${deptKey}`;
+        const normPrefix = prefix.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
         console.log('Marks prefix:', prefix);
 
         // Attempt to resolve canonical ID (admission number) from student_index
@@ -65,7 +66,8 @@ export default function Marks() {
 
         for (const docSnap of snapshot.docs) {
           const id = docSnap.id;
-          if (!id.startsWith(prefix)) continue;
+          const normId = id.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
+          if (!normId.startsWith(normPrefix)) continue;
           matchedCount++;
 
           const data = docSnap.data();
@@ -97,7 +99,7 @@ export default function Marks() {
         }
         console.log('Marks docs matched:', matchedCount, 'results:', results.length);
         if (matchedCount > 0 && results.length === 0) {
-          const sampleDoc = snapshot.docs.find(d => d.id.startsWith(prefix));
+          const sampleDoc = snapshot.docs.find(d => d.id.replace(/\s+/g, '_').replace(/_{2,}/g, '_').startsWith(normPrefix));
           if (sampleDoc) {
             const sampleKeys = Object.keys(sampleDoc.data().students || {}).slice(0, 5);
             console.log('Sample doc students keys:', sampleKeys, 'lookup keys:', lookupKeys);

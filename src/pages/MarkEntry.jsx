@@ -22,7 +22,7 @@ const MARK_TYPES = ["Internal", "Assignment"];
 
 const sanitizeKey = (key) => {
   if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
 };
 
 const deriveSemesterNumber = (label) => {
