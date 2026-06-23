@@ -86,6 +86,7 @@ export default function Curriculum() {
   const [weightageConfigs, setWeightageConfigs] = useState({});
   const [newCourseType, setNewCourseType] = useState("");
   const [courseTypeConfigs, setCourseTypeConfigs] = useState({});
+  const [courseTypePercentages, setCourseTypePercentages] = useState({});
   const [periodConfigs, setPeriodConfigs] = useState({});
   const [selectedConfigReg, setSelectedConfigReg] = useState("");
 
@@ -146,16 +147,22 @@ export default function Curriculum() {
   }, []);
   useEffect(() => {
     const wRef = collection(db, 'course_type_weightage'); // Firestore collection reference
-    const unsubscribe = onSnapshot(wRef, (snapshot) => { // Use onSnapshot for real-time updates
-      const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setWeightageConfigs(data || {}); // Convert QuerySnapshot to object
+    const unsubscribe = onSnapshot(wRef, (snap) => { // Use onSnapshot for real-time updates
+      const data = {}; snap.forEach(doc => { data[doc.id] = doc.data(); }); setWeightageConfigs(data || {});
+      const pcts = {};
+      snap.forEach(doc => {
+        const d = doc.data();
+        if (d._percentages) pcts[doc.id] = d._percentages;
+      });
+      setCourseTypePercentages(pcts);
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    const periodRef = collection(db, 'period_configs'); // Firestore collection reference
-    const unsubscribe = onSnapshot(periodRef, (snapshot) => { // Use onSnapshot for real-time updates
-      const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setPeriodConfigs(data || {}); // Convert QuerySnapshot to object
+    const periodRef = collection(db, 'period_configs');
+    const unsubscribe = onSnapshot(periodRef, (snapshot) => {
+      const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); setPeriodConfigs(data || {});
     });
     return () => unsubscribe();
   }, []);
@@ -222,6 +229,92 @@ export default function Curriculum() {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) { console.error(err); }
+  };
+
+  const handleTypePctChange = (regKey, type, value) => {
+    setCourseTypePercentages(prev => ({
+      ...prev,
+      [regKey]: {
+        ...(prev[regKey] || {}),
+        [type]: value === "" ? "" : parseInt(value) || 0
+      }
+    }));
+  };
+
+  const handleSaveTypePercentages = async (regKey) => {
+    const pcts = courseTypePercentages[regKey] || {};
+    const total = Object.values(pcts).reduce((s, v) => s + (parseInt(v) || 0), 0);
+    if (total !== 100) {
+      showAlert("Error", `Total percentage across course types must be exactly 100%. Current: ${total}%`);
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'course_type_weightage', regKey), { _percentages: pcts }, { merge: true });
+      setSuccessMessage("Course type percentages saved!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleCategoryConfigChange = (regKey, courseType, catName, field, value) => {
+    setWeightageConfigs(prev => {
+      const reg = { ...(prev[regKey] || {}) };
+      const ct = { ...(reg[courseType] || {}) };
+      const cc = { ...(ct._category_config || {}) };
+      cc[catName] = { ...(cc[catName] || {}), [field]: value };
+      ct._category_config = cc;
+      reg[courseType] = ct;
+      return { ...prev, [regKey]: reg };
+    });
+  };
+
+  const handleSaveCategoryConfig = async (regKey, courseType) => {
+    const cc = weightageConfigs[regKey]?.[courseType]?._category_config || {};
+    const entries = Object.entries(cc);
+    if (entries.length === 0) { showAlert("Error", "No categories to save."); return; }
+    for (const [, c] of entries) {
+      if (c.consider_for_internal !== false && (!c.best_count || !c.weightage)) {
+        showAlert("Error", "Fill Best and Wt% for each category."); return;
+      }
+    }
+    const total = entries.reduce((s, [, c]) => s + ((c.consider_for_internal !== false) ? (parseInt(c.weightage) || 0) : 0), 0);
+    const hasInternal = entries.some(([, c]) => c.consider_for_internal !== false);
+    if (hasInternal && total !== 100) {
+      showAlert("Error", `Total weightage across internal categories must be 100%. Current: ${total}%`);
+      return;
+    }
+    try {
+      const clean = {};
+      for (const [cat, c] of entries) {
+        clean[cat] = { consider_for_internal: c.consider_for_internal !== false };
+        if (c.consider_for_internal !== false) {
+          clean[cat].best_count = parseInt(c.best_count);
+          clean[cat].weightage = parseInt(c.weightage);
+        }
+      }
+      await setDoc(doc(db, 'course_type_weightage', regKey), {
+        [courseType]: { _category_config: clean }
+      }, { merge: true });
+      setSuccessMessage(`Category config saved for ${courseType}!`);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+  };
+
+  const getExamCategory = (config) => {
+    if (config.isAssignment) return "Activity";
+    if (config.isProject) return "Project";
+    if (config.isUniversity) return "ESE";
+    if (config.isIndirectAssessment) return "Indirect Assessment";
+    return "Written Test";
+  };
+
+  const catColors = {
+    "Activity": "bg-orange-50 text-orange-700 border-orange-200",
+    "Project": "bg-amber-50 text-amber-700 border-amber-200",
+    "ESE": "bg-purple-50 text-purple-700 border-purple-200",
+    "Indirect Assessment": "bg-teal-50 text-teal-700 border-teal-200",
+    "Written Test": "bg-blue-50 text-blue-700 border-blue-200",
   };
 
   const defaultPeriodConfig = {
@@ -925,7 +1018,7 @@ export default function Curriculum() {
                               <h4 className="text-lg font-bold tracking-tight">Configuring {selectedConfigReg}</h4>
                             </div>
                             <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest opacity-70">
-                              {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : configType === 'period_config' ? 'Period Configuration' : 'Exam QP Versions'}
+                               {configType === 'cia' ? 'CIA (Internal) Assessment Setup' : configType === 'course_type' ? 'Course Categories & Weightage' : configType === 'period_config' ? 'Period Configuration' : 'Exam QP Versions'}
                             </p>
                           </div>
                           <div className="flex items-center gap-4">
@@ -954,30 +1047,112 @@ export default function Curriculum() {
                                   </div>
                                 </div>
                                 
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                  {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).map((type, idx) => (
-                                    <div key={idx} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 space-y-4 flex flex-col">
-                                      <div className="flex justify-between items-center">
-                                        <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
-                                        <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
-                                      </div>
-                                      <div className="flex-1 space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner">
-                                        <div className="flex justify-between items-center mb-2">
-                                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Assessment Weightage</span>
-                                          <button onClick={() => handleSaveWeightage(sanitizeKey(selectedConfigReg), type)} className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md hover:bg-blue-100">Save Split</button>
-                                        </div>
-                                        {Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg) && config.courseTypes?.includes(type)).map(([id, config]) => (
-                                          <div key={id} className="flex items-center justify-between gap-2 py-1.5 border-b border-slate-200 last:border-0">
-                                            <span className="text-xs font-medium text-slate-600">{config.examName}</span>
-                                            <div className="flex items-center gap-1.5">
-                                              <input type="number" className="w-14 px-2 py-1 bg-white border border-slate-200 rounded-lg text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-100" value={weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?.[id] ?? ""} onChange={(e) => handleWeightageChange(sanitizeKey(selectedConfigReg), type, id, e.target.value)} />
-                                              <span className="text-xs text-slate-400 font-bold">%</span>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ))}
+                                {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length > 0 && (
+                                  <div className="flex justify-end gap-2">
+                                    <button onClick={() => handleSaveTypePercentages(sanitizeKey(selectedConfigReg))} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
+                                      <Save size={14} /> Save Type Percentages
+                                    </button>
+                                  </div>
+                                )}
+                                
+                                <div className="bg-white rounded-3xl shadow-sm border border-gray-300 overflow-x-auto">
+                                  <table className="w-full text-sm border-collapse border border-gray-300">
+                                    <thead className="bg-slate-50">
+                                      <tr>
+                                        <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Course Type</th>
+                                        <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Category</th>
+                                        <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Exams</th>
+                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-20">Int. Cons.</th>
+                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
+                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
+                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
+                                        <th className="px-3 py-4 border border-gray-300 w-12"></th>
+                                        <th className="px-4 py-4 border border-gray-300 w-10"></th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).map((type, idx) => {
+                                        const catGroups = {};
+                                        Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg) && config.courseTypes?.includes(type)).forEach(([id, config]) => {
+                                          const cat = getExamCategory(config);
+                                          if (!catGroups[cat]) catGroups[cat] = { ids: [], names: [] };
+                                          catGroups[cat].ids.push(id);
+                                          catGroups[cat].names.push(config.examName);
+                                        });
+                                        const catEntries = Object.entries(catGroups);
+                                        const rowCount = catEntries.length || 1;
+                                        return catEntries.length === 0 ? (
+                                          <tr key={idx}>
+                                            <td className="px-6 py-4 border border-gray-300" colSpan={2}>
+                                              <div className="flex items-center gap-3">
+                                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                                <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                                  <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
+                                                  <span className="text-[10px] font-black text-amber-700">%</span>
+                                                </div>
+                                              </div>
+                                            </td>
+                                            <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
+                                            <td className="px-4 py-4 border border-gray-300"><button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
+                                          </tr>
+                                        ) : (
+                                          catEntries.map(([catName, group], ci) => (
+                                            <tr key={`${idx}_${ci}`}>
+                                              {ci === 0 && (
+                                                <td className="px-6 py-4 border border-gray-300 align-middle font-bold text-slate-700" rowSpan={rowCount}>
+                                                  <div className="flex flex-col items-center gap-2">
+                                                    <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                                    <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                                      <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
+                                                      <span className="text-[10px] font-black text-amber-700">%</span>
+                                                    </div>
+                                                  </div>
+                                                </td>
+                                              )}
+                                              <td className="px-4 py-3 border border-gray-300">
+                                                <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tight border ${catColors[catName] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{catName}</span>
+                                              </td>
+                                              <td className="px-4 py-3 text-xs text-slate-500 font-medium border border-gray-300">{group.names.join(', ')}</td>
+                                              {(() => {
+                                                const cfg = weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName] || {};
+                                                return (
+                                                   <>
+                                                     <td className={`px-3 py-3 text-center border border-gray-300 ${cfg.consider_for_internal === false ? 'bg-red-50' : 'bg-green-50'}`}>
+                                                       <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer" checked={cfg.consider_for_internal !== false} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'consider_for_internal', e.target.checked)} />
+                                                     </td>
+                                                     <td className="px-3 py-3 text-center border border-gray-300">
+                                                       <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'best_count', e.target.value)} />
+                                                     </td>
+                                                     <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
+                                                       {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
+                                                     </td>
+                                                     <td className="px-3 py-3 text-center border border-gray-300">
+                                                       <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
+                                                     </td>
+                                                   </>
+                                                 );
+                                               })()}
+                                              {ci === 0 && (
+                                                <td className="px-3 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
+                                                  <div className="flex flex-col items-center gap-1.5">
+                                                    <button onClick={() => handleSaveCategoryConfig(sanitizeKey(selectedConfigReg), type)} className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md hover:bg-emerald-100 whitespace-nowrap">Save</button>
+                                                  </div>
+                                                </td>
+                                              )}
+                                              {ci === 0 && (
+                                                <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
+                                                  <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                                </td>
+                                              )}
+                                            </tr>
+                                          ))
+                                        );
+                                      })}
+                                      {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length === 0 && (
+                                        <tr><td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
+                                      )}
+                                    </tbody>
+                                  </table>
                                 </div>
                               </div>
                             )}
