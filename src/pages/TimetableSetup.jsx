@@ -75,13 +75,14 @@ export default function TimetableSetup() {
 
   const [allocationTemplateId, setAllocationTemplateId] = useState("");
   const [allocationProgramme, setAllocationProgramme] = useState("");
-  const [allocationBatch, setAllocationBatch] = useState("");
+  const [allocationBatches, setAllocationBatches] = useState([]);
   const [allocationLoading, setAllocationLoading] = useState(false);
-  const [allocationDepartment, setAllocationDepartment] = useState("");
+  const [allocationDepartments, setAllocationDepartments] = useState([]);
   const [allocationAcademicYear, setAllocationAcademicYear] = useState("");
   const [allocationSemester, setAllocationSemester] = useState("");
   const [allocatedTimetables, setAllocatedTimetables] = useState([]);
   const [editingAllocation, setEditingAllocation] = useState(null);
+  const [openDropdown, setOpenDropdown] = useState(null);
 
   const allocationBatchesList = useMemo(() => {
     if (!allocationProgramme) return [];
@@ -89,17 +90,17 @@ export default function TimetableSetup() {
   }, [allocationProgramme, getActiveBatches]);
 
   const allocationAYears = useMemo(() => {
-    return allocationBatch ? getAcademicYears(allocationBatch) : [];
-  }, [allocationBatch]);
+    return allocationBatches.length > 0 ? getAcademicYears(allocationBatches[0]) : [];
+  }, [allocationBatches]);
 
   const allocationSemOptions = useMemo(() => {
-    if (!allocationBatch || !allocationAcademicYear) return [];
-    const years = getAcademicYears(allocationBatch);
+    if (allocationBatches.length === 0 || !allocationAcademicYear) return [];
+    const years = getAcademicYears(allocationBatches[0]);
     const idx = years.indexOf(allocationAcademicYear);
     if (idx < 0) return [];
     const s1 = idx * 2 + 1, s2 = idx * 2 + 2;
     return [`${getOrdinal(s1)} Semester`, `${getOrdinal(s2)} Semester`];
-  }, [allocationBatch, allocationAcademicYear]);
+  }, [allocationBatches, allocationAcademicYear]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'timetable_allocations'), (snap) => {
@@ -241,8 +242,8 @@ export default function TimetableSetup() {
   function loadEditAllocation(allocation) {
     setAllocationTemplateId(allocation.id || '');
     setAllocationProgramme(allocation.programme || '');
-    setAllocationDepartment(allocation.department || '');
-    setAllocationBatch(allocation.batch || '');
+    setAllocationDepartments([allocation.department || '']);
+    setAllocationBatches([allocation.batch || '']);
     setAllocationAcademicYear(allocation.academicYear || '');
     setAllocationSemester(allocation.semester || '');
     setEditingAllocation(allocation);
@@ -254,8 +255,8 @@ export default function TimetableSetup() {
     setEditingAllocation(null);
     setAllocationTemplateId("");
     setAllocationProgramme("");
-    setAllocationDepartment("");
-    setAllocationBatch("");
+    setAllocationDepartments([]);
+    setAllocationBatches([]);
     setAllocationAcademicYear("");
     setAllocationSemester("");
   }
@@ -526,46 +527,110 @@ export default function TimetableSetup() {
                   <div className="grid grid-cols-1 gap-4">
                     <div className="w-full sm:w-1/2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Template</label>
-                      <select value={allocationTemplateId} onChange={e => setAllocationTemplateId(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-emerald-500">
-                        <option value="">Select Template</option>
-                        {savedTemplates.map(t => <option key={t.id} value={t.id}>{t.timetableName}</option>)}
-                      </select>
+                      <div className="relative">
+                        <select value={allocationTemplateId} onChange={e => setAllocationTemplateId(e.target.value)} className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 pr-8 text-sm font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer">
+                          <option value="">Select Template</option>
+                          {savedTemplates.map(t => <option key={t.id} value={t.id}>{t.timetableName}</option>)}
+                        </select>
+                        <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-                      <div>
+                      <div className="relative">
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Programme</label>
-                        <select value={allocationProgramme} onChange={e => { setAllocationProgramme(e.target.value); setAllocationDepartment(""); setAllocationBatch(""); setAllocationAcademicYear(""); setAllocationSemester(""); }} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none">
-                          <option value="">Programme</option>
-                          {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
-                        </select>
+                        <div className="relative">
+                          <select value={allocationProgramme} onChange={e => { setAllocationProgramme(e.target.value); setAllocationDepartments([]); setAllocationBatches([]); setAllocationAcademicYear(""); setAllocationSemester(""); }} className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 pr-8 text-sm font-bold text-[#120c7a] outline-none cursor-pointer">
+                            <option value="">Programme</option>
+                            {Object.keys(PROGRAMME_DEPARTMENTS).map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
+                          </select>
+                          <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        </div>
                       </div>
-                      <div>
+                      <div className="relative">
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Department</label>
-                        <select value={allocationDepartment} onChange={e => setAllocationDepartment(e.target.value)} disabled={!allocationProgramme} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50">
-                          <option value="">Department</option>
-                          {allocationProgramme && PROGRAMME_DEPARTMENTS[allocationProgramme].map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
+                        <button type="button" onClick={() => allocationProgramme && setOpenDropdown(openDropdown === 'dept' ? null : 'dept')}
+                          className={`w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-left outline-none ${!allocationProgramme ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-blue-300'}`}>
+                          <span className={allocationDepartments.length === 0 ? 'text-zinc-400 font-medium' : 'text-[#120c7a]'}>
+                            {allocationDepartments.length === 0 ? 'Select Department' : `${allocationDepartments.length} selected`}
+                          </span>
+                          <ChevronDown size={16} className={`text-zinc-400 transition-transform ${openDropdown === 'dept' ? 'rotate-180' : ''}`} />
+                        </button>
+                        {allocationDepartments.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {allocationDepartments.map(d => (
+                              <span key={d} className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+                                {d}
+                                <button onClick={() => setAllocationDepartments(prev => prev.filter(x => x !== d))} className="hover:text-blue-900">&times;</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {openDropdown === 'dept' && (
+                          <>
+                            <div className="fixed inset-0 z-10" onClick={() => setOpenDropdown(null)} />
+                            <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto p-1.5 space-y-0.5">
+                              {allocationProgramme && PROGRAMME_DEPARTMENTS[allocationProgramme].map(d => (
+                                <div key={d} onClick={() => { setAllocationDepartments(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]); }}
+                                  className={`px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-semibold transition-colors ${allocationDepartments.includes(d) ? 'bg-[#120c7a] text-white' : 'text-zinc-700 hover:bg-blue-50'}`}>
+                                  {d}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
-                      <div>
+                      <div className="relative">
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Batch</label>
-                        <select value={allocationBatch} onChange={e => { setAllocationBatch(e.target.value); setAllocationAcademicYear(""); setAllocationSemester(""); }} disabled={!allocationProgramme} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50">
-                          <option value="">Batch</option>
-                          {allocationBatchesList.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
-                        </select>
+                        <button type="button" onClick={() => allocationProgramme && setOpenDropdown(openDropdown === 'batch' ? null : 'batch')}
+                          className={`w-full flex items-center justify-between bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-left outline-none ${!allocationProgramme ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-blue-300'}`}>
+                          <span className={allocationBatches.length === 0 ? 'text-zinc-400 font-medium' : 'text-[#120c7a]'}>
+                            {allocationBatches.length === 0 ? 'Select Batch' : `${allocationBatches.length} selected`}
+                          </span>
+                          <ChevronDown size={16} className={`text-zinc-400 transition-transform ${openDropdown === 'batch' ? 'rotate-180' : ''}`} />
+                        </button>
+                        {allocationBatches.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {allocationBatches.map(b => (
+                              <span key={b} className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+                                {formatBatchDisplay(b)}
+                                <button onClick={() => setAllocationBatches(prev => prev.filter(x => x !== b))} className="hover:text-blue-900">&times;</button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {openDropdown === 'batch' && (
+                          <>
+                            <div className="fixed inset-0 z-10" onClick={() => setOpenDropdown(null)} />
+                            <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto p-1.5 space-y-0.5">
+                              {allocationBatchesList.map(b => (
+                                <div key={b} onClick={() => { setAllocationBatches(prev => prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b]); }}
+                                  className={`px-2.5 py-1.5 rounded-lg cursor-pointer text-xs font-semibold transition-colors ${allocationBatches.includes(b) ? 'bg-[#120c7a] text-white' : 'text-zinc-700 hover:bg-blue-50'}`}>
+                                  {formatBatchDisplay(b)}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                       <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Academic Year</label>
-                        <select value={allocationAcademicYear} onChange={e => { setAllocationAcademicYear(e.target.value); setAllocationSemester(""); }} disabled={!allocationBatch} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50">
-                          <option value="">Academic Year</option>
-                          {allocationAYears.map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
+                        <div className="relative">
+                          <select value={allocationAcademicYear} onChange={e => { setAllocationAcademicYear(e.target.value); setAllocationSemester(""); }} disabled={allocationBatches.length === 0} className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 pr-8 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50 cursor-pointer">
+                            <option value="">Academic Year</option>
+                            {allocationAYears.map(y => <option key={y} value={y}>{y}</option>)}
+                          </select>
+                          <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        </div>
                       </div>
                       <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Semester</label>
-                        <select value={allocationSemester} onChange={e => setAllocationSemester(e.target.value)} disabled={!allocationAcademicYear} className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50">
-                          <option value="">Semester</option>
-                          {allocationSemOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <div className="relative">
+                          <select value={allocationSemester} onChange={e => setAllocationSemester(e.target.value)} disabled={!allocationAcademicYear} className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-3 py-2.5 pr-8 text-sm font-bold text-[#120c7a] outline-none disabled:opacity-50 cursor-pointer">
+                            <option value="">Semester</option>
+                            {allocationSemOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -573,53 +638,84 @@ export default function TimetableSetup() {
                     {editingAllocation && <button onClick={cancelEdit} className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold rounded-xl text-sm transition-all">Cancel</button>}
                     <button
                       onClick={async () => {
-                        if (!allocationTemplateId || !allocationProgramme || !allocationDepartment || !allocationBatch || !allocationAcademicYear || !allocationSemester) { showToast('Please fill all allocation fields.', 'error'); return; }
+                        if (!allocationTemplateId || !allocationProgramme || allocationDepartments.length === 0 || allocationBatches.length === 0 || !allocationAcademicYear || !allocationSemester) { showToast('Please fill all allocation fields.', 'error'); return; }
                         setAllocationLoading(true);
                         try {
                           const template = savedTemplates.find(t => t.id === allocationTemplateId);
                           if (!template) throw new Error('Template not found');
                           const progKey = formatProgrammeKey(allocationProgramme);
-                          const deptKey = sanitizeKey(allocationDepartment);
-                          const batchKey = sanitizeKey(allocationBatch);
                           const ayKey = sanitizeKey(allocationAcademicYear);
                           const semNum = String(allocationSemester).match(/\d+/)?.[0] || "1";
-                          const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
-                          if (editingAllocation && editingAllocation.allocationId !== compositeKey) await deleteDoc(doc(db, 'timetable_allocations', editingAllocation.allocationId));
-                          const payload = { ...template, programme: allocationProgramme, department: allocationDepartment, batch: allocationBatch, academicYear: allocationAcademicYear, semester: allocationSemester, semNum, progKey, deptKey, batchKey, ayKey, allocatedAt: new Date().toISOString() };
-                          await setDoc(doc(db, 'timetable_allocations', compositeKey), payload);
-                          showToast(editingAllocation ? 'Allocation updated!' : 'Template allocated!');
-                          setAllocationTemplateId(""); setAllocationProgramme(""); setAllocationDepartment(""); setAllocationBatch(""); setAllocationAcademicYear(""); setAllocationSemester(""); setEditingAllocation(null);
+                          if (editingAllocation) await deleteDoc(doc(db, 'timetable_allocations', editingAllocation.allocationId));
+                          let count = 0;
+                          for (const dept of allocationDepartments) {
+                            for (const batch of allocationBatches) {
+                              const deptKey = sanitizeKey(dept);
+                              const batchKey = sanitizeKey(batch);
+                              const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+                              const payload = { ...template, programme: allocationProgramme, department: dept, batch, academicYear: allocationAcademicYear, semester: allocationSemester, semNum, progKey, deptKey, batchKey, ayKey, allocatedAt: new Date().toISOString() };
+                              await setDoc(doc(db, 'timetable_allocations', compositeKey), payload);
+                              count++;
+                            }
+                          }
+                          showToast(`${count} allocation${count > 1 ? 's' : ''} ${editingAllocation ? 'updated' : 'created'}!`);
+                          setAllocationTemplateId(""); setAllocationProgramme(""); setAllocationDepartments([]); setAllocationBatches([]); setAllocationAcademicYear(""); setAllocationSemester(""); setEditingAllocation(null);
                         } catch (err) { console.error(err); showToast('Error allocating template.', 'error'); } finally { setAllocationLoading(false); }
                       }}
-                      disabled={allocationLoading || !allocationTemplateId || !allocationProgramme || !allocationDepartment || !allocationBatch || !allocationAcademicYear || !allocationSemester}
+                      disabled={allocationLoading || !allocationTemplateId || !allocationProgramme || allocationDepartments.length === 0 || allocationBatches.length === 0 || !allocationAcademicYear || !allocationSemester}
                       className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-xl font-bold transition-all"
                     >
                       {allocationLoading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Send size={14} />}
-                      {editingAllocation ? 'Update Allocation' : 'Allocate'}
+                      {editingAllocation ? 'Update Allocation' : `Allocate (${allocationDepartments.length * allocationBatches.length})`}
                     </button>
                   </div>
                 </>
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {savedTemplates.map((t) => (
-                <div key={t.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-lg hover:border-[#120c7a]/30 transition-all group relative overflow-hidden">
-                  <div className={`absolute top-0 left-0 w-1.5 h-full rounded-r-md ${activeTab === "templates" ? "bg-[#120c7a]" : "bg-emerald-500"}`}></div>
-                  <h3 className="text-base font-black text-[#120c7a] leading-tight mb-2">{t.timetableName}</h3>
-                  <p className="text-[10px] font-bold text-slate-400 mb-3">{t.workingDays || '?'} days &bull; {t.periodsPerDay || '?'} periods/day</p>
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {t.startTime && <span className="text-[8px] font-bold px-2 py-0.5 bg-blue-50 text-blue-600 rounded-lg">{t.startTime}</span>}
-                    {t.subjects?.length > 0 && <span className="text-[8px] font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded-lg">{t.subjects.length} subjects</span>}
-                    {t.numBreaks > 0 && <span className="text-[8px] font-bold px-2 py-0.5 bg-amber-50 text-amber-600 rounded-lg">{t.numBreaks} breaks</span>}
-                  </div>
-                  <div className="flex gap-2 pt-3 border-t border-slate-100">
-                    <button onClick={() => setViewTemplate(t)} className="flex-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 py-2 rounded-xl transition-all">View</button>
-                    <button onClick={() => loadTemplateForEdit(t)} className="flex-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 py-2 rounded-xl transition-all">Edit</button>
-                    <button onClick={() => { if (window.confirm(`Delete "${t.timetableName}"?`)) handleDeleteTemplate(t.id); }} className="flex-1 text-[10px] font-bold text-red-600 bg-red-50 hover:bg-red-100 py-2 rounded-xl transition-all">Delete</button>
-                  </div>
+            <div className="overflow-hidden bg-white rounded-[1.5rem] shadow-lg border border-slate-100">
+              <div className="bg-gradient-to-r from-[#120c7a] to-blue-700 px-6 py-4 flex items-center justify-between">
+                <h5 className="text-white font-bold text-sm flex items-center gap-2">
+                  <BookOpen size={16} />
+                  Saved Templates ({savedTemplates.length})
+                </h5>
+              </div>
+              {savedTemplates.length === 0 ? (
+                <div className="p-8 text-center">
+                  <BookOpen size={32} className="mx-auto text-slate-200 mb-2" />
+                  <p className="text-sm font-medium text-slate-400">No templates yet. Create one in the Create Template tab.</p>
                 </div>
-              ))}
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/50">
+                        {["Template Name", "Days", "Periods", "Start", "End", "Actions"].map(h => (
+                          <th key={h} className="px-4 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {savedTemplates.map(t => (
+                        <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-3 text-sm font-black text-[#120c7a]">{t.timetableName}</td>
+                          <td className="px-4 py-3"><span className="text-[10px] font-bold text-slate-600">{t.workingDays || '?'}</span></td>
+                          <td className="px-4 py-3"><span className="text-[10px] font-bold text-slate-600">{t.periodsPerDay || '?'}</span></td>
+                          <td className="px-4 py-3"><span className="text-[10px] font-bold text-slate-500">{t.startTime || '—'}</span></td>
+                          <td className="px-4 py-3"><span className="text-[10px] font-bold text-slate-500">{t.closeTime ? formatTime(parseTimeToDate(t.closeTime)) : '—'}</span></td>
+                          <td className="px-4 py-3">
+                            <div className="flex gap-1.5">
+                              <button onClick={() => setViewTemplate(t)} className="text-[9px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-all">View</button>
+                              <button onClick={() => loadTemplateForEdit(t)} className="text-[9px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg transition-all">Edit</button>
+                              <button onClick={() => { if (window.confirm(`Delete "${t.timetableName}"?`)) handleDeleteTemplate(t.id); }} className="text-[9px] font-bold text-red-600 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition-all">Delete</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -638,31 +734,65 @@ export default function TimetableSetup() {
                   <h3 className="text-lg font-black text-[#120c7a]">Allocated Timetables</h3>
                   <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-full">{allocatedTimetables.length} allocation{allocatedTimetables.length !== 1 ? 's' : ''}</span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {allocatedTimetables.map(a => (
-                    <div key={a.allocationId} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-lg hover:border-emerald-200 transition-all relative overflow-hidden group">
-                      <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500"></div>
-                      <h3 className="text-base font-black text-[#120c7a] leading-tight mb-1">{a.timetableName}</h3>
-                      <p className="text-[10px] font-bold text-slate-400 mb-2">{formatProgDisplay(a.progKey)} &middot; {a.department}</p>
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        {a.batch && <span className="text-[8px] font-bold px-2 py-0.5 bg-blue-50 text-blue-600 rounded-lg">{formatBatchDisplay(a.batch)}</span>}
-                        {a.academicYear && <span className="text-[8px] font-bold px-2 py-0.5 bg-purple-50 text-purple-600 rounded-lg">{a.academicYear}</span>}
-                        {a.semester && <span className="text-[8px] font-bold px-2 py-0.5 bg-amber-50 text-amber-600 rounded-lg">{a.semester}</span>}
+                {(() => {
+                  const grouped = {};
+                  allocatedTimetables.forEach(a => {
+                    const dept = a.department || 'Unknown';
+                    if (!grouped[dept]) grouped[dept] = [];
+                    grouped[dept].push(a);
+                  });
+                  return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([dept, allocs]) => (
+                    <div key={dept} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                      <div className="bg-gradient-to-r from-emerald-600 to-emerald-500 px-5 py-2.5 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <BookOpen size={15} className="text-white/80" />
+                          <h4 className="text-white font-bold text-sm">{dept}</h4>
+                        </div>
+                        <span className="text-[9px] font-bold text-white/80 bg-white/15 px-2.5 py-0.5 rounded-full">{allocs.length} batch{allocs.length > 1 ? 'es' : ''}</span>
                       </div>
-                      <div className="flex flex-wrap gap-1.5 mb-3">
-                        {a.workingDays && <span className="text-[8px] font-bold px-2 py-0.5 bg-slate-50 text-slate-500 rounded-lg">{a.workingDays} days</span>}
-                        {a.periodsPerDay && <span className="text-[8px] font-bold px-2 py-0.5 bg-slate-50 text-slate-500 rounded-lg">{a.periodsPerDay} periods</span>}
-                        {a.subjects?.length > 0 && <span className="text-[8px] font-bold px-2 py-0.5 bg-slate-50 text-slate-500 rounded-lg">{a.subjects.length} subjects</span>}
-                      </div>
-                      <p className="text-[8px] text-slate-400 mb-3">{a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</p>
-                      <div className="flex gap-2 pt-2 border-t border-slate-100">
-                        <button onClick={() => setViewTemplate(a)} className="flex-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 py-2 rounded-xl transition-all">View</button>
-                        <button onClick={() => { setActiveTab("templates"); loadEditAllocation(a); }} className="flex-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 py-2 rounded-xl transition-all">Edit</button>
-                        <button onClick={() => handleDeleteAllocation(a.allocationId, `${a.timetableName} - ${formatProgDisplay(a.progKey)} ${a.department} ${a.batch}`)} className="flex-1 text-[10px] font-bold text-red-600 bg-red-50 hover:bg-red-100 py-2 rounded-xl transition-all">Delete</button>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50/50">
+                              {["Template", "Batch", "AY", "Sem", "Details", "Date", "Actions"].map(h => (
+                                <th key={h} className="px-4 py-2.5 text-[9px] font-bold text-slate-500 uppercase tracking-widest">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {allocs.map(a => (
+                              <tr key={a.allocationId} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="px-4 py-2.5 text-sm font-black text-[#120c7a]">{a.timetableName}</td>
+                                <td className="px-4 py-2.5"><span className="text-[10px] font-bold px-2 py-0.5 bg-blue-50 text-blue-600 rounded-lg">{formatBatchDisplay(a.batch)}</span></td>
+                                <td className="px-4 py-2.5 text-[10px] font-bold text-slate-600">{a.academicYear || '—'}</td>
+                                <td className="px-4 py-2.5 text-[10px] font-bold text-slate-600">{a.semester || '—'}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] text-slate-500">{a.workingDays || '?'}d</span>
+                                    <span className="text-[9px] text-slate-300">/</span>
+                                    <span className="text-[9px] text-slate-500">{a.periodsPerDay || '?'}p</span>
+                                    {a.subjects?.length > 0 && <>
+                                      <span className="text-[9px] text-slate-300">/</span>
+                                      <span className="text-[9px] text-slate-500">{a.subjects.length}sub</span>
+                                    </>}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-[9px] text-slate-400">{a.allocatedAt ? new Date(a.allocatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex items-center gap-1">
+                                    <button onClick={() => setViewTemplate(a)} className="text-[9px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-lg transition-all">View</button>
+                                    <button onClick={() => { setActiveTab("templates"); loadEditAllocation(a); }} className="text-[9px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg transition-all">Edit</button>
+                                    <button onClick={() => handleDeleteAllocation(a.allocationId, `${a.timetableName} - ${formatProgDisplay(a.progKey)} ${a.department} ${a.batch}`)} className="text-[9px] font-bold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-1 rounded-lg transition-all">Delete</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  ));
+                })()}
               </div>
             )}
           </div>

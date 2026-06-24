@@ -448,11 +448,12 @@ export default function AdmissionConfirmation() {
         body: rows,
         styles: { fontSize: 8 },
         headStyles: { fillColor: [18, 12, 122] },
+        showFoot: 'lastPage',
         foot: [["", "", "Total", rows.reduce((s, r) => s + (parseFloat(r[3]) || 0), 0).toFixed(2), "", "", ""]],
-        footStyles: { fillColor: [240, 240, 240], fontStyle: "bold", fontSize: 8, halign: "right" },
+        footStyles: { fillColor: [18, 12, 122], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 8, halign: "right" },
       });
-      doc.autoPrint();
-      window.open(doc.output("bloburl"), "_blank");
+      const blobUrl = doc.output('bloburl');
+      window.open(blobUrl, '_blank');
       setPaymentReportModalOpen(false);
       showToast("Payment report generated", "success");
     } catch (err) {

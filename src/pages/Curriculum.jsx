@@ -243,14 +243,16 @@ export default function Curriculum() {
 
   const handleSaveTypePercentages = async (regKey) => {
     const pcts = courseTypePercentages[regKey] || {};
-    const total = Object.values(pcts).reduce((s, v) => s + (parseInt(v) || 0), 0);
-    if (total !== 100) {
-      showAlert("Error", `Total percentage across course types must be exactly 100%. Current: ${total}%`);
-      return;
-    }
     try {
-      await setDoc(doc(db, 'course_type_weightage', regKey), { _percentages: pcts }, { merge: true });
-      setSuccessMessage("Course type percentages saved!");
+      const payload = { _percentages: pcts };
+      const wc = weightageConfigs[regKey] || {};
+      for (const [ct, ctData] of Object.entries(wc)) {
+        if (ctData._category_config) {
+          payload[ct] = { _category_config: ctData._category_config };
+        }
+      }
+      await setDoc(doc(db, 'course_type_weightage', regKey), payload, { merge: true });
+      setSuccessMessage("All configurations saved!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) { console.error(err); }
@@ -266,39 +268,6 @@ export default function Curriculum() {
       reg[courseType] = ct;
       return { ...prev, [regKey]: reg };
     });
-  };
-
-  const handleSaveCategoryConfig = async (regKey, courseType) => {
-    const cc = weightageConfigs[regKey]?.[courseType]?._category_config || {};
-    const entries = Object.entries(cc);
-    if (entries.length === 0) { showAlert("Error", "No categories to save."); return; }
-    for (const [, c] of entries) {
-      if (c.consider_for_internal !== false && (!c.best_count || !c.weightage)) {
-        showAlert("Error", "Fill Best and Wt% for each category."); return;
-      }
-    }
-    const total = entries.reduce((s, [, c]) => s + ((c.consider_for_internal !== false) ? (parseInt(c.weightage) || 0) : 0), 0);
-    const hasInternal = entries.some(([, c]) => c.consider_for_internal !== false);
-    if (hasInternal && total !== 100) {
-      showAlert("Error", `Total weightage across internal categories must be 100%. Current: ${total}%`);
-      return;
-    }
-    try {
-      const clean = {};
-      for (const [cat, c] of entries) {
-        clean[cat] = { consider_for_internal: c.consider_for_internal !== false };
-        if (c.consider_for_internal !== false) {
-          clean[cat].best_count = parseInt(c.best_count);
-          clean[cat].weightage = parseInt(c.weightage);
-        }
-      }
-      await setDoc(doc(db, 'course_type_weightage', regKey), {
-        [courseType]: { _category_config: clean }
-      }, { merge: true });
-      setSuccessMessage(`Category config saved for ${courseType}!`);
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-    } catch (err) { console.error(err); }
   };
 
   const getExamCategory = (config) => {
@@ -1050,7 +1019,7 @@ export default function Curriculum() {
                                 {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length > 0 && (
                                   <div className="flex justify-end gap-2">
                                     <button onClick={() => handleSaveTypePercentages(sanitizeKey(selectedConfigReg))} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
-                                      <Save size={14} /> Save Type Percentages
+                                      <Save size={14} /> Save All
                                     </button>
                                   </div>
                                 )}
@@ -1066,7 +1035,6 @@ export default function Curriculum() {
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
-                                        <th className="px-3 py-4 border border-gray-300 w-12"></th>
                                         <th className="px-4 py-4 border border-gray-300 w-10"></th>
                                       </tr>
                                     </thead>
@@ -1131,15 +1099,8 @@ export default function Curriculum() {
                                                      </td>
                                                    </>
                                                  );
-                                               })()}
-                                              {ci === 0 && (
-                                                <td className="px-3 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
-                                                  <div className="flex flex-col items-center gap-1.5">
-                                                    <button onClick={() => handleSaveCategoryConfig(sanitizeKey(selectedConfigReg), type)} className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md hover:bg-emerald-100 whitespace-nowrap">Save</button>
-                                                  </div>
-                                                </td>
-                                              )}
-                                              {ci === 0 && (
+                                                })()}
+                                               {ci === 0 && (
                                                 <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
                                                   <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
                                                 </td>
