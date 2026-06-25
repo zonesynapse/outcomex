@@ -51,6 +51,7 @@ const allPossibleItems = [
   { id: "principal-dashboard", icon: LayoutDashboard, label: "Principal Dashboard", path: "/principal-dashboard" },
   { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
   { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
+  { id: "student-management", icon: Users, label: "Student Management", path: "/student-management" },
   { id: "info-configuration", icon: Settings2, label: "Info Configuration", path: "/info-configuration" },
   { id: "curriculum", icon: BookOpen, label: "General Config", path: "/curriculum" },
   { id: "blooms-taxonomy", icon: BrainCircuit, label: "Bloom's Taxonomy", path: "/blooms-taxonomy" },

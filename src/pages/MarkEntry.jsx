@@ -18,11 +18,9 @@ import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
 
-const MARK_TYPES = ["Internal", "Assignment"];
-
 const sanitizeKey = (key) => {
   if (!key) return '';
-  return String(key).replace(/[.#$[\]/ ]/g, '_');
+  return String(key).replace(/[.#$[\]]/g, '_');
 };
 
 const deriveSemesterNumber = (label) => {
@@ -350,19 +348,14 @@ export default function MarkEntry() {
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
     if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+    if (!derivedDepts.length) return [];
     const progKey = formatProgrammeKey(programme);
-    const allowedDepts = new Set();
-    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey && userDepartment) {
-      allowedDepts.add(sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim());
-    }
     const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
-    normalizedDepts.forEach(d => allowedDepts.add(d));
-
     return depts.filter(dept => {
       const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
-      return Array.from(allowedDepts).some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+      return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
     });
-  }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS]);
+  }, [programme, userRole, derivedDepts, PROGRAMME_DEPARTMENTS]);
 
   // Filter Academic Years based on batch and QPs
   useEffect(() => {
@@ -643,12 +636,18 @@ export default function MarkEntry() {
           const qpSub = norm(qp.subject || qp.course || '');
           const qpExam = norm(qp.qpaper_name || qp.qpaperName || '');
           const qpSem = String(qp.semester || '').trim();
+          const qpSection = norm(qp.section || '');
+          const needSection = norm(section || '');
+          
+          // Only apply section filter when QP has a section field (backward compat)
+          const sectionMatch = !qp.section || !needSection || qpSection === needSection;
           
           return qpSub === needSub && 
                  qpAy === needAy && 
                  qpDept === needDept && 
                  qpExam === targetExam && 
-                 qpSem === targetSem;
+                 qpSem === targetSem &&
+                 sectionMatch;
         });
 
         if (match) {
@@ -800,7 +799,7 @@ export default function MarkEntry() {
     };
 
     loadData();
-  }, [programme, department, batch, academicYear, semester, subject, exam, markType]);
+  }, [programme, department, batch, academicYear, semester, subject, exam, markType, section]);
 
   const calculateTotal = (regno, currentMarks) => {
     const s = currentMarks[regno];
@@ -1587,32 +1586,7 @@ export default function MarkEntry() {
               </div>
             </div>
 
-            {!isIndirectAssessment && (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Mark Type</label>
-                <div className="relative">
-                  <select 
-                    disabled={!exam}
-                    value={markType}
-                    onChange={(e) => setMarkType(e.target.value)}
-                    className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
-                  >
-                    <option value="">Select Mark Type</option>
-                    {isUniversityExam ? (
-                      <>
-                        {availableExams.find(e => e.value === exam)?.hasQP && <option value="CO Wise">CO Wise</option>}
-                        <option value="Overall">Overall</option>
-                      </>
-                    ) : (
-                      MARK_TYPES.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))
-                    )}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                </div>
-              </div>
-            )}
+
           </div>
         </div>
 

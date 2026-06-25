@@ -52,6 +52,8 @@ export default function QuestionPaperGenerator() {
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [ciaConfigsMap, setCiaConfigsMap] = useState({}); // Map for quick lookup
   const [userRole, setUserRole] = useState(null);
+  const [userProgramme, setUserProgramme] = useState("");
+  const [userDepartment, setUserDepartment] = useState("");
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [exam, setExam] = useState('');
@@ -390,7 +392,9 @@ export default function QuestionPaperGenerator() {
       if (snapshot.exists()) {
         const userData = snapshot.data();
         setUserRole(userData.role);
-        if (userData.role === 'Faculty') {
+        setUserProgramme(userData.programme || "");
+        setUserDepartment(userData.department || "");
+        if (userData.role === 'Faculty' || userData.role === 'HOD') {
           const assignmentsRef = collection(db, 'subject_assignments');
           unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
             const prefixes = [];
@@ -421,7 +425,7 @@ export default function QuestionPaperGenerator() {
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
   };
 
-  const isAssignmentOrProject = useMemo(() => assessmentType === 'Assignment' || assessmentType === 'Project', [assessmentType]);
+  const isAssignmentOrProject = useMemo(() => assessmentType === 'Assignment' || assessmentType === 'Project' || assessmentType === 'Practical' || assessmentType === 'Indirect', [assessmentType]);
 
   const getCurrentStructureTotalMarks = useCallback(() => {
     if (isAssignmentOrProject) {
@@ -538,7 +542,7 @@ export default function QuestionPaperGenerator() {
       (!norm(config.academicYear) || norm(config.academicYear) === selectedAy) &&
       (!config.semester || String(config.semester) === semNum) &&
       (!norm(config.regulation) || norm(config.regulation) === selectedReg) &&
-      (assessmentType === 'Assignment' ? config.isAssignment : assessmentType === 'Project' ? config.isProject : !config.isAssignment && !config.isProject) &&
+      (assessmentType === 'Assignment' ? config.isAssignment : assessmentType === 'Project' ? config.isProject : assessmentType === 'Practical' ? config.isPractical : assessmentType === 'Indirect' ? config.isIndirectAssessment : !config.isAssignment && !config.isProject && !config.isPractical && !config.isIndirectAssessment) &&
       (!courseType || !config.courseTypes || config.courseTypes.includes(courseType))
     );
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
@@ -565,8 +569,8 @@ export default function QuestionPaperGenerator() {
 
     if (!qp) return { activeCOs, coWeightage };
 
-    // Assignment/Project: each mapping contributes marks directly to its CO
-    if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
+    // Assignment/Project/Practical: each mapping contributes marks directly to its CO
+    if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
       (qp.assignment_config || []).forEach((q) => {
         const marks = parseInt(q?.marks, 10) || 0;
         if (marks <= 0) return;
@@ -578,6 +582,18 @@ export default function QuestionPaperGenerator() {
           activeCOs.add(co);
           coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
         });
+      });
+      return { activeCOs, coWeightage };
+    }
+
+    // Indirect: each assignment_config item IS a CO with its full marks as weight
+    if (qp.assessment_type === 'Indirect') {
+      (qp.assignment_config || []).forEach((q, idx) => {
+        const marks = parseInt(q?.marks, 10) || 0;
+        if (marks <= 0) return;
+        const co = `CO${idx + 1}`;
+        activeCOs.add(co);
+        coWeightage[co] = (coWeightage[co] || 0) + marks;
       });
       return { activeCOs, coWeightage };
     }
@@ -840,8 +856,10 @@ export default function QuestionPaperGenerator() {
   }, [facultyAssignPrefixes, program, programToDepartments]);
 
   const filteredProgrammes = Object.keys(programToDepartments).filter(prog => {
-    if (userRole !== 'Faculty') return true;
-    return derivedProgs.includes(formatProgrammeKey(prog));
+    if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
+    const progKey = formatProgrammeKey(prog);
+    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
+    return derivedProgs.includes(progKey);
   });
 
   const displayedBatches = useMemo(() => {
@@ -852,12 +870,13 @@ export default function QuestionPaperGenerator() {
     const progKeyNorm = norm(progKey);
     const deptNorm = norm(department);
 
-    if (isAssignmentOrProject) {
+    if (isAssignmentOrProject || assessmentType === 'Indirect') {
+      const checkField = assessmentType === 'Indirect' ? 'isIndirectAssessment' : (assessmentType === 'Project' ? 'isProject' : assessmentType === 'Practical' ? 'isPractical' : 'isAssignment');
       return batches.filter(b => {
         const reg = getRegulationForBatch(progKey, b);
         if (!reg) return false;
         return ciaConfigs.some(config =>
-          (assessmentType === 'Project' ? config.isProject : config.isAssignment) === true &&
+          config[checkField] === true &&
           (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
           (!norm(config.department) || norm(config.department) === deptNorm) &&
           (!norm(config.regulation) || norm(config.regulation) === norm(reg))
@@ -887,7 +906,8 @@ export default function QuestionPaperGenerator() {
 
   const filteredDepartments = useMemo(() => {
   const depts = programToDepartments[formatProgrammeKey(program)] || [];
-  if (userRole !== 'Faculty') return depts;
+  if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+  if (!derivedDepts.length) return [];
   const progKey = formatProgrammeKey(program);
   const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
   return depts.filter(dept => {
@@ -932,7 +952,7 @@ export default function QuestionPaperGenerator() {
       examDisplay = configObj?.examName || qp.qpaper_name;
     }
 
-    const isAssignment = qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project';
+    const isAssignment = qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' || qp.assessment_type === 'Indirect';
 
     const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
     const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
@@ -966,7 +986,7 @@ export default function QuestionPaperGenerator() {
 </table>
 <table style="width: 100%; border-collapse: collapse; margin-top: 10px;" border="1">
   <tr>
-    <td style="padding: 4px;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
+    <td style="padding: 4px;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : qp.assessment_type === 'Practical' ? 'Practical' : qp.assessment_type === 'Indirect' ? 'Indirect Assessment' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
     <td colspan="3" style="padding: 4px;">${examDisplay}</td>
     <td style="padding: 4px;"><strong>Academic Year</strong></td>
     <td style="padding: 4px;">${qp.academic_year}</td>
@@ -1401,7 +1421,7 @@ ${(() => {
 
     const checkExisting = async () => {
       try {
-        const existingQpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`; // This is the field key
+        const existingQpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`; // This is the field key
         const qpRef = doc(db, 'generated_qps', docId); // Parent doc path
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
         const qp = snapshot.data()?.[existingQpId]; // Read from field in parent doc
@@ -1417,7 +1437,7 @@ ${(() => {
             }));
             
             // Apply state updates
-            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
+            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
               setNumParts(String(qp.assignment_config?.length || ''));
               setAssignmentConfig(resolveConfig(qp.assignment_config));
               setSavedAssignmentConfig(resolveConfig(qp.assignment_config));
@@ -1512,7 +1532,7 @@ ${(() => {
           setHodComments(qp.hod_comments || ''); // Load HOD comments
           setExam(qp.qpaper_name || '');
           
-            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
+            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
               setNumParts(String(qp.assignment_config?.length || ''));
               const resolved = (qp.assignment_config || []).map(q => ({
                 ...q,
@@ -1993,7 +2013,7 @@ const initEditor = useCallback(() => {
   }
 }, []);
   const handleGenerateParts = () => {
-    if (!isAssignmentOrProject) {
+    if (assessmentType !== 'Indirect' && !isAssignmentOrProject) {
       if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
         showToast("Please fill in all required fields.", "error");
         return;
@@ -2003,6 +2023,10 @@ const initEditor = useCallback(() => {
         showToast("Please fill in all required fields.", "error");
         return;
       }
+      if (!assignmentQuestionCount || parseInt(assignmentQuestionCount, 10) < 1) {
+        showToast("Please enter a valid number of questions.", "error");
+        return;
+      }
     }
 
     if (exam === 'custom' && !customExam) {
@@ -2010,22 +2034,18 @@ const initEditor = useCallback(() => {
       return;
     }
 
-    const count = isAssignmentOrProject ? assignmentQuestionCount : parseInt(numParts, 10);
-    if (isAssignmentOrProject) {
-      const selectedConfig = ciaConfigs.find(c => c.id === exam);
-      const totalMarks = selectedConfig?.totalMarks || 0;
-      setAssignmentTotalMarks(totalMarks);
-      const perQuestionMarks = Math.floor(totalMarks / count);
-      const keys = Object.keys(bloomsDomains || {});
-      const defaultDomainName = keys.length ? (bloomsDomains[keys[0]]?.name || keys[0]) : '';
+    const count = assessmentType === 'Indirect' ? assignmentQuestionCount : (isAssignmentOrProject ? assignmentQuestionCount : parseInt(numParts, 10));
+
+    if (assessmentType === 'Indirect') {
+      setAssignmentTotalMarks(count * 3); // 3 stars per CO
       setAssignmentConfig(Array.from({ length: count }, (_, i) => ({
         question: '',
-        marks: i === count - 1 ? totalMarks - perQuestionMarks * (count - 1) : perQuestionMarks,
+        marks: 3,
         mappings: [],
-        kl: 'L1',
-        kldomain: defaultDomainName
+        kl: '',
+        kldomain: ''
       })));
-    } else {
+    } else if (isAssignmentOrProject) {
       const newPartsConfig = [];
       for (let i = 0; i < count; i++) {
         // If we have existing parts up to this index, preserve them, otherwise default
@@ -2140,7 +2160,7 @@ const initEditor = useCallback(() => {
   };
 
   const handleGenerateTable = () => {
-    if (isAssignmentOrProject) {
+    if (isAssignmentOrProject && assessmentType !== 'Indirect') {
        const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
        if (!hasMappings) {
          showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
@@ -2234,7 +2254,16 @@ const initEditor = useCallback(() => {
     const subjectDisplay = subjectObj ? subjectObj.text : subject;
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
 
-    if (isAssignmentOrProject) {
+    if (assessmentType === 'Indirect') {
+      const hasEmptyDescription = assignmentConfig.some((q, idx) => !q.question || !q.question.trim());
+      if (hasEmptyDescription) {
+        showToast("Please fill in all CO descriptions.", "error");
+        return;
+      }
+      assignmentConfig.forEach(q => {
+        overallTotal += (parseInt(q.marks, 10) || 0);
+      });
+    } else if (isAssignmentOrProject) {
       const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
       if (!hasMappings) {
         showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
@@ -2521,29 +2550,36 @@ const initEditor = useCallback(() => {
       return false;
     }
 
-    const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
-    if (!hasMappings) {
-      showToast("Please ensure the assignment question has at least one CO mapping.", "error");
-      return false;
-    }
-
-    const sumMarks = assignmentConfig[0].mappings.reduce((sum, m) => sum + (m.marks || 0), 0);
-    if (sumMarks !== assignmentConfig[0].marks) {
-      showToast(`The sum of CO marks (${sumMarks}) must equal the total marks (${assignmentConfig[0].marks}).`, "error");
-      return false;
-    }
-
     let overallTotal = 0;
     const co_weightage = {};
-    assignmentConfig.forEach(q => {
-      overallTotal += q.marks;
-      (q.mappings || []).forEach(m => {
-        if (m.co) {
-          const mapMarks = parseInt(m?.marks, 10) || 0;
-          co_weightage[m.co] = (co_weightage[m.co] || 0) + mapMarks;
-        }
+
+    if (assessmentType !== 'Indirect') {
+      const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
+      if (!hasMappings) {
+        showToast("Please ensure the assignment question has at least one CO mapping.", "error");
+        return false;
+      }
+
+      const sumMarks = assignmentConfig[0].mappings.reduce((sum, m) => sum + (m.marks || 0), 0);
+      if (sumMarks !== assignmentConfig[0].marks) {
+        showToast(`The sum of CO marks (${sumMarks}) must equal the total marks (${assignmentConfig[0].marks}).`, "error");
+        return false;
+      }
+
+      assignmentConfig.forEach(q => {
+        overallTotal += q.marks;
+        (q.mappings || []).forEach(m => {
+          if (m.co) {
+            const mapMarks = parseInt(m?.marks, 10) || 0;
+            co_weightage[m.co] = (co_weightage[m.co] || 0) + mapMarks;
+          }
+        });
       });
-    });
+    } else {
+      assignmentConfig.forEach(q => {
+        overallTotal += q.marks;
+      });
+    }
 
     const semesterNum = deriveSemesterNumber(selectedSemester);
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
@@ -2559,7 +2595,7 @@ const initEditor = useCallback(() => {
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
-    const qpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`;
+    const qpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject);
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2569,6 +2605,7 @@ const initEditor = useCallback(() => {
       department: department,
       programme: program,
       batch: batch,
+      section: section || '',
       parts: [],
       assignment_config: assignmentConfig,
       assignment_kl: '',
@@ -2850,7 +2887,7 @@ const initEditor = useCallback(() => {
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
     // Use qpDocId that includes set suffix so multiple sets do not overwrite each other when forwarded. This is the document ID.
-    const qpDocId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : 'Assignment') : 'Exam') : `${exam}${setSuffix}`;
+    const qpDocId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`;
 
     const selectedSub = subjects.find(s => s.value === subject); // Find subject from available subjects
     const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
@@ -2877,9 +2914,10 @@ const initEditor = useCallback(() => {
       department: department,
       programme: program,
       batch: batch,
+      section: section || '',
       qp_set: qpSet,
       parts: partsForPayload,
-      assignment_config: assessmentType === 'Assignment' ? assignmentConfig : [],
+      assignment_config: (assessmentType === 'Assignment' || assessmentType === 'Indirect') ? assignmentConfig : [],
       assessment_type: assessmentType,
       qpaper_name: exam === 'custom' ? examDisplay : exam,
       exam_name: examDisplay,
@@ -2968,8 +3006,10 @@ const initEditor = useCallback(() => {
         const partLetter = String.fromCharCode(64 + index + 1);
         return { part: partLetter, num_questions: count, marks_per_question: marks, questions };
       });
+    } else if (assessmentType === 'Indirect') {
+      overallTotal = assignmentConfig.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
     } else {
-      overallTotal = assignmentConfig[0]?.marks || 0;
+      overallTotal = (assignmentConfig[0]?.marks || 0);
     }
 
     const qpDataForForward = {
@@ -2986,7 +3026,7 @@ const initEditor = useCallback(() => {
         exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
         assessment_type: assessmentType,
         parts: finalizedParts,
-        assignment_config: isAssignmentOrProject ? assignmentConfig : [],
+        assignment_config: (isAssignmentOrProject || assessmentType === 'Indirect') ? assignmentConfig : [],
         assignment_kl: '',
         assignment_kl_domain: ''
     };
@@ -3022,7 +3062,7 @@ const initEditor = useCallback(() => {
     if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
         window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
             // 4. Save the paper with 'forwarded' status
-            const isSaved = await handleSaveQuestionPaper(true, 'forwarded', hodUid);
+            const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', hodUid) : await handleSaveQuestionPaper(true, 'forwarded', hodUid);
             if (isSaved) {
                 showToast("Question paper forwarded to HOD successfully!", "success");
             } else {
@@ -3504,6 +3544,8 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 <option value="Exam">Exam</option>
                 <option value="Assignment">Activity</option>
                 <option value="Project">Project</option>
+                <option value="Practical">Practical</option>
+                <option value="Indirect">Indirect Assessment</option>
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
             </div>
@@ -3673,17 +3715,37 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           )}
 
           <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{isAssignmentOrProject ? 'Questions' : 'Parts'}</label>
+            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Indirect' ? 'Number of COs' : isAssignmentOrProject ? 'Questions' : 'Parts'}</label>
             <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={isAssignmentOrProject ? assignmentQuestionCount : numParts} 
-                onChange={e => isAssignmentOrProject ? setAssignmentQuestionCount(parseInt(e.target.value, 10)) : setNumParts(e.target.value)}
-              >
-                <option value="">Select</option>
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}{isAssignmentOrProject ? ' Question' : ''}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              {assessmentType === 'Indirect' || isAssignmentOrProject ? (
+                <input
+                  type="number"
+                  min="1"
+                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  value={assessmentType === 'Indirect' ? assignmentQuestionCount : assignmentQuestionCount}
+                  onChange={e => {
+                    const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                    if (assessmentType === 'Indirect') {
+                      setAssignmentQuestionCount(val);
+                    } else {
+                      setAssignmentQuestionCount(val);
+                    }
+                  }}
+                  placeholder={assessmentType === 'Indirect' ? "Enter number of COs (default 5)" : "Enter number of questions"}
+                />
+              ) : (
+                <>
+                  <select 
+                    className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
+                    value={numParts} 
+                    onChange={e => setNumParts(e.target.value)}
+                  >
+                    <option value="">Select</option>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -3772,59 +3834,119 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               <CheckCircle2 size={20} />
               Generate Table
             </button>
-            <button
-              onClick={handleOpenAIModal}
-              className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              Generate with AI
-            </button>
+            {assessmentType !== 'Indirect' && (
+              <button
+                onClick={handleOpenAIModal}
+                className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Generate with AI
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {showParts && isAssignmentOrProject && assignmentConfig.length > 0 && (
+      {showParts && (isAssignmentOrProject || assessmentType === 'Indirect') && assignmentConfig.length > 0 && (
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-bold text-[#120c7a] flex items-center gap-2">
               <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
-              Assignment Questions ({assignmentConfig.length})
+              {assessmentType === 'Indirect' ? 'CO Descriptions' : `Assignment Questions (${assignmentConfig.length})`}
             </h3>
             <div className="flex gap-4 items-start">
-              <span className="text-xs text-slate-400 font-medium mt-2">Each question has its own Domain &amp; KL below</span>
+              {assessmentType !== 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Each question has its own Domain &amp; KL below</span>}
+              {assessmentType === 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Describe each CO for student rating (3-star scale)</span>}
             </div>
           </div>
 
           <div className="space-y-6">
-            {presentPoSummary && presentPoSummary.length > 0 && (
+            {sortedPoCodes && sortedPoCodes.length > 0 && (
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                 <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                  <h3 className="font-bold text-slate-700 text-sm">PO / PSO Marks from Assignment PI Mapping</h3>
+                  <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO</h3>
                 </div>
                 <div className="p-2 overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr>
-                        {presentPoSummary.map(p => (
-                          <th key={p.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">{p.displayCode}</th>
+                        {displayedPoSummary.map((r) => (
+                          <th key={r.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">
+                            {r.displayCode}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        {presentPoSummary.map(p => (
-                          <td key={p.poCode} className="px-3 py-2 text-center">
-                            <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{p.marks}</span>
+                        {displayedPoSummary.map((r) => (
+                          <td key={r.poCode} className="px-3 py-2 text-center">
+                            {r.marks === 0 ? (
+                              <span className="inline-flex items-center px-2 py-1 bg-red-50 text-red-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
+                            )}
                           </td>
                         ))}
                       </tr>
                     </tbody>
                   </table>
                 </div>
+                {presentPoSummary && presentPoSummary.length > 0 && (
+                  <div className="p-2 border-t border-slate-100">
+                    <div className="text-sm font-semibold text-slate-600 mb-2">POs present in current question paper (Active Changes)</div>
+                    <div className="overflow-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr>
+                            {presentPoSummary.map(p => (
+                              <th key={p.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">{p.displayCode}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            {presentPoSummary.map(p => (
+                              <td key={p.poCode} className="px-3 py-2 text-center">
+                                <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{p.marks}</span>
+                              </td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
             {assignmentConfig.map((q, qIdx) => {
+              if (assessmentType === 'Indirect') {
+                return (
+                  <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
+                    <div className="flex justify-between items-start">
+                      <h4 className="font-bold text-slate-700 text-lg">CO{qIdx + 1}</h4>
+                      <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Rating Scale:</span>
+                        <span className="text-sm font-bold text-[#120c7a]">1 - 3 Stars</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">CO Description / Question for Students</label>
+                      <textarea
+                        value={q.question}
+                        onChange={e => {
+                          const updated = [...assignmentConfig];
+                          updated[qIdx] = { ...updated[qIdx], question: e.target.value };
+                          setAssignmentConfig(updated);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium min-h-[100px]"
+                        placeholder={`Describe what CO${qIdx + 1} measures and what students should rate themselves on...`}
+                      />
+                    </div>
+                  </div>
+                );
+              }
               const qMeta = getAssignmentMarksMeta(qIdx);
               return (
               <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
@@ -4016,20 +4138,6 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             >
               <CheckCircle2 size={20} />
               Finalize & Preview
-            </button>
-            <button
-              onClick={() => handleSaveAssignment()}
-              className="px-8 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-all shadow-lg shadow-green-900/20 flex items-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
-              Save Assignment
-            </button>
-            <button
-              onClick={handleOpenAIModal}
-              className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              Generate with AI
             </button>
             <button
               onClick={() => { setShowParts(false); setAssignmentConfig([]); }}
@@ -4370,7 +4478,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 Forward to HOD
               </button>
               <button
-                onClick={() => handleSaveQuestionPaper()}
+                onClick={() => isAssignmentOrProject ? handleSaveAssignment() : handleSaveQuestionPaper()}
                 className="px-8 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
@@ -4380,7 +4488,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
           )}
         </div>
 
-      {showAIModal && (
+      {showAIModal && assessmentType !== 'Indirect' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto border border-slate-100 animate-in zoom-in duration-300">
             <h2 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">

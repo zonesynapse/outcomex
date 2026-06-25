@@ -101,6 +101,11 @@
 - Parts-loading `useEffect` early-returns when `isAssignmentOrProject` is true.
 - All existing "Exam" and "Activity" functionality unchanged.
 
+### 15. MarkEntry.jsx section filter not re-fetching data
+- `section` was missing from the data-loading `useEffect` dependency array at `src/pages/MarkEntry.jsx:803`
+- Changing section didn't re-fetch students or marks — the section filter appeared non-functional
+- **Fix**: Added `section` to the dependency array
+
 ---
 
 ## Summary of Changes (Student Module — Dual-ID Lookup & Marks)
@@ -147,6 +152,18 @@
 - For old Upload.jsx data: `admNo=""` (Admission Number column hidden), `regNo=student.reg` (key treated as register number)
 - For new admission data: `admNo=student.reg` (Admission Number column shown), `regNo` from index or empty (Register Number column hidden until assigned)
 - Stats cards in AdmissionEnquiries are computed by `getEnquiriesStats()` which runs Firestore `getCountFromServer` queries on the `status` field — changing a student's status automatically reverses the counts
+
+### 16. QPG HOD programme/department filter fix
+- **Problem**: `filteredProgrammes` and `filteredDepartments` only filtered for `Faculty` role — HOD saw all programmes/departments
+- **Root cause 1**: `userProgramme`/`userDepartment` were not fetched from the `users` doc for HOD (only `userRole` was)
+- **Root cause 2**: `filteredProgrammes` had `if (userRole !== 'Faculty') return true;` — HOD passed through unchecked
+- **Root cause 3**: `filteredDepartments` used `userRole !== 'Faculty'` — HOD got all departments
+- **Root cause 4**: `subject_assignments` listener only ran for `Faculty`, so `facultyAssignPrefixes` was empty for HOD
+- **Fixes**:
+  - Added `userProgramme`/`userDepartment` state variables and loaded them for all roles (line 55-56, 397-398)
+  - Extended `subject_assignments` listener to also run for `HOD` role (line 400)
+  - `filteredProgrammes` (line 846-851): HOD sees their own `userProgramme` + programmes from `derivedProgs`
+  - `filteredDepartments` (line 894-903): HOD sees all depts of their own programme, otherwise filtered by `derivedDepts`
 
 ### Next Steps
 1. Build RegNo assignment page (admin uploads admissionNo → regNo mapping CSV, updates both indexes)

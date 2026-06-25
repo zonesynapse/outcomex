@@ -11,6 +11,7 @@ import AdminRoleConfig from "./pages/AdminRoleConfig";
 import POConfiguration from "./pages/POConfiguration";
 import COConfiguration from "./pages/COConfiguration";
 import MarkEntry from "./pages/MarkEntry";
+import StudentManagement from "./pages/StudentManagement";
 import QuestionPaperGenerator from "./pages/QuestionPaperGenerator";
 import PoAttainment from "./pages/PoAttainment";
 import CoPoMapping from "./pages/CoPoMapping";
@@ -106,6 +107,7 @@ export default function App() {
         <Route path="/principal-dashboard" element={<ProtectedRoute><PrincipalDashboard /></ProtectedRoute>} />
         <Route path="/course-bank" element={<ProtectedRoute><CourseBank /></ProtectedRoute>} />
         <Route path="/admin-roles" element={<ProtectedRoute><AdminRoleConfig /></ProtectedRoute>} />
+        <Route path="/student-management" element={<ProtectedRoute><StudentManagement /></ProtectedRoute>} />
         <Route path="/info-configuration" element={<ProtectedRoute><InfoConfiguration /></ProtectedRoute>} />
         <Route path="/curriculum" element={<ProtectedRoute><Curriculum /></ProtectedRoute>} />
         <Route path="/vision_and_mission" element={<ProtectedRoute><VisionMission /></ProtectedRoute>} />

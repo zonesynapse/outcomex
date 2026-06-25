@@ -14,6 +14,7 @@ interface CIAConfig {
   isIndirectAssessment: boolean;
   isAssignment: boolean;
   isProject: boolean;
+  isPractical: boolean;
   courseTypes: string[];
   numSets?: number;
   createdAt: string;
@@ -41,6 +42,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
     isIndirectAssessment: false,
     isAssignment: false,
     isProject: false,
+    isPractical: false,
     courseTypes: [] as string[]
   });
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +99,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
           isUniversity: true,
           isIndirectAssessment: true,
           isAssignment: false,
+          isPractical: false,
           totalMarks: 0 
         }));
       } else if (name === 'isUniversity' && !checked) {
@@ -143,6 +146,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         isIndirectAssessment,
         isAssignment: formData.isAssignment,
         isProject: formData.isProject,
+        isPractical: formData.isPractical,
         courseTypes: formData.courseTypes,
         numSets: 1,
         createdAt: new Date().toISOString()
@@ -156,6 +160,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         isIndirectAssessment: false,
         isAssignment: false,
         isProject: false,
+        isPractical: false,
         courseTypes: []
       });
     } catch (err) {
@@ -308,6 +313,20 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                   Project
                 </label>
               </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="isPractical"
+                  name="isPractical"
+                  checked={formData.isPractical}
+                  onChange={handleInputChange}
+                  className="w-4 h-4 text-[#120c7a] border-slate-300 rounded focus:ring-[#120c7a]"
+                />
+                <label htmlFor="isPractical" className="text-sm font-medium text-slate-700">
+                  Practical
+                </label>
+              </div>
             </div>
 
             {(formData.isUniversity || formData.isIndirectAssessment) ? (
@@ -444,6 +463,11 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                         {config.isProject && (
                           <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded flex items-center gap-1">
                             Project
+                          </span>
+                        )}
+                        {config.isPractical && (
+                          <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 text-[10px] font-bold rounded flex items-center gap-1">
+                            Practical
                           </span>
                         )}
                       </div>

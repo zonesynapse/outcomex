@@ -94,6 +94,7 @@ export default function AdminRoleConfig() {
     { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard" },
     { id: "course-bank", label: "Course Bank", path: "/course-bank" },
     { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles" },
+    { id: "student-management", label: "Student Management", path: "/student-management" },
     { id: "info-configuration", label: "Info Configuration", path: "/info-configuration" },
     { id: "curriculum", label: "Curriculum", path: "/curriculum" },
     // { id: "regulation-formation", label: "Regulation Formation", path: "/regulation-formation" },
@@ -230,12 +231,14 @@ export default function AdminRoleConfig() {
     const fetchAllUsers = async () => {
       try {
         const snap = await getDocs(collection(db, "users"));
-        const all = snap.docs.map(d => ({
-          ...d.data(),
-          uid: d.id,
-          role: d.data().role || "Faculty",
-          isApproved: d.data().isApproved || false
-        }));
+        const all = snap.docs
+          .filter(d => d.data().role !== "Student")
+          .map(d => ({
+            ...d.data(),
+            uid: d.id,
+            role: d.data().role || "Faculty",
+            isApproved: d.data().isApproved || false
+          }));
         setAllUsers(all);
       } catch (err) {
         console.error("Error fetching all users:", err);
@@ -440,10 +443,12 @@ export default function AdminRoleConfig() {
     const source = userSearchTerm.trim() ? allUsers : users;
     const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
 
-    // Start with source, prepend master/default admin users if paginating
-    let list = isMasterAdminLoggedIn
-      ? [...source]
-      : source.filter(u => u.email !== masterAdminEmail);
+    // Exclude students from admin management
+    let list = source.filter(u => u.role !== 'Student');
+
+    if (!isMasterAdminLoggedIn) {
+      list = list.filter(u => u.email !== masterAdminEmail);
+    }
 
     // When not searching, ensure master/default admin are always in the list
     if (!userSearchTerm.trim()) {

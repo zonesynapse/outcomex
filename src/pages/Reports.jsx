@@ -310,7 +310,7 @@ export default function Reports() {
       return matchesProgramme && matchesDepartment && enteredSet.has(c.id);
     }).filter(ex => {
       if (internalDivision === 'continuous-assessment') {
-        return !ex.isAssignment && !ex.isProject && !ex.isUniversity && !ex.isIndirectAssessment;
+        return !ex.isAssignment && !ex.isProject && !ex.isPractical && !ex.isUniversity && !ex.isIndirectAssessment;
       }
       if (internalDivision === 'activity') {
         return ex.isAssignment === true;

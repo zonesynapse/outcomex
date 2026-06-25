@@ -270,9 +270,26 @@ export default function Curriculum() {
     });
   };
 
+  const handleExamWeightageChange = (regKey, courseType, catName, examId, value) => {
+    setWeightageConfigs(prev => {
+      const reg = { ...(prev[regKey] || {}) };
+      const ct = { ...(reg[courseType] || {}) };
+      const cc = { ...(ct._category_config || {}) };
+      const cat = { ...(cc[catName] || {}) };
+      const ew = { ...(cat.exam_weightage || {}) };
+      ew[examId] = value === "" ? "" : parseInt(value) || 0;
+      cat.exam_weightage = ew;
+      cc[catName] = cat;
+      ct._category_config = cc;
+      reg[courseType] = ct;
+      return { ...prev, [regKey]: reg };
+    });
+  };
+
   const getExamCategory = (config) => {
     if (config.isAssignment) return "Activity";
     if (config.isProject) return "Project";
+    if (config.isPractical) return "Practical";
     if (config.isUniversity) return "ESE";
     if (config.isIndirectAssessment) return "Indirect Assessment";
     return "Written Test";
@@ -281,6 +298,7 @@ export default function Curriculum() {
   const catColors = {
     "Activity": "bg-orange-50 text-orange-700 border-orange-200",
     "Project": "bg-amber-50 text-amber-700 border-amber-200",
+    "Practical": "bg-cyan-50 text-cyan-700 border-cyan-200",
     "ESE": "bg-purple-50 text-purple-700 border-purple-200",
     "Indirect Assessment": "bg-teal-50 text-teal-700 border-teal-200",
     "Written Test": "bg-blue-50 text-blue-700 border-blue-200",
@@ -1080,16 +1098,38 @@ export default function Curriculum() {
                                               <td className="px-4 py-3 border border-gray-300">
                                                 <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tight border ${catColors[catName] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{catName}</span>
                                               </td>
-                                              <td className="px-4 py-3 text-xs text-slate-500 font-medium border border-gray-300">{group.names.join(', ')}</td>
+                                              <td className="px-4 py-3 border border-gray-300">
+                                                <div className="flex flex-col gap-1.5">
+                                                  {group.ids.map((id, ei) => {
+                                                    const cfg = weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName]?.exam_weightage || {};
+                                                    return (
+                                                      <div key={id} className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                                                        <span className="whitespace-nowrap">{group.names[ei]}</span>
+                                                        <input type="number" min="0" max="100"
+                                                          className="w-12 px-1 py-0.5 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs"
+                                                          value={cfg[id] ?? ""}
+                                                          onChange={(e) => handleExamWeightageChange(sanitizeKey(selectedConfigReg), type, catName, id, e.target.value)} />
+                                                        <span className="text-[9px] text-slate-400">%</span>
+                                                      </div>
+                                                    );
+                                                  })}
+                                                </div>
+                                              </td>
                                               {(() => {
                                                 const cfg = weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName] || {};
+                                                const examWt = cfg.exam_weightage || {};
+                                                const hasExamWeightage = Object.values(examWt).some(v => v != null && v !== '' && Number(v) > 0);
                                                 return (
                                                    <>
                                                      <td className={`px-3 py-3 text-center border border-gray-300 ${cfg.consider_for_internal === false ? 'bg-red-50' : 'bg-green-50'}`}>
                                                        <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer" checked={cfg.consider_for_internal !== false} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'consider_for_internal', e.target.checked)} />
                                                      </td>
-                                                     <td className="px-3 py-3 text-center border border-gray-300">
-                                                       <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'best_count', e.target.value)} />
+                                                     <td className={`px-3 py-3 text-center border border-gray-300 ${hasExamWeightage ? 'bg-slate-100' : ''}`}>
+                                                       {hasExamWeightage ? (
+                                                         <span className="text-[10px] text-slate-400 font-medium italic">Weighted</span>
+                                                       ) : (
+                                                         <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'best_count', e.target.value)} />
+                                                       )}
                                                      </td>
                                                      <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
                                                        {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
