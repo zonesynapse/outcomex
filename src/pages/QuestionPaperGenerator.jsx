@@ -2046,16 +2046,10 @@ const initEditor = useCallback(() => {
         kldomain: ''
       })));
     } else if (isAssignmentOrProject) {
-      const newPartsConfig = [];
-      for (let i = 0; i < count; i++) {
-        // If we have existing parts up to this index, preserve them, otherwise default
-        if (partsConfig[i]) {
-          newPartsConfig.push({ ...partsConfig[i] });
-        } else {
-          newPartsConfig.push({ numQuestions: 5, marksPerQuestion: 2, isEitherOr: i > 0 });
-        }
-      }
-      setPartsConfig(newPartsConfig);
+      setAssignmentConfig(Array.from({ length: count }, (_, i) => {
+        const existing = assignmentConfig[i];
+        return existing ? { ...existing } : { question: '', marks: '', mappings: [], kl: '', kldomain: '' };
+      }));
     }
     setShowParts(true);
     setShowFinalPreview(false);
