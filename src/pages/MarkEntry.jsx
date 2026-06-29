@@ -529,7 +529,7 @@ export default function MarkEntry() {
         return {
           value: rawName,
           text: matchedConfig ? matchedConfig.examName : rawName,
-          type: matchedConfig?.isUniversity ? 'University' : (qp.assessment_type === 'Assignment' ? 'Assignment' : 'Internal'),
+          type: matchedConfig?.isUniversity ? 'University' : (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' ? qp.assessment_type : (matchedConfig?.isPractical ? 'Practical' : 'Internal')),
           hasQP: true
         };
       })
@@ -801,6 +801,9 @@ export default function MarkEntry() {
     loadData();
   }, [programme, department, batch, academicYear, semester, subject, exam, markType, section]);
 
+  const isAssignmentLike = markType === 'Assignment' || markType === 'Project' || markType === 'Practical';
+  const showAbsentColumn = markType !== 'Assignment' && markType !== 'Practical';
+
   const calculateTotal = (regno, currentMarks) => {
     const s = currentMarks[regno];
     if (s.absent) return "AB";
@@ -814,7 +817,7 @@ export default function MarkEntry() {
       return coSum;
     }
     
-    if (markType === 'Assignment') {
+    if (isAssignmentLike) {
        const assignmentTotal = Object.values(s.assignment || {}).reduce((a, b) => a + Number(b || 0), 0);
        return assignmentTotal;
     }
@@ -1019,7 +1022,7 @@ export default function MarkEntry() {
           ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
             coTotals[co] = Number(sData.overall || 0);
           });
-        } else if (markType === 'Assignment') {
+        } else if (isAssignmentLike) {
           Object.entries(sData.assignment || {}).forEach(([qKey, mark]) => {
             const qIndex = parseInt(qKey.replace('Q', '')) - 1;
             const co = assignmentConfig[qIndex]?.co;
@@ -1174,7 +1177,7 @@ export default function MarkEntry() {
     const partB = qpParts.find(p => p.part === 'B');
     const partC = qpParts.find(p => p.part === 'C');
 
-    const isAssignment = markType === 'Assignment';
+    const isAssignment = isAssignmentLike;
     const isOverall = markType === 'Overall';
     const isCOWise = markType === 'CO Wise';
 
@@ -1309,7 +1312,8 @@ export default function MarkEntry() {
         const idx = cos.indexOf(qNo);
         if (idx < cos.length - 1) target = { regno, part: 'CO', qNo: cos[idx + 1] };
       } else if (part === 'Assignment') {
-        if (qNo < assignmentConfig.length) target = { regno, part: 'Assignment', qNo: qNo + 1 };
+        const idx = qnosAssignment.indexOf(qNo);
+        if (idx !== -1 && idx < qnosAssignment.length - 1) target = { regno, part: 'Assignment', qNo: qnosAssignment[idx + 1] };
       }
       return target;
     };
@@ -1333,7 +1337,8 @@ export default function MarkEntry() {
         const idx = cos.indexOf(qNo);
         if (idx > 0) target = { regno, part: 'CO', qNo: cos[idx - 1] };
       } else if (part === 'Assignment') {
-        if (qNo > 1) target = { regno, part: 'Assignment', qNo: qNo - 1 };
+        const idx = qnosAssignment.indexOf(qNo);
+        if (idx > 0) target = { regno, part: 'Assignment', qNo: qnosAssignment[idx - 1] };
       }
       return target;
     };
@@ -1345,7 +1350,7 @@ export default function MarkEntry() {
         moveFocus(nextTarget.regno, nextTarget.part, nextTarget.qNo);
       } else if (nextStudent) {
         const firstPart = markType === 'CO Wise' ? 'CO' : 
-                         markType === 'Assignment' ? 'Assignment' :
+                         isAssignmentLike ? 'Assignment' :
                          qnosA.length > 0 ? 'A' :
                          qnosB.length > 0 ? 'B' :
                          qnosC.length > 0 ? 'C' : null;
@@ -1416,6 +1421,7 @@ export default function MarkEntry() {
   const qnosA = useMemo(() => getPartQuestions(partA), [partA]);
   const qnosB = useMemo(() => getPartQuestions(partB), [partB]);
   const qnosC = useMemo(() => getPartQuestions(partC), [partC]);
+  const qnosAssignment = useMemo(() => assignmentConfig.map((_, idx) => idx + 1), [assignmentConfig]);
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !programme) return [];
@@ -1647,7 +1653,7 @@ export default function MarkEntry() {
                 <tr className="bg-[#f8fafc]">
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left w-48">Register Number</th>
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left">Student Name</th>
-                  {markType !== 'Assignment' && <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Absent</th>}
+                  {showAbsentColumn && <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Absent</th>}
                   
                   {markType === 'Overall' ? (
                     <>
@@ -1661,13 +1667,9 @@ export default function MarkEntry() {
                         <th key={co} className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">{co}</th>
                       ))}
                     </>
-                  ) : markType === 'Assignment' ? (
+                        ) : isAssignmentLike ? (
                     <>
-                      {assignmentConfig.map((q, idx) => (
-                        <th key={idx} className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">
-                          Q{idx + 1} ({q.marks}m)
-                        </th>
-                      ))}
+                      <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-40">Assignment</th>
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Total</th>
                     </>
                   ) : (
@@ -1706,7 +1708,7 @@ export default function MarkEntry() {
                           {s.regNo && <span className="ml-2 text-[10px] text-emerald-600 font-bold">({s.regNo})</span>}
                         </td>
                         <td className={`px-6 py-3 text-sm font-medium text-slate-800 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.name}</td>
-                        {markType !== 'Assignment' && (
+                        {showAbsentColumn && (
                           <td className="px-6 py-3 text-center border-r border-slate-50">
                             <input 
                               type="checkbox" 
@@ -1786,35 +1788,50 @@ export default function MarkEntry() {
                               </td>
                             ))}
                           </>
-                        ) : markType === 'Assignment' ? (
+                  ) : isAssignmentLike ? (
                           <>
-                            {assignmentConfig.map((q, idx) => (
-                              <td key={idx} className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
-                                <div className="flex items-center justify-center gap-3">
-                                  <input 
-                                    id={`input-Assignment-${idx + 1}-${s.reg}`}
-                                    type="text"
-                                    inputMode="decimal"
-                                    disabled={isAbsent}
-                                    value={data.assignment?.[`Q${idx + 1}`] ?? ""}
-                                    onKeyDown={(e) => handleKeyDown(e, s.reg, 'Assignment', idx + 1)}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      if (val !== '' && isNaN(val)) return;
-                                      const max = q.marks || 100;
-                                      let parsed = val === '' ? '' : Number(val);
-                                      if (parsed !== '' && parsed > max) {
-                                        showToastMsg(`Mark limit exceeded! Maximum is ${max}.`, 'error');
-                                        parsed = '';
-                                      }
-                                      if (parsed !== '' && parsed < 0) parsed = 0;
-                                      handleAssignmentMark(s.reg, idx, parsed);
-                                    }}
-                                    className="w-16 h-8 border border-slate-200 rounded-md text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-slate-50"
-                                  />
-                                </div>
-                              </td>
-                            ))}
+                            <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
+                              <div className="flex items-center justify-center gap-3">
+                                {(() => {
+                                  const cursor = activeCursor[s.reg];
+                                  const q = cursor?.Assignment || qnosAssignment[0] || 1;
+                                  const qIdx = q - 1;
+                                  const qConfig = assignmentConfig[qIdx];
+                                  return (
+                                    <>
+                                      <span className="w-6 text-right font-bold text-slate-500 text-sm">{q}</span>
+                                      <input
+                                        id={`input-Assignment-${q}-${s.reg}`}
+                                        type="text"
+                                        inputMode="decimal"
+                                        disabled={isAbsent}
+                                        value={data.assignment?.[`Q${q}`] ?? ""}
+                                        onFocus={() => {
+                                          setActiveCursor(prev => ({
+                                            ...prev,
+                                            [s.reg]: { ...(prev[s.reg] || {}), Assignment: q, lastActivePart: 'Assignment' }
+                                          }));
+                                        }}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          if (val !== '' && isNaN(val)) return;
+                                          const max = qConfig?.marks || 100;
+                                          let parsed = val === '' ? '' : Number(val);
+                                          if (parsed !== '' && parsed > max) {
+                                            showToastMsg(`Mark limit exceeded! Maximum is ${max}.`, 'error');
+                                            parsed = '';
+                                          }
+                                          if (parsed !== '' && parsed < 0) parsed = 0;
+                                          handleAssignmentMark(s.reg, qIdx, parsed);
+                                        }}
+                                        onKeyDown={(e) => handleKeyDown(e, s.reg, 'Assignment', q)}
+                                        className="w-16 h-8 border border-slate-200 rounded-md text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-slate-50"
+                                      />
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </td>
                             <td className={`total-marks px-6 py-3 text-center font-black tabular-nums text-xl ${isAbsent ? 'text-red-600' : 'text-blue-600'}`}>
                               {isAbsent ? 'AB' : data.total}
                             </td>

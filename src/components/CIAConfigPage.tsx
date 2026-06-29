@@ -76,11 +76,19 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
       setAvailableCourseTypes([]);
       return;
     }
-    const regKey = regulation.replace(/[.#$[\]]/g, '_');
+    const regKey = regulation.replace(/[.#$[\]/ ]/g, '_');
     const unsub = onSnapshot(doc(db, 'course_type_configs', regKey), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
-        setAvailableCourseTypes(Array.isArray(data) ? data : (data?.list || []));
+        let types: string[] = [];
+        if (Array.isArray(data)) {
+          types = data;
+        } else if (data?.list && Array.isArray(data.list)) {
+          types = data.list;
+        } else if (data && typeof data === 'object') {
+          types = Object.values(data).filter(v => typeof v === 'string');
+        }
+        setAvailableCourseTypes(types);
       } else {
         setAvailableCourseTypes([]);
       }

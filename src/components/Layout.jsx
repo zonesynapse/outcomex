@@ -39,7 +39,8 @@ import {
   CalendarDays,
   Award,
   IndianRupee,
-  ShieldAlert
+  ShieldAlert,
+  Layers
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -85,7 +86,12 @@ const allPossibleItems = [
   { id: "placement-dashboard", icon: LayoutDashboard, label: "Placement Dashboard", path: "/placement/dashboard" },
   { id: "placement-drives", icon: Briefcase, label: "Drives & Apps", path: "/placement/drives" },
   { id: "placement-students", icon: Users, label: "Students & Offers", path: "/placement/students" },
-  { id: "placement-activities", icon: CalendarDays, label: "Interviews & Training", path: "/placement/activities" }
+  { id: "placement-activities", icon: CalendarDays, label: "Interviews & Training", path: "/placement/activities" },
+
+  // Payment Module
+  { id: "payment-roles", icon: Settings2, label: "Payment Roles", path: "/exam-payment/roles" },
+  { id: "payment-entries", icon: FileText, label: "Payment Entries", path: "/exam-payment/entries" },
+  { id: "payment-reports", icon: BarChart3, label: "Payment Reports", path: "/exam-payment/reports" }
 ];
 
 const modules = [
@@ -137,6 +143,12 @@ const modules = [
     label: "Placement",
     icon: Briefcase,
     itemIds: ["placement-dashboard", "placement-drives", "placement-students", "placement-activities"]
+  },
+  {
+    id: "examinations",
+    label: "Examinations",
+    icon: FileText,
+    itemIds: ["payment-roles", "payment-entries", "payment-reports"]
   }
 ];
 

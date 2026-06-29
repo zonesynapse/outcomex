@@ -130,7 +130,10 @@ export default function AdminRoleConfig() {
     { id: "placement-interviews", label: "Placement — Interviews", path: "/placement/interviews" },
     { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers" },
     { id: "placement-training", label: "Placement — Training", path: "/placement/training" },
-    { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports" }
+    { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports" },
+    { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles" },
+    { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries" },
+    { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports" }
   ];
 
   useEffect(() => {

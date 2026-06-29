@@ -25,7 +25,7 @@ import { formatProgDisplay, formatProgrammeKey, getRecentBatches as getRecentBat
 
 function sanitizeKey(key) {
   if (!key) return "";
-  return String(key).replace(/[.#$[\]/]/g, '_');
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
 }
 
 export default function Curriculum() {
@@ -383,7 +383,7 @@ export default function Curriculum() {
       return;
     }
     const updatedTypes = [...currentTypes, newCourseType.trim()];
-    await setDoc(doc(db, 'course_type_configs', regKey), updatedTypes);
+    await setDoc(doc(db, 'course_type_configs', regKey), Object.assign({}, updatedTypes));
     setNewCourseType("");
     setSuccessMessage("Course type added successfully!");
     setShowSuccess(true);
@@ -395,7 +395,7 @@ export default function Curriculum() {
     const typeToRemove = arr[index];
     const updatedArr = arr.filter((_, i) => i !== index);
     if (updatedArr.length > 0) {
-      await setDoc(doc(db, 'course_type_configs', regKey), updatedArr);
+      await setDoc(doc(db, 'course_type_configs', regKey), Object.assign({}, updatedArr));
     } else {
       await deleteDoc(doc(db, 'course_type_configs', regKey));
     }
@@ -419,7 +419,7 @@ export default function Curriculum() {
       gradePoint: gradePoint,
       mark: mark 
     }];
-    await setDoc(doc(db, 'grade_configs', sanitizeKey(gradeReg)), updatedGrades); // Use setDoc for Firestore
+    await setDoc(doc(db, 'grade_configs', sanitizeKey(gradeReg)), Object.assign({}, updatedGrades)); // Use setDoc for Firestore
     setNewGrade({ grade: "", gradePoint: "", mark: "" });
     setSuccessMessage("Grade added successfully!");
     setShowSuccess(true);
@@ -430,7 +430,7 @@ export default function Curriculum() {
     const currentGrades = [...toArray(gradeConfigs[sanitizeKey(reg)])];
     currentGrades.splice(index, 1);
     if (currentGrades.length > 0) {
-      await setDoc(doc(db, 'grade_configs', sanitizeKey(reg)), currentGrades);
+      await setDoc(doc(db, 'grade_configs', sanitizeKey(reg)), Object.assign({}, currentGrades));
     } else {
       await deleteDoc(doc(db, 'grade_configs', sanitizeKey(reg)));
     }

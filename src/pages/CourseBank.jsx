@@ -5,7 +5,7 @@ import { useRegulations } from "../hooks/useRegulations";
 import { db } from "../firebase"; // Import db for Firestore
 import { doc, collection, setDoc, onSnapshot, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { sanitizeKey, formatProgDisplay } from "../lib/utils";
-import { ChevronDown, Trash2 } from "lucide-react";
+import { ChevronDown, Trash2, AlertCircle } from "lucide-react";
 
 export default function CreateCourse() {
   const { departments: allDepartments, durations, loading: dLoading } = useDepartments();
@@ -76,6 +76,16 @@ export default function CreateCourse() {
   }, [periods, currentPeriodConfig, regulation, showCreate]);
 
   // Fetch course types based on regulation
+  const toArray = (v) => {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object') {
+      const vals = Object.values(v);
+      if (vals.length === 1 && Array.isArray(vals[0])) return vals[0];
+      return vals;
+    }
+    return [];
+  };
+
   useEffect(() => {
     if (!regKey) {
       setAvailableCourseTypes(["Program Course"]);
@@ -85,8 +95,9 @@ export default function CreateCourse() {
     const unsub = onSnapshot(typesRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        const types = data?.list || data?.types || Object.values(data).filter(v => typeof v === 'string');
-        setAvailableCourseTypes(types.length > 0 ? types : ["Program Course"]);
+        const raw = toArray(data);
+        const stringTypes = raw.filter(t => typeof t === 'string');
+        setAvailableCourseTypes(stringTypes.length > 0 ? stringTypes : ["Program Course"]);
       } else {
         setAvailableCourseTypes(["Program Course"]);
       }
@@ -342,6 +353,10 @@ export default function CreateCourse() {
     loadExistingCourseIntoForm(selectedExistingCourseKey);
   }, [selectedExistingCourseKey, existingCourses]);
 
+  const courseCodeExists = useMemo(() => {
+    return courseCode.trim() && existingCourses.some(c => c.code?.toLowerCase() === courseCode.trim().toLowerCase());
+  }, [courseCode, existingCourses]);
+
   // Programs are the keys defined in Curriculum (durations / departments), e.g., B_E, B_Tech
   const programmes = Object.keys(durations || allDepartments || {});
 
@@ -492,6 +507,12 @@ export default function CreateCourse() {
                     onChange={(e) => setCourseCode(e.target.value)}
                     placeholder="e.g., CS301"
                   />
+                  {courseCodeExists && (
+                    <div className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-1.5 flex items-center gap-1.5">
+                      <AlertCircle size={14} />
+                      Course code "{courseCode}" already exists for this programme/department/regulation.
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <label className="text-sm font-bold text-zinc-600">Course Name</label>

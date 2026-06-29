@@ -508,10 +508,10 @@ export default function QuestionPaperGenerator() {
 
       let courseData = null;
       try {
-        let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${regKey}_${subjectKey}`);
+        let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${subjectKey}`);
         let snap = await getDoc(courseRef);
         if (!snap.exists()) {
-          courseRef = doc(db, 'courses', `${progKey}_Overall_${regKey}_${subjectKey}`);
+          courseRef = doc(db, 'courses', `${progKey}_Overall_${subjectKey}`);
           snap = await getDoc(courseRef);
         }
         if (snap.exists()) courseData = snap.data();
@@ -534,7 +534,7 @@ export default function QuestionPaperGenerator() {
     const selectedAy = norm(academicYear);
     const selectedReg = norm(regulation);
     
-    return ciaConfigs.filter(config => 
+    const filtered = ciaConfigs.filter(config => 
       // Accept both programme-bound configs and regulation-level global configs.
       (!norm(config.program) || norm(formatProgrammeKey(config.program)) === selectedProg) &&
       (!norm(config.department) || norm(config.department) === selectedDept) &&
@@ -543,8 +543,15 @@ export default function QuestionPaperGenerator() {
       (!config.semester || String(config.semester) === semNum) &&
       (!norm(config.regulation) || norm(config.regulation) === selectedReg) &&
       (assessmentType === 'Assignment' ? config.isAssignment : assessmentType === 'Project' ? config.isProject : assessmentType === 'Practical' ? config.isPractical : assessmentType === 'Indirect' ? config.isIndirectAssessment : !config.isAssignment && !config.isProject && !config.isPractical && !config.isIndirectAssessment) &&
-      (!courseType || !config.courseTypes || config.courseTypes.includes(courseType))
+      (!courseType || (config.courseTypes && config.courseTypes.includes(courseType)))
     );
+    const seen = new Set();
+    return filtered.filter(config => {
+      const name = config.examName || config.id;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
 
   const getAssignmentMarksMeta = useCallback((qIdx) => {
@@ -1223,64 +1230,7 @@ export default function QuestionPaperGenerator() {
               </tbody>
           </table>
         </div>
-${(() => {
-  if (isAssignment && qp.assignment_config && qp.assignment_config.length > 0) {
-    const summaryEntries = Object.entries(poSummaryMapping || {});
-    if (summaryEntries.length > 0) {
-      const poMarks = {};
-      qp.assignment_config.forEach((q) => {
-        (q?.mappings || []).forEach((m) => {
-          const coCode = String(m?.co || '').trim().toUpperCase();
-          const selectedPis = Array.isArray(m?.pis) ? m.pis : [];
-          const mapMarks = Number(m?.marks) || 0;
-          if (!coCode || mapMarks <= 0 || selectedPis.length === 0) return;
-          summaryEntries.forEach(([poCode, poData]) => {
-            const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
-            if (!Array.isArray(mappedPis) || mappedPis.length === 0) return;
-            if (selectedPis.some(pi => mappedPis.includes(pi))) {
-              poMarks[poCode] = (poMarks[poCode] || 0) + mapMarks;
-            }
-          });
-        });
-      });
-      const poCodes = Object.keys(poMarks);
-      if (poCodes.length === 0) return '';
-      poCodes.sort((a, b) => {
-        const ma = String(a).match(/^PO(\d+)$/i);
-        const mb = String(b).match(/^PO(\d+)$/i);
-        if (ma && mb) return parseInt(ma[1]) - parseInt(mb[1]);
-        if (ma) return -1;
-        if (mb) return 1;
-        const psa = String(a).match(/^PSO(\d+)$/i);
-        const psb = String(b).match(/^PSO(\d+)$/i);
-        if (psa && psb) return parseInt(psa[1]) - parseInt(psb[1]);
-        return 0;
-      });
-      return `
-<div style="margin-top: 20px;">
-  <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 8px;">Overall Mapped PO / PSO</h3>
-  <table border="1" style="border-collapse: collapse; width: auto; font-size: 11px; border: 1px solid #000;">
-    <thead>
-      <tr>
-        ${poCodes.map(pc => `<th style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-size: 11px;">${pc.toUpperCase()}</th>`).join('')}
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        ${poCodes.map(pc => {
-          const m = poMarks[pc] || 0;
-          const color = m > 0 ? '#15803d' : '#dc2626';
-          return `<td style="padding: 4px 10px; text-align: center; border: 1px solid #000; font-weight: bold; color: ${color};">${m}</td>`;
-        }).join('')}
-      </tr>
-    </tbody>
-  </table>
-</div>
-`;
-    }
-  }
-  return '';
-})()}
+
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px;">
   <tr>
     <td style="height: 60px; width: 33.33%;">${facultySignatureHtml}</td>

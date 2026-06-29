@@ -315,6 +315,9 @@ export default function Reports() {
       if (internalDivision === 'activity') {
         return ex.isAssignment === true;
       }
+      if (internalDivision === 'project') {
+        return ex.isProject === true;
+      }
       return false;
     });
   }, [internalDivision, programme, department, batch, academicYear, semester, ciaConfigs, enteredMarksMeta]);
@@ -503,7 +506,7 @@ export default function Reports() {
   
   <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #333;" border="1">
     <tr>
-      <td style="padding: 4px;"><strong>Internal Assessment Test</strong></td>
+      <td style="padding: 4px;"><strong>${qp.assessment_type === 'Project' ? 'Project Evaluation' : 'Internal Assessment Test'}</strong></td>
       <td colspan="3" style="padding: 4px;">${examDisplay}</td>
       <td style="padding: 4px;"><strong>Academic Year</strong></td>
       <td style="padding: 4px;">${qp.academic_year}</td>
@@ -535,7 +538,30 @@ export default function Reports() {
   </table>
 
   <div style="margin-top: 20px;">
-    ${qp.parts.map(part => `
+    ${qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' ? `
+      <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
+        <thead>
+          <tr style="background: #f9f9f9;">
+            <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #333;">Q. No.</th>
+            <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #333;">Question(s)</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">Marks</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">CO</th>
+            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">KL</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(qp.assignment_config || []).map((q, idx) => `
+            <tr>
+              <td style="text-align: center; padding: 4px; border: 1px solid #333;">Q${idx + 1}</td>
+              <td style="padding: 4px; border: 1px solid #333;">${q.question || ''}</td>
+              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.marks || ''}</td>
+              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${(q.mappings || []).map(m => m.co).filter(Boolean).join(', ')}</td>
+              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl || ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    ` : (qp.parts || []).map(part => `
       <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
         <tr>
           <td style="width: 50%; padding: 6px; border: none;">Part ${part.part}</td>
@@ -583,7 +609,7 @@ export default function Reports() {
                   </tr>
                 `;
               }
-              return ""; // Skip 'b' as it's handled by 'a'
+              return "";
             } else {
               return `
                 <tr>
@@ -621,7 +647,7 @@ export default function Reports() {
             raw = raw.replace(/\(?[ab]\)/gi, '');
             return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
           };
-          if (qp.assessment_type === 'Assignment') {
+          if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
             (qp.assignment_config || []).forEach((q) => {
               (q.mappings || []).forEach(m => {
                 const co = String(m?.co || '').trim();

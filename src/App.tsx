@@ -63,6 +63,10 @@ import PlacementDrives from "./pages/PlacementDrives";
 import PlacementStudents from "./pages/PlacementStudents";
 import PlacementActivities from "./pages/PlacementActivities";
 
+import PaymentRoles from "./pages/PaymentRoles";
+import PaymentEntries from "./pages/PaymentEntries";
+import PaymentReports from "./pages/PaymentReports";
+
 function RootRedirect() {
   const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -144,6 +148,11 @@ export default function App() {
         <Route path="/placement/drives" element={<ProtectedRoute><PlacementDrives /></ProtectedRoute>} />
         <Route path="/placement/students" element={<ProtectedRoute><PlacementStudents /></ProtectedRoute>} />
         <Route path="/placement/activities" element={<ProtectedRoute><PlacementActivities /></ProtectedRoute>} />
+
+        {/* Payment Routes */}
+        <Route path="/exam-payment/roles" element={<ProtectedRoute><PaymentRoles /></ProtectedRoute>} />
+        <Route path="/exam-payment/entries" element={<ProtectedRoute><PaymentEntries /></ProtectedRoute>} />
+        <Route path="/exam-payment/reports" element={<ProtectedRoute><PaymentReports /></ProtectedRoute>} />
 
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
