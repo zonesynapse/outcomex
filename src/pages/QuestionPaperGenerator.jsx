@@ -1044,7 +1044,7 @@ export default function QuestionPaperGenerator() {
       if (qp.assignment_config && qp.assignment_config.length > 0) {
         qp.assignment_config.forEach((q, idx) => {
           const allCOs = (q.mappings || []).map(m => `${m.co} (${m.marks || 0})`).join(', ');
-          const allPIs = (q.mappings || []).flatMap(m => m.pis).join(', ');
+          const allPIs = (q.mappings || []).map(m => (m.pis || []).map((pi, i) => `${pi}${m.piMarks && m.piMarks[i] != null ? ` (${m.piMarks[i]})` : ''}`).join(', ')).join(', ');
           html += `
             <tr>
               <td style="text-align: center; padding: 4px;">${idx + 1}</td>
@@ -2043,11 +2043,21 @@ const initEditor = useCallback(() => {
     if (usedWithoutCurrent + nextMark > totalAllowed) {
       alert(`Entered mark exceeds the total marks for Question ${qIdx + 1} (${totalAllowed}). Value cleared.`);
       updated[qIdx].mappings[coIndex].marks = '';
+      updated[qIdx].mappings[coIndex].piMarks = [];
       setAssignmentConfig(updated);
       return;
     }
 
     updated[qIdx].mappings[coIndex].marks = nextMark;
+    // Auto-distribute marks equally among PIs
+    const piCount = (updated[qIdx].mappings[coIndex].pis || []).length;
+    if (nextMark > 0 && piCount > 0) {
+      const perPI = Math.floor(nextMark / piCount);
+      const remainder = nextMark % piCount;
+      updated[qIdx].mappings[coIndex].piMarks = updated[qIdx].mappings[coIndex].pis.map((_, i) => i < remainder ? perPI + 1 : perPI);
+    } else {
+      updated[qIdx].mappings[coIndex].piMarks = [];
+    }
     setAssignmentConfig(updated);
   };
 
@@ -2057,6 +2067,14 @@ const initEditor = useCallback(() => {
     const mappings = updated[qIdx].mappings;
     if (!mappings[coIndex].pis.includes(piValue)) {
       mappings[coIndex].pis.push(piValue);
+      // Auto-distribute CO marks equally among all PIs
+      const totalMarks = parseInt(mappings[coIndex].marks, 10) || 0;
+      const piCount = mappings[coIndex].pis.length;
+      if (totalMarks > 0 && piCount > 0) {
+        const perPI = Math.floor(totalMarks / piCount);
+        const remainder = totalMarks % piCount;
+        mappings[coIndex].piMarks = mappings[coIndex].pis.map((_, i) => i < remainder ? perPI + 1 : perPI);
+      }
       setAssignmentConfig(updated);
     }
   };
@@ -2064,6 +2082,16 @@ const initEditor = useCallback(() => {
   const handleRemovePIAssignment = (qIdx, coIndex, piIndex) => {
     const updated = [...assignmentConfig];
     updated[qIdx].mappings[coIndex].pis = updated[qIdx].mappings[coIndex].pis.filter((_, i) => i !== piIndex);
+    // Auto-distribute CO marks equally among remaining PIs
+    const totalMarks = parseInt(updated[qIdx].mappings[coIndex].marks, 10) || 0;
+    const piCount = updated[qIdx].mappings[coIndex].pis.length;
+    if (totalMarks > 0 && piCount > 0) {
+      const perPI = Math.floor(totalMarks / piCount);
+      const remainder = totalMarks % piCount;
+      updated[qIdx].mappings[coIndex].piMarks = updated[qIdx].mappings[coIndex].pis.map((_, i) => i < remainder ? perPI + 1 : perPI);
+    } else {
+      updated[qIdx].mappings[coIndex].piMarks = [];
+    }
     setAssignmentConfig(updated);
   };
 
@@ -4053,7 +4081,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                           <div className="flex flex-wrap gap-1.5">
                             {(mapping.pis || []).map((pi, piIdx) => (
                               <span key={piIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold border border-slate-200 group">
-                                {pi}
+                                {pi}{mapping.piMarks && mapping.piMarks[piIdx] != null ? ` (${mapping.piMarks[piIdx]})` : ''}
                                 <button onClick={() => handleRemovePIAssignment(qIdx, coIdx, piIdx)}>
                                   <XCircle size={10} className="text-slate-300 group-hover:text-red-500 transition-colors" />
                                 </button>

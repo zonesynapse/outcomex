@@ -10,8 +10,12 @@ import {
   Users,
   AlertCircle,
   FileX,
-  Save
+  Save,
+  Calendar,
+  FileText
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
@@ -122,6 +126,17 @@ export default function Attendance() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Per-date record states
+  const [recordDates, setRecordDates] = useState([]);
+  const [selectedRecordDate, setSelectedRecordDate] = useState("");
+  const [currentRecordData, setCurrentRecordData] = useState(null);
+
+  // Report states
+  const [showReport, setShowReport] = useState(false);
+  const [reportFromDate, setReportFromDate] = useState("");
+  const [reportToDate, setReportToDate] = useState("");
+  const [reportData, setReportData] = useState(null);
 
   const derivedProgs = useMemo(() => {
     if (!facultyAssignPrefixes.length) return [];
@@ -388,6 +403,11 @@ export default function Attendance() {
     if (!programme || !department || !batch || !academicYear || !semester || !subject) {
       setAttendanceData(null);
       setStudents([]);
+      setRecordDates([]);
+      setSelectedRecordDate("");
+      setCurrentRecordData(null);
+      setReportData(null);
+      setShowReport(false);
       return;
     }
 
@@ -409,26 +429,56 @@ export default function Attendance() {
         const attData = attendanceSnap.data();
         const masterList = studentSnap.data() || {};
         setAttendanceData(attData);
-        const tHours = attData?._meta?.totalHours || "1";
-        setTotalConducted(tHours);
-        if (attData?._meta?.date) setAttendanceDate(attData._meta.date);
-        if (attData?._meta?.period) setPeriod(attData._meta.period);
-        
-        const studentArray = Object.entries(masterList)
+
+        const masterListObj = {};
+        Object.entries(masterList)
           .filter(([key]) => !key.startsWith('_'))
-          .map(([reg, name]) => {
-            const hours = attData?.students?.[reg] !== undefined ? attData.students[reg] : (parseInt(tHours, 10) || 1);
-            const totalHours = parseInt(tHours, 10) || 1;
-            return {
-              reg,
-              name,
-              hours,
-              status: attData?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
-              percentage: totalHours > 0 ? ((hours / totalHours) * 100).toFixed(2) : "0.00"
-            };
-          });
+          .forEach(([reg, name]) => { masterListObj[reg] = name; });
 
         const order = masterList._order;
+
+        // Support both old format ({ _meta, students }) and new format ({ _meta, records })
+        let dates = [];
+        if (attData?.records) {
+          dates = Object.keys(attData.records).sort();
+        } else if (attData?._meta?.date) {
+          // Migrate old format: wrap into records
+          dates = [attData._meta.date];
+        }
+        setRecordDates(dates);
+
+        // Auto-select the latest date or today's date
+        const today = new Date().toISOString().split('T')[0];
+        const dateToLoad = dates.includes(today) ? today : (dates.length > 0 ? dates[dates.length - 1] : today);
+        setSelectedRecordDate(dateToLoad);
+
+        // Load the selected date's record
+        let dateRecord = null;
+        if (attData?.records?.[dateToLoad]) {
+          dateRecord = attData.records[dateToLoad];
+        } else if (dates.length === 0 && attData?._meta?.date === dateToLoad) {
+          // Old format backward compatibility
+          dateRecord = { period: attData._meta.period, totalHours: attData._meta.totalHours, students: attData.students || {} };
+        }
+        setCurrentRecordData(dateRecord);
+
+        const tHours = dateRecord?.totalHours || attData?._meta?.totalHours || "1";
+        setTotalConducted(tHours);
+        if (dateRecord?.period || attData?._meta?.period) setPeriod(dateRecord?.period || attData._meta.period);
+
+        // Build student list from the selected date's record
+        const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
+          const hours = dateRecord?.students?.[reg] !== undefined ? dateRecord.students[reg] : (parseInt(tHours, 10) || 1);
+          const totalHours = parseInt(tHours, 10) || 1;
+          return {
+            reg,
+            name,
+            hours,
+            status: dateRecord?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
+            percentage: totalHours > 0 ? ((hours / totalHours) * 100).toFixed(2) : "0.00"
+          };
+        });
+
         if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
         else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
 
@@ -459,6 +509,147 @@ export default function Attendance() {
     }));
   };
 
+  const handleSelectRecordDate = (date) => {
+    setSelectedRecordDate(date);
+    setAttendanceDate(date);
+
+    if (!attendanceData) return;
+
+    let dateRecord = null;
+    if (attendanceData.records?.[date]) {
+      dateRecord = attendanceData.records[date];
+    } else if (attendanceData._meta?.date === date && !attendanceData.records) {
+      dateRecord = { period: attendanceData._meta.period, totalHours: attendanceData._meta.totalHours, students: attendanceData.students || {} };
+    }
+    setCurrentRecordData(dateRecord);
+
+    const tHours = dateRecord?.totalHours || attendanceData?._meta?.totalHours || "1";
+    setTotalConducted(tHours);
+    if (dateRecord?.period) setPeriod(dateRecord.period);
+
+    const progKey = formatProgrammeKey(programme);
+    const semNum = String(semester).match(/\d+/)?.[0];
+    const selectedSubjectObj = JSON.parse(subject);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+
+    getDoc(doc(db, "students", compositeKey)).then(studentSnap => {
+      const masterList = studentSnap.data() || {};
+      const totalH = parseInt(tHours, 10) || 1;
+      const studentArray = Object.entries(masterList)
+        .filter(([key]) => !key.startsWith('_'))
+        .map(([reg, name]) => {
+          const hours = dateRecord?.students?.[reg] !== undefined ? dateRecord.students[reg] : totalH;
+          return {
+            reg,
+            name,
+            hours,
+            status: dateRecord?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
+            percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
+          };
+        });
+
+      const order = masterList._order;
+      if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
+      else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
+      setStudents(studentArray);
+    });
+  };
+
+  const handleGenerateReport = () => {
+    if (!reportFromDate || !reportToDate || !attendanceData?.records) {
+      setReportData(null);
+      return;
+    }
+
+    const fromDate = reportFromDate;
+    const toDate = reportToDate;
+    const allDates = Object.keys(attendanceData.records).filter(d => d >= fromDate && d <= toDate).sort();
+
+    if (allDates.length === 0) {
+      setReportData({ dates: [], students: [], totalClasses: 0 });
+      return;
+    }
+
+    const totalClasses = allDates.length;
+    const progKey = formatProgrammeKey(programme);
+    const semNum = String(semester).match(/\d+/)?.[0];
+    const selectedSubjectObj = JSON.parse(subject);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+
+    getDoc(doc(db, "students", compositeKey)).then(studentSnap => {
+      const masterList = studentSnap.data() || {};
+      const order = masterList._order;
+
+      const studentMap = {};
+      Object.entries(masterList)
+        .filter(([key]) => !key.startsWith('_'))
+        .forEach(([reg, name]) => { studentMap[reg] = name; });
+
+      const studentStats = Object.keys(studentMap).map(reg => {
+        let attended = 0;
+        const dailyRecords = {};
+        allDates.forEach(date => {
+          const rec = attendanceData.records[date];
+          const hours = rec?.students?.[reg];
+          const totalH = parseInt(rec?.totalHours || totalConducted, 10) || 1;
+          const isPresent = hours !== undefined ? hours > 0 : false;
+          if (isPresent) attended++;
+          dailyRecords[date] = isPresent ? 'P' : 'A';
+        });
+        return {
+          reg,
+          name: studentMap[reg],
+          attended,
+          totalClasses,
+          percentage: totalClasses > 0 ? ((attended / totalClasses) * 100).toFixed(2) : "0.00",
+          dailyRecords
+        };
+      });
+
+      if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
+      else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
+
+      setReportData({ dates: allDates, students: studentStats, totalClasses });
+    });
+  };
+
+  const handleExportReport = () => {
+    if (!reportData) return;
+    const doc = new jsPDF({ orientation: reportData.dates.length > 6 ? "landscape" : "portrait" });
+
+    doc.setFontSize(16);
+    doc.text(`Attendance Report`, 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Subject: ${subject || "N/A"}  |  Date Range: ${reportFromDate} to ${reportToDate}  |  Total Classes: ${reportData.totalClasses}`, 14, 22);
+
+    const headers = ["Reg No", "Student Name", "Total", "Attended", "Absent", "%"];
+    reportData.dates.forEach(d => headers.push(d));
+
+    const rows = reportData.students.map(s => {
+      const row = [s.reg, s.name, String(s.totalClasses), String(s.attended), String(s.totalClasses - s.attended), `${s.percentage}%`];
+      reportData.dates.forEach(d => row.push(s.dailyRecords[d] || '—'));
+      return row;
+    });
+
+    autoTable(doc, {
+      head: [headers],
+      body: rows,
+      startY: 28,
+      styles: { fontSize: 7, cellPadding: 2, halign: 'center' },
+      headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+      columnStyles: {
+        0: { halign: 'left', fontStyle: 'bold', cellWidth: 28 },
+        1: { halign: 'left', cellWidth: 40 },
+      },
+      alternateRowStyles: { fillColor: [255, 251, 235] },
+      margin: { left: 14, right: 14 },
+    });
+
+    doc.save(`Attendance_Report_${subject || "subject"}_${reportFromDate}_to_${reportToDate}.pdf`);
+  };
+
   const filteredStudents = students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     s.reg.toLowerCase().includes(searchTerm.toLowerCase())
@@ -479,17 +670,39 @@ export default function Attendance() {
     const studentsMap = {};
     students.forEach(s => { studentsMap[s.reg] = s.hours; });
 
+    const dateRecord = {
+      period,
+      totalHours: parseInt(totalConducted, 10) || 1,
+      students: studentsMap,
+      updatedAt: new Date().toISOString()
+    };
+
     try {
+      // Merge with existing records (don't overwrite other dates)
+      const existingRecords = attendanceData?.records || {};
+      const updatedRecords = { ...existingRecords, [attendanceDate]: dateRecord };
+      const nextTotal = parseInt(totalConducted, 10) + 1;
+
       await setDoc(doc(db, "attendance", attendanceDocId), {
-        _meta: { totalHours: parseInt(totalConducted), date: attendanceDate, period, updatedBy: "Manual", updatedAt: new Date().toISOString() },
-        students: studentsMap
+        _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
+        records: updatedRecords
       });
-      alert("Attendance records saved successfully!");
-      
-      setTotalConducted(prev => String(parseInt(prev, 10) + 1));
+      alert(`Attendance for ${attendanceDate} saved successfully!`);
+
+      // Update local state
+      const newRecordDates = [...new Set([...recordDates, attendanceDate])].sort();
+      setRecordDates(newRecordDates);
+      setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
+
+      // Auto-increment Total Mark Attendance for next day
+      setTotalConducted(String(nextTotal));
+
+      // Move to next day
       const nextDay = new Date(attendanceDate);
       nextDay.setDate(nextDay.getDate() + 1);
-      setAttendanceDate(nextDay.toISOString().split('T')[0]);
+      const nextDate = nextDay.toISOString().split('T')[0];
+      setAttendanceDate(nextDate);
+      setSelectedRecordDate(nextDate);
       setPeriod("");
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
@@ -592,13 +805,102 @@ export default function Attendance() {
               <label className="text-[11px] font-bold text-emerald-600 uppercase tracking-widest ml-1">Total Mark Attendance (Classes)</label>
               <input 
                 type="number" 
-                readOnly
+                min="1"
                 placeholder="e.g. 60" 
                 value={totalConducted} 
-                className="w-full bg-emerald-50/50 border border-emerald-100 rounded-xl px-4 py-2 outline-none transition-all font-black text-emerald-700 cursor-not-allowed" 
+                onChange={e => {
+                  const val = e.target.value;
+                  setTotalConducted(val);
+                  const total = parseInt(val, 10) || 0;
+                  setStudents(prev => prev.map(s => {
+                    const newPercentage = total > 0 ? ((s.hours / total) * 100).toFixed(2) : "0.00";
+                    return { ...s, percentage: newPercentage };
+                  }));
+                }}
+                className="w-full bg-emerald-50/50 border border-emerald-100 rounded-xl px-4 py-2 outline-none transition-all font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500" 
               />
             </div>
           </div>
+
+          {/* Edit Existing Date & Report Controls */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-4 pt-4 border-t border-slate-100">
+            {recordDates.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-purple-600 uppercase tracking-widest ml-1">Edit Existing Date</label>
+                <div className="relative">
+                  <select 
+                    value={selectedRecordDate} 
+                    onChange={e => handleSelectRecordDate(e.target.value)}
+                    className="w-full appearance-none bg-purple-50/50 border border-purple-100 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-purple-500 outline-none transition-all font-bold text-purple-700 cursor-pointer"
+                  >
+                    {recordDates.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" size={16} />
+                </div>
+                <p className="text-[10px] text-purple-400 ml-1">{recordDates.length} date(s) recorded</p>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">Attendance Report</label>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => { setShowReport(!showReport); if (!showReport && recordDates.length > 0) { setReportFromDate(recordDates[0]); setReportToDate(recordDates[recordDates.length - 1]); } }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                    showReport 
+                      ? "bg-amber-500 text-white border-amber-500" 
+                      : "bg-white text-amber-700 border-amber-200 hover:border-amber-400"
+                  }`}
+                >
+                  <FileText size={14} />
+                  {showReport ? "Close Report" : "Generate Report"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Report Date Range */}
+          {showReport && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">From Date</label>
+                  <input 
+                    type="date" 
+                    value={reportFromDate} 
+                    onChange={e => setReportFromDate(e.target.value)}
+                    className="w-full bg-amber-50/50 border border-amber-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-amber-700" 
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">To Date</label>
+                  <input 
+                    type="date" 
+                    value={reportToDate} 
+                    onChange={e => setReportToDate(e.target.value)}
+                    className="w-full bg-amber-50/50 border border-amber-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-amber-700" 
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleGenerateReport}
+                    className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
+                  >
+                    <CalendarCheck2 size={14} /> Generate
+                  </button>
+                  {reportData && (
+                    <button 
+                      onClick={handleExportReport}
+                      className="flex items-center gap-2 px-4 py-2 bg-white border border-amber-200 text-amber-700 rounded-xl text-xs font-bold hover:border-amber-400 transition-all"
+                    >
+                      <Download size={14} /> PDF
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
@@ -696,9 +998,26 @@ export default function Attendance() {
                       <td className="px-8 py-4 text-center">
                         <input 
                           type="number"
-                          readOnly
+                          min="0"
+                          max={parseInt(totalConducted, 10) || 0}
                           value={s.hours}
-                          className="w-20 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-black text-slate-400 outline-none cursor-not-allowed"
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            const total = parseInt(totalConducted, 10) || 0;
+                            setStudents(prev => prev.map(st => {
+                              if (st.reg === s.reg) {
+                                const newStatus = val === 0 ? 'A' : (val >= total ? 'P' : 'P');
+                                return {
+                                  ...st,
+                                  hours: val,
+                                  status: newStatus,
+                                  percentage: total > 0 ? ((val / total) * 100).toFixed(2) : "0.00"
+                                };
+                              }
+                              return st;
+                            }));
+                          }}
+                          className="w-20 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-black text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                         />
                       </td>
                       <td className="px-8 py-4 text-center">
@@ -721,6 +1040,80 @@ export default function Attendance() {
             )}
           </div>
         </div>
+
+        {/* Attendance Report Table */}
+        {showReport && reportData && (
+          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100">
+            <div className="bg-amber-500 px-8 py-6 flex flex-wrap justify-between items-center gap-4">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-white/10 rounded-2xl text-white">
+                  <CalendarCheck2 size={24} />
+                </div>
+                <div>
+                  <h2 className="text-white font-bold text-xl leading-tight">Attendance Report</h2>
+                  <p className="text-amber-100 text-xs font-medium uppercase tracking-widest">
+                    {reportFromDate} to {reportToDate} · {reportData.totalClasses} class(es)
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={handleExportReport}
+                className="flex items-center gap-2 px-4 py-2 bg-white text-amber-700 rounded-xl text-sm font-bold hover:bg-amber-50 transition-all shadow-lg"
+              >
+                <Download size={18} /> Export PDF
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              {reportData.students.length === 0 ? (
+                <div className="py-20 text-center flex flex-col items-center gap-4">
+                  <FileX size={48} className="text-slate-200" />
+                  <p className="text-slate-400 font-medium italic">No attendance data found for the selected date range.</p>
+                </div>
+              ) : (
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/50">
+                      <th className="px-6 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
+                      <th className="px-6 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
+                      <th className="px-6 py-4 text-center text-[11px] font-black text-blue-600 uppercase tracking-widest">Total Classes</th>
+                      <th className="px-6 py-4 text-center text-[11px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
+                      <th className="px-6 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Absent</th>
+                      <th className="px-6 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {reportData.students.map((s) => {
+                      const absent = s.totalClasses - s.attended;
+                      return (
+                        <tr key={s.reg} className="hover:bg-amber-50/30 transition-colors">
+                          <td className="px-6 py-4 text-sm font-bold text-slate-600 font-mono">{s.reg}</td>
+                          <td className="px-6 py-4 text-sm font-bold text-slate-800">{s.name}</td>
+                          <td className="px-6 py-4 text-center text-sm font-bold text-blue-700">{s.totalClasses}</td>
+                          <td className="px-6 py-4 text-center text-sm font-bold text-emerald-700">{s.attended}</td>
+                          <td className="px-6 py-4 text-center text-sm font-bold text-rose-600">{absent}</td>
+                          <td className="px-6 py-4 text-center">
+                            <div className="flex items-center justify-center gap-3">
+                              <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden hidden md:block">
+                                <div 
+                                  className={`h-full transition-all duration-1000 ${parseFloat(s.percentage) < 75 ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                  style={{ width: `${s.percentage}%` }}
+                                />
+                              </div>
+                              <span className={`text-sm font-black min-w-[50px] ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                {s.percentage}%
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );

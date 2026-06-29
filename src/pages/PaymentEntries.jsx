@@ -838,10 +838,10 @@ function EntryListTab({ showToast }) {
                   <th className="px-4 py-3 text-left font-bold text-zinc-600 text-xs uppercase tracking-wider">Members</th>
                   <th className="px-4 py-3 text-left font-bold text-zinc-600 text-xs uppercase tracking-wider">Role</th>
                    <th className="px-4 py-3 text-left font-bold text-zinc-600 text-xs uppercase tracking-wider">Dates</th>
-                  <th className="px-4 py-3 text-right font-bold text-zinc-600 text-xs uppercase tracking-wider">Scripts</th>
-                  <th className="px-4 py-3 text-right font-bold text-zinc-600 text-xs uppercase tracking-wider">Amount</th>
+                  <th className="px-4 py-3 text-center font-bold text-zinc-600 text-xs uppercase tracking-wider">Scripts</th>
+                  <th className="px-4 py-3 text-center font-bold text-zinc-600 text-xs uppercase tracking-wider">Amount</th>
                   <th className="px-4 py-3 text-center font-bold text-zinc-600 text-xs uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-3 text-right font-bold text-zinc-600 text-xs uppercase tracking-wider">Actions</th>
+                  <th className="px-4 py-3 text-center font-bold text-zinc-600 text-xs uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -897,10 +897,10 @@ function EntryListTab({ showToast }) {
                         <div>{entry.fromDate || "—"}{entry.toDate ? ` → ${entry.toDate}` : ""}</div>
                         <div className="text-xs text-zinc-400">{entry.exam || ""}</div>
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-zinc-800">
+                      <td className="px-4 py-3 text-center font-semibold text-zinc-800">
                         {entry.totalScripts || memberList.reduce((s, m) => s + (m.scripts || 0), 0)}
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-[#120c7a]">
+                      <td className="px-4 py-3 text-center font-bold text-[#120c7a]">
                         ₹{(entry.totalAmount || 0).toLocaleString()}
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -920,7 +920,7 @@ function EntryListTab({ showToast }) {
                           <option value="Paid">Paid</option>
                         </select>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-center">
                         <button onClick={() => handleDelete(entry.id)}
                           className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                           title="Delete"

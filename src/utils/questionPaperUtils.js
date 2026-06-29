@@ -90,7 +90,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     if (qp.assignment_config && qp.assignment_config.length > 0) {
       qp.assignment_config.forEach((q, idx) => {
         const allCOs = (q.mappings || []).map(m => `${m.co} (${m.marks || 0})`).join(', ');
-        const allPIs = (q.mappings || []).flatMap(m => m.pis).join(', ');
+        const allPIs = (q.mappings || []).map(m => (m.pis || []).map((pi, i) => `${pi}${m.piMarks && m.piMarks[i] != null ? ` (${m.piMarks[i]})` : ''}`).join(', ')).join(', ');
         html += `
           <tr>
             <td style="text-align: center; padding: 8px;">${idx + 1}</td>

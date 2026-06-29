@@ -1025,13 +1025,14 @@ export default function MarkEntry() {
         } else if (isAssignmentLike) {
           Object.entries(sData.assignment || {}).forEach(([qKey, mark]) => {
             const qIndex = parseInt(qKey.replace('Q', '')) - 1;
-            const co = assignmentConfig[qIndex]?.co;
-            if (co && mark !== '') {
-              const coKeys = String(co).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-              coKeys.forEach(coKey => {
+            if (mark === '' || mark === undefined || mark === null) return;
+            const qMappings = assignmentConfig[qIndex]?.mappings || [];
+            qMappings.forEach(m => {
+              const coKey = (m.co || '').trim().toUpperCase();
+              if (coKey && /^CO\d+/i.test(coKey)) {
                 coTotals[coKey] = (coTotals[coKey] || 0) + Number(mark || 0);
-              });
-            }
+              }
+            });
           });
         } else {
           // Part A
