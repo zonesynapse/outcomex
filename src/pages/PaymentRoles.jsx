@@ -75,7 +75,7 @@ export default function PaymentRoles() {
   const handleSave = async (e) => {
     e.preventDefault();
     const name = form.roleName.trim();
-    const rate = parseInt(form.ratePerScript, 10);
+    const rate = parseFloat(form.ratePerScript);
     if (!name) return showToast("Role name is required", "error");
     if (!rate || rate <= 0) return showToast("Rate must be a positive number", "error");
 
@@ -313,8 +313,9 @@ export default function PaymentRoles() {
                   type="number"
                   value={form.ratePerScript}
                   onChange={(e) => setForm({ ...form, ratePerScript: e.target.value })}
-                  placeholder="e.g. 25"
-                  min="1"
+                  placeholder="e.g. 25, 0.50, 2.786"
+                  min="0.01"
+                  step="any"
                   className="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] transition-all"
                   required
                 />

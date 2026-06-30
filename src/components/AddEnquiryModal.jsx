@@ -782,7 +782,7 @@ export default function AddEnquiryModal({
     if (!String(form.emailId || "").trim()) nextErrors.emailId = "Email ID is required";
     else if (!isValidEmail(form.emailId)) nextErrors.emailId = "Enter a valid email address";
 
-    if (!String(form.emsUmsNo || "").trim()) nextErrors.emsUmsNo = "EMIS / UMIS No. is required";
+    if (form.status === "Application" && !String(form.emsUmsNo || "").trim()) nextErrors.emsUmsNo = "EMIS / UMIS No. is required for Application";
     if (!String(form.schoolCollege || "").trim()) nextErrors.schoolCollege = "School/college name is required";
     if (!String(form.mediumOfInstruction || "").trim()) nextErrors.mediumOfInstruction = "Medium of instruction is required";
     if (!String(form.community || "").trim()) nextErrors.community = "Community is required";
@@ -1414,7 +1414,7 @@ export default function AddEnquiryModal({
                   </Field>
                   <Field label="Route" error={errors.transportRoute} readOnly={readOnly || form.transportRequired === 'NO'}><input value={form.transportRoute} onChange={(event) => handleChange("transportRoute", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${readOnly || form.transportRequired === 'NO' ? 'bg-zinc-50 text-zinc-500' : 'bg-white'}`} placeholder="Transport route" readOnly={readOnly || form.transportRequired === 'NO'} /></Field>
                   <Field label="Stage" error={errors.transportStage} readOnly={readOnly || form.transportRequired === 'NO'}><input value={form.transportStage} onChange={(event) => handleChange("transportStage", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${readOnly || form.transportRequired === 'NO' ? 'bg-zinc-50 text-zinc-500' : 'bg-white'}`} placeholder="Transport stage" readOnly={readOnly || form.transportRequired === 'NO'} /></Field>
-                  <Field label="EMIS / UMIS No." required error={errors.emsUmsNo} readOnly={readOnly}><input value={form.emsUmsNo} onChange={(event) => handleChange("emsUmsNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="EMIS / UMIS number" readOnly={readOnly} /></Field>
+                  <Field label="EMIS / UMIS No." required={form.status === "Application"} error={errors.emsUmsNo} readOnly={readOnly}><input value={form.emsUmsNo} onChange={(event) => handleChange("emsUmsNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="EMIS / UMIS number" readOnly={readOnly} /></Field>
                   <Field label="Aadhar No." error={errors.aadharNo} readOnly={readOnly}><input value={form.aadharNo} onChange={(event) => handleChange("aadharNo", event.target.value)} className={`w-full rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none transition-all focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 ${disabledClass}`} placeholder="Aadhar number" readOnly={readOnly} /></Field>
 
                   {[
