@@ -14,10 +14,34 @@ function splitEqually(total, count) {
   return Array.from({ length: count }, (_, i) => (i < rem ? base + 1 : base));
 }
 
+function formatAmount(val) {
+  if (val === undefined || val === null) return "0";
+  const num = Number(val);
+  if (isNaN(num)) return "0";
+  if (num % 1 !== 0) {
+    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
 const memberCash = (entry) => {
-  const totalAmt = entry.totalAmount || 0;
+  const total = entry.totalScripts || 0;
+  const rate = entry.rate || 0;
   const count = (entry.members || []).length || 1;
-  const amounts = splitEqually(totalAmt, count);
+  
+  const scriptsSplit = splitEqually(total, count);
+  let amounts = (entry.members || []).map(m => m.amount);
+  const hasSavedAmounts = amounts.every(a => a !== undefined && a !== null);
+  
+  if (!hasSavedAmounts) {
+    if (total > 0 && rate > 0) {
+      amounts = scriptsSplit.map(s => s * rate);
+    } else {
+      const totalAmt = entry.totalAmount || 0;
+      amounts = splitEqually(totalAmt, count);
+    }
+  }
+
   return (entry.members || []).map((m, i) => ({
     facultyName: m.facultyName,
     facultyCode: m.facultyCode || "",
@@ -26,7 +50,8 @@ const memberCash = (entry) => {
     college: m.college || "",
     email: m.email || "",
     claimed: m.claimed || false,
-    amount: amounts[i] || m.amount || (m.scripts ? m.scripts * (entry.rate || 0) : 0),
+    scripts: scriptsSplit[i] !== undefined ? scriptsSplit[i] : 0,
+    amount: amounts[i] !== undefined ? amounts[i] : 0,
   }));
 };
 
@@ -130,20 +155,23 @@ export default function PaymentReports() {
     let headers, rows;
     if (type === "faculty") {
       headers = ["Subject", "Role", "Scripts", "Rate", "Amount", "Exam"];
-      rows = facultyEntries.map((e) => [e.courseName, e.roleName, e.totalScripts, e.rate, e.totalAmount, e.exam]);
-      rows.push([], ["Grand Total", "", facultyEntries.reduce((s, e) => s + (e.totalScripts || 0), 0), "", facultyEntries.reduce((s, e) => s + (e.totalAmount || 0), 0), ""]);
+      rows = facultyEntries.map((e) => {
+        const m = memberCash(e).find((x) => x.facultyName === selectedFaculty);
+        return [e.fromDate || e.courseName || "—", e.roleName, m?.scripts || 0, e.rate, m?.amount || 0, e.exam];
+      });
+      rows.push([], ["Grand Total", "", rows.reduce((s, r) => s + (r[2] || 0), 0), "", rows.reduce((s, r) => s + (r[4] || 0), 0), ""]);
     } else if (type === "role") {
       headers = ["Faculty", "Scripts", "Rate", "Amount"];
       rows = roleEntries.flatMap((e) =>
-        memberCash(e).map((m) => [m.facultyName, e.totalScripts, e.rate, m.amount])
+        memberCash(e).map((m) => [m.facultyName, m.scripts, e.rate, m.amount])
       );
-      rows.push([], ["Total", roleEntries.reduce((s, e) => s + (e.totalScripts || 0), 0), "", roleEntries.reduce((s, e) => s + (e.totalAmount || 0), 0)]);
+      rows.push([], ["Total", rows.reduce((s, r) => s + (r[1] || 0), 0), "", rows.reduce((s, r) => s + (r[3] || 0), 0)]);
     } else if (type === "exam") {
       headers = ["Faculty", "Role", "Scripts", "Amount"];
       rows = examEntries.flatMap((e) =>
-        memberCash(e).map((m) => [m.facultyName, e.roleName, e.totalScripts, m.amount])
+        memberCash(e).map((m) => [m.facultyName, e.roleName, m.scripts, m.amount])
       );
-      rows.push([], ["Grand Total", "", examEntries.reduce((s, e) => s + (e.totalScripts || 0), 0), examEntries.reduce((s, e) => s + (e.totalAmount || 0), 0)]);
+      rows.push([], ["Grand Total", "", rows.reduce((s, r) => s + (r[2] || 0), 0), rows.reduce((s, r) => s + (r[3] || 0), 0)]);
     }
     const csv = [headers, ...rows].map((r) => r.map((v) => `"${v || ""}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -156,13 +184,11 @@ export default function PaymentReports() {
   const exportRolePDF = () => {
     const printWin = window.open('', '_blank', 'width=900,height=1200');
     if (!printWin) return;
-    const totalAmount = roleEntries.reduce((s, e) => s + (e.totalAmount || 0), 0);
-    const totalScripts = roleEntries.reduce((s, e) => s + (e.totalScripts || 0), 0);
     const rows = roleEntries.flatMap((e) => {
-      const count = (e.members || []).length || 1;
-      const perScripts = Math.floor((e.totalScripts || 0) / count);
-      return memberCash(e).map((m) => ({ faculty: m.facultyName, scripts: perScripts, rate: e.rate, amount: m.amount }));
+      return memberCash(e).map((m) => ({ faculty: m.facultyName, scripts: m.scripts, rate: e.rate, amount: m.amount }));
     });
+    const totalAmount = rows.reduce((s, r) => s + (r.amount || 0), 0);
+    const totalScripts = rows.reduce((s, r) => s + (r.scripts || 0), 0);
     printWin.document.write(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Role Report - ${selectedRole}</title>
 <style>
@@ -189,8 +215,8 @@ tr.tot td{background:#fafafa;font-weight:bold}
 <th style="width:20%">Rate</th>
 <th style="width:20%">Amount</th>
 </tr></thead><tbody>
-${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.scripts + '</td><td>₹' + Number(r.rate || 0).toFixed(2) + '</td><td>₹' + (r.amount || 0).toLocaleString('en-IN') + '</td></tr>').join('')}
-<tr class="tot"><td>Total</td><td>${totalScripts}</td><td></td><td>₹${totalAmount.toLocaleString('en-IN')}</td></tr>
+${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.scripts + '</td><td>₹' + Number(r.rate || 0).toFixed(2) + '</td><td>₹' + formatAmount(r.amount) + '</td></tr>').join('')}
+<tr class="tot"><td>Total</td><td>${totalScripts}</td><td></td><td>₹${formatAmount(totalAmount)}</td></tr>
 </tbody></table>
 </body></html>`);
     printWin.document.close();
@@ -201,13 +227,11 @@ ${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.scripts 
   const exportExamPDF = () => {
     const printWin = window.open('', '_blank', 'width=900,height=1200');
     if (!printWin) return;
-    const totalAmount = examEntries.reduce((s, e) => s + (e.totalAmount || 0), 0);
-    const totalScripts = examEntries.reduce((s, e) => s + (e.totalScripts || 0), 0);
     const rows = examEntries.flatMap((e) => {
-      const count = (e.members || []).length || 1;
-      const perScripts = Math.floor((e.totalScripts || 0) / count);
-      return memberCash(e).map((m) => ({ faculty: m.facultyName, role: e.roleName, scripts: perScripts, amount: m.amount }));
+      return memberCash(e).map((m) => ({ faculty: m.facultyName, role: e.roleName, scripts: m.scripts, amount: m.amount }));
     });
+    const totalAmount = rows.reduce((s, r) => s + (r.amount || 0), 0);
+    const totalScripts = rows.reduce((s, r) => s + (r.scripts || 0), 0);
     printWin.document.write(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Exam Report - ${selectedExam}</title>
 <style>
@@ -232,8 +256,8 @@ tr.tot td{background:#fafafa;font-weight:bold}
 <th style="width:20%">Scripts</th>
 <th style="width:20%">Amount</th>
 </tr></thead><tbody>
-${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '</td><td>' + r.scripts + '</td><td>₹' + (r.amount || 0).toLocaleString('en-IN') + '</td></tr>').join('')}
-<tr class="tot"><td colspan="2">Total</td><td>${totalScripts}</td><td>₹${totalAmount.toLocaleString('en-IN')}</td></tr>
+${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '</td><td>' + r.scripts + '</td><td>₹' + formatAmount(r.amount) + '</td></tr>').join('')}
+<tr class="tot"><td colspan="2">Total</td><td>${totalScripts}</td><td>₹${formatAmount(totalAmount)}</td></tr>
 </tbody></table>
 </body></html>`);
     printWin.document.close();
@@ -289,13 +313,12 @@ ${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '
                 detailHeaders={["Subject", "Role", "Scripts", "Rate", "Amount", "Action"]}
                 detailRows={facultyEntries.map((e) => {
                   const memberMatch = memberCash(e).find(m => m.facultyName === selectedFaculty);
-                  const memCount = (e.members || []).length || 1;
                   return [
                     e.fromDate || e.courseName || "—",
                     <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-semibold">{e.roleName}</span>,
-                    Math.floor((e.totalScripts || 0) / memCount),
+                    memberMatch?.scripts || 0,
                     `₹${e.rate || 0}`,
-                    <span className="font-bold text-[#120c7a]">₹{(memberMatch?.amount || 0).toLocaleString()}</span>,
+                    <span className="font-bold text-[#120c7a]">₹{formatAmount(memberMatch?.amount || 0)}</span>,
                     <button
                       onClick={() => setClaimModal({ open: true, entry: e, member: memberMatch, entryId: e.id, allEntries: facultyEntries })}
                       className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
@@ -309,8 +332,14 @@ ${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '
                   ];
                 })}
                 detailSummary={{
-                  scripts: facultyEntries.reduce((s, e) => s + (e.totalScripts || 0), 0),
-                  amount: facultyEntries.reduce((s, e) => s + (e.totalAmount || 0), 0),
+                  scripts: facultyEntries.reduce((s, e) => {
+                    const m = memberCash(e).find(x => x.facultyName === selectedFaculty);
+                    return s + (m?.scripts || 0);
+                  }, 0),
+                  amount: facultyEntries.reduce((s, e) => {
+                    const m = memberCash(e).find(x => x.facultyName === selectedFaculty);
+                    return s + (m?.amount || 0);
+                  }, 0),
                   count: facultyEntries.length,
                 }}
                 onCSV={() => exportCSV("faculty", selectedFaculty)}
@@ -327,17 +356,16 @@ ${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '
                 onSelect={setSelectedRole}
                 detailHeaders={["Faculty", "Scripts", "Rate", "Amount"]}
                 detailRows={roleEntries.flatMap((e) => {
-                  const memCount = (e.members || []).length || 1;
                   return memberCash(e).map((m) => [
                     m.facultyName || "—",
-                    Math.floor((e.totalScripts || 0) / memCount),
+                    m.scripts || 0,
                     `₹${e.rate || 0}`,
-                    <span className="font-bold text-[#120c7a]">₹{(m.amount || 0).toLocaleString()}</span>,
+                    <span className="font-bold text-[#120c7a]">₹{formatAmount(m.amount || 0)}</span>,
                   ])
                 })}
                 detailSummary={{
-                  scripts: roleEntries.reduce((s, e) => s + (e.totalScripts || 0), 0),
-                  amount: roleEntries.reduce((s, e) => s + (e.totalAmount || 0), 0),
+                  scripts: roleEntries.flatMap(e => memberCash(e)).reduce((sum, m) => sum + (m.scripts || 0), 0),
+                  amount: roleEntries.flatMap(e => memberCash(e)).reduce((sum, m) => sum + (m.amount || 0), 0),
                   count: roleEntries.length,
                 }}
                 onCSV={exportRolePDF}
@@ -355,17 +383,16 @@ ${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '
                 onSelect={setSelectedExam}
                 detailHeaders={["Faculty", "Role", "Scripts", "Amount"]}
                 detailRows={examEntries.flatMap((e) => {
-                  const memCount = (e.members || []).length || 1;
                   return memberCash(e).map((m) => [
                     m.facultyName || "—",
                     <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-semibold">{e.roleName}</span>,
-                    Math.floor((e.totalScripts || 0) / memCount),
-                    <span className="font-bold text-[#120c7a]">₹{(m.amount || 0).toLocaleString()}</span>,
+                    m.scripts || 0,
+                    <span className="font-bold text-[#120c7a]">₹{formatAmount(m.amount || 0)}</span>,
                   ])
                 })}
                 detailSummary={{
-                  scripts: examEntries.reduce((s, e) => s + (e.totalScripts || 0), 0),
-                  amount: examEntries.reduce((s, e) => s + (e.totalAmount || 0), 0),
+                  scripts: examEntries.flatMap(e => memberCash(e)).reduce((sum, m) => sum + (m.scripts || 0), 0),
+                  amount: examEntries.flatMap(e => memberCash(e)).reduce((sum, m) => sum + (m.amount || 0), 0),
                   count: examEntries.length,
                 }}
                 onCSV={exportExamPDF}
@@ -424,7 +451,7 @@ function DashboardView({ stats, entries }) {
     { key: "totalEntries", label: "Total Entries", icon: FileText, value: stats.totalEntries, accent: "#120c7a" },
     { key: "totalFaculty", label: "Faculty", icon: Users, value: stats.totalFaculty, accent: "#059669" },
     { key: "totalScripts", label: "Total Scripts", icon: Award, value: stats.totalScripts.toLocaleString(), accent: "#d97706" },
-    { key: "totalAmount", label: "Total Payment", icon: IndianRupee, value: `₹${stats.totalAmount.toLocaleString()}`, accent: "#dc2626" },
+    { key: "totalAmount", label: "Total Payment", icon: IndianRupee, value: `₹${formatAmount(stats.totalAmount)}`, accent: "#dc2626" },
     { key: "totalRoles", label: "Active Roles", icon: TrendingUp, value: stats.totalRoles, accent: "#7c3aed" },
   ];
 
@@ -464,7 +491,7 @@ function DashboardView({ stats, entries }) {
                 <div key={role}>
                   <div className="flex justify-between text-sm mb-1">
                     <span className="font-medium text-zinc-700">{role}</span>
-                    <span className="font-bold text-emerald-600">₹{amount.toLocaleString()}</span>
+                    <span className="font-bold text-emerald-600">₹{formatAmount(amount)}</span>
                   </div>
                   <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
                     <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${(amount / maxAmount) * 100}%` }} />
@@ -486,7 +513,7 @@ function DashboardView({ stats, entries }) {
                     <Zap size={14} className="text-amber-500" />
                     <span className="text-sm font-medium text-zinc-700">{name}</span>
                   </div>
-                  <span className="text-sm font-bold text-[#120c7a]">₹{amount.toLocaleString()}</span>
+                  <span className="text-sm font-bold text-[#120c7a]">₹{formatAmount(amount)}</span>
                 </div>
               ))}
             </div>
@@ -508,7 +535,7 @@ function DashboardView({ stats, entries }) {
                   </p>
                   <p className="text-xs text-zinc-400">{e.roleName} · {e.courseName || ""}</p>
                 </div>
-                <span className="text-sm font-bold text-[#120c7a]">₹{(e.totalAmount || 0).toLocaleString()}</span>
+                <span className="text-sm font-bold text-[#120c7a]">₹{formatAmount(e.totalAmount || 0)}</span>
               </div>
             ))}
           </div>
@@ -535,7 +562,7 @@ function EnhancedReportView({ items, selectedId, onSelect, detailHeaders, detail
             <p className="font-bold text-zinc-800 group-hover:text-[#120c7a] transition-colors">{item.label}</p>
             <div className="flex items-center justify-between mt-3">
               <span className="text-xs text-zinc-400">{item.count} entry{item.count !== 1 ? 's' : ''}</span>
-              <span className="font-bold text-[#120c7a]">₹{(item.amount || 0).toLocaleString()}</span>
+              <span className="font-bold text-[#120c7a]">₹{formatAmount(item.amount || 0)}</span>
             </div>
             <div className="mt-3 h-1.5 w-full rounded-full bg-zinc-100">
               <div className="h-1.5 rounded-full bg-[#120c7a]/20" style={{ width: `${Math.min((item.amount / Math.max(...items.map(x => x.amount), 1)) * 100, 100)}%` }} />
@@ -567,7 +594,7 @@ function EnhancedReportView({ items, selectedId, onSelect, detailHeaders, detail
           </div>
           <div className="text-right">
             <p className="text-xs text-zinc-500">Total Amount</p>
-            <p className="text-lg font-bold text-[#120c7a]">₹{detailSummary.amount.toLocaleString()}</p>
+            <p className="text-lg font-bold text-[#120c7a]">₹{formatAmount(detailSummary.amount)}</p>
           </div>
           {detailRows.length > 0 && (
             <button onClick={onCSV}
@@ -624,7 +651,14 @@ function numberToWords(num) {
     if (n < 10000000) return convert(Math.floor(n / 100000)) + ' LAKH' + (n % 100000 ? ' ' + convert(n % 100000) : '');
     return convert(Math.floor(n / 10000000)) + ' CRORE' + (n % 10000000 ? ' ' + convert(n % 10000000) : '');
   };
-  return convert(Math.round(num));
+  const mainPart = Math.floor(num);
+  const paisePart = Math.round((num - mainPart) * 100);
+
+  let words = convert(mainPart);
+  if (paisePart > 0) {
+    words += ' AND ' + convert(paisePart) + ' PAISE';
+  }
+  return words;
 }
 
 /* ─── Claim Form Modal ─── */
@@ -663,8 +697,7 @@ function ClaimFormModal({ modal, setClaimModal, showToast }) {
     const match = cash.find(c => c.facultyName === member.facultyName);
     if (field === 'amount') return match?.amount || 0;
     if (field === 'scripts') {
-      const count = (e.members || []).length || 1;
-      return Math.floor((e.totalScripts || 0) / count);
+      return match?.scripts || 0;
     }
     return 0;
   };

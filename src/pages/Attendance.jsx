@@ -487,10 +487,10 @@ export default function Attendance() {
 
   // Auto-load attendance when date or period changes
   useEffect(() => {
-    if (!attendanceData?.records || !Object.keys(masterList).length || !attendanceDate) return;
+    if (!Object.keys(masterList).length || !attendanceDate) return;
 
     const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
-    const dateRecord = attendanceData.records[recordKey] || null;
+    const dateRecord = attendanceData?.records?.[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
     const totalH = parseInt(dateRecord?.totalHours, 10) || 1;
@@ -503,13 +503,12 @@ export default function Attendance() {
     const order = masterList._order;
 
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-      const studentExists = dateRecord?.students?.[reg] !== undefined;
-      const hours = studentExists ? dateRecord.students[reg] : 0;
+      const hours = dateRecord?.students?.[reg] ?? 0;
       return {
         reg,
         name,
         hours,
-        status: studentExists ? (hours > 0 ? 'P' : 'A') : '',
+        status: hours > 0 ? 'P' : 'A',
         percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
       };
     });
@@ -812,7 +811,7 @@ export default function Attendance() {
             { icon: Users, label: 'Total Students', value: students.length, color: 'from-indigo-500 to-blue-600' },
             { icon: CalendarCheck2, label: 'Today\'s Attendance', value: `${pctPresent}%`, color: 'from-emerald-500 to-teal-600' },
             { icon: Calendar, label: 'Date', value: attendanceDate, color: 'from-violet-500 to-purple-600' },
-            { icon: FileText, label: 'Total Classes', value: recordDates.length || '—', color: 'from-amber-500 to-orange-600' },
+            { icon: FileText, label: 'Total Classes', value: recordDates.length, color: 'from-amber-500 to-orange-600' },
           ].map(({ icon: Icon, label, value, color }) => (
             <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 shadow-xl`}>
               <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/5" />
@@ -896,7 +895,7 @@ export default function Attendance() {
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-widest px-0.5">Total Classes</label>
               <div className="w-full bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs font-black text-emerald-700 cursor-not-allowed">
-                {recordDates.length || '—'}
+                {recordDates.length}
               </div>
             </div>
           </div>
@@ -1007,57 +1006,61 @@ export default function Attendance() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredStudents.map(s => (
-                    <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
-                      <td className="px-5 py-3.5">
-                        <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <span className="text-sm font-semibold text-slate-800">{s.name}</span>
-                      </td>
-                      <td className="px-3 py-3.5">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {[
-                            { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
-                            { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
-                            { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
-                          ].map(({ label, value, activeClass, hoverClass }) => (
-                            <button key={value}
-                              onClick={() => handleStatusChange(s.reg, value)}
-                              className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${
-                                s.status === value
-                                  ? activeClass + ' border-transparent'
-                                  : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center justify-center">
-                          <span className="text-xs font-black text-indigo-600">
-                            {cumulativeAttended[s.reg] || 0}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center justify-center gap-2.5">
-                          <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                            <div className={`h-full rounded-full transition-all duration-700 ${
-                              ((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                            }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100, 100)}%` }} />
+                    {filteredStudents.map(s => {
+                      const savedCount = cumulativeAttended[s.reg] || 0;
+                      const isCurrP = s.status === 'P' || s.status === 'OD';
+                      const alreadyCounted = currentRecordData?.students?.[s.reg] !== undefined && Number(currentRecordData.students[s.reg]) > 0;
+                      const displayCount = savedCount + (isCurrP ? 1 : 0) - (alreadyCounted ? 1 : 0);
+                      const totalDays = recordDates.length + (currentRecordData ? 0 : 1);
+                      const pct = totalDays > 0 ? ((displayCount / totalDays) * 100) : 0;
+                      const isLow = pct < 75;
+                      return (
+                      <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
+                        <td className="px-5 py-3.5">
+                          <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="text-sm font-semibold text-slate-800">{s.name}</span>
+                        </td>
+                        <td className="px-3 py-3.5">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {[
+                              { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
+                              { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
+                              { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
+                            ].map(({ label, value, activeClass, hoverClass }) => (
+                              <button key={value}
+                                onClick={() => handleStatusChange(s.reg, value)}
+                                className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${
+                                  s.status === value
+                                    ? activeClass + ' border-transparent'
+                                    : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
                           </div>
-                          <span className={`text-xs font-black min-w-[46px] text-right ${
-                            ((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
-                          }`}>
-                            {((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center justify-center">
+                            <span className="text-xs font-black text-indigo-600">{displayCount}</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center justify-center gap-2.5">
+                            <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                              <div className={`h-full rounded-full transition-all duration-700 ${isLow ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'}`}
+                                style={{ width: `${Math.min(pct, 100)}%` }} />
+                            </div>
+                            <span className={`text-xs font-black min-w-[46px] text-right ${isLow ? 'text-rose-600' : 'text-emerald-600'}`}>
+                              {pct.toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             )}

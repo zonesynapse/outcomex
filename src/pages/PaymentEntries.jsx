@@ -3,9 +3,19 @@ import { db } from "../firebase";
 import { collection, onSnapshot, setDoc, doc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import {
   Plus, Trash2, Copy, CheckCircle2, AlertCircle, Save, X, Search, Filter,
-  Download, Printer, FileText, Users, ChevronDown, ChevronRight
+  Download, Printer, FileText, Users, ChevronDown, ChevronRight, Edit
 } from "lucide-react";
 import Layout from "../components/Layout";
+
+function formatAmount(val) {
+  if (val === undefined || val === null) return "0";
+  const num = Number(val);
+  if (isNaN(num)) return "0";
+  if (num % 1 !== 0) {
+    return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
 
 const TABS = [
   { id: "new", label: "New Entry" },
@@ -17,6 +27,7 @@ export default function PaymentEntries() {
   const [activeTab, setActiveTab] = useState("new");
   const [roles, setRoles] = useState([]);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
+  const [editingEntry, setEditingEntry] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ show: true, message: msg, type });
@@ -63,14 +74,29 @@ export default function PaymentEntries() {
                   : "text-zinc-500 hover:text-zinc-800"
               }`}
             >
-              {tab.label}
+              {tab.id === "new" && editingEntry ? "Edit Entry" : tab.label}
             </button>
           ))}
         </div>
 
-        {activeTab === "new" && <NewEntryTab roles={roles} showToast={showToast} />}
+        {activeTab === "new" && (
+          <NewEntryTab
+            roles={roles}
+            showToast={showToast}
+            editingEntry={editingEntry}
+            onCancelEdit={() => setEditingEntry(null)}
+          />
+        )}
         {activeTab === "bulk" && <BulkEntryTab roles={roles} showToast={showToast} />}
-        {activeTab === "list" && <EntryListTab showToast={showToast} />}
+        {activeTab === "list" && (
+          <EntryListTab
+            showToast={showToast}
+            onEdit={(entry) => {
+              setEditingEntry(entry);
+              setActiveTab("new");
+            }}
+          />
+        )}
       </div>
     </Layout>
   );
@@ -85,9 +111,23 @@ function splitEqually(total, count) {
 }
 
 const memberCash = (entry) => {
-  const totalAmt = entry.totalAmount || 0;
+  const total = entry.totalScripts || 0;
+  const rate = entry.rate || 0;
   const count = (entry.members || []).length || 1;
-  const amounts = splitEqually(totalAmt, count);
+  
+  const scriptsSplit = splitEqually(total, count);
+  let amounts = (entry.members || []).map(m => m.amount);
+  const hasSavedAmounts = amounts.every(a => a !== undefined && a !== null);
+  
+  if (!hasSavedAmounts) {
+    if (total > 0 && rate > 0) {
+      amounts = scriptsSplit.map(s => s * rate);
+    } else {
+      const totalAmt = entry.totalAmount || 0;
+      amounts = splitEqually(totalAmt, count);
+    }
+  }
+
   return (entry.members || []).map((m, i) => ({
     facultyName: m.facultyName,
     facultyCode: m.facultyCode || "",
@@ -95,11 +135,12 @@ const memberCash = (entry) => {
     department: m.department || "",
     college: m.college || "",
     email: m.email || "",
-    amount: amounts[i] || 0,
+    scripts: scriptsSplit[i] !== undefined ? scriptsSplit[i] : 0,
+    amount: amounts[i] !== undefined ? amounts[i] : 0,
   }));
 };
 
-function NewEntryTab({ roles, showToast }) {
+function NewEntryTab({ roles, showToast, editingEntry, onCancelEdit }) {
   const [form, setForm] = useState({
     exam: "",
     academicYear: "",
@@ -113,20 +154,64 @@ function NewEntryTab({ roles, showToast }) {
   const [members, setMembers] = useState([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
   const [saving, setSaving] = useState(false);
 
+  // Populate form and members from editingEntry
   useEffect(() => {
+    if (editingEntry) {
+      setForm({
+        exam: editingEntry.exam || "",
+        academicYear: editingEntry.academicYear || "",
+        fromDate: editingEntry.fromDate || "",
+        toDate: editingEntry.toDate || "",
+        roleId: editingEntry.roleId || "",
+        rate: editingEntry.rate !== undefined ? String(editingEntry.rate) : "",
+        totalScripts: editingEntry.totalScripts !== undefined ? String(editingEntry.totalScripts) : "",
+        remarks: editingEntry.remarks || "",
+      });
+      if (editingEntry.members && editingEntry.members.length > 0) {
+        setMembers(editingEntry.members.map(m => ({
+          facultyName: m.facultyName || "",
+          facultyCode: m.facultyCode || "",
+          designation: m.designation || "",
+          department: m.department || "",
+          college: m.college || "",
+          email: m.email || "",
+        })));
+      } else {
+        setMembers([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
+      }
+    } else {
+      setForm({
+        exam: "",
+        academicYear: "",
+        fromDate: "",
+        toDate: "",
+        roleId: "",
+        rate: "",
+        totalScripts: "",
+        remarks: "",
+      });
+      setMembers([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
+    }
+  }, [editingEntry]);
+
+  // Handle role change or load
+  useEffect(() => {
+    const isInitialLoadOfEditingEntry = editingEntry && form.roleId === editingEntry.roleId;
     const role = roles.find((r) => r.id === form.roleId);
     setForm((prev) => ({
       ...prev,
       roleName: role?.roleName || "",
-      rate: role ? String(role.ratePerScript) : "",
+      rate: isInitialLoadOfEditingEntry && editingEntry.rate !== undefined
+        ? String(editingEntry.rate)
+        : (role ? String(role.ratePerScript) : ""),
     }));
-  }, [form.roleId, roles]);
+  }, [form.roleId, roles, editingEntry]);
 
   const total = parseInt(form.totalScripts, 10) || 0;
   const rate = parseFloat(form.rate) || 0;
   const totalAmount = total * rate;
-  const cashSplit = splitEqually(totalAmount, members.length);
   const scriptsSplit = splitEqually(total, members.length);
+  const cashSplit = scriptsSplit.map(s => s * rate);
 
   const addMember = () => setMembers((prev) => [...prev, { facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
   const removeMember = (idx) => {
@@ -147,9 +232,11 @@ function NewEntryTab({ roles, showToast }) {
       return showToast("At least one member is required", "error");
 
     setSaving(true);
+    const isEdit = !!editingEntry;
     try {
-      const ref = doc(collection(db, "payment_entries"));
-      await setDoc(ref, {
+      const ref = isEdit ? doc(db, "payment_entries", editingEntry.id) : doc(collection(db, "payment_entries"));
+      
+      const payload = {
         exam: form.exam.trim(),
         academicYear: form.academicYear.trim(),
         fromDate: form.fromDate,
@@ -157,36 +244,64 @@ function NewEntryTab({ roles, showToast }) {
         roleId: form.roleId,
         roleName: roles.find((r) => r.id === form.roleId)?.roleName || "",
         rate,
-        members: members.map((m, i) => ({
-          facultyName: m.facultyName.trim(),
-          facultyCode: m.facultyCode.trim(),
-          designation: m.designation.trim(),
-          department: m.department.trim(),
-          college: m.college.trim(),
-          email: m.email.trim(),
-          amount: cashSplit[i],
-          claimed: false,
-        })),
+        members: members.map((m, i) => {
+          const existingMember = editingEntry?.members?.[i];
+          return {
+            facultyName: m.facultyName.trim(),
+            facultyCode: m.facultyCode.trim(),
+            designation: m.designation.trim(),
+            department: m.department.trim(),
+            college: m.college.trim(),
+            email: m.email.trim(),
+            amount: cashSplit[i],
+            claimed: existingMember ? (existingMember.claimed || false) : false,
+          };
+        }),
         totalScripts: total,
         totalAmount,
         remarks: form.remarks.trim(),
-        status: "Pending",
-        createdBy: "admin",
-        createdAt: serverTimestamp(),
+        status: isEdit ? (editingEntry.status || "Pending") : "Pending",
         updatedAt: serverTimestamp(),
-      });
-      showToast("Payment entry created");
-      setForm({ exam: "", academicYear: "", fromDate: "", toDate: "", roleId: "", rate: "", totalScripts: "", remarks: "" });
-      setMembers([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
+      };
+
+      if (!isEdit) {
+        payload.createdBy = "admin";
+        payload.createdAt = serverTimestamp();
+      }
+
+      await setDoc(ref, payload, { merge: true });
+      showToast(isEdit ? "Payment entry updated" : "Payment entry created");
+
+      if (isEdit) {
+        onCancelEdit();
+      } else {
+        setForm({ exam: "", academicYear: "", fromDate: "", toDate: "", roleId: "", rate: "", totalScripts: "", remarks: "" });
+        setMembers([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
+      }
     } catch (err) {
       console.error(err);
-      showToast("Failed to create entry", "error");
+      showToast(isEdit ? "Failed to update entry" : "Failed to create entry", "error");
     }
     setSaving(false);
   };
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-6 space-y-6">
+      {editingEntry && (
+        <div className="flex items-center justify-between p-3.5 bg-blue-50 border border-blue-200 text-blue-800 rounded-xl">
+          <div className="flex items-center gap-2.5 text-sm font-semibold">
+            <Edit size={16} className="text-[#120c7a]" />
+            <span>Editing Payment Entry for <strong className="text-[#120c7a]">{editingEntry.roleName || "—"}</strong> ({editingEntry.exam || ""})</span>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelEdit}
+            className="flex items-center gap-1 text-xs font-bold text-zinc-500 hover:text-zinc-800 px-2.5 py-1.5 rounded-lg hover:bg-blue-100/50 transition-all"
+          >
+            <X size={14} /> Discard & New
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div>
           <label className="block text-sm font-bold text-zinc-700 mb-1.5">Exam *</label>
@@ -300,7 +415,7 @@ function NewEntryTab({ roles, showToast }) {
                 />
                 {totalAmount > 0 && (
                   <span className="text-xs font-bold text-[#120c7a] w-24 text-right">
-                    ₹{cashSplit[idx]?.toLocaleString()}
+                    ₹{formatAmount(cashSplit[idx])}
                   </span>
                 )}
                 <button type="button" onClick={() => removeMember(idx)}
@@ -337,8 +452,7 @@ function NewEntryTab({ roles, showToast }) {
         </div>
         {totalAmount > 0 && members.length > 1 && (
           <p className="text-xs text-zinc-400 mt-2">
-            Total ₹{totalAmount.toLocaleString()} split equally among {members.length} members
-            {totalAmount % members.length !== 0 && ` (₹1 adjustment for ${totalAmount % members.length} member${totalAmount % members.length > 1 ? "s" : ""})`}
+            Scripts split as {total % members.length === 0 ? "equally" : "evenly"} ({total % members.length > 0 ? `${total % members.length} member(s) get ${Math.floor(total / members.length) + 1} scripts, others get ${Math.floor(total / members.length)} scripts` : `${Math.floor(total / members.length)} scripts each`}) at rate of ₹{rate}/script.
           </p>
         )}
       </div>
@@ -352,7 +466,7 @@ function NewEntryTab({ roles, showToast }) {
           Total Scripts: <strong className="text-zinc-800">{total.toLocaleString()}</strong>
         </span>
         <span className="text-sm font-medium text-zinc-600">
-          Total Amount: <strong className="text-[#120c7a]">₹{totalAmount.toLocaleString()}</strong>
+          Total Amount: <strong className="text-[#120c7a]">₹{formatAmount(totalAmount)}</strong>
         </span>
       </div>
 
@@ -367,16 +481,28 @@ function NewEntryTab({ roles, showToast }) {
         />
       </div>
 
-      <button type="submit" disabled={saving}
-        className="flex items-center justify-center gap-2 px-6 py-2.5 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50"
-      >
-        {saving ? (
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-        ) : (
-          <Save size={16} />
+      <div className="flex items-center gap-3">
+        <button type="submit" disabled={saving}
+          className="flex items-center justify-center gap-2 px-6 py-2.5 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl text-sm font-bold transition-all disabled:opacity-50 cursor-pointer"
+        >
+          {saving ? (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+          ) : (
+            <Save size={16} />
+          )}
+          {editingEntry ? "Update Payment Entry" : "Create Payment Entry"}
+        </button>
+        {editingEntry && (
+          <button
+            type="button"
+            onClick={onCancelEdit}
+            disabled={saving}
+            className="px-6 py-2.5 border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded-xl text-sm font-bold transition-all cursor-pointer"
+          >
+            Cancel Edit
+          </button>
         )}
-        Create Payment Entry
-      </button>
+      </div>
     </form>
   );
 }
@@ -455,7 +581,8 @@ function BulkEntryTab({ roles, showToast }) {
         const rate = getRate(card.roleId);
         const totalAmt = scripts * rate;
         const names = card.members.map((m) => m.facultyName.trim()).filter(Boolean);
-        const cashSplit = splitEqually(totalAmt, names.length);
+        const scriptsSplit = splitEqually(scripts, names.length || 1);
+        const cashSplit = scriptsSplit.map(s => s * rate);
         const role = roles.find((r) => r.id === card.roleId);
         const ref = doc(collection(db, "payment_entries"));
         await setDoc(ref, {
@@ -550,7 +677,7 @@ function BulkEntryTab({ roles, showToast }) {
           </button>
         </div>
         <span className="text-sm font-bold text-zinc-800">
-          Total: <span className="text-[#120c7a]">₹{totalAmount.toLocaleString()}</span>
+          Total: <span className="text-[#120c7a]">₹{formatAmount(totalAmount)}</span>
         </span>
       </div>
 
@@ -561,8 +688,8 @@ function BulkEntryTab({ roles, showToast }) {
           const scripts = parseInt(card.scripts, 10) || 0;
           const totalAmt = scripts * rate;
           const names = card.members.map((m) => m.facultyName.trim()).filter(Boolean);
-          const cashSplit = splitEqually(totalAmt, names.length || 1);
           const scriptsSplit = splitEqually(scripts, names.length || 1);
+          const cashSplit = scriptsSplit.map(s => s * rate);
           return (
             <div key={idx} className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -604,7 +731,7 @@ function BulkEntryTab({ roles, showToast }) {
 
               <div className="flex gap-4 text-xs">
                 <span className="text-zinc-500">Rate: <strong className="text-zinc-700">₹{rate}</strong></span>
-                <span className="text-zinc-500">Amount: <strong className="text-[#120c7a]">₹{totalAmt.toLocaleString()}</strong></span>
+                <span className="text-zinc-500">Amount: <strong className="text-[#120c7a]">₹{formatAmount(totalAmt)}</strong></span>
               </div>
 
               <div>
@@ -635,7 +762,7 @@ function BulkEntryTab({ roles, showToast }) {
                         />
                         {totalAmt > 0 && (
                           <span className="text-[10px] font-bold text-[#120c7a] w-16 text-right">
-                            ₹{cashSplit[mi]?.toLocaleString()}
+                            ₹{formatAmount(cashSplit[mi])}
                           </span>
                         )}
                         <button type="button" onClick={() => removeMember(idx, mi)}
@@ -670,7 +797,7 @@ function BulkEntryTab({ roles, showToast }) {
                 </div>
                 {totalAmt > 0 && names.length > 1 && (
                   <p className="text-[10px] text-zinc-400 mt-1">
-                    ₹{totalAmt.toLocaleString()} split equally among {names.length} members
+                    Scripts split as {scripts % names.length === 0 ? "equally" : "evenly"} ({scripts % names.length > 0 ? `${scripts % names.length} member(s) get ${Math.floor(scripts / names.length) + 1} scripts, others get ${Math.floor(scripts / names.length)} scripts` : `${Math.floor(scripts / names.length)} scripts each`}) at rate of ₹{rate}/script.
                   </p>
                 )}
               </div>
@@ -683,7 +810,7 @@ function BulkEntryTab({ roles, showToast }) {
 }
 
 /* ─── Entry List Tab ─── */
-function EntryListTab({ showToast }) {
+function EntryListTab({ showToast, onEdit }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -843,7 +970,7 @@ function EntryListTab({ showToast }) {
           Scripts: <strong className="text-zinc-800">{totalScripts.toLocaleString()}</strong>
         </span>
         <span className="px-3 py-1.5 bg-zinc-100 rounded-lg font-medium text-zinc-600">
-          Amount: <strong className="text-[#120c7a]">₹{totalAmount.toLocaleString()}</strong>
+          Amount: <strong className="text-[#120c7a]">₹{formatAmount(totalAmount)}</strong>
         </span>
       </div>
 
@@ -909,7 +1036,7 @@ function EntryListTab({ showToast }) {
                                     {m.department && <span className="text-zinc-400"> · {m.department}</span>}
                                     {m.college && <span className="text-zinc-400"> · {m.college}</span>}
                                     {m.email && <span className="text-zinc-400"> · {m.email}</span>}
-                                    <span className="ml-2 font-bold text-[#120c7a]">₹{m.amount?.toLocaleString()}</span>
+                                    <span className="ml-2 font-bold text-[#120c7a]">₹{formatAmount(m.amount)}</span>
                                   </div>
                                 </div>
                               ))}
@@ -931,7 +1058,7 @@ function EntryListTab({ showToast }) {
                         {entry.totalScripts || memberList.reduce((s, m) => s + (m.scripts || 0), 0)}
                       </td>
                       <td className="px-4 py-3 text-center font-bold text-[#120c7a]">
-                        ₹{(entry.totalAmount || 0).toLocaleString()}
+                        ₹{formatAmount(entry.totalAmount || 0)}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <select
@@ -951,10 +1078,20 @@ function EntryListTab({ showToast }) {
                         </select>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <button onClick={() => handleDelete(entry.id)}
-                          className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete"
-                        ><Trash2 size={15} /></button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => onEdit(entry)}
+                            className="p-1.5 text-zinc-400 hover:text-[#120c7a] hover:bg-[#120c7a]/5 rounded-lg transition-all cursor-pointer"
+                            title="Edit"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          <button onClick={() => handleDelete(entry.id)}
+                            className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
