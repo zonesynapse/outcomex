@@ -90,6 +90,7 @@ const memberCash = (entry) => {
   const amounts = splitEqually(totalAmt, count);
   return (entry.members || []).map((m, i) => ({
     facultyName: m.facultyName,
+    facultyCode: m.facultyCode || "",
     designation: m.designation || "",
     department: m.department || "",
     college: m.college || "",
@@ -109,7 +110,7 @@ function NewEntryTab({ roles, showToast }) {
     totalScripts: "",
     remarks: "",
   });
-  const [members, setMembers] = useState([{ facultyName: "", designation: "", department: "", college: "", email: "" }]);
+  const [members, setMembers] = useState([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -122,11 +123,12 @@ function NewEntryTab({ roles, showToast }) {
   }, [form.roleId, roles]);
 
   const total = parseInt(form.totalScripts, 10) || 0;
-  const rate = parseInt(form.rate, 10) || 0;
+  const rate = parseFloat(form.rate) || 0;
   const totalAmount = total * rate;
   const cashSplit = splitEqually(totalAmount, members.length);
+  const scriptsSplit = splitEqually(total, members.length);
 
-  const addMember = () => setMembers((prev) => [...prev, { facultyName: "", designation: "", department: "", college: "", email: "" }]);
+  const addMember = () => setMembers((prev) => [...prev, { facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
   const removeMember = (idx) => {
     if (members.length === 1) return;
     setMembers((prev) => prev.filter((_, i) => i !== idx));
@@ -157,6 +159,7 @@ function NewEntryTab({ roles, showToast }) {
         rate,
         members: members.map((m, i) => ({
           facultyName: m.facultyName.trim(),
+          facultyCode: m.facultyCode.trim(),
           designation: m.designation.trim(),
           department: m.department.trim(),
           college: m.college.trim(),
@@ -174,7 +177,7 @@ function NewEntryTab({ roles, showToast }) {
       });
       showToast("Payment entry created");
       setForm({ exam: "", academicYear: "", fromDate: "", toDate: "", roleId: "", rate: "", totalScripts: "", remarks: "" });
-      setMembers([{ facultyName: "", designation: "", department: "", college: "", email: "" }]);
+      setMembers([{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }]);
     } catch (err) {
       console.error(err);
       showToast("Failed to create entry", "error");
@@ -280,6 +283,21 @@ function NewEntryTab({ roles, showToast }) {
                   placeholder="Faculty name *"
                   className="flex-1 px-3 py-2 bg-white border border-zinc-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] transition-all"
                 />
+                <input
+                  type="text" value={m.facultyCode}
+                  onChange={(e) => {
+                    const next = [...members];
+                    next[idx] = { ...next[idx], facultyCode: e.target.value };
+                    setMembers(next);
+                  }}
+                  placeholder="College Code"
+                  className="w-24 px-3 py-2 bg-white border border-zinc-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] transition-all"
+                />
+                <input
+                  type="number" value={total > 0 ? scriptsSplit[idx] : ""} readOnly
+                  className="w-20 px-3 py-2 bg-zinc-100 border border-zinc-200 rounded-lg text-sm text-zinc-600 outline-none cursor-default text-center"
+                  title="Allocated scripts"
+                />
                 {totalAmount > 0 && (
                   <span className="text-xs font-bold text-[#120c7a] w-24 text-right">
                     ₹{cashSplit[idx]?.toLocaleString()}
@@ -369,10 +387,10 @@ function BulkEntryTab({ roles, showToast }) {
   const [academicYear, setAcademicYear] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [cards, setCards] = useState([{ roleId: "", scripts: "", members: [{ facultyName: "", designation: "", department: "", college: "", email: "" }] }]);
+  const [cards, setCards] = useState([{ roleId: "", scripts: "", members: [{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }] }]);
   const [saving, setSaving] = useState(false);
 
-  const addCard = () => setCards([...cards, { roleId: "", scripts: "", members: [{ facultyName: "" }] }]);
+  const addCard = () => setCards([...cards, { roleId: "", scripts: "", members: [{ facultyName: "", facultyCode: "" }] }]);
   const removeCard = (idx) => {
     if (cards.length === 1) return;
     setCards(cards.filter((_, i) => i !== idx));
@@ -391,14 +409,14 @@ function BulkEntryTab({ roles, showToast }) {
 
   const addMember = (cardIdx) => {
     const newCards = [...cards];
-    newCards[cardIdx] = { ...newCards[cardIdx], members: [...newCards[cardIdx].members, { facultyName: "", designation: "", department: "", college: "", email: "" }] };
+    newCards[cardIdx] = { ...newCards[cardIdx], members: [...newCards[cardIdx].members, { facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }] };
     setCards(newCards);
   };
 
   const removeMember = (cardIdx, memberIdx) => {
     const newCards = [...cards];
     const members = newCards[cardIdx].members.filter((_, i) => i !== memberIdx);
-    if (members.length === 0) members.push({ facultyName: "", designation: "", department: "", college: "", email: "" });
+    if (members.length === 0) members.push({ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" });
     newCards[cardIdx] = { ...newCards[cardIdx], members };
     setCards(newCards);
   };
@@ -450,6 +468,7 @@ function BulkEntryTab({ roles, showToast }) {
           rate,
           members: card.members.filter(m => m.facultyName.trim()).map((m, i) => ({
             facultyName: m.facultyName.trim(),
+            facultyCode: m.facultyCode?.trim() || "",
             designation: m.designation?.trim() || "",
             department: m.department?.trim() || "",
             college: m.college?.trim() || "",
@@ -466,7 +485,7 @@ function BulkEntryTab({ roles, showToast }) {
         });
       }
       showToast(`${cards.length} entries saved`);
-      setCards([{ roleId: "", scripts: "", members: [{ facultyName: "", designation: "", department: "", college: "", email: "" }] }]);
+      setCards([{ roleId: "", scripts: "", members: [{ facultyName: "", facultyCode: "", designation: "", department: "", college: "", email: "" }] }]);
       setExam(""); setAcademicYear(""); setFromDate(""); setToDate("");
     } catch (err) {
       console.error(err);
@@ -543,6 +562,7 @@ function BulkEntryTab({ roles, showToast }) {
           const totalAmt = scripts * rate;
           const names = card.members.map((m) => m.facultyName.trim()).filter(Boolean);
           const cashSplit = splitEqually(totalAmt, names.length || 1);
+          const scriptsSplit = splitEqually(scripts, names.length || 1);
           return (
             <div key={idx} className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -603,6 +623,15 @@ function BulkEntryTab({ roles, showToast }) {
                           onChange={(e) => updateMember(idx, mi, "facultyName", e.target.value)}
                           placeholder="Faculty name *"
                           className="flex-1 px-2 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] transition-all"
+                        />
+                        <input type="text" value={m.facultyCode || ""}
+                          onChange={(e) => updateMember(idx, mi, "facultyCode", e.target.value)}
+                          placeholder="College Code"
+                          className="w-20 px-2 py-1.5 bg-white border border-zinc-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] transition-all"
+                        />
+                        <input type="number" value={scripts > 0 ? scriptsSplit[mi] : ""} readOnly
+                          className="w-14 px-2 py-1.5 bg-zinc-100 border border-zinc-200 rounded-lg text-xs text-zinc-600 outline-none cursor-default text-center"
+                          title="Allocated scripts"
                         />
                         {totalAmt > 0 && (
                           <span className="text-[10px] font-bold text-[#120c7a] w-16 text-right">
@@ -730,11 +759,11 @@ function EntryListTab({ showToast }) {
   const toggleExpand = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const exportCSV = () => {
-    const headers = ["Member", "Designation", "Department", "College", "Email", "Role", "Scripts", "Rate", "Amount", "Exam", "From Date", "To Date", "Academic Year", "Status"];
+    const headers = ["Member", "College Code", "Designation", "Department", "College", "Email", "Role", "Scripts", "Rate", "Amount", "Exam", "From Date", "To Date", "Academic Year", "Status"];
     const rows = [];
     filtered.forEach((e) => {
       (e.members || [{}]).forEach((m) => {
-        rows.push([m.facultyName || "", m.designation || "", m.department || "", m.college || "", m.email || "", e.roleName, m.scripts || e.totalScripts, e.rate, e.totalAmount, e.exam, e.fromDate || "", e.toDate || "", e.academicYear, e.status]);
+        rows.push([m.facultyName || "", m.facultyCode || "", m.designation || "", m.department || "", m.college || "", m.email || "", e.roleName, m.scripts || e.totalScripts, e.rate, e.totalAmount, e.exam, e.fromDate || "", e.toDate || "", e.academicYear, e.status]);
       });
     });
     const csv = [headers, ...rows].map((r) => r.map((v) => `"${v || ""}"`).join(",")).join("\n");
@@ -875,6 +904,7 @@ function EntryListTab({ showToast }) {
                                   <Users size={12} />
                                   <div>
                                     <span className="font-medium">{m.facultyName}</span>
+                                    {m.facultyCode && <span className="text-zinc-400"> [{m.facultyCode}]</span>}
                                     {m.designation && <span className="text-zinc-400"> · {m.designation}</span>}
                                     {m.department && <span className="text-zinc-400"> · {m.department}</span>}
                                     {m.college && <span className="text-zinc-400"> · {m.college}</span>}

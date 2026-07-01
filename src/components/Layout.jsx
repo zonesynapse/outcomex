@@ -91,7 +91,10 @@ const allPossibleItems = [
   // Payment Module
   { id: "payment-roles", icon: Settings2, label: "Payment Roles", path: "/exam-payment/roles" },
   { id: "payment-entries", icon: FileText, label: "Payment Entries", path: "/exam-payment/entries" },
-  { id: "payment-reports", icon: BarChart3, label: "Payment Reports", path: "/exam-payment/reports" }
+  { id: "payment-reports", icon: BarChart3, label: "Payment Reports", path: "/exam-payment/reports" },
+
+  // COE Module
+  { id: "qp-converter", icon: FileText, label: "Question Paper Converter", path: "/qp-converter" }
 ];
 
 const modules = [
@@ -146,9 +149,9 @@ const modules = [
   },
   {
     id: "examinations",
-    label: "Examinations",
+    label: "COE",
     icon: FileText,
-    itemIds: ["payment-roles", "payment-entries", "payment-reports"]
+    itemIds: ["payment-roles", "payment-entries", "payment-reports", "qp-converter"]
   }
 ];
 

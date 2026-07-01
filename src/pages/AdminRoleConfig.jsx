@@ -133,7 +133,8 @@ export default function AdminRoleConfig() {
     { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports" },
     { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles" },
     { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries" },
-    { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports" }
+    { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports" },
+    { id: "qp-converter", label: "Question Paper Converter", path: "/qp-converter" }
   ];
 
   useEffect(() => {

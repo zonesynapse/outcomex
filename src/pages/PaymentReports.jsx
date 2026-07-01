@@ -20,6 +20,7 @@ const memberCash = (entry) => {
   const amounts = splitEqually(totalAmt, count);
   return (entry.members || []).map((m, i) => ({
     facultyName: m.facultyName,
+    facultyCode: m.facultyCode || "",
     designation: m.designation || "",
     department: m.department || "",
     college: m.college || "",
@@ -152,6 +153,94 @@ export default function PaymentReports() {
     a.click();
   };
 
+  const exportRolePDF = () => {
+    const printWin = window.open('', '_blank', 'width=900,height=1200');
+    if (!printWin) return;
+    const totalAmount = roleEntries.reduce((s, e) => s + (e.totalAmount || 0), 0);
+    const totalScripts = roleEntries.reduce((s, e) => s + (e.totalScripts || 0), 0);
+    const rows = roleEntries.flatMap((e) => {
+      const count = (e.members || []).length || 1;
+      const perScripts = Math.floor((e.totalScripts || 0) / count);
+      return memberCash(e).map((m) => ({ faculty: m.facultyName, scripts: perScripts, rate: e.rate, amount: m.amount }));
+    });
+    printWin.document.write(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Role Report - ${selectedRole}</title>
+<style>
+@page{size:A4;margin:.5in}
+body{font-family:'Times New Roman',Times,serif;font-size:11px;padding:20px;color:#333}
+.hdr{text-align:center;margin-bottom:10px}
+.hdr img{width:100%;max-width:700px;height:auto}
+h2{text-align:center;margin:6px 0 2px;font-size:14px}
+h3{text-align:center;font-weight:normal;margin:0 0 16px;color:#555;font-size:12px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{border:1px solid #333;padding:5px 8px;text-align:center;font-size:11px}
+th{background:#f0f0f0;font-weight:bold}
+td.l{text-align:left}
+tr.tot td{background:#fafafa;font-weight:bold}
+</style></head><body>
+<div class="hdr">
+<img src="/logo.png" alt="logo"/>
+</div>
+<h2>${selectedRole}</h2>
+<h3>Role Wise Payment Report</h3>
+<table><thead><tr>
+<th style="width:40%">Faculty</th>
+<th style="width:20%">Scripts</th>
+<th style="width:20%">Rate</th>
+<th style="width:20%">Amount</th>
+</tr></thead><tbody>
+${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.scripts + '</td><td>₹' + Number(r.rate || 0).toFixed(2) + '</td><td>₹' + (r.amount || 0).toLocaleString('en-IN') + '</td></tr>').join('')}
+<tr class="tot"><td>Total</td><td>${totalScripts}</td><td></td><td>₹${totalAmount.toLocaleString('en-IN')}</td></tr>
+</tbody></table>
+</body></html>`);
+    printWin.document.close();
+    printWin.focus();
+    setTimeout(() => { printWin.print(); }, 500);
+  };
+
+  const exportExamPDF = () => {
+    const printWin = window.open('', '_blank', 'width=900,height=1200');
+    if (!printWin) return;
+    const totalAmount = examEntries.reduce((s, e) => s + (e.totalAmount || 0), 0);
+    const totalScripts = examEntries.reduce((s, e) => s + (e.totalScripts || 0), 0);
+    const rows = examEntries.flatMap((e) => {
+      const count = (e.members || []).length || 1;
+      const perScripts = Math.floor((e.totalScripts || 0) / count);
+      return memberCash(e).map((m) => ({ faculty: m.facultyName, role: e.roleName, scripts: perScripts, amount: m.amount }));
+    });
+    printWin.document.write(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Exam Report - ${selectedExam}</title>
+<style>
+@page{size:A4;margin:.5in}
+body{font-family:'Times New Roman',Times,serif;font-size:11px;padding:20px;color:#333}
+.hdr{text-align:center;margin-bottom:10px}
+.hdr img{width:100%;max-width:700px;height:auto}
+h2{text-align:center;margin:6px 0 2px;font-size:14px}
+h3{text-align:center;font-weight:normal;margin:0 0 16px;color:#555;font-size:12px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{border:1px solid #333;padding:5px 8px;text-align:center;font-size:11px}
+th{background:#f0f0f0;font-weight:bold}
+td.l{text-align:left}
+tr.tot td{background:#fafafa;font-weight:bold}
+</style></head><body>
+<div class="hdr"><img src="/logo.png" alt="logo"/></div>
+<h2>${selectedExam}</h2>
+<h3>Exam Wise Payment Report</h3>
+<table><thead><tr>
+<th style="width:34%">Faculty</th>
+<th style="width:26%">Role</th>
+<th style="width:20%">Scripts</th>
+<th style="width:20%">Amount</th>
+</tr></thead><tbody>
+${rows.map((r, i) => '<tr><td class="l">' + r.faculty + '</td><td>' + r.role + '</td><td>' + r.scripts + '</td><td>₹' + (r.amount || 0).toLocaleString('en-IN') + '</td></tr>').join('')}
+<tr class="tot"><td colspan="2">Total</td><td>${totalScripts}</td><td>₹${totalAmount.toLocaleString('en-IN')}</td></tr>
+</tbody></table>
+</body></html>`);
+    printWin.document.close();
+    printWin.focus();
+    setTimeout(() => { printWin.print(); }, 500);
+  };
+
   return (
     <Layout title="Payment Reports">
       <div className="p-4 md:p-8 space-y-6">
@@ -200,10 +289,11 @@ export default function PaymentReports() {
                 detailHeaders={["Subject", "Role", "Scripts", "Rate", "Amount", "Action"]}
                 detailRows={facultyEntries.map((e) => {
                   const memberMatch = memberCash(e).find(m => m.facultyName === selectedFaculty);
+                  const memCount = (e.members || []).length || 1;
                   return [
                     e.fromDate || e.courseName || "—",
                     <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-semibold">{e.roleName}</span>,
-                    e.totalScripts || 0,
+                    Math.floor((e.totalScripts || 0) / memCount),
                     `₹${e.rate || 0}`,
                     <span className="font-bold text-[#120c7a]">₹{(memberMatch?.amount || 0).toLocaleString()}</span>,
                     <button
@@ -236,20 +326,22 @@ export default function PaymentReports() {
                 selectedId={selectedRole}
                 onSelect={setSelectedRole}
                 detailHeaders={["Faculty", "Scripts", "Rate", "Amount"]}
-                detailRows={roleEntries.flatMap((e) =>
-                  memberCash(e).map((m) => [
+                detailRows={roleEntries.flatMap((e) => {
+                  const memCount = (e.members || []).length || 1;
+                  return memberCash(e).map((m) => [
                     m.facultyName || "—",
-                    e.totalScripts || 0,
+                    Math.floor((e.totalScripts || 0) / memCount),
                     `₹${e.rate || 0}`,
                     <span className="font-bold text-[#120c7a]">₹{(m.amount || 0).toLocaleString()}</span>,
                   ])
-                )}
+                })}
                 detailSummary={{
                   scripts: roleEntries.reduce((s, e) => s + (e.totalScripts || 0), 0),
                   amount: roleEntries.reduce((s, e) => s + (e.totalAmount || 0), 0),
                   count: roleEntries.length,
                 }}
-                onCSV={() => exportCSV("role", selectedRole)}
+                onCSV={exportRolePDF}
+                exportLabel="PDF"
                 emptyMessage="No roles found"
               />
             )}
@@ -262,20 +354,22 @@ export default function PaymentReports() {
                 selectedId={selectedExam}
                 onSelect={setSelectedExam}
                 detailHeaders={["Faculty", "Role", "Scripts", "Amount"]}
-                detailRows={examEntries.flatMap((e) =>
-                  memberCash(e).map((m) => [
+                detailRows={examEntries.flatMap((e) => {
+                  const memCount = (e.members || []).length || 1;
+                  return memberCash(e).map((m) => [
                     m.facultyName || "—",
                     <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-semibold">{e.roleName}</span>,
-                    e.totalScripts || 0,
+                    Math.floor((e.totalScripts || 0) / memCount),
                     <span className="font-bold text-[#120c7a]">₹{(m.amount || 0).toLocaleString()}</span>,
                   ])
-                )}
+                })}
                 detailSummary={{
                   scripts: examEntries.reduce((s, e) => s + (e.totalScripts || 0), 0),
                   amount: examEntries.reduce((s, e) => s + (e.totalAmount || 0), 0),
                   count: examEntries.length,
                 }}
-                onCSV={() => exportCSV("exam", selectedExam)}
+                onCSV={exportExamPDF}
+                exportLabel="PDF"
                 emptyMessage="No exams found"
               />
             )}
@@ -425,7 +519,7 @@ function DashboardView({ stats, entries }) {
 }
 
 /* ─── Enhanced Report View (card grid + drill-down) ─── */
-function EnhancedReportView({ items, selectedId, onSelect, detailHeaders, detailRows, detailSummary, onCSV, emptyMessage }) {
+function EnhancedReportView({ items, selectedId, onSelect, detailHeaders, detailRows, detailSummary, onCSV, emptyMessage, exportLabel = "CSV" }) {
   if (!selectedId) {
     return items.length === 0 ? (
       <div className="p-12 text-center bg-white rounded-2xl border border-zinc-200">
@@ -478,7 +572,7 @@ function EnhancedReportView({ items, selectedId, onSelect, detailHeaders, detail
           {detailRows.length > 0 && (
             <button onClick={onCSV}
               className="flex items-center gap-1.5 px-4 py-2 bg-white border border-zinc-200 text-zinc-700 rounded-xl text-sm font-bold hover:border-zinc-300 transition-all"
-            ><Download size={16} /> CSV</button>
+            >{exportLabel === "PDF" ? <Printer size={16} /> : <Download size={16} />} {exportLabel}</button>
           )}
         </div>
       </div>
@@ -547,7 +641,14 @@ function ClaimFormModal({ modal, setClaimModal, showToast }) {
     ).sort((a, b) => (a.fromDate || '').localeCompare(b.fromDate || ''));
   }, [allEntries, member]);
 
-  const claimDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const formatDate = (d) => {
+    if (!d) return '';
+    const parts = d.split('-');
+    if (parts.length === 3 && parts[0].length === 4) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return d;
+  };
+
+  const claimDate = formatDate(new Date().toISOString().split('T')[0]);
 
   const claimNo = useMemo(() => {
     const now = new Date();
@@ -557,8 +658,19 @@ function ClaimFormModal({ modal, setClaimModal, showToast }) {
     return `${monthAbbr}-${short}/${String(hash).padStart(5, '0')}`;
   }, [member]);
 
-  const subTotal = allClaimEntries.reduce((s, e) => s + (e.totalAmount || 0), 0);
-  const totalScripts = allClaimEntries.reduce((s, e) => s + (e.totalScripts || 0), 0);
+  const memberShare = (e, field) => {
+    const cash = memberCash(e);
+    const match = cash.find(c => c.facultyName === member.facultyName);
+    if (field === 'amount') return match?.amount || 0;
+    if (field === 'scripts') {
+      const count = (e.members || []).length || 1;
+      return Math.floor((e.totalScripts || 0) / count);
+    }
+    return 0;
+  };
+
+  const subTotal = allClaimEntries.reduce((s, e) => s + memberShare(e, 'amount'), 0);
+  const totalScripts = allClaimEntries.reduce((s, e) => s + memberShare(e, 'scripts'), 0);
   const daAmount = 0;
   const grandTotal = subTotal + daAmount;
 
@@ -594,7 +706,7 @@ function ClaimFormModal({ modal, setClaimModal, showToast }) {
   };
 
   const buildPrintHTML = () => {
-    const examLabel = entry.exam || 'END SEMESTER EXAMINATIONS';
+    const examLabel = entry.exam ? `central evaluation - ${entry.exam}` : 'END SEMESTER EXAMINATIONS';
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Claim Form - ${claimNo}</title>
 <style>
@@ -623,7 +735,7 @@ body{font-family:'Times New Roman',Times,serif;font-size:11px;color:#333;margin:
 <div class="hdr">
 <img src="/logo.png" alt="logo" style="width:100%;max-width:700px;height:auto"/>
 <h3>${examLabel.toUpperCase()}</h3>
-<h3 style="text-decoration:none;font-size:10px;margin-top:4px">EXAMINER CLAIM FORM</h3>
+<h3 style="text-decoration:none;font-size:10px;margin-top:4px">${(entry.roleName || 'EXAMINER').toUpperCase()} CLAIM FORM</h3>
 </div>
 <div class="info">
 <span><strong>Claim No. : ${claimNo}</strong></span>
@@ -632,30 +744,34 @@ body{font-family:'Times New Roman',Times,serif;font-size:11px;color:#333;margin:
 <table class="dtbl"><tr>
 <td style="width:50%"><strong>Name, Designation &amp; Department</strong><br/>
 ${member.facultyName}${member.designation ? ', ' + member.designation : ''}${member.department ? ' &amp; ' + member.department : ''}</td>
-<td style="width:50%"><strong>Faculty Code &amp; College</strong><br/>
-${member.college || 'N/A'}</td>
+<td style="width:50%"><strong>College Code &amp; College Name</strong><br/>
+${member.facultyCode ? member.facultyCode + ' - ' : ''}${member.college || 'N/A'}</td>
 </tr></table>
 <h4 style="font-size:9px;margin:12px 0 4px;text-decoration:underline">REMUNERATION FOR VALUATION</h4>
 <table class="rtbl"><thead><tr>
-<th style="width:6%">S. No.</th><th style="width:16%">Date</th>
+<th style="width:6%">S. No.</th><th style="width:16%">Evaluation Date</th>
 <th style="width:14%">No.Scripts</th>
 <th style="width:30%">Remuneration Per Script</th><th style="width:34%">Amount</th>
 </tr></thead><tbody>
 ${allClaimEntries.map((e2, i) => {
-  const amt = e2.totalAmount || 0;
-  return '<tr><td>' + (i+1) + '</td><td>' + (e2.fromDate || claimDate) + '</td><td class="r">' + (e2.totalScripts || 0) + '</td><td class="r">' + Number(e2.rate || 0).toFixed(2) + '</td><td class="r">' + amt.toLocaleString('en-IN', {minimumFractionDigits:2}) + '</td></tr>';
+  const amt = memberShare(e2, 'amount');
+  return '<tr><td>' + (i+1) + '</td><td>' + (formatDate(e2.fromDate) || claimDate) + '</td><td class="r">' + memberShare(e2, 'scripts') + '</td><td class="r">₹' + Number(e2.rate || 0).toFixed(2) + '</td><td class="r">₹' + amt.toLocaleString('en-IN', {minimumFractionDigits:2}) + '</td></tr>';
 }).join('')}
-<tr class="tot"><td colspan="2"></td><td class="r">${totalScripts}</td><td class="r">Sub Total</td><td class="r">${subTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
-<tr class="tot"><td colspan="3"></td><td class="r">DA Amount</td><td class="r">${daAmount.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
-<tr class="tot"><td colspan="3"></td><td class="r">Total</td><td class="r" style="font-size:13px">${grandTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
+<tr class="tot"><td colspan="2"></td><td class="r">${totalScripts}</td><td class="r">Sub Total</td><td class="r">₹${subTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
+<tr class="tot"><td colspan="3"></td><td class="r">DA Amount</td><td class="r">₹${daAmount.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
+<tr class="tot"><td colspan="3"></td><td class="r">Total</td><td class="r" style="font-size:13px">₹${grandTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>
 </tbody></table>
 <div class="rupees">* TA - Travel Allowance (only to the external examiners).<br/>
 (Received Rs. ${grandTotal.toLocaleString('en-IN',{minimumFractionDigits:2})} (Rupees ${numberToWords(grandTotal)} ONLY))</div>
-<div class="signs"><div><div class="ln">Signature of the Examiner</div>
+<div class="signs"><div><div class="ln">Signature of the ${entry.roleName || 'Examiner'}</div>
 <div style="font-size:9px;margin-top:2px">(To be signed on Revenue Stamp if exceed Rs.5000)</div></div></div>
 <div class="obox"><h4>FOR OFFICE USE ONLY.</h4>
 <div class="rw"><span>Verified: Passed for Payment</span><span>Payment Mode: Cash / NEFT</span></div>
-<div class="rw"><span>Date:</span><span style="font-weight:bold">CONTROLLER OF EXAMINATIONS</span></div></div>
+<div class="rw"><span>Date:</span><span>&nbsp;</span></div>
+<div style="display:flex;justify-content:space-between;margin-top:50px">
+<div style="width:45%;text-align:center"><div style="border-top:1px solid #333;padding-top:10px;font-weight:bold">CONTROLLER OF EXAMINATIONS</div></div>
+<div style="width:45%;text-align:center"><div style="border-top:1px solid #333;padding-top:10px;font-weight:bold">Approved by Principal</div></div>
+</div></div>
 </body></html>`;
   };
 
@@ -676,8 +792,8 @@ ${allClaimEntries.map((e2, i) => {
           <div className="bg-white border border-zinc-200 rounded-xl shadow-sm p-8 max-w-[800px] mx-auto" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
             <div className="text-center mb-4">
               <img src="/logo.png" alt="College Logo" className="w-full max-w-[700px] h-auto mx-auto mb-2" />
-              <h3 className="text-[9px] underline mt-2 mb-0">{entry.exam || 'END SEMESTER EXAMINATIONS'}</h3>
-              <h3 className="text-[10px] font-bold mt-1">EXAMINER CLAIM FORM</h3>
+              <h3 className="text-[9px] underline mt-2 mb-0">{entry.exam ? `central evaluation - ${entry.exam}` : 'END SEMESTER EXAMINATIONS'}</h3>
+              <h3 className="text-[10px] font-bold mt-1">{(entry.roleName || 'EXAMINER').toUpperCase()} CLAIM FORM</h3>
             </div>
 
             <div className="flex justify-between text-xs font-bold mb-3">
@@ -693,8 +809,8 @@ ${allClaimEntries.map((e2, i) => {
                     {member.facultyName}{member.designation ? `, ${member.designation}` : ''}{member.department ? ` & ${member.department}` : ''}
                   </td>
                   <td className="border border-zinc-800 p-2 w-1/2">
-                    <strong>Faculty Code &amp; College</strong><br/>
-                    {member.college || 'N/A'}
+                    <strong>College Code &amp; College Name</strong><br/>
+                    {member.facultyCode ? `${member.facultyCode} - ` : ''}{member.college || 'N/A'}
                   </td>
                 </tr>
               </tbody>
@@ -706,7 +822,7 @@ ${allClaimEntries.map((e2, i) => {
               <thead>
                 <tr className="bg-zinc-100">
                   <th className="border border-zinc-800 p-1.5 w-[6%]">S.No</th>
-                  <th className="border border-zinc-800 p-1.5 w-[16%]">Date</th>
+                  <th className="border border-zinc-800 p-1.5 w-[16%]">Evaluation Date</th>
                   <th className="border border-zinc-800 p-1.5 w-[14%]">No.Scripts</th>
                   <th className="border border-zinc-800 p-1.5 w-[30%]">Remuneration Per Script</th>
                   <th className="border border-zinc-800 p-1.5 w-[34%]">Amount</th>
@@ -714,14 +830,14 @@ ${allClaimEntries.map((e2, i) => {
               </thead>
               <tbody>
                 {allClaimEntries.map((e, i) => {
-                  const amt = e.totalAmount || 0;
+                  const amt = memberShare(e, 'amount');
                   return (
                     <tr key={i}>
                       <td className="border border-zinc-800 p-1.5 text-center">{i + 1}</td>
-                      <td className="border border-zinc-800 p-1.5 text-center">{e.fromDate || claimDate}</td>
-                      <td className="border border-zinc-800 p-1.5 text-right">{e.totalScripts || 0}</td>
-                      <td className="border border-zinc-800 p-1.5 text-right">{Number(e.rate || 0).toFixed(2)}</td>
-                      <td className="border border-zinc-800 p-1.5 text-right">{amt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td className="border border-zinc-800 p-1.5 text-center">{formatDate(e.fromDate) || claimDate}</td>
+                      <td className="border border-zinc-800 p-1.5 text-right">{memberShare(e, 'scripts')}</td>
+                      <td className="border border-zinc-800 p-1.5 text-right">₹{Number(e.rate || 0).toFixed(2)}</td>
+                      <td className="border border-zinc-800 p-1.5 text-right">₹{amt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   );
                 })}
@@ -729,17 +845,17 @@ ${allClaimEntries.map((e2, i) => {
                   <td colSpan={2} className="border border-zinc-800 p-1.5"></td>
                   <td className="border border-zinc-800 p-1.5 text-right">{totalScripts}</td>
                   <td className="border border-zinc-800 p-1.5 text-right">Sub Total</td>
-                  <td className="border border-zinc-800 p-1.5 text-right">{subTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td className="border border-zinc-800 p-1.5 text-right">₹{subTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 </tr>
                 <tr className="bg-zinc-50 font-bold">
                   <td colSpan={3} className="border border-zinc-800 p-1.5"></td>
                   <td className="border border-zinc-800 p-1.5 text-right">DA Amount</td>
-                  <td className="border border-zinc-800 p-1.5 text-right">{daAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td className="border border-zinc-800 p-1.5 text-right">₹{daAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 </tr>
                 <tr className="bg-zinc-50 font-bold text-sm">
                   <td colSpan={3} className="border border-zinc-800 p-1.5"></td>
                   <td className="border border-zinc-800 p-1.5 text-right">Total</td>
-                  <td className="border border-zinc-800 p-1.5 text-right">{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td className="border border-zinc-800 p-1.5 text-right">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 </tr>
               </tbody>
             </table>
@@ -753,7 +869,7 @@ ${allClaimEntries.map((e2, i) => {
 
             <div className="flex justify-between text-xs mt-10">
               <div className="text-center w-1/3">
-                <div className="border-t border-zinc-800 mt-8 pt-1">Signature of the Examiner</div>
+                <div className="border-t border-zinc-800 mt-8 pt-1">Signature of the {entry.roleName || 'Examiner'}</div>
                 <div className="text-[9px] mt-0.5">(To be signed on Revenue Stamp if exceed Rs.5000)</div>
               </div>
             </div>
@@ -766,7 +882,15 @@ ${allClaimEntries.map((e2, i) => {
               </div>
               <div className="flex justify-between text-xs mt-2">
                 <span>Date:</span>
-                <span className="font-bold">CONTROLLER OF EXAMINATIONS</span>
+                <span>&nbsp;</span>
+              </div>
+              <div className="flex justify-between text-xs mt-12">
+                <div className="text-center w-[48%]">
+                  <div className="border-t border-zinc-800 pt-3 font-bold">CONTROLLER OF EXAMINATIONS</div>
+                </div>
+                <div className="text-center w-[48%]">
+                  <div className="border-t border-zinc-800 pt-3 font-bold">Approved by Principal</div>
+                </div>
               </div>
             </div>
           </div>

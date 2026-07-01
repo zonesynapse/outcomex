@@ -102,8 +102,7 @@ export default function Dashboard() {
           const userData = snapshot.data();
           setUserRole(userData.role);
 
-          if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments');
+          const assignmentsRef = collection(db, 'subject_assignments');
             const unsub2 = onSnapshot(assignmentsRef, (assignSnap) => {
               if (!assignSnap.empty) {
                 const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
@@ -126,7 +125,6 @@ export default function Dashboard() {
               }
             }, (err) => console.error("Assignments fetch error:", err));
             assignCleanupRef.current = unsub2;
-          }
         }
       }, (err) => console.error("User fetch error:", err));
       userCleanupRef.current = unsub1;
@@ -264,13 +262,15 @@ export default function Dashboard() {
     return years;
   };
 
+  const hasAssignments = assignedProgs.length > 0;
+
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole !== 'Faculty') return true;
+    if (!hasAssignments) return true;
     return assignedProgs.includes(formatProgrammeKey(prog));
   });
 
   const filteredDepartments = (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
-    if (userRole !== 'Faculty') return true;
+    if (!hasAssignments) return true;
     return assignedDepts.includes(sanitizeKey(dept));
   });
 
@@ -298,7 +298,7 @@ export default function Dashboard() {
     if (!questionPapers.length) return [];
     
     let filtered = questionPapers;
-    if (userRole === 'Faculty') {
+    if (userAssignments.length > 0) {
       filtered = filtered.filter(qp => userAssignments.includes(qp.subject));
     }
     if (field === 'academic_year') filtered = filtered.filter(qp => !batch || qp.batch === batch);
@@ -1624,7 +1624,7 @@ export default function Dashboard() {
                     <option value="">Choose Subject</option>
                     {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
                       ?.filter(sub => sub != null && sub.isActive !== false)
-                      ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
+                      ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
                       ?.map(sub => (
                       <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
                     ))}
@@ -1682,7 +1682,7 @@ export default function Dashboard() {
                     {Array.from(new Set([
                       ...(syllabusData?.semesters?.[deriveSemesterNumber(semester)]
                         ?.filter(sub => sub != null && sub.isActive !== false)
-                        ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
+                        ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
                         ?.map(sub => `${sub.code} - ${sub.name}`) || []),
                       ...getQPFilterOptions('subject')
                     ])).map(sub => (
@@ -1949,7 +1949,7 @@ export default function Dashboard() {
               ) : (
                 (() => {
                   const filteredQPs = questionPapers
-                    .filter(qp => userRole !== 'Faculty' || userAssignments.includes(qp.subject))
+                    .filter(qp => userAssignments.length === 0 || userAssignments.includes(qp.subject))
                     .filter(qp => !batch || qp.batch === batch)
                     .filter(qp => !academicYear || qp.academic_year === academicYear)
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))

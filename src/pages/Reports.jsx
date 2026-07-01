@@ -84,6 +84,38 @@ export default function Reports() {
   const [enteredMarksMeta, setEnteredMarksMeta] = useState([]);
   const [internalMarksRows, setInternalMarksRows] = useState([]);
   const [loadingInternalMarks, setLoadingInternalMarks] = useState(false);
+  const [configuredCoKeys, setConfiguredCoKeys] = useState([]);
+
+  // Fetch actual CO keys from course_outcomes (set in COConfiguration.jsx)
+  useEffect(() => {
+    if (!((module === 'consolidation' || module === 'log-report') && programme && department && batch && academicYear && extraSubject)) {
+      setConfiguredCoKeys([]);
+      return;
+    }
+    const progKey = formatProgrammeKey(programme);
+    const regulation = getRegulationForBatch(progKey, batch);
+    if (!regulation) return;
+    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(extraSubject)}_${sanitizeKey(academicYear)}`;
+    const unsub = onSnapshot(doc(db, 'course_outcomes', coDocId), (snap) => {
+      const data = snap.data();
+      if (data) {
+        const keys = Object.keys(data)
+          .filter(k => /^CO\d+/i.test(k))
+          .sort((a, b) => {
+            const na = Number(a.replace(/[^0-9]/g, '')) || 0;
+            const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
+            return na - nb;
+          });
+        setConfiguredCoKeys(keys);
+      } else {
+        setConfiguredCoKeys([]);
+      }
+    }, (err) => {
+      console.error("Failed to fetch course_outcomes:", err);
+      setConfiguredCoKeys([]);
+    });
+    return () => unsub();
+  }, [module, programme, department, batch, academicYear, extraSubject, getRegulationForBatch]);
 
   // Fetch CIA Configs for exam name mapping
   useEffect(() => {
@@ -179,8 +211,7 @@ export default function Reports() {
           const userData = snapshot.data();
           setUserRole(userData.role);
 
-          if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments');
+          const assignmentsRef = collection(db, 'subject_assignments');
             const unsub2 = onSnapshot(assignmentsRef, (assignSnap) => {
               if (!assignSnap.empty) {
                 const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
@@ -203,7 +234,6 @@ export default function Reports() {
               }
             }, (err) => console.error("Assignments fetch error:", err));
             assignCleanupRef.current = unsub2;
-          }
         }
       }, (err) => console.error("User fetch error:", err));
       userCleanupRef.current = unsub1;
@@ -367,13 +397,15 @@ export default function Reports() {
     return years;
   };
 
+  const hasAssignments = assignedProgs.length > 0;
+
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole === 'Faculty') return assignedProgs.includes(formatProgrammeKey(prog));
+    if (hasAssignments) return assignedProgs.includes(formatProgrammeKey(prog));
     return true;
   });
 
   const filteredDepartments = (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
-    if (userRole === 'Faculty') return assignedDepts.includes(sanitizeKey(dept));
+    if (hasAssignments) return assignedDepts.includes(sanitizeKey(dept));
     return true;
   });
 
@@ -401,7 +433,7 @@ export default function Reports() {
     if (!questionPapers.length) return [];
     
     let filtered = questionPapers;
-    if (userRole === 'Faculty') {
+    if (userAssignments.length > 0) {
       filtered = filtered.filter(qp => userAssignments.includes(qp.subject));
     }
     if (field === 'academic_year') filtered = filtered.filter(qp => !batch || qp.batch === batch);
@@ -961,7 +993,7 @@ export default function Reports() {
       if (!consolidationView || consolidationView === 'latest') {
         const latestInternal = children.find(c => !c.isUniversity) || children[0];
         if (latestInternal) {
-          setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } });
+          setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || {} });
           setConsolidationView(latestInternal.key);
         }
       }
@@ -1034,7 +1066,7 @@ export default function Reports() {
     const computeForView = (view) => {
       if (view === 'latest' || view === undefined) {
         const chosen = consolidationChildren.find(c => !c.isUniversity) || consolidationChildren[0];
-        return { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } };
+        return { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || {} };
       }
 
       if (view === 'overall') {
@@ -1164,7 +1196,7 @@ export default function Reports() {
 
       // view is examKey
       const pick = consolidationChildren.find(c => c.key === view);
-      if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } };
+      if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || {} };
       return null;
     };
 
@@ -1311,7 +1343,7 @@ export default function Reports() {
     const isIndirectView = !!selectedConsolidationChild?.isIndirect;
     if (!isIndirectView || !consolidationData?.studentTotals) return null;
 
-    const coKeys = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
+    const coKeys = consolidationCoKeys.length > 0 ? consolidationCoKeys : Object.keys(consolidationData.studentTotals?.[Object.keys(consolidationData.studentTotals)[0]] || {}).filter(k => /^CO\d+/i.test(k));
     const regs = students?.length
       ? students.map(s => s.reg)
       : Object.keys(consolidationData.studentTotals || {});
@@ -1328,6 +1360,20 @@ export default function Reports() {
 
     return { totalStudents, averages };
   }, [selectedConsolidationChild, consolidationData, students]);
+
+  const consolidationCoKeys = useMemo(() => {
+    if (configuredCoKeys.length > 0) return configuredCoKeys;
+    if (consolidationData?.maxMarks) {
+      return Object.keys(consolidationData.maxMarks)
+        .filter(k => /^CO\d+/i.test(k))
+        .sort((a, b) => {
+          const na = Number(a.replace(/[^0-9]/g, '')) || 0;
+          const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
+          return na - nb;
+        });
+    }
+    return [];
+  }, [configuredCoKeys, consolidationData]);
 
   const logAnalysisResults = useMemo(() => {
     if (!consolidationData || !students.length) return null;
@@ -1793,7 +1839,7 @@ export default function Reports() {
                     <option value="">Choose Subject</option>
                     {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
                       ?.filter(sub => sub != null && sub.isActive !== false)
-                      ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
+                      ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
                       ?.map(sub => (
                       <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
                     ))}
@@ -1897,7 +1943,7 @@ export default function Reports() {
                     {Array.from(new Set([
                       ...(syllabusData?.semesters?.[deriveSemesterNumber(semester)]
                         ?.filter(sub => sub != null && sub.isActive !== false)
-                        ?.filter(sub => userRole !== 'Faculty' || userAssignments.includes(sub.code))
+                        ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
                         ?.map(sub => `${sub.code} - ${sub.name}`) || []),
                       ...getQPFilterOptions('subject')
                     ])).map(sub => (
@@ -2240,7 +2286,7 @@ export default function Reports() {
               ) : (
                 (() => {
                   const filteredQPs = questionPapers
-                    .filter(qp => userRole !== 'Faculty' || userAssignments.includes(qp.subject))
+                    .filter(qp => userAssignments.length === 0 || userAssignments.includes(qp.subject))
                     .filter(qp => !batch || qp.batch === batch)
                     .filter(qp => !academicYear || qp.academic_year === academicYear)
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))
@@ -2350,12 +2396,12 @@ export default function Reports() {
           <div className="space-y-6">
             {/* CO Max Marks Summary */}
             <div className="bg-white rounded-3xl shadow-xl p-6 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center gap-2 mb-4 ml-1">
+              <div className="flex items-center gap-2 mb-4">
                 <div className="w-2 h-6 bg-blue-500 rounded-full" />
                 <h4 className="text-sm font-bold text-zinc-600 uppercase tracking-wider">CO Max Marks</h4>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-                {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-4">
+                {consolidationCoKeys.map(co => (
                   <div key={co} className="bg-blue-50/50 rounded-2xl p-4 border border-blue-100/50 text-center group hover:bg-blue-50 transition-all duration-300">
                     <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1 group-hover:text-blue-500">{co}</p>
                     <p className="text-2xl font-black text-blue-600">
@@ -2412,11 +2458,9 @@ export default function Reports() {
                         {showAdmNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Admission number</th>}
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">name</th>
                         {showRegNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register No</th>}
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co1</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co2</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co3</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co4</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co5</th>
+                        {consolidationCoKeys.map(co => (
+                          <th key={co} className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">{co}</th>
+                        ))}
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-emerald-600 uppercase tracking-wider text-center bg-emerald-50/50">total</th>
                       </tr>
                     </thead>
@@ -2429,13 +2473,11 @@ export default function Reports() {
                             {showAdmNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.admNo}</td>}
                             <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
                             {showRegNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.regNo}</td>}
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO1 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO2 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO3 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO4 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO5 || 0}</td>
+                            {consolidationCoKeys.map(co => (
+                              <td key={co} className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals[co] || 0}</td>
+                            ))}
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30">
-                              {(Number(totals.CO1 || 0) + Number(totals.CO2 || 0) + Number(totals.CO3 || 0) + Number(totals.CO4 || 0) + Number(totals.CO5 || 0))}
+                              {consolidationCoKeys.reduce((sum, co) => sum + Number(totals[co] || 0), 0)}
                             </td>
                           </tr>
                         );
@@ -2445,13 +2487,11 @@ export default function Reports() {
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={1 + (showAdmNoCol ? 1 : 0) + 1 + (showRegNoCol ? 1 : 0)}>
                             CO Average ({indirectCoAverages.totalStudents} Students)
                           </td>
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO1.toFixed(2)}</td>
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO2.toFixed(2)}</td>
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO3.toFixed(2)}</td>
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO4.toFixed(2)}</td>
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages.CO5.toFixed(2)}</td>
+                          {consolidationCoKeys.map(co => (
+                            <td key={co} className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages[co]?.toFixed(2)}</td>
+                          ))}
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
-                            {(indirectCoAverages.averages.CO1 + indirectCoAverages.averages.CO2 + indirectCoAverages.averages.CO3 + indirectCoAverages.averages.CO4 + indirectCoAverages.averages.CO5).toFixed(2)}
+                            {consolidationCoKeys.reduce((sum, co) => sum + (indirectCoAverages.averages[co] || 0), 0).toFixed(2)}
                           </td>
                         </tr>
                       )}

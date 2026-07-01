@@ -123,13 +123,13 @@ export default function Attendance() {
   // Data States
   const [attendanceData, setAttendanceData] = useState(null);
   const [students, setStudents] = useState([]);
+  const [masterList, setMasterList] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
   // Per-date record states
   const [recordDates, setRecordDates] = useState([]);
-  const [selectedRecordDate, setSelectedRecordDate] = useState("");
   const [currentRecordData, setCurrentRecordData] = useState(null);
 
   // Report states
@@ -349,7 +349,12 @@ export default function Attendance() {
     const fetchTimetableConfig = async () => {
       if (!programme || !department || !batch || !academicYear || !semester) {
         setTimetableConfig(null);
-        setAvailablePeriodsWithTiming([]);
+        setAvailablePeriodsWithTiming(
+          Array.from({ length: 8 }, (_, i) => ({
+            value: String(i + 1),
+            label: `Period ${i + 1}`
+          }))
+        );
         return;
       }
 
@@ -388,12 +393,23 @@ export default function Attendance() {
           setAvailablePeriodsWithTiming(periods);
         } else {
           setTimetableConfig(null);
-          setAvailablePeriodsWithTiming([]);
+          // Fallback to default periods 1-8 when no timetable exists
+          setAvailablePeriodsWithTiming(
+            Array.from({ length: 8 }, (_, i) => ({
+              value: String(i + 1),
+              label: `Period ${i + 1}`
+            }))
+          );
         }
       } catch (err) {
         console.error("Error fetching timetable config:", err);
         setTimetableConfig(null);
-        setAvailablePeriodsWithTiming([]);
+        setAvailablePeriodsWithTiming(
+          Array.from({ length: 8 }, (_, i) => ({
+            value: String(i + 1),
+            label: `Period ${i + 1}`
+          }))
+        );
       }
     };
     fetchTimetableConfig();
@@ -403,8 +419,8 @@ export default function Attendance() {
     if (!programme || !department || !batch || !academicYear || !semester || !subject) {
       setAttendanceData(null);
       setStudents([]);
+      setMasterList({});
       setRecordDates([]);
-      setSelectedRecordDate("");
       setCurrentRecordData(null);
       setReportData(null);
       setShowReport(false);
@@ -427,62 +443,22 @@ export default function Attendance() {
         ]);
 
         const attData = attendanceSnap.data();
-        const masterList = studentSnap.data() || {};
+        const rawMaster = studentSnap.data() || {};
         setAttendanceData(attData);
-
-        const masterListObj = {};
-        Object.entries(masterList)
-          .filter(([key]) => !key.startsWith('_'))
-          .forEach(([reg, name]) => { masterListObj[reg] = name; });
-
-        const order = masterList._order;
+        setMasterList(rawMaster);
+        setStudents([]);
 
         // Support both old format ({ _meta, students }) and new format ({ _meta, records })
-        let dates = [];
+        let recordKeys = [];
         if (attData?.records) {
-          dates = Object.keys(attData.records).sort();
+          recordKeys = Object.keys(attData.records).sort();
         } else if (attData?._meta?.date) {
           // Migrate old format: wrap into records
-          dates = [attData._meta.date];
+          recordKeys = [attData._meta.date];
         }
-        setRecordDates(dates);
-
-        // Auto-select the latest date or today's date
-        const today = new Date().toISOString().split('T')[0];
-        const dateToLoad = dates.includes(today) ? today : (dates.length > 0 ? dates[dates.length - 1] : today);
-        setSelectedRecordDate(dateToLoad);
-
-        // Load the selected date's record
-        let dateRecord = null;
-        if (attData?.records?.[dateToLoad]) {
-          dateRecord = attData.records[dateToLoad];
-        } else if (dates.length === 0 && attData?._meta?.date === dateToLoad) {
-          // Old format backward compatibility
-          dateRecord = { period: attData._meta.period, totalHours: attData._meta.totalHours, students: attData.students || {} };
-        }
-        setCurrentRecordData(dateRecord);
-
-        const tHours = dateRecord?.totalHours || attData?._meta?.totalHours || "1";
-        setTotalConducted(tHours);
-        if (dateRecord?.period || attData?._meta?.period) setPeriod(dateRecord?.period || attData._meta.period);
-
-        // Build student list from the selected date's record
-        const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-          const hours = dateRecord?.students?.[reg] !== undefined ? dateRecord.students[reg] : (parseInt(tHours, 10) || 1);
-          const totalHours = parseInt(tHours, 10) || 1;
-          return {
-            reg,
-            name,
-            hours,
-            status: dateRecord?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
-            percentage: totalHours > 0 ? ((hours / totalHours) * 100).toFixed(2) : "0.00"
-          };
-        });
-
-        if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-        else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
-
-        setStudents(studentArray);
+        setRecordDates(recordKeys);
+        setCurrentRecordData(null);
+        setTotalConducted("1");
       } catch (err) { console.error(err); }
       setLoading(false);
     };
@@ -509,52 +485,40 @@ export default function Attendance() {
     }));
   };
 
-  const handleSelectRecordDate = (date) => {
-    setSelectedRecordDate(date);
-    setAttendanceDate(date);
+  // Auto-load attendance when date or period changes
+  useEffect(() => {
+    if (!attendanceData?.records || !Object.keys(masterList).length || !attendanceDate) return;
 
-    if (!attendanceData) return;
-
-    let dateRecord = null;
-    if (attendanceData.records?.[date]) {
-      dateRecord = attendanceData.records[date];
-    } else if (attendanceData._meta?.date === date && !attendanceData.records) {
-      dateRecord = { period: attendanceData._meta.period, totalHours: attendanceData._meta.totalHours, students: attendanceData.students || {} };
-    }
+    const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
+    const dateRecord = attendanceData.records[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
-    const tHours = dateRecord?.totalHours || attendanceData?._meta?.totalHours || "1";
-    setTotalConducted(tHours);
-    if (dateRecord?.period) setPeriod(dateRecord.period);
+    const totalH = parseInt(dateRecord?.totalHours, 10) || 1;
 
-    const progKey = formatProgrammeKey(programme);
-    const semNum = String(semester).match(/\d+/)?.[0];
-    const selectedSubjectObj = JSON.parse(subject);
-    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+    const masterListObj = {};
+    Object.entries(masterList)
+      .filter(([key]) => !key.startsWith('_'))
+      .forEach(([reg, name]) => { masterListObj[reg] = name; });
 
-    getDoc(doc(db, "students", compositeKey)).then(studentSnap => {
-      const masterList = studentSnap.data() || {};
-      const totalH = parseInt(tHours, 10) || 1;
-      const studentArray = Object.entries(masterList)
-        .filter(([key]) => !key.startsWith('_'))
-        .map(([reg, name]) => {
-          const hours = dateRecord?.students?.[reg] !== undefined ? dateRecord.students[reg] : totalH;
-          return {
-            reg,
-            name,
-            hours,
-            status: dateRecord?.students?.[reg] !== undefined ? (hours > 0 ? 'P' : 'A') : 'P',
-            percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
-          };
-        });
+    const order = masterList._order;
 
-      const order = masterList._order;
-      if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-      else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
-      setStudents(studentArray);
+    const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
+      const studentExists = dateRecord?.students?.[reg] !== undefined;
+      const hours = studentExists ? dateRecord.students[reg] : 0;
+      return {
+        reg,
+        name,
+        hours,
+        status: studentExists ? (hours > 0 ? 'P' : 'A') : '',
+        percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
+      };
     });
-  };
+
+    if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
+    else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
+
+    setStudents(studentArray);
+  }, [attendanceDate, period, attendanceData, masterList]);
 
   const handleGenerateReport = () => {
     if (!reportFromDate || !reportToDate || !attendanceData?.records) {
@@ -564,19 +528,33 @@ export default function Attendance() {
 
     const fromDate = reportFromDate;
     const toDate = reportToDate;
-    const allDates = Object.keys(attendanceData.records).filter(d => d >= fromDate && d <= toDate).sort();
+    const allKeys = Object.keys(attendanceData.records).filter(k => {
+      const datePart = k.includes('_P') ? k.slice(0, k.lastIndexOf('_P')) : k;
+      return datePart >= fromDate && datePart <= toDate;
+    }).sort();
 
-    if (allDates.length === 0) {
+    if (allKeys.length === 0) {
       setReportData({ dates: [], students: [], totalClasses: 0 });
       return;
     }
 
-    const totalClasses = allDates.length;
+    const totalClasses = allKeys.length;
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+
+    // Derive display labels for each key (date-only → plain, compound → "date (Period X)")
+    const keyLabels = {};
+    allKeys.forEach(k => {
+      if (k.includes('_P')) {
+        const idx = k.lastIndexOf('_P');
+        keyLabels[k] = `${k.slice(0, idx)} (P${k.slice(idx + 2)})`;
+      } else {
+        keyLabels[k] = k;
+      }
+    });
 
     getDoc(doc(db, "students", compositeKey)).then(studentSnap => {
       const masterList = studentSnap.data() || {};
@@ -590,13 +568,13 @@ export default function Attendance() {
       const studentStats = Object.keys(studentMap).map(reg => {
         let attended = 0;
         const dailyRecords = {};
-        allDates.forEach(date => {
-          const rec = attendanceData.records[date];
+        allKeys.forEach(key => {
+          const rec = attendanceData.records[key];
           const hours = rec?.students?.[reg];
           const totalH = parseInt(rec?.totalHours || totalConducted, 10) || 1;
           const isPresent = hours !== undefined ? hours > 0 : false;
           if (isPresent) attended++;
-          dailyRecords[date] = isPresent ? 'P' : 'A';
+          dailyRecords[key] = isPresent ? 'P' : 'A';
         });
         return {
           reg,
@@ -611,43 +589,117 @@ export default function Attendance() {
       if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
       else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
 
-      setReportData({ dates: allDates, students: studentStats, totalClasses });
+      setReportData({ dates: allKeys, keyLabels, students: studentStats, totalClasses });
     });
   };
 
-  const handleExportReport = () => {
+  const handleExportReport = async () => {
     if (!reportData) return;
-    const doc = new jsPDF({ orientation: reportData.dates.length > 6 ? "landscape" : "portrait" });
 
-    doc.setFontSize(16);
-    doc.text(`Attendance Report`, 14, 15);
-    doc.setFontSize(10);
-    doc.text(`Subject: ${subject || "N/A"}  |  Date Range: ${reportFromDate} to ${reportToDate}  |  Total Classes: ${reportData.totalClasses}`, 14, 22);
+    // Parse subject JSON for readable display
+    let subjectCode = '', subjectName = '', batchLabel = '', semLabel = '', sectionLabel = '';
+    try {
+      const parsed = JSON.parse(subject);
+      subjectCode = parsed.code || '';
+      batchLabel = parsed.batch || '';
+      semLabel = parsed.sem || '';
+      sectionLabel = parsed.section || '';
+      const match = subjects.find(s => s.value === subject);
+      if (match) {
+        subjectName = match.text
+          .replace(`${subjectCode} - `, '')
+          .replace(/\s*\(.*\)\s*$/, '')
+          .trim();
+      }
+    } catch { /* keep defaults */ }
 
-    const headers = ["Reg No", "Student Name", "Total", "Attended", "Absent", "%"];
-    reportData.dates.forEach(d => headers.push(d));
+    // Load college logo
+    let logoDataUrl = null;
+    try {
+      const resp = await fetch('/logo.png');
+      const blob = await resp.blob();
+      logoDataUrl = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch { /* logo unavailable, skip */ }
+
+    // Landscape only when too many columns
+    const totalCols = 6 + reportData.dates.length;
+    const orient = totalCols > 10 ? 'landscape' : 'portrait';
+    const doc = new jsPDF({ orientation: orient });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // ── Logo on first page ──
+    let yPos = 10;
+    if (logoDataUrl) {
+      try {
+        const logoW = pageWidth - 28;
+        const logoH = logoW * 0.07;
+        doc.addImage(logoDataUrl, 'PNG', 14, yPos, logoW, logoH);
+        yPos += logoH + 4;
+      } catch { /* skip */ }
+    }
+
+    // ── Title ──
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text('Attendance Report', 14, yPos);
+    yPos += 7;
+
+    // ── Subject / batch / sem / section ──
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.text(`Subject: ${subjectCode}${subjectName ? ' - ' + subjectName : ''}`, 14, yPos);
+    yPos += 5;
+
+    doc.setFont(undefined, 'normal');
+    const detailParts = [];
+    if (batchLabel) detailParts.push(`Batch: ${batchLabel}`);
+    if (semLabel) detailParts.push(`Semester: ${semLabel}`);
+    if (sectionLabel) detailParts.push(`Section: ${sectionLabel}`);
+    detailParts.push(`Date Range: ${reportFromDate} to ${reportToDate}`);
+    detailParts.push(`Total Classes: ${reportData.totalClasses}`);
+    doc.text(detailParts.join('  |  '), 14, yPos);
+    yPos += 5;
+
+    // ── Table ──
+    const headers = ['Reg No', 'Student Name'];
+    reportData.dates.forEach(d => headers.push(reportData.keyLabels?.[d] || d));
+    headers.push('Total', 'Attended', 'Absent', '%');
 
     const rows = reportData.students.map(s => {
-      const row = [s.reg, s.name, String(s.totalClasses), String(s.attended), String(s.totalClasses - s.attended), `${s.percentage}%`];
+      const row = [s.reg, s.name];
       reportData.dates.forEach(d => row.push(s.dailyRecords[d] || '—'));
+      row.push(String(s.totalClasses), String(s.attended), String(s.totalClasses - s.attended), `${s.percentage}%`);
       return row;
     });
+
+    // Dynamic column styles: fixed widths for RegNo, Name, Total/Attended/Absent/%; date cols auto-sized
+    const dateColCount = reportData.dates.length;
+    const colStyles = {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
+      1: { halign: 'left', cellWidth: 34 },
+    };
+    const lastIdx = 2 + dateColCount;
+    colStyles[lastIdx]     = { halign: 'center', cellWidth: 12 };
+    colStyles[lastIdx + 1] = { halign: 'center', cellWidth: 14 };
+    colStyles[lastIdx + 2] = { halign: 'center', cellWidth: 12 };
+    colStyles[lastIdx + 3] = { halign: 'center', cellWidth: 14 };
 
     autoTable(doc, {
       head: [headers],
       body: rows,
-      startY: 28,
-      styles: { fontSize: 7, cellPadding: 2, halign: 'center' },
+      startY: yPos,
+      styles: { fontSize: 6.5, cellPadding: 1.5, halign: 'center', overflow: 'linebreak' },
       headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-      columnStyles: {
-        0: { halign: 'left', fontStyle: 'bold', cellWidth: 28 },
-        1: { halign: 'left', cellWidth: 40 },
-      },
+      columnStyles: colStyles,
       alternateRowStyles: { fillColor: [255, 251, 235] },
       margin: { left: 14, right: 14 },
     });
 
-    doc.save(`Attendance_Report_${subject || "subject"}_${reportFromDate}_to_${reportToDate}.pdf`);
+    doc.output('dataurlnewwindow');
   };
 
   const filteredStudents = students.filter(s => 
@@ -658,6 +710,10 @@ export default function Attendance() {
   const handleSaveAttendance = async () => {
     if (!programme || !department || !batch || !subject || !totalConducted || !attendanceDate) {
       alert("Please ensure all filters and Total Conducted hours are provided.");
+      return;
+    }
+    if (!period) {
+      alert("Please select a Period before saving attendance.");
       return;
     }
     setSaving(true);
@@ -678,32 +734,35 @@ export default function Attendance() {
     };
 
     try {
-      // Merge with existing records (don't overwrite other dates)
+      // Merge with existing records (don't overwrite other dates/periods)
+      const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
       const existingRecords = attendanceData?.records || {};
-      const updatedRecords = { ...existingRecords, [attendanceDate]: dateRecord };
+      const isEdit = !!existingRecords[recordKey];
+      const updatedRecords = { ...existingRecords, [recordKey]: dateRecord };
       const nextTotal = parseInt(totalConducted, 10) + 1;
 
       await setDoc(doc(db, "attendance", attendanceDocId), {
         _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
         records: updatedRecords
       });
-      alert(`Attendance for ${attendanceDate} saved successfully!`);
+      alert(`Attendance for ${attendanceDate} (Period ${period}) saved successfully!`);
 
       // Update local state
-      const newRecordDates = [...new Set([...recordDates, attendanceDate])].sort();
-      setRecordDates(newRecordDates);
+      const newRecordKeys = Object.keys(updatedRecords).sort();
+      setRecordDates(newRecordKeys);
       setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
 
-      // Auto-increment Total Mark Attendance for next day
-      setTotalConducted(String(nextTotal));
-
-      // Move to next day
-      const nextDay = new Date(attendanceDate);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const nextDate = nextDay.toISOString().split('T')[0];
-      setAttendanceDate(nextDate);
-      setSelectedRecordDate(nextDate);
-      setPeriod("");
+      if (isEdit) {
+        // Editing existing record — keep same date/period selected
+      } else {
+        // New record — auto-increment and move to next day
+        setTotalConducted(String(nextTotal));
+        const nextDay = new Date(attendanceDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDate = nextDay.toISOString().split('T')[0];
+        setAttendanceDate(nextDate);
+        setPeriod("");
+      }
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
   };
@@ -716,320 +775,284 @@ export default function Attendance() {
     XLSX.writeFile(wb, `Attendance_${subject}_${batch}.xlsx`);
   };
 
+  const handleMarkAllPresent = () => {
+    const total = parseInt(totalConducted, 10) || 0;
+    setStudents(prev => prev.map(s => ({
+      ...s,
+      status: 'P',
+      hours: total,
+      percentage: total > 0 ? "100.00" : "0.00"
+    })));
+  };
+
+  // ─── cumulative attendance from all records ───
+  const cumulativeAttended = useMemo(() => {
+    if (!attendanceData?.records) return {};
+    const counts = {};
+    Object.values(attendanceData.records).forEach(record => {
+      Object.entries(record.students || {}).forEach(([reg, hours]) => {
+        if (Number(hours) > 0) counts[reg] = (counts[reg] || 0) + 1;
+      });
+    });
+    return counts;
+  }, [attendanceData]);
+
+  // ─── derived stats ───
+  const pctPresent = students.length
+    ? ((students.filter(s => s.status === 'P' || s.status === 'OD').length / students.length) * 100).toFixed(1)
+    : '—';
+
   return (
     <Layout title="Attendance Records">
-      <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-        
-        <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-6">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Programme</label>
-              <select value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(""); setSubject(""); setSection(""); }} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium">
-                <option value="">Select</option>
-                {filteredProgrammes.map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
-              </select>
+      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
+
+        {/* ═══ Hero Stats ═══ */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { icon: Users, label: 'Total Students', value: students.length, color: 'from-indigo-500 to-blue-600' },
+            { icon: CalendarCheck2, label: 'Today\'s Attendance', value: `${pctPresent}%`, color: 'from-emerald-500 to-teal-600' },
+            { icon: Calendar, label: 'Date', value: attendanceDate, color: 'from-violet-500 to-purple-600' },
+            { icon: FileText, label: 'Total Classes', value: recordDates.length || '—', color: 'from-amber-500 to-orange-600' },
+          ].map(({ icon: Icon, label, value, color }) => (
+            <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 shadow-xl`}>
+              <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/5" />
+              <div className="absolute -bottom-4 -left-4 w-16 h-16 rounded-full bg-white/5" />
+              <div className="relative z-10 flex items-start justify-between">
+                <div>
+                  <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">{label}</p>
+                  <p className="text-white text-2xl font-black mt-1">{value}</p>
+                </div>
+                <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
+                  <Icon size={22} className="text-white" />
+                </div>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
-              <select value={department} onChange={e => { setDepartment(e.target.value); setSubject(""); setSection(""); }} disabled={!programme} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50">
-                <option value="">Select</option>
-                {programme && filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
+          ))}
+        </div>
+
+        {/* ═══ Filter Card ═══ */}
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200/60 p-5 md:p-6 transition-all">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
+              <Search size= {14} className="text-white" />
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
-              <select value={subject} onChange={e => handleSubjectChange(e.target.value)} disabled={!department} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50 text-[#120c7a] font-bold">
-                <option value="">Select Subject</option>
-                {subjects.map(s => <option key={s.value} value={s.value}>{s.text}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Batch</label>
-              <select value={batch} onChange={e => setBatch(e.target.value)} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium bg-zinc-100 cursor-not-allowed" disabled>
-                <option value="">Select</option>
-                {batches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Academic Year</label>
-              <select value={academicYear} onChange={e => setAcademicYear(e.target.value)} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium bg-zinc-100 cursor-not-allowed" disabled>
-                <option value="">Select</option>
-                {aYears.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
-              <select value={semester} onChange={e => setSemester(e.target.value)} className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium bg-zinc-100 cursor-not-allowed" disabled>
-                <option value="">Select</option>
-                {semesters.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
-              <select value={section} disabled className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium bg-zinc-100 cursor-not-allowed">
-                <option value="">{section || (availableSections.length === 0 ? "No sections configured" : "Select Section")}</option>
-                {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
+            <h3 className="text-sm font-bold text-slate-700">Filters</h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-6 pt-6 border-t border-slate-100">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Date</label>
-              <input 
-                type="date"
-                value={attendanceDate} 
-                onChange={e => setAttendanceDate(e.target.value)} 
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+            {[
+              { label: 'Programme', value: programme, set: v => { setProgramme(v); setDepartment(''); setSubject(''); setSection(''); }, opts: filteredProgrammes, display: formatProgDisplay, disabled: false },
+              { label: 'Department', value: department, set: v => { setDepartment(v); setSubject(''); setSection(''); }, opts: programme ? filteredDepartments : [], display: d => d, disabled: !programme },
+              { label: 'Subject', value: subject, set: v => handleSubjectChange(v), opts: subjects, display: s => s.text, disabled: !department, valKey: 'value', special: true },
+              { label: 'Batch', value: batch, set: setBatch, opts: batches, display: formatBatchDisplay, disabled: true },
+              { label: 'Academic Year', value: academicYear, set: setAcademicYear, opts: aYears, display: y => y, disabled: true },
+              { label: 'Semester', value: semester, set: setSemester, opts: semesters, display: s => s, disabled: true },
+              { label: 'Section', value: section, set: setSection, opts: availableSections, display: s => s, disabled: true, placeholder: !availableSections.length ? 'No sections' : undefined },
+            ].map(({ label, value, set, opts, display, disabled, valKey, placeholder }) => (
+              <div key={label} className="space-y-1">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest px-0.5">{label}</label>
+                <select
+                  value={value}
+                  onChange={e => set(e.target.value)}
+                  disabled={disabled}
+                  className={`w-full appearance-none text-xs font-semibold rounded-xl px-3 py-2.5 outline-none transition-all border
+                    ${disabled ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer'}
+                  `}
+                >
+                  <option value="">{placeholder || (disabled ? 'Auto' : `Select ${label}`)}</option>
+                  {opts.map(o => (
+                    <option key={valKey ? o[valKey] : o} value={valKey ? o[valKey] : o}>
+                      {valKey ? display(o) : display(o)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {/* Session controls */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-100">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Date</label>
+              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
                 max={new Date().toISOString().split('T')[0]}
-                className="w-full bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a] cursor-pointer" 
+                className="w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
               />
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Period</label>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Period <span className="text-rose-500">*</span></label>
               <div className="relative">
-                <select 
-                  value={period} 
-                  onChange={e => setPeriod(e.target.value)} 
-                  className="w-full appearance-none bg-blue-50/50 border border-blue-100 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-[#120c7a] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={!timetableConfig}
+                <select value={period} onChange={e => setPeriod(e.target.value)}
+                  className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
                 >
-                  <option value="">{timetableConfig ? "Select Period" : "No timetable allocated"}</option>
+                  <option value="">Select Period</option>
                   {availablePeriodsWithTiming.map(p => (
                     <option key={p.value} value={p.value}>{p.label}</option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
+                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-emerald-600 uppercase tracking-widest ml-1">Total Mark Attendance (Classes)</label>
-              <input 
-                type="number" 
-                min="1"
-                placeholder="e.g. 60" 
-                value={totalConducted} 
-                onChange={e => {
-                  const val = e.target.value;
-                  setTotalConducted(val);
-                  const total = parseInt(val, 10) || 0;
-                  setStudents(prev => prev.map(s => {
-                    const newPercentage = total > 0 ? ((s.hours / total) * 100).toFixed(2) : "0.00";
-                    return { ...s, percentage: newPercentage };
-                  }));
-                }}
-                className="w-full bg-emerald-50/50 border border-emerald-100 rounded-xl px-4 py-2 outline-none transition-all font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500" 
-              />
-            </div>
-          </div>
-
-          {/* Edit Existing Date & Report Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-4 pt-4 border-t border-slate-100">
-            {recordDates.length > 0 && (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-purple-600 uppercase tracking-widest ml-1">Edit Existing Date</label>
-                <div className="relative">
-                  <select 
-                    value={selectedRecordDate} 
-                    onChange={e => handleSelectRecordDate(e.target.value)}
-                    className="w-full appearance-none bg-purple-50/50 border border-purple-100 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-purple-500 outline-none transition-all font-bold text-purple-700 cursor-pointer"
-                  >
-                    {recordDates.map(d => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" size={16} />
-                </div>
-                <p className="text-[10px] text-purple-400 ml-1">{recordDates.length} date(s) recorded</p>
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">Attendance Report</label>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => { setShowReport(!showReport); if (!showReport && recordDates.length > 0) { setReportFromDate(recordDates[0]); setReportToDate(recordDates[recordDates.length - 1]); } }}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                    showReport 
-                      ? "bg-amber-500 text-white border-amber-500" 
-                      : "bg-white text-amber-700 border-amber-200 hover:border-amber-400"
-                  }`}
-                >
-                  <FileText size={14} />
-                  {showReport ? "Close Report" : "Generate Report"}
-                </button>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-widest px-0.5">Total Classes</label>
+              <div className="w-full bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs font-black text-emerald-700 cursor-not-allowed">
+                {recordDates.length || '—'}
               </div>
             </div>
           </div>
 
-          {/* Report Date Range */}
+          {/* Report toggle */}
+          <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-slate-100">
+            <button onClick={() => { setShowReport(!showReport); if (!showReport && recordDates.length > 0) { setReportFromDate(recordDates[0]); setReportToDate(recordDates[recordDates.length - 1]); } }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                showReport ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-amber-200' : 'bg-white text-amber-700 border border-amber-200 hover:border-amber-400'
+              }`}
+            >
+              <FileText size={14} />
+              {showReport ? 'Close Report' : 'Attendance Report'}
+            </button>
+          </div>
+
+          {/* Report date range */}
           {showReport && (
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">From Date</label>
-                  <input 
-                    type="date" 
-                    value={reportFromDate} 
-                    onChange={e => setReportFromDate(e.target.value)}
-                    className="w-full bg-amber-50/50 border border-amber-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-amber-700" 
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-amber-600 uppercase tracking-widest ml-1">To Date</label>
-                  <input 
-                    type="date" 
-                    value={reportToDate} 
-                    onChange={e => setReportToDate(e.target.value)}
-                    className="w-full bg-amber-50/50 border border-amber-100 rounded-xl px-4 py-2 focus:ring-2 focus:ring-amber-500 outline-none transition-all font-bold text-amber-700" 
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={handleGenerateReport}
-                    className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
-                  >
-                    <CalendarCheck2 size={14} /> Generate
-                  </button>
-                  {reportData && (
-                    <button 
-                      onClick={handleExportReport}
-                      className="flex items-center gap-2 px-4 py-2 bg-white border border-amber-200 text-amber-700 rounded-xl text-xs font-bold hover:border-amber-400 transition-all"
-                    >
-                      <Download size={14} /> PDF
-                    </button>
-                  )}
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100 items-end">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-amber-600 uppercase tracking-widest px-0.5">From</label>
+                <input type="date" value={reportFromDate} onChange={e => setReportFromDate(e.target.value)}
+                  className="w-full bg-amber-50/50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-700 outline-none focus:ring-2 focus:ring-amber-500/40 transition-all"
+                />
               </div>
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-amber-600 uppercase tracking-widest px-0.5">To</label>
+                <input type="date" value={reportToDate} onChange={e => setReportToDate(e.target.value)}
+                  className="w-full bg-amber-50/50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-700 outline-none focus:ring-2 focus:ring-amber-500/40 transition-all"
+                />
+              </div>
+              <button onClick={handleGenerateReport}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-200"
+              >
+                <CalendarCheck2 size={14} /> Generate
+              </button>
+              {reportData && (
+                <button onClick={handleExportReport}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-amber-200 text-amber-700 rounded-xl text-xs font-bold hover:border-amber-400 hover:bg-amber-50 transition-all"
+                >
+                  <Download size={14} /> Export PDF
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-          <div className="bg-[#120c7a] px-8 py-6 flex flex-wrap justify-between items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-white/10 rounded-2xl text-white">
-                <CalendarCheck2 size={24} />
+        {/* ═══ Attendance Table ═══ */}
+        <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200/60 overflow-hidden transition-all">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-blue-900 via-blue-950 to-indigo-950 px-5 md:px-7 py-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
+                <CalendarCheck2 size={20} className="text-white" />
               </div>
               <div>
-                <h2 className="text-white font-bold text-xl leading-tight">Student Attendance</h2>
-                {totalConducted && (
-                  <p className="text-blue-200 text-xs font-medium uppercase tracking-widest">Marking base: {totalConducted} Sessions {period ? `(Period ${period})` : ""}</p>
-                )}
+                <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Entry</h2>
               </div>
             </div>
-            
-            <div className="flex items-center gap-3">
-              <div className="relative group">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/60 group-focus-within:text-[#120c7a] transition-colors" size={16} />
-                <input 
-                  type="text" 
-                  placeholder="Search students..." 
-                  className="bg-white/10 border border-white/20 rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder:text-white/50 focus:bg-white focus:!text-[#120c7a] focus:placeholder:text-zinc-400 transition-all outline-none shadow-inner"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
+
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" />
+                <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                  className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-3.5 py-2 text-xs text-white placeholder:text-white/40 outline-none focus:bg-white focus:text-indigo-800 focus:placeholder:text-slate-400 transition-all w-36 md:w-44"
                 />
               </div>
-              <button 
-                onClick={handleSaveAttendance} 
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50"
-                disabled={saving}
+              <button onClick={handleMarkAllPresent}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-blue-500/25"
               >
-                {saving ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={18} />}
-                Save Records
+                <Users size={15} /> Mark All Present
               </button>
-              <button onClick={handleExport} className="p-2.5 bg-white text-[#120c7a] rounded-xl hover:bg-blue-50 transition-all shadow-lg">
-                <Download size={20} />
+              <button onClick={handleSaveAttendance} disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50"
+              >
+                {saving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={15} />}
+                Save
+              </button>
+              <button onClick={handleExport} className="p-2 bg-white/15 hover:bg-white/25 text-white rounded-xl transition-all">
+                <Download size={16} />
               </button>
             </div>
           </div>
 
+          {/* Table body */}
           <div className="overflow-x-auto">
             {loading ? (
-              <div className="py-20 text-center"><div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>
+              <div className="py-20 flex flex-col items-center gap-3">
+                <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                <p className="text-xs text-slate-400 font-medium">Loading attendance data...</p>
+              </div>
             ) : !students.length ? (
-              <div className="py-20 text-center flex flex-col items-center gap-4">
-                <FileX size={48} className="text-slate-200" />
-                <p className="text-slate-400 font-medium italic">No attendance records found for this selection.</p>
+              <div className="py-16 flex flex-col items-center gap-4">
+                <div className="p-4 rounded-2xl bg-slate-50">
+                  <FileX size={40} className="text-slate-300" />
+                </div>
+                <p className="text-sm text-slate-400 font-medium">No students found for this selection.</p>
               </div>
             ) : (
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="bg-slate-50/50">
-                    <th className="px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Register Number</th>
-                    <th className="px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
-                    <th className="px-4 py-4 text-center text-[11px] font-black text-emerald-500 uppercase tracking-widest">P</th>
-                    <th className="px-4 py-4 text-center text-[11px] font-black text-rose-500 uppercase tracking-widest">A</th>
-                    <th className="px-4 py-4 text-center text-[11px] font-black text-blue-500 uppercase tracking-widest">OD</th>
-                    <th className="px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Classes Attended</th>
-                    <th className="px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
+                  <tr className="bg-slate-50">
+                    <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
+                    <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
+                    <th className="px-3 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                    <th className="px-5 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Attended</th>
+                    <th className="px-5 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredStudents.map((s) => (
-                    <tr key={s.reg} className="hover:bg-blue-50/30 transition-colors">
-                      <td className="px-8 py-4 text-sm font-bold text-slate-600 font-mono">{s.reg}</td>
-                      <td className="px-8 py-4 text-sm font-bold text-slate-800">{s.name}</td>
-                      <td className="px-8 py-4 text-center">
-                        <input 
-                          type="radio" 
-                          name={`status-${s.reg}`} 
-                          className="w-4 h-4 accent-emerald-500 cursor-pointer"
-                          checked={s.status === 'P'}
-                          onChange={() => handleStatusChange(s.reg, 'P')}
-                        />
+                  {filteredStudents.map(s => (
+                    <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
+                      <td className="px-5 py-3.5">
+                        <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
                       </td>
-                      <td className="px-8 py-4 text-center">
-                        <input 
-                          type="radio" 
-                          name={`status-${s.reg}`} 
-                          className="w-4 h-4 accent-rose-500 cursor-pointer"
-                          checked={s.status === 'A'}
-                          onChange={() => handleStatusChange(s.reg, 'A')}
-                        />
+                      <td className="px-5 py-3.5">
+                        <span className="text-sm font-semibold text-slate-800">{s.name}</span>
                       </td>
-                      <td className="px-8 py-4 text-center">
-                        <input 
-                          type="radio" 
-                          name={`status-${s.reg}`} 
-                          className="w-4 h-4 accent-blue-500 cursor-pointer"
-                          checked={s.status === 'OD'}
-                          onChange={() => handleStatusChange(s.reg, 'OD')}
-                        />
+                      <td className="px-3 py-3.5">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {[
+                            { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
+                            { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
+                            { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
+                          ].map(({ label, value, activeClass, hoverClass }) => (
+                            <button key={value}
+                              onClick={() => handleStatusChange(s.reg, value)}
+                              className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${
+                                s.status === value
+                                  ? activeClass + ' border-transparent'
+                                  : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
                       </td>
-                      <td className="px-8 py-4 text-center">
-                        <input 
-                          type="number"
-                          min="0"
-                          max={parseInt(totalConducted, 10) || 0}
-                          value={s.hours}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value, 10) || 0;
-                            const total = parseInt(totalConducted, 10) || 0;
-                            setStudents(prev => prev.map(st => {
-                              if (st.reg === s.reg) {
-                                const newStatus = val === 0 ? 'A' : (val >= total ? 'P' : 'P');
-                                return {
-                                  ...st,
-                                  hours: val,
-                                  status: newStatus,
-                                  percentage: total > 0 ? ((val / total) * 100).toFixed(2) : "0.00"
-                                };
-                              }
-                              return st;
-                            }));
-                          }}
-                          className="w-20 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-center font-black text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                        />
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-center">
+                          <span className="text-xs font-black text-indigo-600">
+                            {cumulativeAttended[s.reg] || 0}
+                          </span>
+                        </div>
                       </td>
-                      <td className="px-8 py-4 text-center">
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden hidden md:block">
-                            <div 
-                              className={`h-full transition-all duration-1000 ${parseFloat(s.percentage) < 75 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                              style={{ width: `${s.percentage}%` }}
-                            />
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-center gap-2.5">
+                          <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                            <div className={`h-full rounded-full transition-all duration-700 ${
+                              ((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                            }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100, 100)}%` }} />
                           </div>
-                          <span className={`text-sm font-black min-w-[50px] ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                            {s.percentage}%
+                          <span className={`text-xs font-black min-w-[46px] text-right ${
+                            ((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
+                          }`}>
+                            {((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1) * 100).toFixed(1)}%
                           </span>
                         </div>
                       </td>
@@ -1039,76 +1062,100 @@ export default function Attendance() {
               </table>
             )}
           </div>
+
+          {/* Footer summary */}
+          {students.length > 0 && (
+            <div className="px-5 md:px-7 py-3 bg-slate-50/80 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-[10px]">
+              <span className="text-slate-400 font-medium">
+                <strong className="text-slate-600">{filteredStudents.length}</strong> / <strong className="text-slate-600">{students.length}</strong> students shown
+              </span>
+              <div className="flex items-center gap-4">
+                <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1.5" />P: <strong className="text-slate-700">{students.filter(s => s.status === 'P').length}</strong></span>
+                <span><span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1.5" />A: <strong className="text-slate-700">{students.filter(s => s.status === 'A').length}</strong></span>
+                <span><span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5" />OD: <strong className="text-slate-700">{students.filter(s => s.status === 'OD').length}</strong></span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Attendance Report Table */}
+        {/* ═══ Report Table ═══ */}
         {showReport && reportData && (
-          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-amber-500 px-8 py-6 flex flex-wrap justify-between items-center gap-4">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-white/10 rounded-2xl text-white">
-                  <CalendarCheck2 size={24} />
+          <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200/60 overflow-hidden transition-all">
+            <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 px-5 md:px-7 py-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
+                  <CalendarCheck2 size={20} className="text-white" />
                 </div>
                 <div>
-                  <h2 className="text-white font-bold text-xl leading-tight">Attendance Report</h2>
-                  <p className="text-amber-100 text-xs font-medium uppercase tracking-widest">
-                    {reportFromDate} to {reportToDate} · {reportData.totalClasses} class(es)
+                  <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Report</h2>
+                  <p className="text-amber-200 text-[10px] font-bold uppercase tracking-widest">
+                    {reportFromDate} → {reportToDate} · {reportData.totalClasses} class(es)
                   </p>
                 </div>
               </div>
-              <button 
-                onClick={handleExportReport}
-                className="flex items-center gap-2 px-4 py-2 bg-white text-amber-700 rounded-xl text-sm font-bold hover:bg-amber-50 transition-all shadow-lg"
+              <button onClick={handleExportReport}
+                className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-sm"
               >
-                <Download size={18} /> Export PDF
+                <Download size={15} /> Export PDF
               </button>
             </div>
 
             <div className="overflow-x-auto">
               {reportData.students.length === 0 ? (
-                <div className="py-20 text-center flex flex-col items-center gap-4">
-                  <FileX size={48} className="text-slate-200" />
-                  <p className="text-slate-400 font-medium italic">No attendance data found for the selected date range.</p>
+                <div className="py-16 flex flex-col items-center gap-4">
+                  <div className="p-4 rounded-2xl bg-amber-50"><FileX size={40} className="text-amber-300" /></div>
+                  <p className="text-sm text-slate-400 font-medium">No data for the selected range.</p>
                 </div>
               ) : (
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50/50">
-                      <th className="px-6 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
-                      <th className="px-6 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
-                      <th className="px-6 py-4 text-center text-[11px] font-black text-blue-600 uppercase tracking-widest">Total Classes</th>
-                      <th className="px-6 py-4 text-center text-[11px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
-                      <th className="px-6 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Absent</th>
-                      <th className="px-6 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {reportData.students.map((s) => {
-                      const absent = s.totalClasses - s.attended;
-                      return (
-                        <tr key={s.reg} className="hover:bg-amber-50/30 transition-colors">
-                          <td className="px-6 py-4 text-sm font-bold text-slate-600 font-mono">{s.reg}</td>
-                          <td className="px-6 py-4 text-sm font-bold text-slate-800">{s.name}</td>
-                          <td className="px-6 py-4 text-center text-sm font-bold text-blue-700">{s.totalClasses}</td>
-                          <td className="px-6 py-4 text-center text-sm font-bold text-emerald-700">{s.attended}</td>
-                          <td className="px-6 py-4 text-center text-sm font-bold text-rose-600">{absent}</td>
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex items-center justify-center gap-3">
-                              <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden hidden md:block">
-                                <div 
-                                  className={`h-full transition-all duration-1000 ${parseFloat(s.percentage) < 75 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                                  style={{ width: `${s.percentage}%` }}
-                                />
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-amber-50/50">
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
+                        {reportData.dates.map(d => (
+                          <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
+                            {reportData.keyLabels?.[d] || d}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {reportData.students.map(s => {
+                        const absent = s.totalClasses - s.attended;
+                        return (
+                          <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
+                            <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
+                            <td className="px-5 py-3.5"><span className="text-sm font-semibold text-slate-800">{s.name}</span></td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center justify-center gap-2">
+                                <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                  <div className={`h-full rounded-full transition-all duration-700 ${
+                                    parseFloat(s.percentage) < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                                  }`} style={{ width: `${Math.min(parseFloat(s.percentage), 100)}%` }} />
+                                </div>
+                                <span className={`text-xs font-black min-w-[44px] text-right ${
+                                  parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'
+                                }`}>{s.percentage}%</span>
                               </div>
-                              <span className={`text-sm font-black min-w-[50px] ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                {s.percentage}%
-                              </span>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
+                            </td>
+                            {reportData.dates.map(d => (
+                              <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${
+                                s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'
+                              }`}>
+                                {s.dailyRecords[d] || '—'}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
                 </table>
               )}
             </div>

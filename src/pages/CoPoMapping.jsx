@@ -58,8 +58,7 @@ export default function CoPoMapping() {
         if (snapshot.exists()) {
           const userData = snapshot.data(); // Use .data() for Firestore documents
           setUserRole(userData.role);
-          if (userData.role === 'Faculty') {
-            const assignmentsRef = collection(db, 'subject_assignments');
+          const assignmentsRef = collection(db, 'subject_assignments');
             const unsubscribe = onSnapshot(assignmentsRef, (assignSnap) => {
               const progs = new Set();
               const depts = new Set();
@@ -82,7 +81,6 @@ export default function CoPoMapping() {
               setAssignedDepts(Array.from(depts));
             });
             unsubscribeAssignments = unsubscribe;
-          }
         }
       });
     }
@@ -257,13 +255,15 @@ export default function CoPoMapping() {
     return SEMESTER_MAPPING[yearIndex] || [];
   };
 
+  const hasAssignments = assignedProgs.length > 0;
+
   const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole === 'Faculty') return assignedProgs.includes(formatProgrammeKey(prog));
+    if (hasAssignments) return assignedProgs.includes(formatProgrammeKey(prog));
     return true;
   });
 
   const filteredDepartments = (PROGRAMME_DEPARTMENTS[programme] || []).filter(dept => {
-    if (userRole === 'Faculty') return assignedDepts.includes(sanitizeKey(dept));
+    if (hasAssignments) return assignedDepts.includes(sanitizeKey(dept));
     return true;
   });
 

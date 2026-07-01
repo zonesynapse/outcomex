@@ -66,6 +66,7 @@ import PlacementActivities from "./pages/PlacementActivities";
 import PaymentRoles from "./pages/PaymentRoles";
 import PaymentEntries from "./pages/PaymentEntries";
 import PaymentReports from "./pages/PaymentReports";
+import QPConverter from "./pages/QPConverter";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -153,6 +154,9 @@ export default function App() {
         <Route path="/exam-payment/roles" element={<ProtectedRoute><PaymentRoles /></ProtectedRoute>} />
         <Route path="/exam-payment/entries" element={<ProtectedRoute><PaymentEntries /></ProtectedRoute>} />
         <Route path="/exam-payment/reports" element={<ProtectedRoute><PaymentReports /></ProtectedRoute>} />
+
+        {/* COE Routes */}
+        <Route path="/qp-converter" element={<ProtectedRoute><QPConverter /></ProtectedRoute>} />
 
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />

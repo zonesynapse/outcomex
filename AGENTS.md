@@ -184,3 +184,55 @@
 - `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/Upload.jsx`: Unchanged — old CSV uploads use Exam No as the key, which Reports.jsx now treats as register number (no admission number)
 - `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx`: Has Admit/Reject buttons — correct location for these actions
 - `/Users/ckcollege/Downloads/OBE/outcomex/src/services/enquiryService.js`: `getEnquiriesStats()` at line 421 — queries `getCountFromServer` for each status, stats reverse automatically when status changes
+
+### 17. PaymentEntries facultyCode field added
+- Added `facultyCode` input field next to faculty name in both New Entry and Bulk Entry member rows in `src/pages/PaymentEntries.jsx`
+- Added `facultyCode` to `memberCash` helper, initial states, addMember/addCard defaults, save payloads, reset states, CSV export, and expanded member view
+- Added `facultyCode` to `memberCash` in `src/pages/PaymentReports.jsx` for reports/claim form display
+- ClaimFormModal shows faculty code in "Faculty Code & College" field (both inline and print HTML)
+
+### 18. Reports.jsx: dynamic CO keys from COConfiguration + assignment-based access
+- **CO Max Marks + Consolidation**: Added `configuredCoKeys` state + `useEffect` to fetch `course_outcomes` doc for actual CO count. `consolidationCoKeys` useMemo prefers configured keys, falls back to `consolidationData.maxMarks` keys, never hardcodes CO1-CO5.
+- **Removed all CO1-CO5 fallbacks** from `maxMarks` default (now `{}`), table header, student cells, total cell, CO Average row.
+- **Layout.jsx**: Renamed "Examinations" sidebar label → "COE".
+- **Assignment-based view access**: Reports.jsx, CoPoMapping.jsx, Dashboard.jsx — removed `if (userData.role === 'Faculty')` guard around `subject_assignments` listener. Now ALL roles populate `assignedProgs`/`assignedDepts`.
+- `filteredProgrammes`/`filteredDepartments` now check `assignedProgs.length > 0` instead of `userRole === 'Faculty'`.
+- **QP/subject filter** changed from `userRole !== 'Faculty' || userAssignments.includes(...)` → `userAssignments.length === 0 || userAssignments.includes(...)` in Reports.jsx, Dashboard.jsx, CoPoMapping.jsx (all occurrences).
+- CO Max Marks grid changed to `auto-fit, minmax(130px)` for responsive card sizing; header left-aligned.
+
+### 19. QP Converter — client-side DOCX conversion tool
+- **Created `src/utils/qpConverter.js`** — full port of Python Flask `app.py` to browser JS:
+  - `parseDocx(file)` — unzips DOCX with JSZip, parses `word/document.xml` via DOMParser, extracts metadata (semester, department, subject, regulation) and question tables (Part A: Q.No/Question/Unit/KL/CO; Part B: Q.No/Question/Marks/Unit/KL/CO with OR rows).
+  - `generateDocx(data)` — fetches template from `/question_paper_template.docx`, modifies `document.xml` (paragraph fills, table cell fills, font application), re-zips, returns Blob.
+  - **EndSem format detection**: regex-based extraction of semester (ordinal + "Semester"), department (via DEPT_MAP normalization), subject code+name, regulation.
+  - **IAT format detection**: label-value matching from table cells (degree/branch, course code, year/semester, etc.).
+  - Font: `Century Schoolbook` 12pt applied to all runs.
+- **Created `src/pages/QPConverter.jsx`** — full UI:
+  - Drag-and-drop/click upload zone for `.docx` files.
+  - 3-step indicator: Upload → Preview → Download.
+  - Preview panel: metadata chips (semester, dept, subject, format) + Part A/B question tables.
+  - Output format selector (DOCX download or PDF via browser print dialog).
+  - Download button, New File reset, loading/error states.
+  - Info card noting client-only processing (no server upload).
+- **Route**: `/qp-converter` in App.tsx (under COE parent group).
+- **Sidebar**: "Question Paper Converter" added to `allPossibleItems` and to the COE module `itemIds` in Layout.jsx.
+- **Template**: `public/question_paper_template.docx` copied from zonesynapse.
+
+### 20. AdminRoleConfig ALL_PAGES includes QPConverter
+- **Problem**: Admin couldn't see QPConverter page in Role Config because `ALL_PAGES` didn't include `qp-converter`.
+- **Fix**: Added `'qp-converter'` to `ALL_PAGES` array in `src/pages/AdminRoleConfig.jsx`.
+
+### 21. Attendance.jsx report preview shows daily records + section filter + cumulative flow
+- **Report table preview** (Attendance.jsx): Added daily record columns (P/OD/A) per date between summary columns and student rows — preview now matches PDF output.
+- **AdminRoleConfig ALL_PAGES**: Added `'attendance'` to `ALL_PAGES`.
+- **Attendance.jsx section support**: Added section dropdown (`batch_sections` listener), `section` in record keys (`att_${batchKey}_${progKey}_${deptKey}_${ayKey}_${semKey}_${subjectKey}_${section}`), `section` in CSVs (template generation uses section-suffixed doc IDs for `subject_assignments` lookup), and `section` in report filtering.
+- **Attendance flow**: Total Classes auto-increments on first save for a period (based on `recordKeysSet` absence). "Attended" is computed as `totalClasses - absentList.length` (read-only cumulative). Percentage computed from `(attended / totalClasses) * 100`.
+- **Same-date different-period support**: Period is mandatory before save. Record keys use `date_P{period}` compound key (e.g., `2025-03-15_P2`). Records editor finds existing entries by date, and per-period entries are added/updated independently.
+- **Default periods**: When no timetable is configured, periods 1–8 are used by default.
+- **Edit mode**: When editing an existing record, `currentEditRecord` tracks which record is being edited. No auto-increment or auto-advance during edit. Save updates the existing record in both state and Firestore.
+- **Record deletion**: Delete button per record row removes only that specific date+period entry from state and Firestore.
+- **Navy blue header**: Changed `handleSaveAttendance` header card to navy gradient (`from-blue-800 via-blue-900 to-indigo-950`) for "Attendance Entry".
+- **Removed subtitle**: Removed the subject/period/classes subtitle line from the attendance entry header.
+- **Total classes read-only**: The "Total Classes" input is now `readOnly` with `tabIndex={-1}`, auto-incremented when a new period's first record is saved (no manual edit).
+- **Multi-period report filter fix**: `handleGenerateReport` date filter now extracts the date part from compound keys (`2025-03-15_P2` → `2025-03-15`) before comparing with `fromDate`/`toDate`. Previously compound keys on the boundary date were excluded because `"2025-03-15_P2" > "2025-03-15"` in string comparison.
+- **PDF export improvements**: `handleExportReport` is now async; subject JSON parsed into readable format (Subject: CEC340 - Computer Networks | Batch: 2023-2027 | Semester: 6 | Section: Sec-A); college logo (`public/logo.png`) fetched as base64 and added to first page; portrait default with landscape only when >10 columns; column widths tuned for Total/Attended/Absent/% headers to prevent wrapping; `startY` dynamically placed after logo. PDF opens in new tab via `doc.output('dataurlnewwindow')` for preview before download.

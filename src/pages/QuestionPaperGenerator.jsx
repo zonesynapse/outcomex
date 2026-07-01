@@ -82,6 +82,7 @@ export default function QuestionPaperGenerator() {
   const [qbKLDomain, setQbKLDomain] = useState('');
   const [qbCO, setQbCO] = useState('');
   const [bloomsDomains, setBloomsDomains] = useState({});
+  const [allQpMarks, setAllQpMarks] = useState({});
   const [qbPI, setQbPI] = useState('');
   const [qbMarks, setQbMarks] = useState(2);
   const qbQuestionRef = useRef(null);
@@ -326,7 +327,7 @@ export default function QuestionPaperGenerator() {
     isEditingQbRef.current = true;  // Mark that we're in edit mode
     setShowQbEditor(true);
     setQbQNo(String(q.qno || (index + 1)).trim());
-    const domainKey = Object.keys(bloomsDomains || {}).find(k => (bloomsDomains[k] && bloomsDomains[k].name) === q.kldomain) || '';
+    const domainKey = Object.keys(bloomsDomains || {}).find(k => k === q.kldomain || (bloomsDomains[k]?.name === q.kldomain)) || '';
     setQbKLDomain(domainKey);
     setQbKL(q.kl || 'L1');
     setQbCO(q.co || '');
@@ -554,6 +555,111 @@ export default function QuestionPaperGenerator() {
     });
   }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
 
+  // Fetch ALL saved QPs for this subject and compute combined PO marks
+  useEffect(() => {
+    const fetchAllQpMarks = async () => {
+      if (!department || !academicYear || !subject) {
+        setAllQpMarks({});
+        return;
+      }
+
+      const secSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${secSuffix}`;
+      const summaryEntries = Object.entries(poSummaryMapping || {});
+
+      if (!summaryEntries.length) {
+        setAllQpMarks({});
+        return;
+      }
+
+      try {
+        const qpDocSnap = await getDoc(doc(db, 'generated_qps', key));
+
+        if (!qpDocSnap.exists()) {
+          setAllQpMarks({});
+          return;
+        }
+
+        const qpData = qpDocSnap.data();
+        const combinedMarks = {};
+
+        Object.values(qpData).forEach((qpField) => {
+          if (!qpField || !qpField.assessment_type) return;
+
+          const at = qpField.assessment_type;
+          const isAssignment = at === 'Assignment' || at === 'Project' || at === 'Practical';
+
+          if (isAssignment) {
+            (qpField.assignment_config || []).forEach((q) => {
+              (q?.mappings || []).forEach((m) => {
+                const coCode = String(m?.co || '').trim().toUpperCase();
+                const selectedPis = Array.isArray(m?.pis) ? m.pis : [];
+                const mapMarks = Number(m?.marks) || 0;
+                if (!coCode || mapMarks <= 0 || selectedPis.length === 0) return;
+
+                const base = Math.floor(mapMarks / selectedPis.length);
+                const rem = mapMarks % selectedPis.length;
+
+                selectedPis.forEach((pi, piIdx) => {
+                  const piShare = piIdx < rem ? base + 1 : base;
+                  summaryEntries.forEach(([poCode, poData]) => {
+                    const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
+                    if (Array.isArray(mappedPis) && mappedPis.includes(pi)) {
+                      combinedMarks[poCode] = (combinedMarks[poCode] || 0) + piShare;
+                    }
+                  });
+                });
+              });
+            });
+          } else if (at === 'Exam') {
+            const groups = {};
+            (qpField.parts || []).forEach((part) => {
+              (part?.questions || []).forEach((q) => {
+                const qMarks = Number(q?.marks) || 0;
+                const coCode = String(q?.co || '').trim().toUpperCase();
+                const piCode = String(q?.pi || '').trim();
+                const qnoRaw = String(q?.qno || '');
+
+                if (!coCode || !piCode || qMarks <= 0) return;
+
+                let raw = qnoRaw.toLowerCase().replace(/\s+/g, '');
+                raw = raw.replace(/\(?[ab]\)/gi, '');
+                raw = raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
+                const base = raw;
+                if (!base) return;
+
+                if (!groups[base]) groups[base] = { marks: qMarks, pos: new Set() };
+                if (!groups[base].marks && qMarks > 0) groups[base].marks = qMarks;
+
+                summaryEntries.forEach(([poCode, poData]) => {
+                  const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
+                  if (Array.isArray(mappedPis) && mappedPis.includes(piCode)) {
+                    groups[base].pos.add(poCode);
+                  }
+                });
+              });
+            });
+
+            Object.values(groups).forEach(group => {
+              const marks = Number(group?.marks) || 0;
+              if (marks <= 0) return;
+              group.pos.forEach(poCode => {
+                combinedMarks[poCode] = (combinedMarks[poCode] || 0) + marks;
+              });
+            });
+          }
+        });
+
+        setAllQpMarks(combinedMarks);
+      } catch (err) {
+        console.error('Error fetching all QP marks:', err);
+        setAllQpMarks({});
+      }
+    };
+
+    fetchAllQpMarks();
+  }, [department, academicYear, subject, section, poSummaryMapping]);
+
   const getAssignmentMarksMeta = useCallback((qIdx) => {
     const idx = qIdx || 0;
     const total = parseInt(assignmentConfig?.[idx]?.marks, 10) || 0;
@@ -710,14 +816,20 @@ export default function QuestionPaperGenerator() {
 
           if (!coCode || mapMarks <= 0 || selectedPis.length === 0) return;
 
-          summaryEntries.forEach(([poCode, poData]) => {
-            const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
-            if (!Array.isArray(mappedPis) || mappedPis.length === 0) return;
+          const piShares = (() => {
+            const base = Math.floor(mapMarks / selectedPis.length);
+            const rem = mapMarks % selectedPis.length;
+            return selectedPis.map((_, i) => i < rem ? base + 1 : base);
+          })();
 
-            const hasAnyMappedPi = selectedPis.some(pi => mappedPis.includes(pi));
-            if (hasAnyMappedPi) {
-              poMarks[poCode] = (poMarks[poCode] || 0) + mapMarks;
-            }
+          selectedPis.forEach((pi, piIdx) => {
+            const piShare = piShares[piIdx];
+            summaryEntries.forEach(([poCode, poData]) => {
+              const mappedPis = (poData?.checked_map && poData.checked_map[coCode]) || [];
+              if (Array.isArray(mappedPis) && mappedPis.includes(pi)) {
+                poMarks[poCode] = (poMarks[poCode] || 0) + piShare;
+              }
+            });
           });
         });
       });
@@ -806,15 +918,15 @@ export default function QuestionPaperGenerator() {
     return code;
   }, [poList]);
 
-  // Build displayed summary (TOP TABLE): use ONLY savedPoMarks
+  // Build displayed summary (TOP TABLE): use ALL saved QPs marks combined
   const displayedPoSummary = useMemo(() => {
     return (sortedPoCodes || []).map(po => ({
       poCode: po,
       displayCode: formatPoPsoCode(po),
       mappedCos: Object.keys((poSummaryMapping && poSummaryMapping[po] && poSummaryMapping[po].checked_map) || {}),
-      marks: Number(savedPoMarks[po] || 0)
+      marks: Number(allQpMarks[po] || 0)
     }));
-  }, [sortedPoCodes, savedPoMarks, poSummaryMapping, formatPoPsoCode]);
+  }, [sortedPoCodes, allQpMarks, poSummaryMapping, formatPoPsoCode]);
 
   // Build active summary (BOTTOM TABLE): use qpQuestions marks
   const presentPoSummary = useMemo(() => {
@@ -1379,10 +1491,15 @@ export default function QuestionPaperGenerator() {
           if (qp && !hasLoadedRef.current) {
             hasLoadedRef.current = true;
             
-            // Resolve kldomain keys to names and strip <p> tags when loading saved data
+            // Resolve kldomain: if saved as name, convert to key; strip <p> tags
             const resolveConfig = (config) => (config || []).map(q => ({
               ...q,
-              kldomain: (bloomsDomains && q.kldomain && bloomsDomains[q.kldomain]?.name) || q.kldomain || '',
+              kldomain: (() => {
+                const saved = q.kldomain || '';
+                if (bloomsDomains && bloomsDomains[saved]) return saved;
+                const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
+                return foundKey || '';
+              })(),
               question: (q.question || '').replace(/<\/?p>/g, '')
             }));
             
@@ -1486,7 +1603,12 @@ export default function QuestionPaperGenerator() {
               setNumParts(String(qp.assignment_config?.length || ''));
               const resolved = (qp.assignment_config || []).map(q => ({
                 ...q,
-                kldomain: (bloomsDomains && q.kldomain && bloomsDomains[q.kldomain]?.name) || q.kldomain || '',
+                kldomain: (() => {
+                  const saved = q.kldomain || '';
+                  if (bloomsDomains && bloomsDomains[saved]) return saved;
+                  const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
+                  return foundKey || '';
+                })(),
                 question: (q.question || '').replace(/<\/?p>/g, '')
               }));
               setAssignmentConfig(resolved);
@@ -3933,8 +4055,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                           value={assignmentConfig[qIdx].kldomain || ''} 
                           onChange={e => {
                             const updated = [...assignmentConfig];
-                            const name = bloomsDomains[e.target.value]?.name || e.target.value;
-                            updated[qIdx] = { ...updated[qIdx], kldomain: name, kl: '' };
+                            updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
                             setAssignmentConfig(updated);
                           }} 
                           className="w-36 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
@@ -3961,8 +4082,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                           disabled={!assignmentConfig[qIdx].kldomain}
                         >
                           {(() => {
-                            const domainName = assignmentConfig[qIdx].kldomain;
-                            const domainKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === domainName);
+                            const domainKey = assignmentConfig[qIdx].kldomain;
                             const domain = domainKey ? bloomsDomains[domainKey] : null;
                             if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
                               return (
