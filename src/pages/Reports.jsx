@@ -87,6 +87,7 @@ export default function Reports() {
   const [overallMarksRows, setOverallMarksRows] = useState([]);
   const [loadingOverallMarks, setLoadingOverallMarks] = useState(false);
   const [courseWeightageData, setCourseWeightageData] = useState({});
+  const [internalSubjectCourseType, setInternalSubjectCourseType] = useState("");
   const [configuredCoKeys, setConfiguredCoKeys] = useState([]);
 
   // Fetch actual CO keys from course_outcomes (set in COConfiguration.jsx)
@@ -169,6 +170,24 @@ export default function Reports() {
 
   const studentsRef = useRef(students);
   useEffect(() => { studentsRef.current = students; }, [students]);
+
+  // Fetch course type for selected internal subject
+  useEffect(() => {
+    if (!internalSubject || !programme || !department) {
+      setInternalSubjectCourseType("");
+      return;
+    }
+    const progKey = formatProgrammeKey(programme);
+    const deptKey = sanitizeKey(department);
+    (async () => {
+      let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${internalSubject}`));
+      if (!snap.exists()) {
+        snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${internalSubject}`));
+      }
+      setInternalSubjectCourseType(snap.exists() ? (snap.data().type || '') : '');
+    })();
+  }, [internalSubject, programme, department]);
+
   useEffect(() => {
     if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester || !internalSubject || selectedInternalExam === '__overall__') {
       setInternalMarksRows([]);
@@ -240,75 +259,189 @@ export default function Reports() {
         const courseType = courseSnap.exists() ? (courseSnap.data().type || 'Theory') : 'Theory';
 
         const weightage = courseWeightageData[regKey] || {};
-        const examWeightages = weightage[courseType] || {};
-
-        // Find CIA configs matching this course type; fall back to ALL non-university if none match
-        let courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-          if (config.isUniversity) return false;
-          if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.includes(courseType)) return false;
-          if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-          if (config.department && config.department !== department) return false;
-          return true;
-        }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
-
-        // If no configs matched the course type, try without course type filter
-        if (courseTypeCiaConfigs.length === 0) {
-          courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-            if (config.isUniversity) return false;
-            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-            if (config.department && config.department !== department) return false;
-            return true;
-          }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
-        }
-
-        // Build promises for each exam
-        const examPromises = courseTypeCiaConfigs.map(async ({ id: examId, totalMarks: examTotal }) => {
-          const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
-          const snap = await getDocs(q);
-          const examData = {};
-          snap.forEach(doc => {
-            const data = doc.data();
-            const m = data._meta || {};
-            if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
-            Object.entries(data.students || {}).forEach(([reg, s]) => {
-              const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
-              const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
-              if (rawTotal <= 0 && !s.absent) return;
-              examData[reg] = { total: rawTotal, absent: !!s.absent };
-            });
-          });
-          return { examId, examTotal, data: examData, weight: examWeightages[examId] };
-        });
-
-        const examResults = await Promise.all(examPromises);
-
-        // Fill missing/zero weights with equal distribution
-        const configuredWt = examResults.reduce((s, r) => s + (Number(r.weight) > 0 ? Number(r.weight) : 0), 0);
-        const missingCount = examResults.filter(r => !r.weight || r.weight <= 0).length;
-        if (missingCount > 0) {
-          const eqWt = examResults.length > 0 ? (100 - configuredWt) / missingCount : 0;
-          examResults.forEach(r => { if (!r.weight || r.weight <= 0) r.weight = Math.max(0, eqWt); });
-        }
+        const courseTypeData = weightage[courseType] || {};
+        const categoryConfig = courseTypeData._category_config;
 
         const overallMap = {};
         const stRef = studentsRef.current;
 
-        examResults.forEach(({ data: examData, weight, examTotal }) => {
-          if (!weight || weight <= 0) return;
-          Object.entries(examData).forEach(([reg, { total }]) => {
-            if (!overallMap[reg]) {
-              const st = stRef.find(s => s.reg === reg);
-              overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
-            }
-            overallMap[reg].weightedSum += (total / examTotal) * weight;
-            overallMap[reg].totalWeight += weight;
+        // Helper to get category for an exam config
+        const getExamCategory = (config) => {
+          if (config.isAssignment) return "Activity";
+          if (config.isProject) return "Project";
+          if (config.isPractical) return "Practical";
+          if (config.isUniversity) return "ESE";
+          if (config.isIndirectAssessment) return "Indirect Assessment";
+          return "Written Test";
+        };
+
+        if (!categoryConfig) {
+          // OLD LOGIC FALLBACK
+          const examWeightages = courseTypeData || {};
+          let courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+            if (config.isUniversity) return false;
+            if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.some(ct => ct.toLowerCase() === courseType.toLowerCase())) return false;
+            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+            if (config.department && config.department !== department) return false;
+            return true;
+          }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
+
+          if (courseTypeCiaConfigs.length === 0) {
+            courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+              if (config.isUniversity) return false;
+              if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+              if (config.department && config.department !== department) return false;
+              return true;
+            }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
+          }
+
+          const examPromises = courseTypeCiaConfigs.map(async ({ id: examId, totalMarks: examTotal }) => {
+            const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
+            const snap = await getDocs(q);
+            const examData = {};
+            snap.forEach(doc => {
+              const data = doc.data();
+              const m = data._meta || {};
+              if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
+              Object.entries(data.students || {}).forEach(([reg, s]) => {
+                const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+                const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
+                if (rawTotal <= 0 && !s.absent) return;
+                examData[reg] = { total: rawTotal, absent: !!s.absent };
+              });
+            });
+            return { examId, examTotal, data: examData, weight: examWeightages[examId] };
           });
-        });
+
+          const examResults = await Promise.all(examPromises);
+          const configuredWt = examResults.reduce((s, r) => s + (Number(r.weight) > 0 ? Number(r.weight) : 0), 0);
+          const missingCount = examResults.filter(r => !r.weight || r.weight <= 0).length;
+          if (missingCount > 0) {
+            const eqWt = examResults.length > 0 ? (100 - configuredWt) / missingCount : 0;
+            examResults.forEach(r => { if (!r.weight || r.weight <= 0) r.weight = Math.max(0, eqWt); });
+          }
+
+          examResults.forEach(({ data: examData, weight, examTotal }) => {
+            if (!weight || weight <= 0) return;
+            Object.entries(examData).forEach(([reg, { total }]) => {
+              if (!overallMap[reg]) {
+                const st = stRef.find(s => s.reg === reg);
+                overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
+              }
+              overallMap[reg].weightedSum += (total / examTotal) * 100 * weight;
+              overallMap[reg].totalWeight += weight;
+            });
+          });
+        } else {
+          // NEW CATEGORY-BASED LOGIC
+          let validExams = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+            if (config.isUniversity) return false;
+            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+            if (config.department && config.department !== department) return false;
+            if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.some(ct => ct.toLowerCase() === courseType.toLowerCase())) return false;
+            return true;
+          });
+
+          if (validExams.length === 0) {
+            validExams = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+              if (config.isUniversity) return false;
+              if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+              if (config.department && config.department !== department) return false;
+              return true;
+            });
+          }
+
+          const examsByCategory = {};
+          validExams.forEach(([id, config]) => {
+            const cat = getExamCategory(config);
+            if (!examsByCategory[cat]) examsByCategory[cat] = [];
+            examsByCategory[cat].push({ id, totalMarks: config.totalMarks || 100 });
+          });
+
+          const examDataMap = {};
+          const allRegs = new Set();
+          
+          await Promise.all(validExams.map(async ([examId]) => {
+            const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
+            const snap = await getDocs(q);
+            const eData = {};
+            snap.forEach(doc => {
+              const data = doc.data();
+              const m = data._meta || {};
+              if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
+              Object.entries(data.students || {}).forEach(([reg, s]) => {
+                const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+                const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
+                if (rawTotal <= 0 && !s.absent) return;
+                eData[reg] = { total: rawTotal, absent: !!s.absent };
+                allRegs.add(reg);
+              });
+            });
+            examDataMap[examId] = eData;
+          }));
+
+          Object.entries(examsByCategory).forEach(([catName, exams]) => {
+            const catCfg = categoryConfig[catName] || {};
+            if (catCfg.consider_for_internal === false) return;
+            
+            const catWeight = Number(catCfg.weightage) || 0;
+            const finalCatWeight = catWeight > 0 ? catWeight : (Object.keys(categoryConfig).length > 0 ? 0 : 1);
+            if (finalCatWeight === 0 && Object.keys(categoryConfig).length > 0) return;
+
+            const examWeights = catCfg.exam_weightage || {};
+            const bestCount = Number(catCfg.best_count) || 0;
+            const hasExamWeights = Object.values(examWeights).some(v => v != null && v !== '' && Number(v) > 0);
+
+            allRegs.forEach(reg => {
+              const examPcts = [];
+              
+              exams.forEach(exam => {
+                const studentExamData = examDataMap[exam.id]?.[reg];
+                if (studentExamData) {
+                  const pct = (studentExamData.total / exam.totalMarks) * 100;
+                  examPcts.push({ id: exam.id, pct, weight: Number(examWeights[exam.id]) || 0 });
+                }
+              });
+
+              if (examPcts.length === 0) return;
+
+              let catScore = 0;
+              if (hasExamWeights) {
+                let sumWeightedPct = 0;
+                let sumWeights = 0;
+                examPcts.forEach(ep => {
+                  if (ep.weight > 0) {
+                    sumWeightedPct += ep.pct * ep.weight;
+                    sumWeights += ep.weight;
+                  }
+                });
+                if (sumWeights > 0) {
+                  catScore = sumWeightedPct / sumWeights;
+                } else {
+                  catScore = examPcts.reduce((s, ep) => s + ep.pct, 0) / examPcts.length;
+                }
+              } else if (bestCount > 0) {
+                examPcts.sort((a, b) => b.pct - a.pct);
+                const topN = examPcts.slice(0, bestCount);
+                catScore = topN.reduce((s, ep) => s + ep.pct, 0) / topN.length;
+              } else {
+                catScore = examPcts.reduce((s, ep) => s + ep.pct, 0) / examPcts.length;
+              }
+
+              if (!overallMap[reg]) {
+                const st = stRef.find(s => s.reg === reg);
+                overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
+              }
+              overallMap[reg].weightedSum += catScore * finalCatWeight;
+              overallMap[reg].totalWeight += finalCatWeight;
+            });
+          });
+        }
 
         const rows = Object.values(overallMap).map(r => ({
           reg: r.reg,
           name: r.name,
-          mark: r.totalWeight > 0 ? Math.min(100, Math.round((r.weightedSum / r.totalWeight) * 100)) : 0
+          mark: r.totalWeight > 0 ? Math.min(100, Math.round(r.weightedSum / r.totalWeight)) : 0
         })).sort((a, b) => a.reg.localeCompare(b.reg));
 
         if (!cancelled) setOverallMarksRows(rows);
@@ -1996,25 +2129,32 @@ export default function Reports() {
             {module === "internal" && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
-                <div className="relative">
-                  <select
-                    disabled={!semester}
-                    value={internalSubject}
-                    onChange={(e) => {
-                      setInternalSubject(e.target.value);
-                      setSelectedInternalExam("");
-                    }}
-                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
-                  >
-                    <option value="">Choose Subject</option>
-                    {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
-                      ?.filter(sub => sub != null && sub.isActive !== false)
-                      ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
-                      ?.map(sub => (
-                        <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
-                      ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <select
+                      disabled={!semester}
+                      value={internalSubject}
+                      onChange={(e) => {
+                        setInternalSubject(e.target.value);
+                        setSelectedInternalExam("");
+                      }}
+                      className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                    >
+                      <option value="">Choose Subject</option>
+                      {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
+                        ?.filter(sub => sub != null && sub.isActive !== false)
+                        ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
+                        ?.map(sub => (
+                          <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
+                        ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                  </div>
+                  {internalSubject && internalSubjectCourseType && (
+                    <span className="shrink-0 self-stretch flex items-center px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-700 whitespace-nowrap">
+                      {internalSubjectCourseType}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -2148,8 +2288,16 @@ export default function Reports() {
                         </tr>
                       ) : overallMarksRows.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
-                            No marks found for overall calculation.
+                          <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                            <div className="flex flex-col items-center gap-2">
+                              <AlertCircle size={24} className="text-zinc-400" />
+                              <p>No marks found for overall calculation.</p>
+                              {window._debugOverall && (
+                                <pre className="text-left text-xs bg-gray-100 p-2 mt-4 max-w-full overflow-auto w-full text-red-600">
+                                  {JSON.stringify(window._debugOverall, null, 2)}
+                                </pre>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ) : (
