@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase"; // Import db for Firestore
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, query, where } from "firebase/firestore"; // Firestore imports
-import { 
-  ChevronDown, 
-  Plus, 
-  Minus, 
+import {
+  ChevronDown,
+  Plus,
+  Minus,
   GripVertical,
   Upload,
   X,
@@ -52,9 +52,9 @@ export default function Reports() {
   const [semester, setSemester] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("");
   const [extraSubject, setExtraSubject] = useState("");
+  const [internalSubject, setInternalSubject] = useState("");
   const [selectedExam, setSelectedExam] = useState("");
   const [section, setSection] = useState("");
-  const [internalDivision, setInternalDivision] = useState("");
   const [selectedInternalExam, setSelectedInternalExam] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
   const userCleanupRef = useRef(null);
@@ -81,9 +81,12 @@ export default function Reports() {
   const [assignedProgs, setAssignedProgs] = useState([]);
   const [assignedDepts, setAssignedDepts] = useState([]);
   const [ciaConfigs, setCiaConfigs] = useState({});
-  const [enteredMarksMeta, setEnteredMarksMeta] = useState([]);
+  const [enteredInternalExamIds, setEnteredInternalExamIds] = useState([]);
   const [internalMarksRows, setInternalMarksRows] = useState([]);
   const [loadingInternalMarks, setLoadingInternalMarks] = useState(false);
+  const [overallMarksRows, setOverallMarksRows] = useState([]);
+  const [loadingOverallMarks, setLoadingOverallMarks] = useState(false);
+  const [courseWeightageData, setCourseWeightageData] = useState({});
   const [configuredCoKeys, setConfiguredCoKeys] = useState([]);
 
   // Fetch actual CO keys from course_outcomes (set in COConfiguration.jsx)
@@ -121,7 +124,7 @@ export default function Reports() {
   useEffect(() => {
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
-      if (!snapshot.empty) { 
+      if (!snapshot.empty) {
         const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
         setCiaConfigs(data);
       }
@@ -131,32 +134,43 @@ export default function Reports() {
     return () => unsubscribe();
   }, []);
 
-  // Track which exams have been used in mark entry
+  // Fetch course_type_weightage for overall calculation
   useEffect(() => {
-    if (module !== 'internal') { setEnteredMarksMeta([]); return; }
+    const wRef = collection(db, 'course_type_weightage');
+    const unsub = onSnapshot(wRef, (snap) => {
+      const data = {};
+      snap.forEach(doc => { data[doc.id] = doc.data(); });
+      setCourseWeightageData(data);
+    });
+    return () => unsub();
+  }, []);
+
+  // Track which exams have marks entered for current selection
+  useEffect(() => {
+    if (module !== 'internal' || !programme || !department || !batch || !academicYear || !semester) {
+      setEnteredInternalExamIds([]);
+      return;
+    }
     const unsub = onSnapshot(collection(db, 'marks'), (snapshot) => {
-      const entries = [];
+      const ids = new Set();
       snapshot.forEach(doc => {
         const m = doc.data()._meta || {};
-        if (m.exam && m.programme && m.department && m.batch && m.academic_year && m.semester_label) {
-          entries.push({
-            exam: m.exam,
-            programme: m.programme,
-            department: m.department,
-            batch: m.batch,
-            academicYear: m.academic_year,
-            semester: m.semester_label
-          });
+        if (m.exam && m.programme === programme && m.department === department && m.batch === batch &&
+            m.academic_year === academicYear && m.semester_label === semester &&
+            (!internalSubject || m.subject === internalSubject) &&
+            (!section || m.section === undefined || m.section === section)) {
+          ids.add(m.exam);
         }
       });
-      setEnteredMarksMeta(entries);
+      setEnteredInternalExamIds(Array.from(ids));
     }, (err) => console.error("Marks fetch error:", err));
     return () => unsub();
-  }, [module]);
+  }, [module, programme, department, batch, academicYear, semester, internalSubject, section]);
 
-  // Fetch marks data for selected internal exam
+  const studentsRef = useRef(students);
+  useEffect(() => { studentsRef.current = students; }, [students]);
   useEffect(() => {
-    if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester) {
+    if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester || !internalSubject || selectedInternalExam === '__overall__') {
       setInternalMarksRows([]);
       return;
     }
@@ -170,11 +184,11 @@ export default function Reports() {
         const snap = await getDocs(q);
         const rowsMap = {};
         const studentMap = {};
-        students.forEach(st => { studentMap[st.reg] = st.name; });
+        studentsRef.current.forEach(st => { studentMap[st.reg] = st.name; });
         snap.forEach(doc => {
           const data = doc.data();
           const m = data._meta || {};
-          if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester) return;
+          if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
           Object.entries(data.students || {}).forEach(([reg, s]) => {
             const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
             const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
@@ -199,7 +213,115 @@ export default function Reports() {
     };
     fetchMarks();
     return () => { cancelled = true; };
-  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, students]);
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, internalSubject, section]);
+
+  // Fetch overall marks (weighted aggregate across all exams)
+  useEffect(() => {
+    if (module !== 'internal' || selectedInternalExam !== '__overall__' || !programme || !department || !batch || !academicYear || !semester || !internalSubject) {
+      setOverallMarksRows([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchOverall = async () => {
+      setLoadingOverallMarks(true);
+      try {
+        const progKey = formatProgrammeKey(programme);
+        const regulation = getRegulationForBatch(progKey, batch);
+        if (!regulation) { setOverallMarksRows([]); setLoadingOverallMarks(false); return; }
+        const regKey = sanitizeKey(regulation);
+
+        const deptKey = sanitizeKey(department);
+        const subjectCode = internalSubject;
+
+        let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${subjectCode}`));
+        if (!courseSnap.exists()) {
+          courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${subjectCode}`));
+        }
+        const courseType = courseSnap.exists() ? (courseSnap.data().type || 'Theory') : 'Theory';
+
+        const weightage = courseWeightageData[regKey] || {};
+        const examWeightages = weightage[courseType] || {};
+
+        // Find CIA configs matching this course type; fall back to ALL non-university if none match
+        let courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+          if (config.isUniversity) return false;
+          if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.includes(courseType)) return false;
+          if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+          if (config.department && config.department !== department) return false;
+          return true;
+        }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
+
+        // If no configs matched the course type, try without course type filter
+        if (courseTypeCiaConfigs.length === 0) {
+          courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
+            if (config.isUniversity) return false;
+            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
+            if (config.department && config.department !== department) return false;
+            return true;
+          }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
+        }
+
+        // Build promises for each exam
+        const examPromises = courseTypeCiaConfigs.map(async ({ id: examId, totalMarks: examTotal }) => {
+          const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
+          const snap = await getDocs(q);
+          const examData = {};
+          snap.forEach(doc => {
+            const data = doc.data();
+            const m = data._meta || {};
+            if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
+            Object.entries(data.students || {}).forEach(([reg, s]) => {
+              const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+              const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
+              if (rawTotal <= 0 && !s.absent) return;
+              examData[reg] = { total: rawTotal, absent: !!s.absent };
+            });
+          });
+          return { examId, examTotal, data: examData, weight: examWeightages[examId] };
+        });
+
+        const examResults = await Promise.all(examPromises);
+
+        // Fill missing/zero weights with equal distribution
+        const configuredWt = examResults.reduce((s, r) => s + (Number(r.weight) > 0 ? Number(r.weight) : 0), 0);
+        const missingCount = examResults.filter(r => !r.weight || r.weight <= 0).length;
+        if (missingCount > 0) {
+          const eqWt = examResults.length > 0 ? (100 - configuredWt) / missingCount : 0;
+          examResults.forEach(r => { if (!r.weight || r.weight <= 0) r.weight = Math.max(0, eqWt); });
+        }
+
+        const overallMap = {};
+        const stRef = studentsRef.current;
+
+        examResults.forEach(({ data: examData, weight, examTotal }) => {
+          if (!weight || weight <= 0) return;
+          Object.entries(examData).forEach(([reg, { total }]) => {
+            if (!overallMap[reg]) {
+              const st = stRef.find(s => s.reg === reg);
+              overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
+            }
+            overallMap[reg].weightedSum += (total / examTotal) * weight;
+            overallMap[reg].totalWeight += weight;
+          });
+        });
+
+        const rows = Object.values(overallMap).map(r => ({
+          reg: r.reg,
+          name: r.name,
+          mark: r.totalWeight > 0 ? Math.min(100, Math.round((r.weightedSum / r.totalWeight) * 100)) : 0
+        })).sort((a, b) => a.reg.localeCompare(b.reg));
+
+        if (!cancelled) setOverallMarksRows(rows);
+      } catch (err) {
+        console.error("Fetch overall marks error:", err);
+        if (!cancelled) setOverallMarksRows([]);
+      } finally {
+        if (!cancelled) setLoadingOverallMarks(false);
+      }
+    };
+    fetchOverall();
+    return () => { cancelled = true; };
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, internalSubject, section, ciaConfigs, courseWeightageData, getRegulationForBatch]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -212,28 +334,28 @@ export default function Reports() {
           setUserRole(userData.role);
 
           const assignmentsRef = collection(db, 'subject_assignments');
-            const unsub2 = onSnapshot(assignmentsRef, (assignSnap) => {
-              if (!assignSnap.empty) {
-                const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
-                const progs = new Set();
-                const depts = new Set();
+          const unsub2 = onSnapshot(assignmentsRef, (assignSnap) => {
+            if (!assignSnap.empty) {
+              const data = {}; assignSnap.forEach(d => { data[d.id] = d.data(); });
+              const progs = new Set();
+              const depts = new Set();
 
-                Object.entries(data).forEach(([progKey, deptData]) => {
-                  Object.entries(deptData).forEach(([deptKey, batchData]) => {
-                    if (JSON.stringify(batchData).includes(user.uid)) {
-                      progs.add(progKey);
-                      depts.add(deptKey);
-                    }
-                  });
+              Object.entries(data).forEach(([progKey, deptData]) => {
+                Object.entries(deptData).forEach(([deptKey, batchData]) => {
+                  if (JSON.stringify(batchData).includes(user.uid)) {
+                    progs.add(progKey);
+                    depts.add(deptKey);
+                  }
                 });
-                setAssignedProgs(Array.from(progs));
-                setAssignedDepts(Array.from(depts));
-              } else {
-                setAssignedProgs([]);
-                setAssignedDepts([]);
-              }
-            }, (err) => console.error("Assignments fetch error:", err));
-            assignCleanupRef.current = unsub2;
+              });
+              setAssignedProgs(Array.from(progs));
+              setAssignedDepts(Array.from(depts));
+            } else {
+              setAssignedProgs([]);
+              setAssignedDepts([]);
+            }
+          }, (err) => console.error("Assignments fetch error:", err));
+          assignCleanupRef.current = unsub2;
         }
       }, (err) => console.error("User fetch error:", err));
       userCleanupRef.current = unsub1;
@@ -314,58 +436,37 @@ export default function Reports() {
   const [mappingThresholds, setMappingThresholds] = useState([]);
 
   const expectedExams = useMemo(() => {
-    if (!programme || !department || !batch || !academicYear || !semester) return [];
-    const semNum = String(deriveSemesterNumber(semester));
+    if (!programme || !department) return [];
     const progKey = formatProgrammeKey(programme);
-    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => 
-      formatProgrammeKey(c.program) === progKey && 
-      c.department === department && 
-      c.batch === batch && 
-      c.academicYear === academicYear && 
-      String(c.semester) === semNum
+    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({ id, ...val })).filter(c =>
+      (!c.program || formatProgrammeKey(c.program) === progKey) &&
+      (!c.department || c.department === department)
     );
-  }, [ciaConfigs, programme, department, batch, academicYear, semester]);
+  }, [ciaConfigs, programme, department]);
 
   const filteredInternalExams = useMemo(() => {
-    if (!internalDivision || !programme || !department) return [];
-    const progKey = formatProgrammeKey(programme);
-    const enteredSet = new Set(
-      enteredMarksMeta
-        .filter(m => m.programme === programme && m.department === department && m.batch === batch && m.academicYear === academicYear && m.semester === semester)
-        .map(m => m.exam)
-    );
-    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => {
-      const matchesProgramme = !c.program || formatProgrammeKey(c.program) === progKey;
-      const matchesDepartment = !c.department || c.department === department;
-      return matchesProgramme && matchesDepartment && enteredSet.has(c.id);
-    }).filter(ex => {
-      if (internalDivision === 'continuous-assessment') {
-        return !ex.isAssignment && !ex.isProject && !ex.isPractical && !ex.isUniversity && !ex.isIndirectAssessment;
-      }
-      if (internalDivision === 'activity') {
-        return ex.isAssignment === true;
-      }
-      if (internalDivision === 'project') {
-        return ex.isProject === true;
-      }
-      return false;
-    });
-  }, [internalDivision, programme, department, batch, academicYear, semester, ciaConfigs, enteredMarksMeta]);
+    if (!programme || !department) return [];
+    const exams = expectedExams.filter(ex => !ex.isUniversity && enteredInternalExamIds.includes(ex.id));
+    if (exams.length > 0) {
+      exams.push({ id: "__overall__", examName: "Overall", totalMarks: 100, isOverall: true });
+    }
+    return exams;
+  }, [expectedExams, programme, department, enteredInternalExamIds]);
 
   const allExamsCompleted = useMemo(() => {
     if (expectedExams.length === 0) return false;
     // Exclude indirect assessments from the mandatory check
     const mandatoryExams = expectedExams.filter(ex => !ex.isIndirectAssessment);
-    
+
     if (mandatoryExams.length === 0) return false;
 
     return mandatoryExams.every(examConfig => {
       return consolidationChildren.some(child => {
-        return child.label === examConfig.examName || 
-               child.key === examConfig.id || 
-               child.data._meta?.exam === examConfig.id || 
-               child.data._meta?.qpaper_name === examConfig.id ||
-               child.data._meta?.exam === examConfig.examName;
+        return child.label === examConfig.examName ||
+          child.key === examConfig.id ||
+          child.data._meta?.exam === examConfig.id ||
+          child.data._meta?.qpaper_name === examConfig.id ||
+          child.data._meta?.exam === examConfig.examName;
       });
     });
   }, [expectedExams, consolidationChildren]);
@@ -376,10 +477,10 @@ export default function Reports() {
     return mandatoryExams.filter(examConfig => {
       const isPresent = consolidationChildren.some(child => {
         return child.label === examConfig.examName ||
-               child.key === examConfig.id ||
-               child.data._meta?.exam === examConfig.id ||
-               child.data._meta?.qpaper_name === examConfig.id ||
-               child.data._meta?.exam === examConfig.examName;
+          child.key === examConfig.id ||
+          child.data._meta?.exam === examConfig.id ||
+          child.data._meta?.qpaper_name === examConfig.id ||
+          child.data._meta?.exam === examConfig.examName;
       });
       return !isPresent;
     });
@@ -414,10 +515,10 @@ export default function Reports() {
     const [batchStart] = batch.split("-").map(Number);
     const [yearStart] = academicYear.split("-").map(Number);
     const yearIndex = yearStart - batchStart;
-    
+
     const sem1 = (yearIndex * 2) + 1;
     const sem2 = (yearIndex * 2) + 2;
-    
+
     const allSems = [sem1, sem2];
 
     const getLabel = (num) => {
@@ -431,7 +532,7 @@ export default function Reports() {
 
   const getQPFilterOptions = (field) => {
     if (!questionPapers.length) return [];
-    
+
     let filtered = questionPapers;
     if (userAssignments.length > 0) {
       filtered = filtered.filter(qp => userAssignments.includes(qp.subject));
@@ -464,7 +565,7 @@ export default function Reports() {
       if (typeof a === 'string') return a.localeCompare(b);
       return a - b;
     });
-    
+
     return options;
   };
 
@@ -487,12 +588,12 @@ export default function Reports() {
   const confirmRemoveRow = () => {
     const { index, reason, confirmReg } = removeStudentModal;
     const student = students[index];
-    
+
     if (confirmReg !== student.reg) {
       showAlert("Error", "Register number does not match. Deletion cancelled.");
       return;
     }
-    
+
     if (!reason.trim()) {
       showAlert("Error", "Please provide a reason for removal.");
       return;
@@ -519,7 +620,7 @@ export default function Reports() {
 
   const renderQuestionPaper = (qp) => {
     if (!qp) return "";
-    
+
     const yearSemester = `${getYearLabel(qp.semester)} / ${getSemesterLabel(qp.semester)}`;
     // Get exam name from exam_name field, or look it up from cia_configs using the config ID
     let examDisplay = qp.exam_name;
@@ -614,10 +715,10 @@ export default function Reports() {
         </thead>
         <tbody>
           ${part.questions.map((q, qIdx) => {
-            if (q.either_or) {
-              if (q.sub === 'a') {
-                const nextQ = part.questions[qIdx + 1];
-                return `
+      if (q.either_or) {
+        if (q.sub === 'a') {
+          const nextQ = part.questions[qIdx + 1];
+          return `
                   <tr>
                     <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
                     <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
@@ -640,10 +741,10 @@ export default function Reports() {
                     <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.pi || ""}</td>
                   </tr>
                 `;
-              }
-              return "";
-            } else {
-              return `
+        }
+        return "";
+      } else {
+        return `
                 <tr>
                   <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
                   <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
@@ -652,8 +753,8 @@ export default function Reports() {
                   <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
                 </tr>
               `;
-            }
-          }).join('')}
+      }
+    }).join('')}
         </tbody>
       </table>
     `).join('')}
@@ -672,57 +773,57 @@ export default function Reports() {
       </thead>
       <tbody>
         ${(() => {
-          const activeCOs = new Set();
-          const coWeightage = {};
-          const getBaseQno = (qno) => {
-            let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
-            raw = raw.replace(/\(?[ab]\)/gi, '');
-            return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
-          };
-          if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
-            (qp.assignment_config || []).forEach((q) => {
-              (q.mappings || []).forEach(m => {
-                const co = String(m?.co || '').trim();
-                if (!co || !co.toUpperCase().startsWith('CO')) return;
-                const mapMarks = parseInt(m?.marks, 10) || 0;
-                activeCOs.add(co);
-                coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
-              });
+        const activeCOs = new Set();
+        const coWeightage = {};
+        const getBaseQno = (qno) => {
+          let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
+          raw = raw.replace(/\(?[ab]\)/gi, '');
+          return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
+        };
+        if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
+          (qp.assignment_config || []).forEach((q) => {
+            (q.mappings || []).forEach(m => {
+              const co = String(m?.co || '').trim();
+              if (!co || !co.toUpperCase().startsWith('CO')) return;
+              const mapMarks = parseInt(m?.marks, 10) || 0;
+              activeCOs.add(co);
+              coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
             });
-          } else {
-            const groups = {};
-            (qp.parts || []).forEach((part) => {
-              (part?.questions || []).forEach((q) => {
-                const co = String(q?.co || '').trim();
-                const marks = parseInt(q?.marks, 10) || 0;
-                if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
-                const base = getBaseQno(q?.qno);
-                if (!base) return;
-                activeCOs.add(co);
-                if (!groups[base]) groups[base] = { marks, cos: new Set() };
-                if (marks > 0) groups[base].marks = marks;
-                groups[base].cos.add(co);
-              });
-            });
-            Object.values(groups).forEach((group) => {
-              group.cos.forEach((co) => {
-                coWeightage[co] = (coWeightage[co] || 0) + group.marks;
-              });
-            });
-          }
-          const sorted = Array.from(activeCOs).sort((a, b) => {
-            const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
-            const nb = parseInt(b.replace(/\D/g, ''), 10) || 0;
-            return na - nb;
           });
-          if (sorted.length > 0) {
-            return sorted.map(co => {
-              const w = coWeightage[co] || '';
-              return `<tr><td style="padding: 4px; border: 1px solid #333;">${co}</td><td style="padding: 4px; border: 1px solid #333;"></td><td style="text-align: center; padding: 4px; border: 1px solid #333;">✓</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">${w || ''}</td></tr>`;
-            }).join('');
-          }
-          return '<tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;"></td></tr>';
-        })()}
+        } else {
+          const groups = {};
+          (qp.parts || []).forEach((part) => {
+            (part?.questions || []).forEach((q) => {
+              const co = String(q?.co || '').trim();
+              const marks = parseInt(q?.marks, 10) || 0;
+              if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
+              const base = getBaseQno(q?.qno);
+              if (!base) return;
+              activeCOs.add(co);
+              if (!groups[base]) groups[base] = { marks, cos: new Set() };
+              if (marks > 0) groups[base].marks = marks;
+              groups[base].cos.add(co);
+            });
+          });
+          Object.values(groups).forEach((group) => {
+            group.cos.forEach((co) => {
+              coWeightage[co] = (coWeightage[co] || 0) + group.marks;
+            });
+          });
+        }
+        const sorted = Array.from(activeCOs).sort((a, b) => {
+          const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
+          const nb = parseInt(b.replace(/\D/g, ''), 10) || 0;
+          return na - nb;
+        });
+        if (sorted.length > 0) {
+          return sorted.map(co => {
+            const w = coWeightage[co] || '';
+            return `<tr><td style="padding: 4px; border: 1px solid #333;">${co}</td><td style="padding: 4px; border: 1px solid #333;"></td><td style="text-align: center; padding: 4px; border: 1px solid #333;">✓</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">${w || ''}</td></tr>`;
+          }).join('');
+        }
+        return '<tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;"></td></tr>';
+      })()}
       </tbody>
     </table>
   </div>
@@ -793,7 +894,7 @@ export default function Reports() {
         if (data) {
           let studentList = Object.entries(data)
             .filter(([key]) => !key.startsWith('_'))
-            .map(([reg, name]) => ({ reg, name }));
+            .map(([reg, nameVal]) => ({ reg, name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal }));
 
           const order = data._order || data.order;
           if (order && Array.isArray(order)) {
@@ -816,7 +917,7 @@ export default function Reports() {
                     regNo: sectionIndexData[s.reg]?.regNo || ""
                   }));
                 }
-              } catch (e) {}
+              } catch (e) { }
             }
             if (!cancelled) {
               if (!hasSectionIndex) {
@@ -848,7 +949,7 @@ export default function Reports() {
 
   // Fetch Syllabus when filters change
   useEffect(() => {
-    if ((module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator") && programme && department && batch && semester) {
+    if ((module === "syllabus" || module === "consolidation" || module === "log-report" || module === "question-paper-generator" || module === "internal") && programme && department && batch && semester) {
       const progKey = formatProgrammeKey(programme);
       const regulation = getRegulationForBatch(progKey, batch);
       if (!regulation) return; // Wait until regulation is loaded // Ensure regulation is available
@@ -1116,7 +1217,7 @@ export default function Reports() {
       if (view === 'final') {
         const internalChildren = consolidationChildren.filter(c => !c.isUniversity && !c.isIndirect);
         const uniChild = consolidationChildren.find(c => c.isUniversity);
-        
+
         if (internalChildren.length === 0 && !uniChild) return null;
 
         const split = mappingPercentageSplit || { internal: 100, university: 0 };
@@ -1155,7 +1256,7 @@ export default function Reports() {
         }
 
         const studentRegs = new Set([
-          ...Object.keys(avgInternal), 
+          ...Object.keys(avgInternal),
           ...Object.keys(uniChild?.data.students || {})
         ]);
         const result = {};
@@ -1165,10 +1266,10 @@ export default function Reports() {
           const iData = avgInternal[reg] || {};
           const uData = uniChild?.data.students?.[reg] || {};
           const entry = { name: iData.name || uData.name || '' };
-          
+
           const coKeys = Array.from(new Set([
-            ...Object.keys(iData).filter(k=>/^CO\d+/i.test(k)), 
-            ...Object.keys(uData).filter(k=>/^CO\d+/i.test(k))
+            ...Object.keys(iData).filter(k => /^CO\d+/i.test(k)),
+            ...Object.keys(uData).filter(k => /^CO\d+/i.test(k))
           ]));
 
           coKeys.forEach(k => {
@@ -1229,7 +1330,7 @@ export default function Reports() {
         const mark = s[co] || 0;
         const maxMark = consolidationData.maxMarks[co] || 100;
         const markPct = maxMark > 0 ? (mark / maxMark) * 100 : 0;
-        
+
         if (markPct >= Number(mappingCutoff)) {
           countGreaterEqual++;
         } else {
@@ -1238,7 +1339,7 @@ export default function Reports() {
       });
 
       const percentage = totalStudents > 0 ? (countGreaterEqual / totalStudents) * 100 : 0;
-      
+
       // Find threshold level
       let attainmentLevel = 0;
       const threshold = mappingThresholds.find(t => percentage >= t.min && percentage <= t.max);
@@ -1281,7 +1382,7 @@ export default function Reports() {
       // Indirect Attainment Mean
       let indirectTotalVal = 0;
       let totalIndirectSubmissions = 0;
-      
+
       indirectChildren.forEach(child => {
         const studs = child.data.students || {};
         const maxMarksMap = child.data.co_max_marks || {};
@@ -1377,12 +1478,12 @@ export default function Reports() {
 
   const logAnalysisResults = useMemo(() => {
     if (!consolidationData || !students.length) return null;
-    
+
     const cutoff = Number(mappingCutoff) || 50;
     const totalStudents = students.length;
-    
+
     let coKeys = Object.keys(consolidationData.maxMarks || {}).filter(k => /^CO\d+/i.test(k));
-    
+
     // Fallback if maxMarks is empty: check first student for CO keys to avoid marking everyone as absent
     if (coKeys.length === 0 && Object.keys(consolidationData.studentTotals).length > 0) {
       const firstReg = Object.keys(consolidationData.studentTotals)[0];
@@ -1409,7 +1510,7 @@ export default function Reports() {
     students.forEach(s => {
       const sdata = consolidationData.studentTotals[s.reg];
       const isPresent = sdata && coKeys.some(k => typeof sdata[k] === 'number');
-      
+
       if (!isPresent) {
         absentCount++;
         absenteesList.push({ reg: s.reg, name: s.name });
@@ -1417,7 +1518,7 @@ export default function Reports() {
         presentCount++;
         const studentTotalMarks = coKeys.reduce((sum, co) => sum + (Number(sdata[co]) || 0), 0);
         const percentage = totalMaxMarks > 0 ? (studentTotalMarks / totalMaxMarks) * 100 : 0;
-        
+
         if (percentage >= cutoff) {
           passedCount++;
         } else {
@@ -1517,7 +1618,7 @@ export default function Reports() {
 
   const handleSaveStudents = async () => {
     if (!batch || !programme || !department) return;
-    
+
     const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
@@ -1532,7 +1633,7 @@ export default function Reports() {
       },
       _order: students.map(s => s.reg)
     };
-    
+
     // Add each student to the object
     students.forEach(s => {
       if (s.reg && s.name) {
@@ -1620,17 +1721,19 @@ export default function Reports() {
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Programme Name</label>
               <div className="relative">
-                <select 
+                <select
                   value={programme}
-                  onChange={(e) => { 
-                    setProgramme(e.target.value); 
-                    setDepartment(""); 
+                  onChange={(e) => {
+                    setProgramme(e.target.value);
+                    setDepartment("");
                     setSyllabusData(null);
                     setBatch("");
                     setAcademicYear("");
                     setSemester("");
                     setSelectedSubject("");
                     setExtraSubject("");
+                    setInternalSubject("");
+                    setSelectedInternalExam("");
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
@@ -1652,7 +1755,7 @@ export default function Reports() {
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Department</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!programme}
                   value={department}
                   onChange={(e) => {
@@ -1663,6 +1766,8 @@ export default function Reports() {
                     setSemester("");
                     setSelectedSubject("");
                     setExtraSubject("");
+                    setInternalSubject("");
+                    setSelectedInternalExam("");
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (module === "students") setLoadingStudents(true);
@@ -1684,7 +1789,7 @@ export default function Reports() {
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Module</label>
               <div className="relative">
-                <select 
+                <select
                   value={module}
                   onChange={(e) => {
                     setModule(e.target.value);
@@ -1694,6 +1799,8 @@ export default function Reports() {
                     setSemester("");
                     setSelectedSubject("");
                     setExtraSubject("");
+                    setInternalSubject("");
+                    setSelectedInternalExam("");
                     setSelectedExam("");
                     setConsolidationData(null);
                     if (e.target.value === "students") setLoadingStudents(true);
@@ -1719,14 +1826,16 @@ export default function Reports() {
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Batch</label>
               <div className="relative">
-                <select 
+                <select
                   value={batch}
-                  onChange={(e) => { 
-                    setBatch(e.target.value); 
-                    setAcademicYear(""); 
-                    setSemester(""); 
+                  onChange={(e) => {
+                    setBatch(e.target.value);
+                    setAcademicYear("");
+                    setSemester("");
                     setSelectedSubject("");
                     setExtraSubject("");
+                    setInternalSubject("");
+                    setSelectedInternalExam("");
                     setSelectedExam("");
                     setSyllabusData(null);
                     setConsolidationData(null);
@@ -1748,7 +1857,7 @@ export default function Reports() {
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Section</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!batch}
                   value={section}
                   onChange={(e) => setSection(e.target.value)}
@@ -1768,14 +1877,16 @@ export default function Reports() {
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Academic Year</label>
                 <div className="relative">
-                  <select 
+                  <select
                     disabled={!batch}
                     value={academicYear}
-                    onChange={(e) => { 
-                      setAcademicYear(e.target.value); 
-                      setSemester(""); 
+                    onChange={(e) => {
+                      setAcademicYear(e.target.value);
+                      setSemester("");
                       setSelectedSubject("");
                       setExtraSubject("");
+                      setInternalSubject("");
+                      setSelectedInternalExam("");
                       setSelectedExam("");
                       setSyllabusData(null);
                       setConsolidationData(null);
@@ -1798,13 +1909,15 @@ export default function Reports() {
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Semester Type</label>
                 <div className="relative">
-                  <select 
+                  <select
                     disabled={!academicYear}
                     value={semester}
                     onChange={(e) => {
                       setSemester(e.target.value);
                       setSelectedSubject("");
                       setExtraSubject("");
+                      setInternalSubject("");
+                      setSelectedInternalExam("");
                       setSelectedExam("");
                       setSyllabusData(null);
                       setConsolidationData(null);
@@ -1827,7 +1940,7 @@ export default function Reports() {
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
                 <div className="relative">
-                  <select 
+                  <select
                     disabled={!semester}
                     value={extraSubject}
                     onChange={(e) => {
@@ -1841,8 +1954,8 @@ export default function Reports() {
                       ?.filter(sub => sub != null && sub.isActive !== false)
                       ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
                       ?.map(sub => (
-                      <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
-                    ))}
+                        <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
+                      ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
@@ -1879,22 +1992,27 @@ export default function Reports() {
               </div>
             )}
 
-            {/* Internal Division Selector */}
+            {/* Subject (Internal only) */}
             {module === "internal" && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">Internal Division</label>
+                <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
                 <div className="relative">
                   <select
-                    value={internalDivision}
-                    onChange={(e) => { setInternalDivision(e.target.value); setSelectedInternalExam(""); }}
-                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                    disabled={!semester}
+                    value={internalSubject}
+                    onChange={(e) => {
+                      setInternalSubject(e.target.value);
+                      setSelectedInternalExam("");
+                    }}
+                    className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   >
-                    <option value="">Choose Division</option>
-                    <option value="continuous-assessment">Continuous Assessment</option>
-                    <option value="activity">Activity</option>
-                    <option value="attendance">Attendance</option>
-                    <option value="practical">Practical</option>
-                    <option value="project">Project</option>
+                    <option value="">Choose Subject</option>
+                    {syllabusData?.semesters?.[deriveSemesterNumber(semester)]
+                      ?.filter(sub => sub != null && sub.isActive !== false)
+                      ?.filter(sub => userAssignments.length === 0 || userAssignments.includes(sub.code))
+                      ?.map(sub => (
+                        <option key={sub.code} value={sub.code}>{sub.code} - {sub.name}</option>
+                      ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
@@ -1902,10 +2020,10 @@ export default function Reports() {
             )}
 
             {/* Internal Exam Marks Selector */}
-            {module === "internal" && (internalDivision === "continuous-assessment" || internalDivision === "activity") && (
+            {module === "internal" && internalSubject && (
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">
-                  {internalDivision === "continuous-assessment" ? "Assessment Marks" : "Activity Marks"}
+                  Select Exam
                 </label>
                 <div className="relative">
                   <select
@@ -1913,7 +2031,7 @@ export default function Reports() {
                     onChange={(e) => setSelectedInternalExam(e.target.value)}
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                   >
-                    <option value="">Choose {internalDivision === "continuous-assessment" ? "Assessment" : "Activity"}</option>
+                    <option value="">Choose Exam</option>
                     {filteredInternalExams.map(ex => (
                       <option key={ex.id} value={ex.id}>
                         {ex.examName} - {ex.totalMarks || "N/A"} Marks
@@ -1930,7 +2048,7 @@ export default function Reports() {
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
                 <div className="relative">
-                  <select 
+                  <select
                     disabled={!semester}
                     value={selectedSubject}
                     onChange={(e) => {
@@ -1960,7 +2078,7 @@ export default function Reports() {
               <div className="space-y-2">
                 <label className="text-sm font-bold text-zinc-600 ml-1">Select Exam</label>
                 <div className="relative">
-                  <select 
+                  <select
                     disabled={!selectedSubject}
                     value={selectedExam}
                     onChange={(e) => setSelectedExam(e.target.value)}
@@ -1990,10 +2108,16 @@ export default function Reports() {
                   <FileText size={18} />
                 </div>
                 <h3 className="font-bold text-zinc-800 tracking-tight">
-                  {(() => { const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1]; return c?.examName || selectedInternalExam; })()}
+                  {selectedInternalExam === '__overall__' ? 'Overall Marks' : (((() => { const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1]; return c?.examName || selectedInternalExam; })()))}
                 </h3>
                 <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap">
-                  {internalDivision === "continuous-assessment" ? "Assessment" : "Activity"} Marks
+                  {selectedInternalExam === '__overall__' ? 'Weighted' : (((() => {
+                    const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1];
+                    if (c?.isAssignment) return "Activity";
+                    if (c?.isProject) return "Project";
+                    if (c?.isPractical) return "Practical";
+                    return "Assessment";
+                  })()))} Marks
                 </span>
                 <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium whitespace-nowrap hidden sm:inline-block">
                   {batch} • {programme} • {department} {section ? `(Sec-${section})` : ''}
@@ -2012,7 +2136,40 @@ export default function Reports() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {loadingInternalMarks ? (
+                    {selectedInternalExam === '__overall__' ? (
+                      loadingOverallMarks ? (
+                        <tr>
+                          <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
+                            <div className="flex flex-col items-center justify-center gap-2">
+                              <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                              <span>Loading marks...</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : overallMarksRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
+                            No marks found for overall calculation.
+                          </td>
+                        </tr>
+                      ) : (
+                        overallMarksRows.map((row) => (
+                          <tr key={row.reg} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
+                            <td className="p-4">
+                              <span className="text-sm font-mono text-zinc-700 font-medium">{row.reg}</span>
+                            </td>
+                            <td className="p-4">
+                              <span className="text-sm font-medium text-zinc-800">{row.name}</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span className="text-sm font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md">
+                                {row.mark}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )
+                    ) : loadingInternalMarks ? (
                       <tr>
                         <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
                           <div className="flex flex-col items-center justify-center gap-2">
@@ -2063,7 +2220,7 @@ export default function Reports() {
               </div>
               <div className="flex gap-2">
                 {!isEditing ? (
-                  <button 
+                  <button
                     onClick={() => setIsEditing(true)}
                     className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold transition-all shadow-sm"
                   >
@@ -2071,7 +2228,7 @@ export default function Reports() {
                   </button>
                 ) : (
                   <>
-                    <button 
+                    <button
                       onClick={() => {
                         showConfirm(
                           "Clear Students",
@@ -2083,13 +2240,13 @@ export default function Reports() {
                     >
                       Clear All
                     </button>
-                    <button 
+                    <button
                       onClick={() => setIsEditing(false)}
                       className="bg-zinc-200 hover:bg-zinc-300 text-zinc-700 px-4 py-1.5 rounded-lg text-sm font-bold transition-all"
                     >
                       Cancel
                     </button>
-                    <button 
+                    <button
                       onClick={handleSaveStudents}
                       className="bg-green-500 hover:bg-green-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold transition-all shadow-sm"
                     >
@@ -2132,7 +2289,7 @@ export default function Reports() {
                           )}
                           {showAdmNoCol && <td className="p-4">
                             {isEditing ? (
-                              <input 
+                              <input
                                 value={student.reg}
                                 onChange={(e) => handleStudentChange(idx, "reg", e.target.value)}
                                 className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -2149,7 +2306,7 @@ export default function Reports() {
                           )}
                           <td className="p-4">
                             {isEditing ? (
-                              <input 
+                              <input
                                 value={student.name}
                                 onChange={(e) => handleStudentChange(idx, "name", e.target.value)}
                                 className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -2161,14 +2318,14 @@ export default function Reports() {
                           </td>
                           {isEditing && (
                             <td className="p-4 flex justify-center gap-2">
-                              <button 
+                              <button
                                 onClick={() => handleAddRow(idx)}
                                 className="p-1.5 text-blue-500 hover:bg-blue-100 rounded-lg transition-colors"
                                 title="Add Row Below"
                               >
                                 <Plus size={16} />
                               </button>
-                              <button 
+                              <button
                                 onClick={() => handleRemoveRow(idx)}
                                 className="p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition-colors"
                                 title="Remove Row"
@@ -2182,7 +2339,7 @@ export default function Reports() {
                       {isEditing && students.length === 0 && (
                         <tr>
                           <td colSpan={4} className="p-4 text-center">
-                            <button 
+                            <button
                               onClick={() => setStudents([{ reg: "", name: "" }])}
                               className="text-blue-500 hover:underline text-sm font-bold"
                             >
@@ -2210,9 +2367,9 @@ export default function Reports() {
                 </span>
               </div>
               {syllabusData?.file_url && (
-                <a 
-                  href={syllabusData.file_url} 
-                  target="_blank" 
+                <a
+                  href={syllabusData.file_url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1"
                 >
@@ -2245,18 +2402,18 @@ export default function Reports() {
                       {syllabusData.semesters[deriveSemesterNumber(semester)]
                         .filter(subject => subject != null && subject.isActive !== false)
                         .map((subject, idx) => (
-                        <tr key={idx} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
-                          <td className="p-4">
-                            <span className="text-sm font-mono text-zinc-600">{subject.code}</span>
-                          </td>
-                          <td className="p-4">
-                            <span className="text-sm font-medium text-zinc-800">{subject.name}</span>
-                          </td>
-                          <td className="p-4 text-center">
-                            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{subject.credits}</span>
-                          </td>
-                        </tr>
-                      ))}
+                          <tr key={idx} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
+                            <td className="p-4">
+                              <span className="text-sm font-mono text-zinc-600">{subject.code}</span>
+                            </td>
+                            <td className="p-4">
+                              <span className="text-sm font-medium text-zinc-800">{subject.name}</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{subject.credits}</span>
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                 </div>
@@ -2353,7 +2510,7 @@ export default function Reports() {
                               </td>
                               <td className="p-4">
                                 <div className="flex justify-center gap-2">
-                                  <button 
+                                  <button
                                     onClick={() => {
                                       setSelectedQP(qp);
                                       setShowQPModal(true);
@@ -2363,14 +2520,14 @@ export default function Reports() {
                                   >
                                     <Eye size={18} />
                                   </button>
-                                  <button 
+                                  <button
                                     onClick={() => handleDownloadQP(qp)}
                                     className="p-2 text-green-500 hover:bg-green-100 rounded-xl transition-all"
                                     title="Download as Word"
                                   >
                                     <Download size={18} />
                                   </button>
-                                  <button 
+                                  <button
                                     onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
                                     className="p-2 text-amber-500 hover:bg-amber-100 rounded-xl transition-all"
                                     title="Continue Editing"
@@ -2443,7 +2600,7 @@ export default function Reports() {
                   </button>
                 </div>
               </div>
-              
+
               <div className="p-6 overflow-x-auto">
                 {loadingConsolidation ? (
                   <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -2483,7 +2640,7 @@ export default function Reports() {
                         );
                       })}
                       {indirectCoAverages && (
-                          <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
+                        <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={1 + (showAdmNoCol ? 1 : 0) + 1 + (showRegNoCol ? 1 : 0)}>
                             CO Average ({indirectCoAverages.totalStudents} Students)
                           </td>
@@ -2524,7 +2681,7 @@ export default function Reports() {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="p-8">
                   {!mappingCutoff || !mappingThresholds.length ? (
                     <div className="text-center py-10">
@@ -2543,7 +2700,7 @@ export default function Reports() {
                               <p className="text-xl font-black text-[#120c7a]">Level {stats.attainmentLevel}</p>
                             </div>
                           </div>
-                          
+
                           <div className="space-y-3">
                             <div className="flex justify-between items-center text-sm">
                               <span className="text-zinc-500 font-medium">≥ {mappingCutoff}%</span>
@@ -2559,8 +2716,8 @@ export default function Reports() {
                                 <span className="text-xs font-black text-blue-600">{stats.percentage}%</span>
                               </div>
                               <div className="w-full h-2 bg-zinc-200 rounded-full overflow-hidden">
-                                <div 
-                                  className="h-full bg-blue-600 transition-all duration-1000" 
+                                <div
+                                  className="h-full bg-blue-600 transition-all duration-1000"
                                   style={{ width: `${stats.percentage}%` }}
                                 />
                               </div>
@@ -2583,7 +2740,7 @@ export default function Reports() {
                   </div>
                   <h3 className="font-bold text-zinc-800 tracking-tight">Final Overall CO Attainment (Direct + Indirect)</h3>
                 </div>
-                
+
                 <div className="p-8">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                     {Object.entries(finalOverallAttainment).map(([co, data]) => (
@@ -2595,7 +2752,7 @@ export default function Reports() {
                             <p className="text-xl font-black text-emerald-700">{data.finalLevel}</p>
                           </div>
                         </div>
-                        
+
                         <div className="space-y-3">
                           <div className="flex justify-between items-center text-xs">
                             <span className="text-zinc-500 font-medium">Direct ({data.directPct}%)</span>
@@ -2611,8 +2768,8 @@ export default function Reports() {
                               <span className="text-xs font-black text-emerald-600">{(Number(data.finalLevel) / 3 * 100).toFixed(0)}%</span>
                             </div>
                             <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-emerald-600 transition-all duration-1000" 
+                              <div
+                                className="h-full bg-emerald-600 transition-all duration-1000"
                                 style={{ width: `${(Number(data.finalLevel) / 3 * 100)}%` }}
                               />
                             </div>
@@ -2648,14 +2805,14 @@ export default function Reports() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button 
+                  <button
                     onClick={() => handleDownloadQP(selectedQP)}
                     className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm"
                   >
                     <Download size={16} />
                     Download Word
                   </button>
-                  <button 
+                  <button
                     onClick={() => setShowQPModal(false)}
                     className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-all"
                   >
@@ -2663,7 +2820,7 @@ export default function Reports() {
                   </button>
                 </div>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/50">
                 <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
                   <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
@@ -2706,116 +2863,116 @@ export default function Reports() {
               <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/60">
                 <div id="log-print-content" className="bg-white shadow-lg mx-auto" style={{ width: "210mm", minHeight: "297mm", padding: "16mm 14mm", color: "#111", fontFamily: "Arial, sans-serif" }}>
                   <div style={{ position: "relative", minHeight: "calc(297mm - 32mm)" }}>
-                  <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, marginBottom: "12px", letterSpacing: "0.2px" }}>
-                    PARTICULARS OF RESULT ANALYSIS FOR IA-I / IA-II MODEL
-                  </div>
+                    <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, marginBottom: "12px", letterSpacing: "0.2px" }}>
+                      PARTICULARS OF RESULT ANALYSIS FOR IA-I / IA-II MODEL
+                    </div>
 
-                  <div style={{ fontSize: "11px", marginBottom: "6px" }}>
-                    <strong>Subject Code & Name:</strong> {extraSubject || "________________"}
-                  </div>
-                  <div style={{ fontSize: "11px", marginBottom: "8px" }}>
-                    <strong>Minimum Pass Percentage:</strong> {mappingCutoff || "_____"}
-                  </div>
+                    <div style={{ fontSize: "11px", marginBottom: "6px" }}>
+                      <strong>Subject Code & Name:</strong> {extraSubject || "________________"}
+                    </div>
+                    <div style={{ fontSize: "11px", marginBottom: "8px" }}>
+                      <strong>Minimum Pass Percentage:</strong> {mappingCutoff || "_____"}
+                    </div>
 
-                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>Date of Exam</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. of Students</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Present</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Absent</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Passed</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>No. Failed</th>
-                        <th style={{ ...logCellStyle, textAlign: "left" }}>Pass %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={{ ...logCellStyle, height: "28px" }}>{selectedInternalAssessmentDate}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.total || ""}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.present || ""}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.absent || ""}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.passed || ""}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.failed || ""}</td>
-                        <td style={logCellStyle}>{logAnalysisResults?.passPercentage || ""}%</td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>RESULT ANALYSIS</div>
-                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...logCellStyle, width: "18%" }}>Range</th>
-                        <th style={logCellStyle}>0% to 24%</th>
-                        <th style={logCellStyle}>25% to 49%</th>
-                        <th style={logCellStyle}>50% to 59%</th>
-                        <th style={logCellStyle}>60% to 74%</th>
-                        <th style={logCellStyle}>75% to 90%</th>
-                        <th style={logCellStyle}>91% to 100%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={logCellStyle}>Total No. of Students</td>
-                        <td style={{ ...logCellStyle, height: "26px", textAlign: "center" }}>{logAnalysisResults?.ranges?.r0_24?.count || ""}</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r25_49?.count || ""}</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r50_59?.count || ""}</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r60_74?.count || ""}</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r75_90?.count || ""}</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r91_100?.count || ""}</td>
-                      </tr>
-                      <tr>
-                        <td style={logCellStyle}>Reg No. of Students</td>
-                        <td style={{ ...logCellStyle, height: "56px", fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r0_24?.regs.join(', ') || ""}</td>
-                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r25_49?.regs.join(', ') || ""}</td>
-                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r50_59?.regs.join(', ') || ""}</td>
-                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r60_74?.regs.join(', ') || ""}</td>
-                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r75_90?.regs.join(', ') || ""}</td>
-                        <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r91_100?.regs.join(', ') || ""}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>DETAILS OF ABSENTEES</div>
-                  <table style={{ ...logTableStyle, marginBottom: "14px" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...logCellStyle, width: "12%" }}>S.No</th>
-                        <th style={{ ...logCellStyle, width: "33%" }}>Reg.No. of Student</th>
-                        <th style={logCellStyle}>Name of Student</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(logAnalysisResults?.absentees || []).map((s, idx) => (
-                        <tr key={s.reg || idx}>
-                          <td style={{ ...logCellStyle, height: "22px", textAlign: "center" }}>{idx + 1}</td>
-                          <td style={logCellStyle}>{s.reg}</td>
-                          <td style={logCellStyle}>{s.name}</td>
+                    <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>Date of Exam</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>No. of Students</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>No. Present</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>No. Absent</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>No. Passed</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>No. Failed</th>
+                          <th style={{ ...logCellStyle, textAlign: "left" }}>Pass %</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style={{ ...logCellStyle, height: "28px" }}>{selectedInternalAssessmentDate}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.total || ""}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.present || ""}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.absent || ""}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.passed || ""}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.failed || ""}</td>
+                          <td style={logCellStyle}>{logAnalysisResults?.passPercentage || ""}%</td>
+                        </tr>
+                      </tbody>
+                    </table>
 
-                  <table style={{ ...logTableStyle, marginTop: "18px", position: 'absolute', bottom: '16mm', left: 0, right: 0, width: '100%', tableLayout: 'fixed' }}>
-                    <tbody>
-                      <tr>
-                        <td style={{ ...logCellStyle, height: "34px", width: "33.33%", textAlign: "center" }}></td>
-                        <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
-                        <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
-                      </tr>
-                      <tr>
-                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Faculty Member</td>
-                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the HOD</td>
-                        <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Principal</td>
-                      </tr>
-                      <tr>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
-                        <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                    <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>RESULT ANALYSIS</div>
+                    <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...logCellStyle, width: "18%" }}>Range</th>
+                          <th style={logCellStyle}>0% to 24%</th>
+                          <th style={logCellStyle}>25% to 49%</th>
+                          <th style={logCellStyle}>50% to 59%</th>
+                          <th style={logCellStyle}>60% to 74%</th>
+                          <th style={logCellStyle}>75% to 90%</th>
+                          <th style={logCellStyle}>91% to 100%</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style={logCellStyle}>Total No. of Students</td>
+                          <td style={{ ...logCellStyle, height: "26px", textAlign: "center" }}>{logAnalysisResults?.ranges?.r0_24?.count || ""}</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r25_49?.count || ""}</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r50_59?.count || ""}</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r60_74?.count || ""}</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r75_90?.count || ""}</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>{logAnalysisResults?.ranges?.r91_100?.count || ""}</td>
+                        </tr>
+                        <tr>
+                          <td style={logCellStyle}>Reg No. of Students</td>
+                          <td style={{ ...logCellStyle, height: "56px", fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r0_24?.regs.join(', ') || ""}</td>
+                          <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r25_49?.regs.join(', ') || ""}</td>
+                          <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r50_59?.regs.join(', ') || ""}</td>
+                          <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r60_74?.regs.join(', ') || ""}</td>
+                          <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r75_90?.regs.join(', ') || ""}</td>
+                          <td style={{ ...logCellStyle, fontSize: "8px", verticalAlign: "top", wordBreak: "break-all" }}>{logAnalysisResults?.ranges?.r91_100?.regs.join(', ') || ""}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    <div style={{ fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>DETAILS OF ABSENTEES</div>
+                    <table style={{ ...logTableStyle, marginBottom: "14px" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...logCellStyle, width: "12%" }}>S.No</th>
+                          <th style={{ ...logCellStyle, width: "33%" }}>Reg.No. of Student</th>
+                          <th style={logCellStyle}>Name of Student</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(logAnalysisResults?.absentees || []).map((s, idx) => (
+                          <tr key={s.reg || idx}>
+                            <td style={{ ...logCellStyle, height: "22px", textAlign: "center" }}>{idx + 1}</td>
+                            <td style={logCellStyle}>{s.reg}</td>
+                            <td style={logCellStyle}>{s.name}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    <table style={{ ...logTableStyle, marginTop: "18px", position: 'absolute', bottom: '16mm', left: 0, right: 0, width: '100%', tableLayout: 'fixed' }}>
+                      <tbody>
+                        <tr>
+                          <td style={{ ...logCellStyle, height: "34px", width: "33.33%", textAlign: "center" }}></td>
+                          <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
+                          <td style={{ ...logCellStyle, width: "33.33%", textAlign: "center" }}></td>
+                        </tr>
+                        <tr>
+                          <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Faculty Member</td>
+                          <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the HOD</td>
+                          <td style={{ ...logCellStyle, textAlign: "center", whiteSpace: "nowrap" }}>Signature of the Principal</td>
+                        </tr>
+                        <tr>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                          <td style={{ ...logCellStyle, textAlign: "center" }}>Date:</td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -2840,25 +2997,25 @@ export default function Reports() {
               <p className="text-sm text-slate-600 mb-4">
                 You are about to remove <strong>{students[removeStudentModal.index]?.name}</strong> ({students[removeStudentModal.index]?.reg}).
               </p>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Reason for removal</label>
-                  <textarea 
+                  <textarea
                     value={removeStudentModal.reason}
-                    onChange={(e) => setRemoveStudentModal({...removeStudentModal, reason: e.target.value})}
+                    onChange={(e) => setRemoveStudentModal({ ...removeStudentModal, reason: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
                     rows="3"
                     placeholder="Why are you removing this student?"
                   ></textarea>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Type register number to confirm</label>
-                  <input 
+                  <input
                     type="text"
                     value={removeStudentModal.confirmReg}
-                    onChange={(e) => setRemoveStudentModal({...removeStudentModal, confirmReg: e.target.value})}
+                    onChange={(e) => setRemoveStudentModal({ ...removeStudentModal, confirmReg: e.target.value })}
                     className="w-full border border-slate-300 rounded-lg p-2 focus:ring-2 focus:ring-red-500 outline-none"
                     placeholder={students[removeStudentModal.index]?.reg}
                   />
@@ -2866,13 +3023,13 @@ export default function Reports() {
               </div>
 
               <div className="flex justify-end gap-3 mt-6">
-                <button 
+                <button
                   onClick={() => setRemoveStudentModal({ show: false, index: null, reason: '', confirmReg: '' })}
                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   onClick={confirmRemoveRow}
                   className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
                 >
@@ -2893,14 +3050,14 @@ export default function Reports() {
               </div>
               <div className="bg-zinc-50 px-6 py-4 flex justify-end gap-3">
                 {modal.type === 'confirm' && (
-                  <button 
+                  <button
                     className="px-4 py-2 text-zinc-600 font-semibold hover:bg-zinc-100 rounded-xl transition-colors"
                     onClick={() => setModal({ ...modal, show: false })}
                   >
                     Cancel
                   </button>
                 )}
-                <button 
+                <button
                   className="px-6 py-2 bg-[#120c7a] text-white font-semibold rounded-xl hover:bg-opacity-90 transition-all shadow-lg shadow-blue-900/20"
                   onClick={async () => {
                     if (modal.onConfirm) {

@@ -1004,7 +1004,8 @@ export default function MarkEntry() {
       mark_type: markType,
       is_university: isUniversityExam,
       entry_mode: isUniversityExam ? markType : 'CO Wise',
-      qpaper_meta: qpMeta
+      qpaper_meta: qpMeta,
+      section: section || ""
     };
 
     const enrichedMarksData = {};

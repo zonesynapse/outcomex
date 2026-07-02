@@ -107,8 +107,8 @@ export default function QuestionPaperGenerator() {
       });
 
       editor.on('instanceReady', function () {
-        try { 
-          editor.setData(qbQuestion || qbEditorData || ''); 
+        try {
+          editor.setData(qbQuestion || qbEditorData || '');
           try { editor.focus(); } catch { /* ignore focus errors */ }
         } catch { /* ignore */ }
       });
@@ -320,7 +320,7 @@ export default function QuestionPaperGenerator() {
     });
     setShowFinalPreview(false);
   };
-  
+
   const handleEditQuestion = useCallback((index) => {
     const q = qpQuestions && qpQuestions[index];
     if (!q) return;
@@ -524,7 +524,7 @@ export default function QuestionPaperGenerator() {
 
   const filteredExams = useMemo(() => {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
-    
+
     const semNum = deriveSemesterNumber(selectedSemester);
     const courseType = subjectCourseDetails?.type;
     const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
@@ -534,8 +534,8 @@ export default function QuestionPaperGenerator() {
     const selectedBatch = norm(batch);
     const selectedAy = norm(academicYear);
     const selectedReg = norm(regulation);
-    
-    const filtered = ciaConfigs.filter(config => 
+
+    const filtered = ciaConfigs.filter(config =>
       // Accept both programme-bound configs and regulation-level global configs.
       (!norm(config.program) || norm(formatProgrammeKey(config.program)) === selectedProg) &&
       (!norm(config.department) || norm(config.department) === selectedDept) &&
@@ -776,9 +776,9 @@ export default function QuestionPaperGenerator() {
   // Sort PO/PSO codes in ascending numeric order
   const sortedPoCodes = useMemo(() => {
     if (!poCoTableData || poCoTableData.length === 0) return [];
-    
+
     const uniquePOs = Array.from(new Set(poCoTableData.map(row => row.po)));
-    
+
     const sortMeta = (code) => {
       const poMatch = String(code || '').match(/^PO(\d+)$/i);
       if (poMatch) return { type: 'PO', num: parseInt(poMatch[1], 10) };
@@ -1007,9 +1007,9 @@ export default function QuestionPaperGenerator() {
     const indirectRegs = new Set();
     ciaConfigs.forEach(config => {
       if (config.isIndirectAssessment === true &&
-          (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
-          (!norm(config.department) || norm(config.department) === deptNorm) &&
-          config.regulation
+        (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
+        (!norm(config.department) || norm(config.department) === deptNorm) &&
+        config.regulation
       ) {
         indirectRegs.add(norm(config.regulation));
       }
@@ -1024,16 +1024,16 @@ export default function QuestionPaperGenerator() {
   }, [batches, assessmentType, ciaConfigs, program, department, getRegulationForBatch]);
 
   const filteredDepartments = useMemo(() => {
-  const depts = programToDepartments[formatProgrammeKey(program)] || [];
-  if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
-  if (!derivedDepts.length) return [];
-  const progKey = formatProgrammeKey(program);
-  const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
-  return depts.filter(dept => {
-    const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
-    return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
-  });
-}, [program, userRole, derivedDepts, programToDepartments]);
+    const depts = programToDepartments[formatProgrammeKey(program)] || [];
+    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+    if (!derivedDepts.length) return [];
+    const progKey = formatProgrammeKey(program);
+    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
+    return depts.filter(dept => {
+      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
+      return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    });
+  }, [program, userRole, derivedDepts, programToDepartments]);
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !program) return [];
@@ -1138,7 +1138,7 @@ export default function QuestionPaperGenerator() {
     `;
 
     let questionCounter = 1;
-    
+
     if (isAssignment) {
       html += `
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; text-align: left; font-size: 12px;">
@@ -1202,10 +1202,10 @@ export default function QuestionPaperGenerator() {
   <tbody>`;
 
         if (part.questions && part.questions.length > 0) {
-          const filteredQuestions = (part.questions || []).filter(q => 
+          const filteredQuestions = (part.questions || []).filter(q =>
             !(q.question && q.question.trim().toLowerCase() === '(or)')
           );
-          
+
           filteredQuestions.forEach((q, qIdx) => {
             if (q.either_or) {
               if (q.sub === 'a') {
@@ -1302,10 +1302,10 @@ export default function QuestionPaperGenerator() {
       coRows = cos
         .filter((co) => activeSet.has(co.code))
         .map((co) => {
-        const tick = activeSet.has(co.code) ? '✓' : '';
-        const w = weightMap && Object.prototype.hasOwnProperty.call(weightMap, co.code) ? weightMap[co.code] : '';
-        
-        return `
+          const tick = activeSet.has(co.code) ? '✓' : '';
+          const w = weightMap && Object.prototype.hasOwnProperty.call(weightMap, co.code) ? weightMap[co.code] : '';
+
+          return `
           <tr>
             <td style="padding: 4px;">${co.code}</td>
             <td style="padding: 4px;">${co.description}</td>
@@ -1313,7 +1313,7 @@ export default function QuestionPaperGenerator() {
             <td style="text-align: center; padding: 4px;">${w ? String(w) : ''}</td>
           </tr>
         `;
-      }).join('');
+        }).join('');
     } else {
       coRows = `
         <tr>
@@ -1385,9 +1385,9 @@ export default function QuestionPaperGenerator() {
     const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
     const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
 
-      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
-      const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
+    const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
     const unsubscribePoPso = onSnapshot(poPsoRef, (snap) => { // Use onSnapshot for real-time updates
       const data = snap.data() || {}; // Use .data() for Firestore documents
@@ -1398,9 +1398,9 @@ export default function QuestionPaperGenerator() {
       const data = snapshot.data(); // Use .data() for Firestore documents
       if (data) {
         const loadedCOs = Object.entries(data)
-          .map(([code, val]) => ({ 
-            code, 
-            description: typeof val === 'object' && val !== null ? val.description : val 
+          .map(([code, val]) => ({
+            code,
+            description: typeof val === 'object' && val !== null ? val.description : val
           }))
           .sort((a, b) => {
             const numA = parseInt(a.code.replace(/\D/g, '')) || 0;
@@ -1488,87 +1488,87 @@ export default function QuestionPaperGenerator() {
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
         const qp = snapshot.data()?.[existingQpId]; // Read from field in parent doc
 
-          if (qp && !hasLoadedRef.current) {
-            hasLoadedRef.current = true;
-            
-            // Resolve kldomain: if saved as name, convert to key; strip <p> tags
-            const resolveConfig = (config) => (config || []).map(q => ({
-              ...q,
-              kldomain: (() => {
-                const saved = q.kldomain || '';
-                if (bloomsDomains && bloomsDomains[saved]) return saved;
-                const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
-                return foundKey || '';
-              })(),
-              question: (q.question || '').replace(/<\/?p>/g, '')
-            }));
-            
-            // Apply state updates
-            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
-              setNumParts(String(qp.assignment_config?.length || ''));
-              setAssignmentConfig(resolveConfig(qp.assignment_config));
-              setSavedAssignmentConfig(resolveConfig(qp.assignment_config));
-              setSavedExamParts([]);
-              setQpQuestions(qp.assignment_config || []);
-            } else {
-              setNumParts(String(qp.parts?.length || ''));
-              const config = qp.parts?.map(p => ({
-                numQuestions: p.num_questions,
-                marksPerQuestion: p.marks_per_question || p.marksPerQuestion || 0,
-                isEitherOr: p.questions?.some(q => q.either_or) || false
-              })) || [];
-              setPartsConfig(config);
-              setSavedExamParts(qp.parts || []);
-              const qList = [];
-              qp.parts?.forEach(p => {
-                const questions = (p.questions || []);
-                // If stored as object, convert to array
-                const qArray = Array.isArray(questions) ? questions : Object.values(questions);
-                qArray.forEach(q => {
-                  if (q.question && q.question.trim().toLowerCase() === '(or)') return;
-                  // Ensure sub property exists for either_or questions if missing
-                  if (q.either_or && !q.sub) {
-                    if (q.qno && q.qno.toLowerCase().endsWith('(a)')) q.sub = 'a';
-                    else if (q.qno && q.qno.toLowerCase().endsWith('(b)')) q.sub = 'b';
-                    else if (q.qno && q.qno.toLowerCase().endsWith('a')) q.sub = 'a';
-                    else if (q.qno && q.qno.toLowerCase().endsWith('b')) q.sub = 'b';
-                  }
-                  qList.push(q);
-                });
+        if (qp && !hasLoadedRef.current) {
+          hasLoadedRef.current = true;
+
+          // Resolve kldomain: if saved as name, convert to key; strip <p> tags
+          const resolveConfig = (config) => (config || []).map(q => ({
+            ...q,
+            kldomain: (() => {
+              const saved = q.kldomain || '';
+              if (bloomsDomains && bloomsDomains[saved]) return saved;
+              const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
+              return foundKey || '';
+            })(),
+            question: (q.question || '').replace(/<\/?p>/g, '')
+          }));
+
+          // Apply state updates
+          if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
+            setNumParts(String(qp.assignment_config?.length || ''));
+            setAssignmentConfig(resolveConfig(qp.assignment_config));
+            setSavedAssignmentConfig(resolveConfig(qp.assignment_config));
+            setSavedExamParts([]);
+            setQpQuestions(qp.assignment_config || []);
+          } else {
+            setNumParts(String(qp.parts?.length || ''));
+            const config = qp.parts?.map(p => ({
+              numQuestions: p.num_questions,
+              marksPerQuestion: p.marks_per_question || p.marksPerQuestion || 0,
+              isEitherOr: p.questions?.some(q => q.either_or) || false
+            })) || [];
+            setPartsConfig(config);
+            setSavedExamParts(qp.parts || []);
+            const qList = [];
+            qp.parts?.forEach(p => {
+              const questions = (p.questions || []);
+              // If stored as object, convert to array
+              const qArray = Array.isArray(questions) ? questions : Object.values(questions);
+              qArray.forEach(q => {
+                if (q.question && q.question.trim().toLowerCase() === '(or)') return;
+                // Ensure sub property exists for either_or questions if missing
+                if (q.either_or && !q.sub) {
+                  if (q.qno && q.qno.toLowerCase().endsWith('(a)')) q.sub = 'a';
+                  else if (q.qno && q.qno.toLowerCase().endsWith('(b)')) q.sub = 'b';
+                  else if (q.qno && q.qno.toLowerCase().endsWith('a')) q.sub = 'a';
+                  else if (q.qno && q.qno.toLowerCase().endsWith('b')) q.sub = 'b';
+                }
+                qList.push(q);
               });
-              setQpQuestions(qList);
-            }
-            setShowParts(true);
-
-            // Fetch COs explicitly for loading
-            const progKey = formatProgrammeKey(qp.programme);
-            const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
-            if (!regulation) return;
-            const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
-            const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
-            const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
-            const coData = coSnapshot.data(); // Use .data() for Firestore documents
-            let fetchedCOs = [];
-            if (coData) {
-              fetchedCOs = Object.entries(coData)
-                .map(([code, val]) => ({ 
-                  code, 
-                  description: typeof val === 'object' && val !== null ? val.description : val 
-                }))
-                .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
-            }
-            setCourseOutcomes(fetchedCOs);
-
-            // Wait for editor to be ready
-            const checkEditor = setInterval(() => { // This interval is for loading existing paper on initial load
-              if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
-                clearInterval(checkEditor);
-                const html = getQuestionPaperHTML(qp, fetchedCOs);
-                window.CKEDITOR.instances.questionEditor.setData(html);
-                showToast(`Existing saved ${assessmentType} loaded for this subject/exam.`, "success");
-              }
-            }, 500);
+            });
+            setQpQuestions(qList);
           }
+          setShowParts(true);
+
+          // Fetch COs explicitly for loading
+          const progKey = formatProgrammeKey(qp.programme);
+          const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
+          if (!regulation) return;
+          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+          const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
+          const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
+          const coData = coSnapshot.data(); // Use .data() for Firestore documents
+          let fetchedCOs = [];
+          if (coData) {
+            fetchedCOs = Object.entries(coData)
+              .map(([code, val]) => ({
+                code,
+                description: typeof val === 'object' && val !== null ? val.description : val
+              }))
+              .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+          }
+          setCourseOutcomes(fetchedCOs);
+
+          // Wait for editor to be ready
+          const checkEditor = setInterval(() => { // This interval is for loading existing paper on initial load
+            if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
+              clearInterval(checkEditor);
+              const html = getQuestionPaperHTML(qp, fetchedCOs);
+              window.CKEDITOR.instances.questionEditor.setData(html);
+              showToast(`Existing saved ${assessmentType} loaded for this subject/exam.`, "success");
+            }
+          }, 500);
+        }
       } catch (error) {
         console.error("Error checking for existing paper:", error);
       }
@@ -1598,23 +1598,23 @@ export default function QuestionPaperGenerator() {
           setLoadedExamName(qp.exam_name || ''); // Preserve the human name from DB
           setHodComments(qp.hod_comments || ''); // Load HOD comments
           setExam(qp.qpaper_name || '');
-          
-            if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
-              setNumParts(String(qp.assignment_config?.length || ''));
-              const resolved = (qp.assignment_config || []).map(q => ({
-                ...q,
-                kldomain: (() => {
-                  const saved = q.kldomain || '';
-                  if (bloomsDomains && bloomsDomains[saved]) return saved;
-                  const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
-                  return foundKey || '';
-                })(),
-                question: (q.question || '').replace(/<\/?p>/g, '')
-              }));
-              setAssignmentConfig(resolved);
-              setSavedAssignmentConfig(resolved);
-              setSavedExamParts([]);
-              setQpQuestions(qp.assignment_config || []);
+
+          if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
+            setNumParts(String(qp.assignment_config?.length || ''));
+            const resolved = (qp.assignment_config || []).map(q => ({
+              ...q,
+              kldomain: (() => {
+                const saved = q.kldomain || '';
+                if (bloomsDomains && bloomsDomains[saved]) return saved;
+                const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
+                return foundKey || '';
+              })(),
+              question: (q.question || '').replace(/<\/?p>/g, '')
+            }));
+            setAssignmentConfig(resolved);
+            setSavedAssignmentConfig(resolved);
+            setSavedExamParts([]);
+            setQpQuestions(qp.assignment_config || []);
           } else {
             setNumParts(String(qp.parts?.length || ''));
             const config = qp.parts?.map(p => ({
@@ -1655,19 +1655,19 @@ export default function QuestionPaperGenerator() {
           let fetchedCOs = [];
           if (coData) {
             fetchedCOs = Object.entries(coData)
-              .map(([code, val]) => ({ 
-                code, 
-                description: typeof val === 'object' && val !== null ? val.description : val 
+              .map(([code, val]) => ({
+                code,
+                description: typeof val === 'object' && val !== null ? val.description : val
               }))
               .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
           }
           setCourseOutcomes(fetchedCOs);
 
           // Wait for editor to be ready
-            const checkEditor = setInterval(() => { // This interval is for loading saved paper when editing
+          const checkEditor = setInterval(() => { // This interval is for loading saved paper when editing
             if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
               clearInterval(checkEditor);
-              
+
               const html = getQuestionPaperHTML(qp, fetchedCOs);
               window.CKEDITOR.instances.questionEditor.setData(html);
               showToast("Saved question paper loaded successfully.", "success");
@@ -1756,7 +1756,7 @@ export default function QuestionPaperGenerator() {
         const snapshot = await getDoc(syllabusRef);
         const data = snapshot.data();
         let fetchedSubjects = [];
-        
+
         if (data && data.semesters && data.semesters[semNum]) {
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
@@ -1781,10 +1781,10 @@ export default function QuestionPaperGenerator() {
         const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}${sectionSuffix}`;
         const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey);
         const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
-        
+
         if (assignmentSnap.exists()) {
           const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
-          
+
           if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
             // Show all subjects that have at least one allocation to ANY faculty
             const allAllocatedCodes = new Set();
@@ -1821,7 +1821,7 @@ export default function QuestionPaperGenerator() {
       script.onload = () => {
         if (window.CKEDITOR) {
           window.CKEDITOR.config.versionCheck = false;
-          window.CKEDITOR.on('log', function(evt) {
+          window.CKEDITOR.on('log', function (evt) {
             if (evt.data && evt.data.errorCode === 'exportpdf-no-token-url') {
               evt.cancel();
             }
@@ -1941,41 +1941,41 @@ export default function QuestionPaperGenerator() {
     return () => { cancelled = true; };
   }, [assignmentConfig.length, showParts, assessmentType]);
 
-const initEditor = useCallback(() => {
-  if (!window.CKEDITOR) return;
-  
-  try {
-    // ✅ CRITICAL: Destroy old instance if it exists before creating a new one
-    if (window.CKEDITOR.instances && window.CKEDITOR.instances.questionEditor) {
-      try {
-        window.CKEDITOR.instances.questionEditor.destroy(true);
-        delete window.CKEDITOR.instances.questionEditor;
-      } catch (e) {
-        console.warn('Failed to destroy previous CKEditor instance:', e);
+  const initEditor = useCallback(() => {
+    if (!window.CKEDITOR) return;
+
+    try {
+      // ✅ CRITICAL: Destroy old instance if it exists before creating a new one
+      if (window.CKEDITOR.instances && window.CKEDITOR.instances.questionEditor) {
+        try {
+          window.CKEDITOR.instances.questionEditor.destroy(true);
+          delete window.CKEDITOR.instances.questionEditor;
+        } catch (e) {
+          console.warn('Failed to destroy previous CKEditor instance:', e);
+        }
       }
-    }
 
-    // Remove textarea from DOM if it's been attached to multiple instances
-    const element = document.getElementById('questionEditor');
-    if (!element) return;
+      // Remove textarea from DOM if it's been attached to multiple instances
+      const element = document.getElementById('questionEditor');
+      if (!element) return;
 
-    const editor = window.CKEDITOR.replace('questionEditor', {
-      versionCheck: false,
-      width: '210mm',
-      height: '297mm',
-      extraPlugins: 'print',
-      toolbar: [
-        { name: 'document', items: ['Source', '-', 'Print'] },
-        { name: 'clipboard', items: ['Undo', 'Redo'] },
-        { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', '-', 'RemoveFormat'] },
-        { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
-        { name: 'insert', items: ['Image', 'Table', 'HorizontalRule'] },
-        { name: 'styles', items: ['Format', 'FontSize'] },
-        { name: 'colors', items: ['TextColor', 'BGColor'] },
-        { name: 'tools', items: ['Maximize'] }
-      ],
-      contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
-      contentsStyle: `
+      const editor = window.CKEDITOR.replace('questionEditor', {
+        versionCheck: false,
+        width: '210mm',
+        height: '297mm',
+        extraPlugins: 'print',
+        toolbar: [
+          { name: 'document', items: ['Source', '-', 'Print'] },
+          { name: 'clipboard', items: ['Undo', 'Redo'] },
+          { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', '-', 'RemoveFormat'] },
+          { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
+          { name: 'insert', items: ['Image', 'Table', 'HorizontalRule'] },
+          { name: 'styles', items: ['Format', 'FontSize'] },
+          { name: 'colors', items: ['TextColor', 'BGColor'] },
+          { name: 'tools', items: ['Maximize'] }
+        ],
+        contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
+        contentsStyle: `
         @page { size: A4; margin: 20mm; }
         html, body { width: 210mm; }
         body { font-family: Arial, sans-serif; font-size: 12pt; margin: 0; padding: 20mm; line-height: 1.5; box-sizing: border-box; }
@@ -1989,101 +1989,101 @@ const initEditor = useCallback(() => {
           table, td, th { border-color: #000 !important; }
         }
       `
-    });
+      });
 
-    editor.on('instanceReady', function (evt) {
-      try {
-        evt.editor.container.setStyle('width', '210mm');
-        evt.editor.container.setStyle('max-width', '210mm');
-        evt.editor.container.setStyle('background', 'transparent');
-        evt.editor.container.setStyle('margin', '0 auto');
+      editor.on('instanceReady', function (evt) {
+        try {
+          evt.editor.container.setStyle('width', '210mm');
+          evt.editor.container.setStyle('max-width', '210mm');
+          evt.editor.container.setStyle('background', 'transparent');
+          evt.editor.container.setStyle('margin', '0 auto');
 
-        const contents = evt.editor.container.findOne('.cke_contents');
-        if (contents) {
-          contents.setStyle('height', 'calc(297mm - 40mm)');
-          contents.setStyle('overflow', 'auto');
-        }
-
-        // ✅ Fix toolbar positioning
-        const toolbar = evt.editor.container.findOne('.cke_top');
-        if (toolbar) {
-          toolbar.setStyle('position', 'relative');
-          toolbar.setStyle('z-index', '11');
-          toolbar.setStyle('overflow', 'visible');
-        }
-
-        // ✅ Close any open panels when clicking on editor content
-        evt.editor.editable().attachListener(evt.editor.editable(), 'click', function() {
-          const panelElement = document.querySelector('.cke_panel_on');
-          if (panelElement && window.CKEDITOR && window.CKEDITOR.ui.panel) {
-            panelElement.style.display = 'none';
-            panelElement.classList.remove('cke_panel_on');
+          const contents = evt.editor.container.findOne('.cke_contents');
+          if (contents) {
+            contents.setStyle('height', 'calc(297mm - 40mm)');
+            contents.setStyle('overflow', 'auto');
           }
-        });
 
-        window.CKEDITOR.addCss(
-          'select{border:1px solid #d1d5db; border-radius:4px; padding:2px 4px; background-color:#f9fafb; font-size:11px; color:#374151; outline:none; cursor:pointer; transition:border-color 0.2s;}' +
-          'select:focus{border-color:#3b82f6; background-color:#fff;}'
-        );
+          // ✅ Fix toolbar positioning
+          const toolbar = evt.editor.container.findOne('.cke_top');
+          if (toolbar) {
+            toolbar.setStyle('position', 'relative');
+            toolbar.setStyle('z-index', '11');
+            toolbar.setStyle('overflow', 'visible');
+          }
 
-        evt.editor.document.on('change', function(e) {
-          const target = e.data.getTarget();
-          if (target.getName() === 'select') {
-            const val = target.getValue();
-            const options = target.find('option');
-            for (let i = 0; i < options.count(); i++) {
-              const option = options.getItem(i);
-              if (option.getValue() === val) {
-                option.setAttribute('selected', 'selected');
-              } else {
-                option.removeAttribute('selected');
-              }
+          // ✅ Close any open panels when clicking on editor content
+          evt.editor.editable().attachListener(evt.editor.editable(), 'click', function () {
+            const panelElement = document.querySelector('.cke_panel_on');
+            if (panelElement && window.CKEDITOR && window.CKEDITOR.ui.panel) {
+              panelElement.style.display = 'none';
+              panelElement.classList.remove('cke_panel_on');
             }
-            if (target.hasClass('co-select')) {
-              const selectedCO = val;
-              const tr = target.getAscendant('tr');
-              if (tr) {
-                const piSelect = tr.findOne('.pi-select');
-                if (piSelect) {
-                  piSelect.setHtml('<option value="">Select PI</option>');
-                  const mapping = window.coPiMappingData || {};
-                  const pis = mapping[selectedCO] || [];
-                  if (pis.length > 0) {
-                    pis.forEach(pi => {
-                      const option = evt.editor.document.createElement('option');
-                      option.setAttribute('value', pi);
-                      option.setText(pi);
-                      piSelect.append(option);
-                    });
-                  }
-                  piSelect.setValue('');
-                  const piOptions = piSelect.find('option');
-                  for (let i = 0; i < piOptions.count(); i++) {
-                    piOptions.getItem(i).removeAttribute('selected');
-                  }
-                  if (piOptions.count() > 0) {
-                    piOptions.getItem(0).setAttribute('selected', 'selected');
+          });
+
+          window.CKEDITOR.addCss(
+            'select{border:1px solid #d1d5db; border-radius:4px; padding:2px 4px; background-color:#f9fafb; font-size:11px; color:#374151; outline:none; cursor:pointer; transition:border-color 0.2s;}' +
+            'select:focus{border-color:#3b82f6; background-color:#fff;}'
+          );
+
+          evt.editor.document.on('change', function (e) {
+            const target = e.data.getTarget();
+            if (target.getName() === 'select') {
+              const val = target.getValue();
+              const options = target.find('option');
+              for (let i = 0; i < options.count(); i++) {
+                const option = options.getItem(i);
+                if (option.getValue() === val) {
+                  option.setAttribute('selected', 'selected');
+                } else {
+                  option.removeAttribute('selected');
+                }
+              }
+              if (target.hasClass('co-select')) {
+                const selectedCO = val;
+                const tr = target.getAscendant('tr');
+                if (tr) {
+                  const piSelect = tr.findOne('.pi-select');
+                  if (piSelect) {
+                    piSelect.setHtml('<option value="">Select PI</option>');
+                    const mapping = window.coPiMappingData || {};
+                    const pis = mapping[selectedCO] || [];
+                    if (pis.length > 0) {
+                      pis.forEach(pi => {
+                        const option = evt.editor.document.createElement('option');
+                        option.setAttribute('value', pi);
+                        option.setText(pi);
+                        piSelect.append(option);
+                      });
+                    }
+                    piSelect.setValue('');
+                    const piOptions = piSelect.find('option');
+                    for (let i = 0; i < piOptions.count(); i++) {
+                      piOptions.getItem(i).removeAttribute('selected');
+                    }
+                    if (piOptions.count() > 0) {
+                      piOptions.getItem(0).setAttribute('selected', 'selected');
+                    }
                   }
                 }
               }
+              if (typeof window.refreshOutcomesSummary === 'function') {
+                setTimeout(() => window.refreshOutcomesSummary(), 100);
+              }
+              evt.editor.fire('change');
             }
-            if (typeof window.refreshOutcomesSummary === 'function') {
-              setTimeout(() => window.refreshOutcomesSummary(), 100);
-            }
-            evt.editor.fire('change');
-          }
-        }, null, null, 1);
+          }, null, null, 1);
 
-        // ✅ Ensure panels are properly hidden on blur
-        evt.editor.focusManager.blur(true);
-      } catch (e) {
-        console.warn('Failed to apply A4 styles to CKEditor instance', e);
-      }
-    });
-  } catch (e) {
-    console.error('initEditor error:', e);
-  }
-}, []);
+          // ✅ Ensure panels are properly hidden on blur
+          evt.editor.focusManager.blur(true);
+        } catch (e) {
+          console.warn('Failed to apply A4 styles to CKEditor instance', e);
+        }
+      });
+    } catch (e) {
+      console.error('initEditor error:', e);
+    }
+  }, []);
   const handleGenerateParts = () => {
     if (assessmentType !== 'Indirect' && !isAssignmentOrProject) {
       if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
@@ -2122,6 +2122,11 @@ const initEditor = useCallback(() => {
         const existing = assignmentConfig[i];
         return existing ? { ...existing } : { question: '', marks: '', mappings: [], kl: '', kldomain: '' };
       }));
+    } else if (assessmentType === 'Exam') {
+      setPartsConfig(Array.from({ length: count }, (_, i) => {
+        const existing = partsConfig[i];
+        return existing ? { ...existing } : { numQuestions: 1, marksPerQuestion: 2, isEitherOr: false };
+      }));
     }
     setShowParts(true);
     setShowFinalPreview(false);
@@ -2138,7 +2143,7 @@ const initEditor = useCallback(() => {
     if (!coCode) return;
     const updated = [...assignmentConfig];
     if (!updated[qIdx].mappings) updated[qIdx].mappings = [];
-    
+
     if (!updated[qIdx].mappings.some(m => m.co === coCode)) {
       updated[qIdx].mappings.push({ co: coCode, pis: [], marks: '' });
       setAssignmentConfig(updated);
@@ -2255,17 +2260,17 @@ const initEditor = useCallback(() => {
 
   const handleGenerateTable = () => {
     if (isAssignmentOrProject && assessmentType !== 'Indirect') {
-       const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
-       if (!hasMappings) {
-         showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
-         return false;
-       }
+      const hasMappings = assignmentConfig[0]?.mappings && assignmentConfig[0].mappings.length > 0;
+      if (!hasMappings) {
+        showToast("Please ensure at least one CO is mapped to the assignment question.", "error");
+        return false;
+      }
 
-       const sumMarks = assignmentConfig[0].mappings.reduce((sum, m) => sum + (m.marks || 0), 0);
-       if (sumMarks !== assignmentConfig[0].marks) {
-         showToast(`The sum of CO marks (${sumMarks}) must equal the total marks (${assignmentConfig[0].marks}).`, "error");
-         return false;
-       }
+      const sumMarks = assignmentConfig[0].mappings.reduce((sum, m) => sum + (m.marks || 0), 0);
+      if (sumMarks !== assignmentConfig[0].marks) {
+        showToast(`The sum of CO marks (${sumMarks}) must equal the total marks (${assignmentConfig[0].marks}).`, "error");
+        return false;
+      }
     }
 
     let overallTotal = 0;
@@ -2279,7 +2284,7 @@ const initEditor = useCallback(() => {
       });
     }
 
-    
+
 
     // Do not render to the second CKEditor here.
     // Only prepare Q.No options for builder; final rendering happens on Finalize.
@@ -2385,7 +2390,7 @@ const initEditor = useCallback(() => {
       (partsConfig || []).forEach(part => {
         overallTotal += (parseInt(part?.numQuestions, 10) || 0) * (parseInt(part?.marksPerQuestion, 10) || 0);
       });
-      
+
       let counter = 1;
       finalizedParts = (partsConfig || []).map((part) => {
         const count = parseInt(part?.numQuestions, 10) || 0;
@@ -2470,10 +2475,10 @@ const initEditor = useCallback(() => {
 
     const coSummary = deriveCOSummaryFromQp(qpDataForFinalize);
     const combinedContent = getQuestionPaperHTML(qpDataForFinalize, courseOutcomes, coSummary.activeCOs, coSummary.coWeightage);
-    
+
     // Always set preview to true (make the textarea visible)
     setShowFinalPreview(true);
-    
+
     // Once visible, initialize the editor if needed and set content
     setTimeout(() => {
       try {
@@ -2481,7 +2486,7 @@ const initEditor = useCallback(() => {
         if (!window.CKEDITOR || !window.CKEDITOR.instances['questionEditor']) {
           initEditor();
         }
-        
+
         // Wait for editor to be ready, then set data
         setTimeout(() => {
           const editor = window.CKEDITOR && window.CKEDITOR.instances['questionEditor'];
@@ -2501,7 +2506,7 @@ const initEditor = useCallback(() => {
         console.error('Error in handleFinalizeQuestions:', e);
       }
     }, 50);
-    
+
     showToast('Question paper finalized with inserted questions.', 'success');
   };
 
@@ -2525,7 +2530,7 @@ const initEditor = useCallback(() => {
         const table = tables.getItem(i);
         const tableText = table.getText();
         const rows = table.find('tr');
-        
+
         if (/Part\s+[A-Z]/i.test(tableText) && /Marks/i.test(tableText)) {
           // Handle both "×" and "x" and tolerate extra whitespace.
           const m = tableText.match(/(\d+)\s*[×x]\s*(\d+)\s*=\s*(\d+)/i);
@@ -2543,7 +2548,7 @@ const initEditor = useCallback(() => {
         if (!firstRow) continue;
         const headers = firstRow.find('th');
         let coIndex = -1, marksIndex = -1;
-        
+
         for (let j = 0; j < headers.count(); j++) {
           const hText = headers.getItem(j).getText().trim();
           if (hText === 'CO') coIndex = j;
@@ -2763,7 +2768,7 @@ const initEditor = useCallback(() => {
     const parser = new DOMParser();
     const contentDoc = parser.parseFromString(content, 'text/html');
     const tables = contentDoc.querySelectorAll('table');
-    
+
     const invalidEntries = [];
 
     tables.forEach(table => {
@@ -3055,13 +3060,13 @@ const initEditor = useCallback(() => {
 
   const handleForwardPaper = async () => {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
-        showToast("Please fill in all required fields before forwarding.", "error");
-        return;
+      showToast("Please fill in all required fields before forwarding.", "error");
+      return;
     }
 
     if (!currentUserSignatureUrl) {
-        showToast("Please upload your digital signature in your profile before forwarding.", "error");
-        return;
+      showToast("Please upload your digital signature in your profile before forwarding.", "error");
+      return;
     }
 
     // 1. Construct qpData with actual current questions to ensure HTML is complete for extraction
@@ -3107,22 +3112,22 @@ const initEditor = useCallback(() => {
     }
 
     const qpDataForForward = {
-        programme: program,
-        department,
-        batch,
-        academic_year: academicYear,
-        semester: String(semesterNum || ''),
-        subject,
-        subject_name: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
-        qpaper_name: exam, // Keep ID as the pointer
-        exam_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || (loadedExamName || exam)),
-        total_marks: overallTotal,
-        exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
-        assessment_type: assessmentType,
-        parts: finalizedParts,
-        assignment_config: (isAssignmentOrProject || assessmentType === 'Indirect') ? assignmentConfig : [],
-        assignment_kl: '',
-        assignment_kl_domain: ''
+      programme: program,
+      department,
+      batch,
+      academic_year: academicYear,
+      semester: String(semesterNum || ''),
+      subject,
+      subject_name: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
+      qpaper_name: exam, // Keep ID as the pointer
+      exam_name: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || (loadedExamName || exam)),
+      total_marks: overallTotal,
+      exam_date: ciaConfigs.find(c => c.id === exam)?.examDate || new Date().toISOString(),
+      assessment_type: assessmentType,
+      parts: finalizedParts,
+      assignment_config: (isAssignmentOrProject || assessmentType === 'Indirect') ? assignmentConfig : [],
+      assignment_kl: '',
+      assignment_kl_domain: ''
     };
 
     const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, currentUserSignatureUrl);
@@ -3130,49 +3135,49 @@ const initEditor = useCallback(() => {
     // 2. Find HOD for the selected department
     let hodUid = null;
     try {
-        const usersRef = collection(db, 'users'); // Firestore collection reference
-        const usersSnapshot = await getDocs(usersRef); // Use getDocs for collection
-        if (!usersSnapshot.empty) {
-            const allUsers = {}; usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); }); // Convert QuerySnapshot to object
-            const hods = Object.values(allUsers).filter(
-                user => user.role === 'HOD' && user.department === department && user.isApproved
-            );
-            if (hods.length > 0) {
-                hodUid = hods[0].uid; // Assuming one HOD per department or picking the first
-            }
+      const usersRef = collection(db, 'users'); // Firestore collection reference
+      const usersSnapshot = await getDocs(usersRef); // Use getDocs for collection
+      if (!usersSnapshot.empty) {
+        const allUsers = {}; usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); }); // Convert QuerySnapshot to object
+        const hods = Object.values(allUsers).filter(
+          user => user.role === 'HOD' && user.department === department && user.isApproved
+        );
+        if (hods.length > 0) {
+          hodUid = hods[0].uid; // Assuming one HOD per department or picking the first
         }
+      }
     } catch (error) {
-        console.error("Error finding HOD:", error);
-        showToast("Failed to find HOD for the department.", "error");
-        return;
+      console.error("Error finding HOD:", error);
+      showToast("Failed to find HOD for the department.", "error");
+      return;
     }
 
     if (!hodUid) {
-        showToast(`No HOD found for department ${department}. Cannot forward.`, "error");
-        return;
+      showToast(`No HOD found for department ${department}. Cannot forward.`, "error");
+      return;
     }
 
     // 3. Update the editor with the content including signature before saving
     if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
-        window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
-            // 4. Save the paper with 'forwarded' status
-            const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', hodUid) : await handleSaveQuestionPaper(true, 'forwarded', hodUid);
-            if (isSaved) {
-                showToast("Question paper forwarded to HOD successfully!", "success");
-            } else {
-                showToast("Failed to forward question paper.", "error");
-            }
-        });
+      window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
+        // 4. Save the paper with 'forwarded' status
+        const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', hodUid) : await handleSaveQuestionPaper(true, 'forwarded', hodUid);
+        if (isSaved) {
+          showToast("Question paper forwarded to HOD successfully!", "success");
+        } else {
+          showToast("Failed to forward question paper.", "error");
+        }
+      });
     } else {
-        showToast("Editor not ready. Please finalize the paper first.", "error");
+      showToast("Editor not ready. Please finalize the paper first.", "error");
     }
-};
+  };
 
   const downloadQuestionPaperDocx = async () => { // Kept for now, but will be removed from UI
     try {
       // Ensure the editor content is up-to-date with any active changes
       refreshOutcomesSummary(true);
-      
+
       let content = '';
       if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
         content = window.CKEDITOR.instances.questionEditor.getData();
@@ -3294,55 +3299,55 @@ const initEditor = useCallback(() => {
   };
 
   const handleGenerateAI = async () => {
-  // Marks sanity-check BEFORE calling AI
-  if (assessmentType === 'Exam' && exam && exam !== 'custom') {
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
-    if (selectedConfig) {
-      const currentTotal = getCurrentStructureTotalMarks();
-      if (alertIfMarksMismatchWithConfig(selectedConfig, currentTotal)) {
+    // Marks sanity-check BEFORE calling AI
+    if (assessmentType === 'Exam' && exam && exam !== 'custom') {
+      const selectedConfig = ciaConfigs.find(c => c.id === exam);
+      if (selectedConfig) {
+        const currentTotal = getCurrentStructureTotalMarks();
+        if (alertIfMarksMismatchWithConfig(selectedConfig, currentTotal)) {
+          return;
+        }
+      }
+    }
+
+    if (!aiSyllabus.trim()) {
+      if (!subjectCourseDetails || !Array.isArray(subjectCourseDetails.co) || subjectCourseDetails.co.length === 0) {
+        showToast("No syllabus content found for the selected subject. Please ensure COs are defined in the Course Bank.", "error");
         return;
       }
     }
-  }
 
-  if (!aiSyllabus.trim()) {
-    if (!subjectCourseDetails || !Array.isArray(subjectCourseDetails.co) || subjectCourseDetails.co.length === 0) {
-      showToast("No syllabus content found for the selected subject. Please ensure COs are defined in the Course Bank.", "error");
-      return;
+    let syllabusContentForAI = "No specific syllabus content provided in the course node.";
+    if (subjectCourseDetails && Array.isArray(subjectCourseDetails.co)) {
+      syllabusContentForAI = subjectCourseDetails.co.map(co => {
+        let coText = `CO ${co.id}: ${co.description}`;
+        if (co.content) coText += `\n  Content: ${co.content}`;
+        if (co.domain) coText += `\n  Domain: ${co.domain}`;
+        if (co.level) coText += `\n  Level: ${co.level}`;
+        return coText;
+      }).join('\n\n');
     }
-  }
 
-  let syllabusContentForAI = "No specific syllabus content provided in the course node.";
-  if (subjectCourseDetails && Array.isArray(subjectCourseDetails.co)) {
-    syllabusContentForAI = subjectCourseDetails.co.map(co => {
-      let coText = `CO ${co.id}: ${co.description}`;
-      if (co.content) coText += `\n  Content: ${co.content}`;
-      if (co.domain) coText += `\n  Domain: ${co.domain}`;
-      if (co.level) coText += `\n  Level: ${co.level}`;
-      return coText;
-    }).join('\n\n');
-  }
-  
-  setIsGeneratingAI(true);
-  try {
-    const mappingContext = {};
-    courseOutcomes.forEach(co => {
-      mappingContext[co.code] = {
-        description: co.description,
-        pis: coPiMapping[co.code] || []
-      };
-    });
+    setIsGeneratingAI(true);
+    try {
+      const mappingContext = {};
+      courseOutcomes.forEach(co => {
+        mappingContext[co.code] = {
+          description: co.description,
+          pis: coPiMapping[co.code] || []
+        };
+      });
 
-    const { GoogleGenAI, Type } = await import('@google/genai');
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    
-    if (!apiKey) {
-      throw new Error("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file and restart the server.");
-    }
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // ✅ FIXED: Properly formatted prompt as a single string
-    const prompt = `You are an expert Question Paper Setter for an engineering college.
+      const { GoogleGenAI, Type } = await import('@google/genai');
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+      if (!apiKey) {
+        throw new Error("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file and restart the server.");
+      }
+      const ai = new GoogleGenAI({ apiKey });
+
+      // ✅ FIXED: Properly formatted prompt as a single string
+      const prompt = `You are an expert Question Paper Setter for an engineering college.
 Based on the following syllabus/topics, generate a high-quality assessment paper.
 
 DETAILED COURSE OUTCOMES & SYLLABUS CONTENT:
@@ -3366,143 +3371,143 @@ INSTRUCTIONS:
 ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requested to generate diagrams (graphs, circuits, architecture, meshes, mechanical parts) for SOME of the questions if the syllabus topic implies it. For these questions, you MUST generate a valid HTML5 inline <svg> element to represent the diagram. Append or prepend the raw <svg>...</svg> code directly inside the "question" string, together with the question text. Use responsive widths (e.g. width="300" height="200") and clear styling inside the SVG. Remember to escape quotes properly for JSON output! Do NOT skip this step; we need at least a few diagrams when applicable.` : `6. Do NOT include any images, SVG, or HTML diagrams. Output plain text questions only.`}
 `;
 
-    // ✅ FIXED: Changed model to working Gemini model
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',  // Changed from 'gemini-pro'
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            parts: {
-              type: Type.ARRAY,
-              description: "Array of parts for the exam paper",
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  partLetter: { type: Type.STRING },
-                  questions: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        qnoText: { type: Type.STRING, description: "E.g., '1' or '11(a)'" },
-                        eitherOrSub: { type: Type.STRING, description: "Empty string, or 'a' or 'b'" },
-                        question: { type: Type.STRING },
-                        kl: { type: Type.STRING },
-                        co: { type: Type.STRING },
-                        pi: { type: Type.STRING },
-                        marks: { type: Type.NUMBER }
-                      },
-                      required: ["qnoText", "question", "kl", "co", "pi", "marks"]
+      // ✅ FIXED: Changed model to working Gemini model
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',  // Changed from 'gemini-pro'
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              parts: {
+                type: Type.ARRAY,
+                description: "Array of parts for the exam paper",
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    partLetter: { type: Type.STRING },
+                    questions: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          qnoText: { type: Type.STRING, description: "E.g., '1' or '11(a)'" },
+                          eitherOrSub: { type: Type.STRING, description: "Empty string, or 'a' or 'b'" },
+                          question: { type: Type.STRING },
+                          kl: { type: Type.STRING },
+                          co: { type: Type.STRING },
+                          pi: { type: Type.STRING },
+                          marks: { type: Type.NUMBER }
+                        },
+                        required: ["qnoText", "question", "kl", "co", "pi", "marks"]
+                      }
                     }
-                  }
-                },
-                required: ["partLetter", "questions"]
+                  },
+                  required: ["partLetter", "questions"]
+                }
               }
-            }
-          },
-          required: ["parts"]
-        }
-      }
-    });
-    
-    const responseData = response.text;
-    if (!responseData) throw new Error("Empty response from AI");
-    const data = JSON.parse(responseData);
-    
-    let overallTotal = 0;
-    let finalizedParts = [];
-    
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
-    const semesterNum = deriveSemesterNumber(selectedSemester);
-    const subjectObj = subjects.find(s => s.value === subject);
-    const subjectDisplay = subjectObj ? subjectObj.text : subject;
-    const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
-    
-    const qpData = {
-      programme: program,
-      department: department,
-      batch: batch,
-      academic_year: academicYear,
-      semester: String(semesterNum || ''),
-      subject: subject,
-      subject_name: subjectDisplay.split(' - ')[1] || '',
-      qpaper_name: exam === 'custom' ? examDisplay : exam,
-      total_marks: overallTotal,
-      exam_date: selectedConfig ? selectedConfig.examDate : new Date().toISOString(),
-      assessment_type: assessmentType,
-      parts: [],
-      assignment_config: []
-    };
-    
-    if (assessmentType === 'Exam') {
-      let questionCounter = 1;
-      const newQpQuestions = [];
-      data.parts.forEach((p, index) => {
-        const originalPart = partsConfig[index];
-        if (!originalPart) return;
-        
-        let aiQuestionIdx = 0;
-        for (let i = 0; i < originalPart.numQuestions; i++) {
-          if (originalPart.isEitherOr) {
-            const qa = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
-            const qb = p.questions[aiQuestionIdx + 1] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
-            newQpQuestions.push({
-              qno: `${questionCounter}(a)`,
-              sub: 'a',
-              either_or: true,
-              marks: originalPart.marksPerQuestion,
-              question: qa.question,
-              co: qa.co || "CO1",
-              kl: qa.kl || "L1",
-              pi: qa.pi || (coPiMapping[qa.co]?.[0] || "")
-            });
-            newQpQuestions.push({
-              qno: `${questionCounter}(b)`,
-              sub: 'b',
-              either_or: true,
-              marks: originalPart.marksPerQuestion,
-              question: qb.question,
-              co: qb.co || "CO1",
-              kl: qb.kl || "L1",
-              pi: qb.pi || (coPiMapping[qb.co]?.[0] || "")
-            });
-            aiQuestionIdx += 2;
-          } else {
-            const q = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L1", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
-            newQpQuestions.push({
-              qno: `${questionCounter}`,
-              sub: '',
-              either_or: false,
-              marks: originalPart.marksPerQuestion,
-              question: q.question,
-              co: q.co || "CO1",
-              kl: q.kl || "L1",
-              pi: q.pi || (coPiMapping[q.co]?.[0] || "")
-            });
-            aiQuestionIdx += 1;
+            },
+            required: ["parts"]
           }
-          questionCounter++;
         }
       });
-      setQpQuestions(newQpQuestions);
-      showToast("Questions generated by AI! Review and click 'Finalize Question Paper' to see the full preview.", "success");
+
+      const responseData = response.text;
+      if (!responseData) throw new Error("Empty response from AI");
+      const data = JSON.parse(responseData);
+
+      let overallTotal = 0;
+      let finalizedParts = [];
+
+      const selectedConfig = ciaConfigs.find(c => c.id === exam);
+      const semesterNum = deriveSemesterNumber(selectedSemester);
+      const subjectObj = subjects.find(s => s.value === subject);
+      const subjectDisplay = subjectObj ? subjectObj.text : subject;
+      const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam);
+
+      const qpData = {
+        programme: program,
+        department: department,
+        batch: batch,
+        academic_year: academicYear,
+        semester: String(semesterNum || ''),
+        subject: subject,
+        subject_name: subjectDisplay.split(' - ')[1] || '',
+        qpaper_name: exam === 'custom' ? examDisplay : exam,
+        total_marks: overallTotal,
+        exam_date: selectedConfig ? selectedConfig.examDate : new Date().toISOString(),
+        assessment_type: assessmentType,
+        parts: [],
+        assignment_config: []
+      };
+
+      if (assessmentType === 'Exam') {
+        let questionCounter = 1;
+        const newQpQuestions = [];
+        data.parts.forEach((p, index) => {
+          const originalPart = partsConfig[index];
+          if (!originalPart) return;
+
+          let aiQuestionIdx = 0;
+          for (let i = 0; i < originalPart.numQuestions; i++) {
+            if (originalPart.isEitherOr) {
+              const qa = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+              const qb = p.questions[aiQuestionIdx + 1] || { question: "AI missed this question", kl: "L4", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+              newQpQuestions.push({
+                qno: `${questionCounter}(a)`,
+                sub: 'a',
+                either_or: true,
+                marks: originalPart.marksPerQuestion,
+                question: qa.question,
+                co: qa.co || "CO1",
+                kl: qa.kl || "L1",
+                pi: qa.pi || (coPiMapping[qa.co]?.[0] || "")
+              });
+              newQpQuestions.push({
+                qno: `${questionCounter}(b)`,
+                sub: 'b',
+                either_or: true,
+                marks: originalPart.marksPerQuestion,
+                question: qb.question,
+                co: qb.co || "CO1",
+                kl: qb.kl || "L1",
+                pi: qb.pi || (coPiMapping[qb.co]?.[0] || "")
+              });
+              aiQuestionIdx += 2;
+            } else {
+              const q = p.questions[aiQuestionIdx] || { question: "AI missed this question", kl: "L1", co: "CO1", pi: "", marks: originalPart.marksPerQuestion };
+              newQpQuestions.push({
+                qno: `${questionCounter}`,
+                sub: '',
+                either_or: false,
+                marks: originalPart.marksPerQuestion,
+                question: q.question,
+                co: q.co || "CO1",
+                kl: q.kl || "L1",
+                pi: q.pi || (coPiMapping[q.co]?.[0] || "")
+              });
+              aiQuestionIdx += 1;
+            }
+            questionCounter++;
+          }
+        });
+        setQpQuestions(newQpQuestions);
+        showToast("Questions generated by AI! Review and click 'Finalize Question Paper' to see the full preview.", "success");
+      }
+
+      setShowAIModal(false);
+    } catch (err) {
+      console.error(err);
+      if (err && err.status === 429) {
+        showToast("API Quota Exceeded. Please check API usage.", "error");
+      } else {
+        showToast(err.message || "Failed to generate questions", "error");
+      }
+    } finally {
+      setIsGeneratingAI(false);
     }
-    
-    setShowAIModal(false);
-  } catch (err) {
-    console.error(err);
-    if (err && err.status === 429) {
-      showToast("API Quota Exceeded. Please check API usage.", "error");
-    } else {
-      showToast(err.message || "Failed to generate questions", "error");
-    }
-  } finally {
-    setIsGeneratingAI(false);
-  }
-};
+  };
 
   return (
     <Layout title="Question Paper Generator">
@@ -3626,337 +3631,627 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
       <div className="question-paper-page container mx-auto p-6 max-w-7xl">
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Assessment Type</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={assessmentType} 
-                onChange={e => { setAssessmentType(e.target.value); setShowParts(false); setQbAvailableQNos([]); }}
-              >
-                <option value="Exam">Exam</option>
-                <option value="Assignment">Activity</option>
-                <option value="Project">Project</option>
-                <option value="Practical">Practical</option>
-                <option value="Indirect">Indirect Assessment</option>
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Assessment Type</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  value={assessmentType}
+                  onChange={e => { setAssessmentType(e.target.value); setShowParts(false); setQbAvailableQNos([]); }}
+                >
+                  <option value="Exam">Exam</option>
+                  <option value="Assignment">Activity</option>
+                  <option value="Project">Project</option>
+                  <option value="Practical">Practical</option>
+                  <option value="Indirect">Indirect Assessment</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Program</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  value={program}
+                  onChange={e => { setProgram(e.target.value); setDepartment(''); setSection(''); setQbAvailableQNos([]); }}
+                >
+                  <option value="">Select Program</option>
+                  {filteredProgrammes.map(progKey => (
+                    <option key={progKey} value={progKey}>{formatProgDisplay(progKey)}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                  value={department}
+                  onChange={e => { setDepartment(e.target.value); setSection(''); }}
+                  disabled={!filteredDepartments.length}
+                >
+                  <option value="">Select Department</option>
+                  {filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Batch</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                  value={batch}
+                  onChange={e => { setBatch(e.target.value); setSection(''); }}
+                  disabled={!displayedBatches.length}
+                >
+                  <option value="">Select Batch</option>
+                  {displayedBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Academic Year</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                  value={academicYear}
+                  onChange={e => setAcademicYear(e.target.value)}
+                  disabled={!academicYears.length}
+                >
+                  <option value="">Select Year</option>
+                  {academicYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
             </div>
           </div>
 
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Program</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={program} 
-                onChange={e => { setProgram(e.target.value); setDepartment(''); setSection(''); setQbAvailableQNos([]); }}
-              >
-                <option value="">Select Program</option>
-                {filteredProgrammes.map(progKey => (
-                  <option key={progKey} value={progKey}>{formatProgDisplay(progKey)}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                  value={selectedSemester}
+                  onChange={e => setSelectedSemester(e.target.value)}
+                  disabled={!semesters.length}
+                >
+                  <option value="">Select Semester</option>
+                  {semesters.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                  value={section}
+                  onChange={e => setSection(e.target.value)}
+                  disabled={!department || !batch || availableSections.length === 0}
+                >
+                  <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
+                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  value={subject}
+                  onChange={e => setSubject(e.target.value)}
+                >
+                  <option value="">Select Subject</option>
+                  {subjects.map((s, i) => (
+                    <option key={i} value={s.value}>
+                      {s.text}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Exam</label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  value={exam}
+                  onChange={e => setExam(e.target.value)}
+                >
+                  <option value="">Select Exam</option>
+                  {filteredExams.map((e, i) => (
+                    <option key={i} value={e.id}>
+                      {e.examName}
+                    </option>
+                  ))}
+                  <option value="custom">Custom</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+              {exam === 'custom' && (
+                <input
+                  type="text"
+                  className="w-full mt-2 bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  placeholder="Enter custom name"
+                  value={customExam}
+                  onChange={e => setCustomExam(e.target.value)}
+                />
+              )}
+            </div>
+
+            {exam && exam !== 'custom' && ciaConfigs.find(c => c.id === exam)?.numSets > 1 && (
+              <div className="space-y-2.5">
+                <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Choose Question Paper Set</label>
+                <div className="relative">
+                  <select
+                    className="w-full appearance-none bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-black text-blue-700"
+                    value={qpSet}
+                    onChange={e => setQpSet(e.target.value)}
+                  >
+                    {Array.from({ length: ciaConfigs.find(c => c.id === exam).numSets }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Indirect' ? 'Number of COs' : isAssignmentOrProject ? 'Questions' : 'Parts'}</label>
+              <div className="relative">
+                {assessmentType === 'Indirect' || isAssignmentOrProject ? (
+                  <input
+                    type="number"
+                    min="1"
+                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                    value={assessmentType === 'Indirect' ? assignmentQuestionCount : assignmentQuestionCount}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                      if (assessmentType === 'Indirect') {
+                        setAssignmentQuestionCount(val);
+                      } else {
+                        setAssignmentQuestionCount(val);
+                      }
+                    }}
+                    placeholder={assessmentType === 'Indirect' ? "Enter number of COs (default 5)" : "Enter number of questions"}
+                  />
+                ) : (
+                  <>
+                    <select
+                      className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      value={numParts}
+                      onChange={e => setNumParts(e.target.value)}
+                    >
+                      <option value="">Select</option>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
-                value={department} 
-                onChange={e => { setDepartment(e.target.value); setSection(''); }} 
-                disabled={!filteredDepartments.length}
-              >
-                <option value="">Select Department</option>
-                {filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Batch</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
-                value={batch} 
-                onChange={e => { setBatch(e.target.value); setSection(''); }} 
-                disabled={!displayedBatches.length}
-              >
-                <option value="">Select Batch</option>
-                {displayedBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Academic Year</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
-                value={academicYear} 
-                onChange={e => setAcademicYear(e.target.value)} 
-                disabled={!academicYears.length}
-              >
-                <option value="">Select Year</option>
-                {academicYears.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
+          <div className="flex justify-center">
+            <button
+              onClick={() => {
+                if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
+                  showToast("Please fill in all required fields.", "error");
+                  return;
+                }
+                // ✅ CRITICAL: Clean up old CKEditor instances before generating new layout
+                if (window.CKEDITOR && window.CKEDITOR.instances) {
+                  try {
+                    if (window.CKEDITOR.instances.questionEditor) {
+                      window.CKEDITOR.instances.questionEditor.destroy(true);
+                      delete window.CKEDITOR.instances.questionEditor;
+                    }
+                  } catch (e) {
+                    console.warn("Error cleaning up CKEditor before generating layout:", e);
+                  }
+                }
+                setShowFinalPreview(false);
+                handleGenerateParts();
+              }}
+              className="group relative inline-flex items-center justify-center px-8 py-3 font-bold text-white transition-all duration-200 bg-[#120c7a] font-pj rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#120c7a] hover:bg-[#1a1494] shadow-lg shadow-blue-900/20"
+            >
+              Generate Layout
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
-                value={selectedSemester} 
-                onChange={e => setSelectedSemester(e.target.value)} 
-                disabled={!semesters.length}
-              >
-                <option value="">Select Semester</option>
-                {semesters.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
-          </div>
+        {showParts && assessmentType === 'Exam' && (
+          <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
+            <h3 className="text-xl font-bold text-[#120c7a] mb-6 flex items-center gap-2">
+              <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
+              Parts Configuration
+            </h3>
+            <div className="space-y-4">
+              {partsConfig.map((part, index) => (
+                <div key={index} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 flex flex-wrap gap-6 items-center">
+                  <h4 className="font-bold text-slate-700 text-lg w-full md:w-auto min-w-[100px]">Part {String.fromCharCode(64 + index + 1)}</h4>
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Questions</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      className="w-24 bg-white border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      value={part.numQuestions === '' ? '' : part.numQuestions}
+                      onChange={e => handlePartChange(index, 'numQuestions', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    />
+                  </div>
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Marks Each</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className="w-24 bg-white border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      value={part.marksPerQuestion === '' ? '' : part.marksPerQuestion}
+                      onChange={e => handlePartChange(index, 'marksPerQuestion', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    />
+                  </div>
+                  <div className="space-y-2.5">
+                    <div className="h-4 hidden md:block"></div> {/* Spacer to align with input labels */}
+                    <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-200 mt-0">
+                      <input
+                        type="checkbox"
+                        id={`eitherOr-${index}`}
+                        className="w-5 h-5 cursor-pointer text-[#120c7a] rounded border-slate-300 focus:ring-[#120c7a]"
+                        checked={part.isEitherOr}
+                        onChange={e => handlePartChange(index, 'isEitherOr', e.target.checked)}
+                      />
+                      <label htmlFor={`eitherOr-${index}`} className="text-sm font-semibold text-slate-600 cursor-pointer select-none">Either/Or Choice</label>
+                    </div>
+                  </div>
+                </div>
 
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50" 
-                value={section} 
-                onChange={e => setSection(e.target.value)} 
-                disabled={!department || !batch || availableSections.length === 0}
-              >
-                <option value="">{availableSections.length === 0 && department && batch ? "No sections configured" : "Select Section"}</option>
-                {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              ))}
             </div>
-          </div>
-
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={subject} 
-                onChange={e => setSubject(e.target.value)}
+            <div className="flex flex-wrap justify-center gap-4 mt-8">
+              <button
+                onClick={handleGenerateTable}
+                className="px-8 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-all shadow-lg shadow-green-900/20 flex items-center gap-2"
               >
-                <option value="">Select Subject</option>
-                {subjects.map((s, i) => (
-                  <option key={i} value={s.value}>
-                    {s.text}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Exam</label>
-            <div className="relative">
-              <select 
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                value={exam} 
-                onChange={e => setExam(e.target.value)}
-              >
-                <option value="">Select Exam</option>
-                {filteredExams.map((e, i) => (
-                  <option key={i} value={e.id}>
-                    {e.examName}
-                  </option>
-                ))}
-                <option value="custom">Custom</option>
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-            </div>
-            {exam === 'custom' && (
-              <input
-                type="text"
-                className="w-full mt-2 bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                placeholder="Enter custom name"
-                value={customExam}
-                onChange={e => setCustomExam(e.target.value)}
-              />
-            )}
-          </div>
-
-          {exam && exam !== 'custom' && ciaConfigs.find(c => c.id === exam)?.numSets > 1 && (
-            <div className="space-y-2.5">
-              <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Choose Question Paper Set</label>
-              <div className="relative">
-                <select 
-                  className="w-full appearance-none bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-black text-blue-700" 
-                  value={qpSet} 
-                  onChange={e => setQpSet(e.target.value)}
+                <CheckCircle2 size={20} />
+                Generate Table
+              </button>
+              {assessmentType !== 'Indirect' && (
+                <button
+                  onClick={handleOpenAIModal}
+                  className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
                 >
-                  {Array.from({ length: ciaConfigs.find(c => c.id === exam).numSets }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2.5">
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">{assessmentType === 'Indirect' ? 'Number of COs' : isAssignmentOrProject ? 'Questions' : 'Parts'}</label>
-            <div className="relative">
-              {assessmentType === 'Indirect' || isAssignmentOrProject ? (
-                <input
-                  type="number"
-                  min="1"
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                  value={assessmentType === 'Indirect' ? assignmentQuestionCount : assignmentQuestionCount}
-                  onChange={e => {
-                    const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                    if (assessmentType === 'Indirect') {
-                      setAssignmentQuestionCount(val);
-                    } else {
-                      setAssignmentQuestionCount(val);
-                    }
-                  }}
-                  placeholder={assessmentType === 'Indirect' ? "Enter number of COs (default 5)" : "Enter number of questions"}
-                />
-              ) : (
-                <>
-                  <select 
-                    className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium" 
-                    value={numParts} 
-                    onChange={e => setNumParts(e.target.value)}
-                  >
-                    <option value="">Select</option>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                </>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  Generate with AI
+                </button>
               )}
             </div>
           </div>
-        </div>
+        )}
 
-        <div className="flex justify-center">
-          <button
-            onClick={() => {
-              if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
-                showToast("Please fill in all required fields.", "error");
-                return;
-              }
-              // ✅ CRITICAL: Clean up old CKEditor instances before generating new layout
-              if (window.CKEDITOR && window.CKEDITOR.instances) {
-                try {
-                  if (window.CKEDITOR.instances.questionEditor) {
-                    window.CKEDITOR.instances.questionEditor.destroy(true);
-                    delete window.CKEDITOR.instances.questionEditor;
-                  }
-                } catch (e) {
-                  console.warn("Error cleaning up CKEditor before generating layout:", e);
-                }
-              }
-              setShowFinalPreview(false);
-              handleGenerateParts();
-            }}
-            className="group relative inline-flex items-center justify-center px-8 py-3 font-bold text-white transition-all duration-200 bg-[#120c7a] font-pj rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#120c7a] hover:bg-[#1a1494] shadow-lg shadow-blue-900/20"
-          >
-            Generate Layout
-          </button>
-        </div>
-      </div>
-
-      {showParts && assessmentType === 'Exam' && (
-        <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
-          <h3 className="text-xl font-bold text-[#120c7a] mb-6 flex items-center gap-2">
-            <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
-            Parts Configuration
-          </h3>
-          <div className="space-y-4">
-            {partsConfig.map((part, index) => (
-              <div key={index} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 flex flex-wrap gap-6 items-center">
-                <h4 className="font-bold text-slate-700 text-lg w-full md:w-auto min-w-[100px]">Part {String.fromCharCode(64 + index + 1)}</h4>
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Questions</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    className="w-24 bg-white border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    value={part.numQuestions === '' ? '' : part.numQuestions}
-                    onChange={e => handlePartChange(index, 'numQuestions', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                  />
-                </div>
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Marks Each</label>
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-24 bg-white border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    value={part.marksPerQuestion === '' ? '' : part.marksPerQuestion}
-                    onChange={e => handlePartChange(index, 'marksPerQuestion', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                  />
-                </div>
-                <div className="space-y-2.5">
-                  <div className="h-4 hidden md:block"></div> {/* Spacer to align with input labels */}
-                  <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-200 mt-0">
-                    <input
-                      type="checkbox"
-                      id={`eitherOr-${index}`}
-                      className="w-5 h-5 cursor-pointer text-[#120c7a] rounded border-slate-300 focus:ring-[#120c7a]"
-                      checked={part.isEitherOr}
-                      onChange={e => handlePartChange(index, 'isEitherOr', e.target.checked)}
-                    />
-                    <label htmlFor={`eitherOr-${index}`} className="text-sm font-semibold text-slate-600 cursor-pointer select-none">Either/Or Choice</label>
-                  </div>
-                </div>
+        {showParts && (isAssignmentOrProject || assessmentType === 'Indirect') && assignmentConfig.length > 0 && (
+          <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-[#120c7a] flex items-center gap-2">
+                <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
+                {assessmentType === 'Indirect' ? 'CO Descriptions' : `Assignment Questions (${assignmentConfig.length})`}
+              </h3>
+              <div className="flex gap-4 items-start">
+                {assessmentType !== 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Each question has its own Domain &amp; KL below</span>}
+                {assessmentType === 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Describe each CO for student rating (3-star scale)</span>}
               </div>
-              
-            ))}
-          </div>
-          <div className="flex flex-wrap justify-center gap-4 mt-8">
-            <button
-              onClick={handleGenerateTable}
-              className="px-8 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-all shadow-lg shadow-green-900/20 flex items-center gap-2"
-            >
-              <CheckCircle2 size={20} />
-              Generate Table
-            </button>
-            {assessmentType !== 'Indirect' && (
-              <button
-                onClick={handleOpenAIModal}
-                className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 transition-all shadow-lg shadow-purple-900/20 flex items-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                Generate with AI
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+            </div>
 
-      {showParts && (isAssignmentOrProject || assessmentType === 'Indirect') && assignmentConfig.length > 0 && (
-        <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-bold text-[#120c7a] flex items-center gap-2">
-              <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
-              {assessmentType === 'Indirect' ? 'CO Descriptions' : `Assignment Questions (${assignmentConfig.length})`}
-            </h3>
-            <div className="flex gap-4 items-start">
-              {assessmentType !== 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Each question has its own Domain &amp; KL below</span>}
-              {assessmentType === 'Indirect' && <span className="text-xs text-slate-400 font-medium mt-2">Describe each CO for student rating (3-star scale)</span>}
+            <div className="space-y-6">
+              {sortedPoCodes && sortedPoCodes.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                  <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
+                    <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO</h3>
+                  </div>
+                  <div className="p-2 overflow-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr>
+                          {displayedPoSummary.map((r) => (
+                            <th key={r.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">
+                              {r.displayCode}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          {displayedPoSummary.map((r) => (
+                            <td key={r.poCode} className="px-3 py-2 text-center">
+                              {r.marks === 0 ? (
+                                <span className="inline-flex items-center px-2 py-1 bg-red-50 text-red-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {presentPoSummary && presentPoSummary.length > 0 && (
+                    <div className="p-2 border-t border-slate-100">
+                      <div className="text-sm font-semibold text-slate-600 mb-2">POs present in current question paper (Active Changes)</div>
+                      <div className="overflow-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr>
+                              {presentPoSummary.map(p => (
+                                <th key={p.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">{p.displayCode}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              {presentPoSummary.map(p => (
+                                <td key={p.poCode} className="px-3 py-2 text-center">
+                                  <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{p.marks}</span>
+                                </td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {assignmentConfig.map((q, qIdx) => {
+                if (assessmentType === 'Indirect') {
+                  return (
+                    <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <h4 className="font-bold text-slate-700 text-lg">CO{qIdx + 1}</h4>
+                        <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
+                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Rating Scale:</span>
+                          <span className="text-sm font-bold text-[#120c7a]">1 - 3 Stars</span>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">CO Description / Question for Students</label>
+                        <textarea
+                          value={q.question}
+                          onChange={e => {
+                            const updated = [...assignmentConfig];
+                            updated[qIdx] = { ...updated[qIdx], question: e.target.value };
+                            setAssignmentConfig(updated);
+                          }}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium min-h-[100px]"
+                          placeholder={`Describe what CO${qIdx + 1} measures and what students should rate themselves on...`}
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+                const qMeta = getAssignmentMarksMeta(qIdx);
+                return (
+                  <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-4">
+                        <h4 className="font-bold text-slate-700 text-lg">Question {qIdx + 1}</h4>
+                        <div className="h-8 w-px bg-slate-200"></div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Domain</label>
+                          <div className="relative">
+                            <select
+                              value={assignmentConfig[qIdx].kldomain || ''}
+                              onChange={e => {
+                                const updated = [...assignmentConfig];
+                                updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
+                                setAssignmentConfig(updated);
+                              }}
+                              className="w-36 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
+                            >
+                              <option value="">Select domain</option>
+                              {Object.keys(bloomsDomains || {}).map(key => (
+                                <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KL</label>
+                          <div className="relative">
+                            <select
+                              value={assignmentConfig[qIdx].kl || ''}
+                              onChange={e => {
+                                const updated = [...assignmentConfig];
+                                updated[qIdx] = { ...updated[qIdx], kl: e.target.value };
+                                setAssignmentConfig(updated);
+                              }}
+                              className="w-28 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
+                              disabled={!assignmentConfig[qIdx].kldomain}
+                            >
+                              {(() => {
+                                const domainKey = assignmentConfig[qIdx].kldomain;
+                                const domain = domainKey ? bloomsDomains[domainKey] : null;
+                                if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
+                                  return (
+                                    <>
+                                      <option value="">Select KL</option>
+                                      {domain.levels.map((lvl, i) => (
+                                        <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
+                                      ))}
+                                    </>
+                                  );
+                                }
+                                return ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'].map(l => <option key={l} value={l}>{l}</option>);
+                              })()}
+                            </select>
+                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Marks:</span>
+                        <input
+                          type="number" min="1"
+                          value={assignmentConfig[qIdx].marks}
+                          onChange={e => {
+                            const updated = [...assignmentConfig];
+                            updated[qIdx] = { ...updated[qIdx], marks: parseInt(e.target.value, 10) || 0 };
+                            setAssignmentConfig(updated);
+                          }}
+                          className="w-20 text-center font-bold text-[#120c7a] bg-transparent border border-slate-200 rounded-lg px-2 py-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Question Content</label>
+                      <div id={`editorWrapper_${qIdx}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm min-h-[150px]"></div>
+                    </div>
+
+                    <div className="space-y-4 pt-4 border-t border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1">
+                          <h5 className="font-bold text-slate-700 text-sm">CO-wise Mark Distribution</h5>
+                          <p className="text-[10px] text-slate-400 font-medium">Split the marks ({assignmentConfig[qIdx].marks}) across mapped COs</p>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          <div className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-2 ${qMeta.balanced ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                            {qMeta.balanced ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                            <span>Remaining Mark: {qMeta.remaining}</span>
+                          </div>
+
+                          <div className="relative">
+                            <button className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-[#0e0960] transition-all shadow-sm">
+                              <Plus size={14} /> Add CO Mapping
+                            </button>
+                            <select
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              value=""
+                              onChange={e => handleAddCOAssignment(qIdx, e.target.value)}
+                            >
+                              <option value="">Select CO to add</option>
+                              {courseOutcomes.map(co => (
+                                <option key={co.code} value={co.code}>{co.code}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {(assignmentConfig[qIdx].mappings || []).map((mapping, coIdx) => (
+                          <div key={coIdx} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all space-y-4">
+                            <div className="flex justify-between items-center">
+                              <span className="px-3 py-1 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 uppercase">
+                                {mapping.co}
+                              </span>
+                              <button
+                                onClick={() => handleRemoveCOAssignment(qIdx, coIdx)}
+                                className="text-slate-300 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Assigned Marks</label>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={assignmentConfig[qIdx].marks}
+                                  value={mapping.marks === 0 || mapping.marks === '0' || mapping.marks === '' || mapping.marks === null || mapping.marks === undefined ? '' : mapping.marks}
+                                  onChange={(e) => handleMappingMarksChange(qIdx, coIdx, e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-sm text-[#120c7a]"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="relative">
+                                <button className="w-full px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all border border-blue-100">
+                                  <Plus size={12} /> Add PI for {mapping.co}
+                                </button>
+                                <select
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  value=""
+                                  onChange={e => handleAddPIAssignment(qIdx, coIdx, e.target.value)}
+                                >
+                                  <option value="">Select PI</option>
+                                  {coPiMapping[mapping.co]?.map(pi => (
+                                    <option key={pi} value={pi}>{pi}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="flex flex-wrap gap-1.5">
+                                {(mapping.pis || []).map((pi, piIdx) => (
+                                  <span key={piIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold border border-slate-200 group">
+                                    {pi}{mapping.piMarks && mapping.piMarks[piIdx] != null ? ` (${mapping.piMarks[piIdx]})` : ''}
+                                    <button onClick={() => handleRemovePIAssignment(qIdx, coIdx, piIdx)}>
+                                      <XCircle size={10} className="text-slate-300 group-hover:text-red-500 transition-colors" />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {(assignmentConfig[qIdx].mappings || []).length === 0 && (
+                          <div className="md:col-span-2 py-8 text-center border-2 border-dashed border-slate-100 rounded-2xl text-slate-400 text-sm">
+                            No Course Outcomes mapped yet. Select a CO above.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap justify-center gap-4 mt-8">
+              <button
+                onClick={handleFinalizeQuestions}
+                className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
+              >
+                <CheckCircle2 size={20} />
+                Finalize & Preview
+              </button>
+              <button
+                onClick={() => { setShowParts(false); setAssignmentConfig([]); }}
+                className="px-8 py-3 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300 transition-all flex items-center gap-2"
+              >
+                <XCircle size={20} />
+                Cancel
+              </button>
             </div>
           </div>
+        )}
 
-          <div className="space-y-6">
+        {assessmentType === 'Exam' && (
+          <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100 mb-8">
+            {/* PO-CO Mapping Reference */}
             {sortedPoCodes && sortedPoCodes.length > 0 && (
-              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+              <div className="mb-8 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
                 <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
                   <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO</h3>
                 </div>
@@ -3986,8 +4281,9 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                     </tbody>
                   </table>
                 </div>
+                {/* Current Paper PO Summary: show only POs present in active paper (editor) */}
                 {presentPoSummary && presentPoSummary.length > 0 && (
-                  <div className="p-2 border-t border-slate-100">
+                  <div className="mt-4 p-2 border-t border-slate-100">
                     <div className="text-sm font-semibold text-slate-600 mb-2">POs present in current question paper (Active Changes)</div>
                     <div className="overflow-auto">
                       <table className="min-w-full text-sm">
@@ -4013,572 +4309,281 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 )}
               </div>
             )}
+            <h4 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">
+              <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
+              Enter Questions
+            </h4>
 
-            {assignmentConfig.map((q, qIdx) => {
-              if (assessmentType === 'Indirect') {
-                return (
-                  <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
-                    <div className="flex justify-between items-start">
-                      <h4 className="font-bold text-slate-700 text-lg">CO{qIdx + 1}</h4>
-                      <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Rating Scale:</span>
-                        <span className="text-sm font-bold text-[#120c7a]">1 - 3 Stars</span>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">CO Description / Question for Students</label>
-                      <textarea
-                        value={q.question}
+
+            {showQbEditor && (
+              <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 w-full mb-8">
+                <div className="mb-4 bg-white rounded-xl overflow-hidden border border-slate-200">
+                  <textarea id="qbEditor" ref={qbQuestionRef} style={{ width: '100%' }} />
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 mb-8">
+              <form onSubmit={(e) => { e.preventDefault(); handleAddQuestion(); }}>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-6 items-end">
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">QNo</label>
+                    <div className="relative">
+                      <select
+                        value={qbQNo}
                         onChange={e => {
-                          const updated = [...assignmentConfig];
-                          updated[qIdx] = { ...updated[qIdx], question: e.target.value };
-                          setAssignmentConfig(updated);
+                          setQbQNo(e.target.value);
+                          // Reset editor content when manually switching question numbers
+                          try {
+                            const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+                            if (inst && typeof inst.setData === 'function') inst.setData('');
+                          } catch (_err) { /* ignore */ }
                         }}
-                        className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium min-h-[100px]"
-                        placeholder={`Describe what CO${qIdx + 1} measures and what students should rate themselves on...`}
-                      />
+                        className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      >
+                        {qbAvailableQNos && qbAvailableQNos.length > 0 ? (
+                          <>
+                            <option value="">Select</option>
+                            {qbAvailableQNos.map(v => <option key={v} value={v}>{v}</option>)}
+                          </>
+                        ) : (
+                          <option value="">Generate Layout First</option>
+                        )}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                     </div>
                   </div>
-                );
-              }
-              const qMeta = getAssignmentMarksMeta(qIdx);
-              return (
-              <div key={qIdx} className="p-6 rounded-2xl bg-slate-50/50 border border-slate-100 space-y-4">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-4">
-                    <h4 className="font-bold text-slate-700 text-lg">Question {qIdx + 1}</h4>
-                    <div className="h-8 w-px bg-slate-200"></div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Domain</label>
-                      <div className="relative">
-                        <select 
-                          value={assignmentConfig[qIdx].kldomain || ''} 
-                          onChange={e => {
-                            const updated = [...assignmentConfig];
-                            updated[qIdx] = { ...updated[qIdx], kldomain: e.target.value, kl: '' };
-                            setAssignmentConfig(updated);
-                          }} 
-                          className="w-36 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                        >
-                          <option value="">Select domain</option>
-                          {Object.keys(bloomsDomains || {}).map(key => (
-                            <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KL</label>
-                      <div className="relative">
-                        <select 
-                          value={assignmentConfig[qIdx].kl || ''} 
-                          onChange={e => {
-                            const updated = [...assignmentConfig];
-                            updated[qIdx] = { ...updated[qIdx], kl: e.target.value };
-                            setAssignmentConfig(updated);
-                          }} 
-                          className="w-28 appearance-none bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 pr-8 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs"
-                          disabled={!assignmentConfig[qIdx].kldomain}
-                        >
-                          {(() => {
-                            const domainKey = assignmentConfig[qIdx].kldomain;
-                            const domain = domainKey ? bloomsDomains[domainKey] : null;
-                            if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
-                              return (
-                                <>
-                                  <option value="">Select KL</option>
-                                  {domain.levels.map((lvl, i) => (
-                                    <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
-                                  ))}
-                                </>
-                              );
-                            }
-                            return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
-                          })()}
-                        </select>
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
-                      </div>
+
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">CO Mapping</label>
+                    <div className="relative">
+                      <select
+                        value={qbCO}
+                        onChange={e => { const v = e.target.value; setQbCO(v); setQbPI((coPiMapping[v] && coPiMapping[v][0]) || ''); }}
+                        className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      >
+                        <option value="">Select CO</option>
+                        {courseOutcomes && courseOutcomes.map(co => (
+                          <option key={co.code} value={co.code}>{co.code}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Marks:</span>
-                    <input 
-                      type="number" min="1"
-                      value={assignmentConfig[qIdx].marks}
-                      onChange={e => {
-                        const updated = [...assignmentConfig];
-                        updated[qIdx] = { ...updated[qIdx], marks: parseInt(e.target.value, 10) || 0 };
-                        setAssignmentConfig(updated);
-                      }}
-                      className="w-20 text-center font-bold text-[#120c7a] bg-transparent border border-slate-200 rounded-lg px-2 py-1"
-                    />
+
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">KL Domain</label>
+                    <div className="relative">
+                      <select
+                        value={qbKLDomain}
+                        onChange={e => { setQbKLDomain(e.target.value); setQbKL(''); }}
+                        className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs md:text-sm"
+                      >
+                        <option value="">Select domain</option>
+                        {Object.keys(bloomsDomains || {}).map(key => (
+                          <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Knowledge Level</label>
+                    <div className="relative">
+                      <select
+                        value={qbKL}
+                        onChange={e => setQbKL(e.target.value)}
+                        className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                      >
+                        {(() => {
+                          const domain = bloomsDomains[qbKLDomain];
+                          if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
+                            return domain.levels.map((lvl, i) => (
+                              <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
+                            ));
+                          }
+                          return ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'].map(l => <option key={l} value={l}>{l}</option>);
+                        })()}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">PI Mapping</label>
+                    <div className="relative">
+                      <select
+                        value={qbPI}
+                        onChange={e => setQbPI(e.target.value)}
+                        className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
+                        disabled={!qbCO}
+                      >
+                        <option value="">Select PI</option>
+                        {(coPiMapping[qbCO] || []).map(pi => (
+                          <option key={pi} value={pi}>{pi}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                    </div>
                   </div>
                 </div>
-
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Question Content</label>
-                  <div id={`editorWrapper_${qIdx}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm min-h-[150px]"></div>
+                <div className="flex justify-end mt-8 pr-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+                        if (inst && typeof inst.getData === 'function') {
+                          handleAddQuestion();
+                        } else {
+                          const data = document.getElementById('qbEditor') ? document.getElementById('qbEditor').value : qbQuestion;
+                          setQbQuestion(data);
+                          handleAddQuestion();
+                        }
+                      } catch (e) {
+                        console.error('Error inserting rich question', e);
+                      }
+                    }}
+                    className="px-8 py-3 bg-[#120c7a] text-white font-bold rounded-xl hover:bg-[#1a1494] transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
+                  >
+                    <CheckCircle2 size={18} />
+                    Insert / Update Question
+                  </button>
                 </div>
+              </form>
 
-                <div className="space-y-4 pt-4 border-t border-slate-200">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <h5 className="font-bold text-slate-700 text-sm">CO-wise Mark Distribution</h5>
-                      <p className="text-[10px] text-slate-400 font-medium">Split the marks ({assignmentConfig[qIdx].marks}) across mapped COs</p>
-                    </div>
-                    
-                    <div className="flex items-center gap-4">
-                      <div className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center gap-2 ${qMeta.balanced ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
-                        {qMeta.balanced ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                        <span>Remaining Mark: {qMeta.remaining}</span>
-                      </div>
-                      
-                      <div className="relative">
-                        <button className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-[#0e0960] transition-all shadow-sm">
-                          <Plus size={14} /> Add CO Mapping
-                        </button>
-                        <select
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          value=""
-                          onChange={e => handleAddCOAssignment(qIdx, e.target.value)}
-                        >
-                          <option value="">Select CO to add</option>
-                          {courseOutcomes.map(co => (
-                            <option key={co.code} value={co.code}>{co.code}</option>
+              {qpQuestions && qpQuestions.length > 0 && (
+                <div className="mt-8 pt-8 border-t border-slate-200">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-bold text-slate-700">Added Questions Summary</h4>
+                    <span className="text-[10px] font-black bg-blue-100 text-[#120c7a] px-2 py-1 rounded-md uppercase tracking-wider">
+                      {qpQuestions.length} Questions Added
+                    </span>
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div className="overflow-auto max-h-[300px]">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">#</th>
+                            <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">Question</th>
+                            <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">KL</th>
+                            <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">CO</th>
+                            <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">PI</th>
+                            <th className="px-4 py-3 text-right font-bold text-slate-400 uppercase tracking-widest text-[10px]">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {qpQuestions.map((q, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 font-bold text-slate-400">
+                                {q.qno || (idx + 1)}
+                                {q.either_or && (
+                                  <span className="ml-1 text-[9px] px-1 bg-slate-100 text-slate-500 rounded uppercase">
+                                    Choice {q.sub?.toUpperCase() || ''}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 align-top">
+                                <div className="line-clamp-2" dangerouslySetInnerHTML={{ __html: q.question }}></div>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 font-medium">{q.kl}</td>
+                              <td className="px-4 py-3">
+                                <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-lg font-bold text-[10px]">
+                                  {formatPoPsoCode(q.co)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-bold text-[10px]">{q.pi}</span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex justify-end gap-1">
+                                  <button
+                                    onClick={() => handleEditQuestion(idx)}
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
+                                    title="Edit question"
+                                  >
+                                    <Pencil size={18} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteQuestion(idx)}
+                                    className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                                    title="Delete question"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
                           ))}
-                        </select>
-                      </div>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {(assignmentConfig[qIdx].mappings || []).map((mapping, coIdx) => (
-                      <div key={coIdx} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all space-y-4">
-                        <div className="flex justify-between items-center">
-                          <span className="px-3 py-1 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 uppercase">
-                            {mapping.co}
-                          </span>
-                          <button 
-                            onClick={() => handleRemoveCOAssignment(qIdx, coIdx)}
-                            className="text-slate-300 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Assigned Marks</label>
-                          <div className="relative">
-                            <input 
-                              type="number"
-                              min="0"
-                              max={assignmentConfig[qIdx].marks}
-                              value={mapping.marks === 0 || mapping.marks === '0' || mapping.marks === '' || mapping.marks === null || mapping.marks === undefined ? '' : mapping.marks}
-                              onChange={(e) => handleMappingMarksChange(qIdx, coIdx, e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-sm text-[#120c7a]"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-3">
-                          <div className="relative">
-                            <button className="w-full px-3 py-2 bg-blue-50 text-blue-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all border border-blue-100">
-                              <Plus size={12} /> Add PI for {mapping.co}
-                            </button>
-                            <select
-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                              value=""
-                              onChange={e => handleAddPIAssignment(qIdx, coIdx, e.target.value)}
-                            >
-                              <option value="">Select PI</option>
-                              {coPiMapping[mapping.co]?.map(pi => (
-                                <option key={pi} value={pi}>{pi}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1.5">
-                            {(mapping.pis || []).map((pi, piIdx) => (
-                              <span key={piIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 text-slate-600 rounded-lg text-[10px] font-bold border border-slate-200 group">
-                                {pi}{mapping.piMarks && mapping.piMarks[piIdx] != null ? ` (${mapping.piMarks[piIdx]})` : ''}
-                                <button onClick={() => handleRemovePIAssignment(qIdx, coIdx, piIdx)}>
-                                  <XCircle size={10} className="text-slate-300 group-hover:text-red-500 transition-colors" />
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {(assignmentConfig[qIdx].mappings || []).length === 0 && (
-                      <div className="md:col-span-2 py-8 text-center border-2 border-dashed border-slate-100 rounded-2xl text-slate-400 text-sm">
-                        No Course Outcomes mapped yet. Select a CO above.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              );
-            })}
-          </div>
-          
-          <div className="flex flex-wrap justify-center gap-4 mt-8">
-            <button
-              onClick={handleFinalizeQuestions}
-              className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
-            >
-              <CheckCircle2 size={20} />
-              Finalize & Preview
-            </button>
-            <button
-              onClick={() => { setShowParts(false); setAssignmentConfig([]); }}
-              className="px-8 py-3 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300 transition-all flex items-center gap-2"
-            >
-              <XCircle size={20} />
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {assessmentType === 'Exam' && (
-        <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100 mb-8">
-          {/* PO-CO Mapping Reference */}
-          {sortedPoCodes && sortedPoCodes.length > 0 && (
-            <div className="mb-8 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-              <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
-                <h3 className="font-bold text-slate-700 text-sm">Overall Mapped PO / PSO</h3>
-              </div>
-              <div className="p-2 overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr>
-                      {displayedPoSummary.map((r) => (
-                        <th key={r.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">
-                          {r.displayCode}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      {displayedPoSummary.map((r) => (
-                        <td key={r.poCode} className="px-3 py-2 text-center">
-                          {r.marks === 0 ? (
-                            <span className="inline-flex items-center px-2 py-1 bg-red-50 text-red-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{r.marks}</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              {/* Current Paper PO Summary: show only POs present in active paper (editor) */}
-              {presentPoSummary && presentPoSummary.length > 0 && (
-                <div className="mt-4 p-2 border-t border-slate-100">
-                  <div className="text-sm font-semibold text-slate-600 mb-2">POs present in current question paper (Active Changes)</div>
-                  <div className="overflow-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr>
-                          {presentPoSummary.map(p => (
-                            <th key={p.poCode} className="px-3 py-2 text-center font-bold text-slate-700 uppercase tracking-wide text-[11px]">{p.displayCode}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          {presentPoSummary.map(p => (
-                            <td key={p.poCode} className="px-3 py-2 text-center">
-                              <span className="inline-flex items-center px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-[11px]">{p.marks}</span>
-                            </td>
-                          ))}
-                        </tr>
-                      </tbody>
-                    </table>
+                  <div className="mt-8 flex justify-center">
+                    <button
+                      onClick={handleFinalizeQuestions}
+                      className="px-10 py-3.5 bg-blue-700 text-white font-black rounded-xl hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/30 flex items-center gap-3 uppercase tracking-widest text-xs"
+                    >
+                      <CheckCircle2 size={18} />
+                      Finalize Question Paper
+                    </button>
                   </div>
                 </div>
               )}
             </div>
-          )}
-          <h4 className="text-2xl font-bold text-[#120c7a] mb-6 flex items-center gap-3">
-            <div className="w-2 h-8 bg-[#120c7a] rounded-full"></div>
-            Enter Questions
-          </h4>
-
-          
-          {showQbEditor && (
-            <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 w-full mb-8">
-              <div className="mb-4 bg-white rounded-xl overflow-hidden border border-slate-200">
-                <textarea id="qbEditor" ref={qbQuestionRef} style={{ width: '100%' }} />
-              </div>
-            </div>
-          )}
-
-          <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 mb-8">
-            <form onSubmit={(e) => { e.preventDefault(); handleAddQuestion(); }}>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-6 items-end">
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">QNo</label>
-                  <div className="relative">
-                    <select 
-                      value={qbQNo} 
-                      onChange={e => {
-                        setQbQNo(e.target.value);
-                        // Reset editor content when manually switching question numbers
-                        try {
-                          const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
-                          if (inst && typeof inst.setData === 'function') inst.setData('');
-                        } catch (_err) { /* ignore */ }
-                      }}
-                      className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    >
-                      {qbAvailableQNos && qbAvailableQNos.length > 0 ? (
-                        <>
-                          <option value="">Select</option>
-                          {qbAvailableQNos.map(v => <option key={v} value={v}>{v}</option>)}
-                        </>
-                      ) : (
-                        <option value="">Generate Layout First</option>
-                      )}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">CO Mapping</label>
-                  <div className="relative">
-                    <select 
-                      value={qbCO} 
-                      onChange={e => { const v = e.target.value; setQbCO(v); setQbPI((coPiMapping[v] && coPiMapping[v][0]) || ''); }} 
-                      className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    >
-                      <option value="">Select CO</option>
-                      {courseOutcomes && courseOutcomes.map(co => (
-                        <option key={co.code} value={co.code}>{co.code}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">KL Domain</label>
-                  <div className="relative">
-                    <select 
-                      value={qbKLDomain} 
-                      onChange={e => { setQbKLDomain(e.target.value); setQbKL(''); }} 
-                      className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium text-xs md:text-sm"
-                    >
-                      <option value="">Select domain</option>
-                      {Object.keys(bloomsDomains || {}).map(key => (
-                        <option key={key} value={key}>{bloomsDomains[key]?.name || key}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Knowledge Level</label>
-                  <div className="relative">
-                    <select 
-                      value={qbKL} 
-                      onChange={e => setQbKL(e.target.value)} 
-                      className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                    >
-                      {(() => {
-                        const domain = bloomsDomains[qbKLDomain];
-                        if (domain && Array.isArray(domain.levels) && domain.levels.length > 0) {
-                          return domain.levels.map((lvl, i) => (
-                            <option key={i} value={lvl.code || lvl.name}>{lvl.code || lvl.name}</option>
-                          ));
-                        }
-                        return ['L1','L2','L3','L4','L5','L6'].map(l => <option key={l} value={l}>{l}</option>);
-                      })()}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-
-                <div className="space-y-2.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">PI Mapping</label>
-                  <div className="relative">
-                    <select 
-                      value={qbPI} 
-                      onChange={e => setQbPI(e.target.value)} 
-                      className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
-                      disabled={!qbCO}
-                    >
-                      <option value="">Select PI</option>
-                      {(coPiMapping[qbCO] || []).map(pi => (
-                        <option key={pi} value={pi}>{pi}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end mt-8 pr-1">
-                <button 
-                  type="button"
-                  onClick={() => {
-                    try {
-                      const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
-                      if (inst && typeof inst.getData === 'function') {
-                        handleAddQuestion();
-                      } else {
-                        const data = document.getElementById('qbEditor') ? document.getElementById('qbEditor').value : qbQuestion;
-                        setQbQuestion(data);
-                        handleAddQuestion();
-                      }
-                    } catch (e) {
-                      console.error('Error inserting rich question', e);
-                    }
-                  }} 
-                  className="px-8 py-3 bg-[#120c7a] text-white font-bold rounded-xl hover:bg-[#1a1494] transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
-                >
-                  <CheckCircle2 size={18} />
-                  Insert / Update Question
-                </button>
-              </div>
-            </form>
-
-            {qpQuestions && qpQuestions.length > 0 && (
-              <div className="mt-8 pt-8 border-t border-slate-200">
-                <div className="flex justify-between items-center mb-4">
-                  <h4 className="font-bold text-slate-700">Added Questions Summary</h4>
-                  <span className="text-[10px] font-black bg-blue-100 text-[#120c7a] px-2 py-1 rounded-md uppercase tracking-wider">
-                    {qpQuestions.length} Questions Added
-                  </span>
-                </div>
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  <div className="overflow-auto max-h-[300px]">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">#</th>
-                        <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">Question</th>
-                        <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">KL</th>
-                        <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">CO</th>
-                        <th className="px-4 py-3 text-left font-bold text-slate-400 uppercase tracking-widest text-[10px]">PI</th>
-                        <th className="px-4 py-3 text-right font-bold text-slate-400 uppercase tracking-widest text-[10px]">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {qpQuestions.map((q, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-3 font-bold text-slate-400">
-                            {q.qno || (idx + 1)}
-                            {q.either_or && (
-                              <span className="ml-1 text-[9px] px-1 bg-slate-100 text-slate-500 rounded uppercase">
-                                Choice {q.sub?.toUpperCase() || ''}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <div className="line-clamp-2" dangerouslySetInnerHTML={{ __html: q.question }}></div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600 font-medium">{q.kl}</td>
-                          <td className="px-4 py-3">
-                            <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-lg font-bold text-[10px]">
-                              {formatPoPsoCode(q.co)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                             <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-bold text-[10px]">{q.pi}</span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex justify-end gap-1">
-                              <button
-                                onClick={() => handleEditQuestion(idx)}
-                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors"
-                                title="Edit question"
-                              >
-                                <Pencil size={18} />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteQuestion(idx)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                                title="Delete question"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
-                <div className="mt-8 flex justify-center">
-                  <button
-                    onClick={handleFinalizeQuestions}
-                    className="px-10 py-3.5 bg-blue-700 text-white font-black rounded-xl hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/30 flex items-center gap-3 uppercase tracking-widest text-xs"
-                  >
-                    <CheckCircle2 size={18} />
-                    Finalize Question Paper
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {showFinalPreview ? (
-            <div className="bg-slate-50 border border-slate-200 rounded-[2rem] p-8 md:p-12 mb-8 overflow-auto flex justify-center">
-              <div className="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm overflow-hidden" style={{ width: '210mm', minHeight: '297mm' }}>
-                <textarea name="ckeditor" id="questionEditor" ref={editorRef}></textarea>
-              </div>
+        {showFinalPreview ? (
+          <div className="bg-slate-50 border border-slate-200 rounded-[2rem] p-8 md:p-12 mb-8 overflow-auto flex justify-center">
+            <div className="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm overflow-hidden" style={{ width: '210mm', minHeight: '297mm' }}>
+              <textarea name="ckeditor" id="questionEditor" ref={editorRef}></textarea>
             </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center text-center p-12 bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-[2rem] mb-8 group">
-              <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mb-4 text-slate-300 group-hover:scale-110 transition-transform duration-300">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-              </div>
-              <p className="text-slate-400 font-bold tracking-tight uppercase text-xs">Preview Area</p>
-              <p className="text-slate-400 mt-1 max-w-[200px]">Click Finalize button after adding questions to see the preview.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center text-center p-12 bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-[2rem] mb-8 group">
+            <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mb-4 text-slate-300 group-hover:scale-110 transition-transform duration-300">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
             </div>
-          )}
+            <p className="text-slate-400 font-bold tracking-tight uppercase text-xs">Preview Area</p>
+            <p className="text-slate-400 mt-1 max-w-[200px]">Click Finalize button after adding questions to see the preview.</p>
+          </div>
+        )}
 
-          {showFinalPreview && (
-            <div className="flex flex-wrap justify-center gap-6 pb-8">
-              <button
-                onClick={() => refreshOutcomesSummary(false)}
-                className="px-8 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 transition-all shadow-lg shadow-amber-900/20 flex items-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                Refresh Outcomes
-              </button>
-              <button
-                onClick={() => {
-                  if (!currentUserSignatureUrl) {
-                    showToast("Please upload your digital signature in your profile before forwarding.", "error");
-                    return;
-                  }
-                  handleForwardPaper();
-                }}
-                className={`px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 ${!currentUserSignatureUrl ? 'opacity-60' : ''}`}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                Forward to HOD
-              </button>
-              <button
-                onClick={() => isAssignmentOrProject ? handleSaveAssignment() : handleSaveQuestionPaper()}
-                className="px-8 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
-                Save Paper
-              </button>
-            </div>
-          )}
-        </div>
+        {showFinalPreview && (
+          <div className="flex flex-wrap justify-center gap-6 pb-8">
+            <button
+              onClick={() => refreshOutcomesSummary(false)}
+              className="px-8 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 transition-all shadow-lg shadow-amber-900/20 flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+              Refresh Outcomes
+            </button>
+            <button
+              onClick={() => {
+                if (!currentUserSignatureUrl) {
+                  showToast("Please upload your digital signature in your profile before forwarding.", "error");
+                  return;
+                }
+                handleForwardPaper();
+              }}
+              className={`px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 ${!currentUserSignatureUrl ? 'opacity-60' : ''}`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+              Forward to HOD
+            </button>
+            <button
+              onClick={() => isAssignmentOrProject ? handleSaveAssignment() : handleSaveQuestionPaper()}
+              className="px-8 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+              Save Paper
+            </button>
+          </div>
+        )}
+      </div>
 
       {showAIModal && assessmentType !== 'Indirect' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -4588,7 +4593,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               Generate with AI
               <span className="text-sm font-normal text-slate-500 ml-2">(Syllabus fetched automatically)</span>
             </h2>
-            
+
             <div className="space-y-6">
               <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl text-blue-700 text-sm flex items-center gap-3">
                 <AlertCircle size={20} className="shrink-0" />
@@ -4620,9 +4625,9 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               </div>
 
               <div className="flex items-center gap-3 bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100">
-                <input 
-                  type="checkbox" 
-                  id="aiIncludeImages" 
+                <input
+                  type="checkbox"
+                  id="aiIncludeImages"
                   className="w-5 h-5 cursor-pointer text-purple-600 rounded border-slate-300 focus:ring-purple-600"
                   checked={aiIncludeImages}
                   onChange={(e) => setAiIncludeImages(e.target.value === 'on' || e.target.checked)}

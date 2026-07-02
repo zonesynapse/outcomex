@@ -199,13 +199,21 @@ export default function Timetable() {
                     <tr key={dayIdx} className="hover:bg-blue-50/30 transition-colors">
                       <td className="px-4 py-4 text-sm font-bold text-slate-600">{DAYS[dayIdx] || `Day ${dayIdx + 1}`}</td>
                       {Array.from({ length: periodsPerDay }).map((_, periodIdx) => {
-                        const subjectCode = timetable.subjectAllocation?.[DAYS[dayIdx]]?.[periodIdx + 1];
+                        const raw = timetable.subjectAllocation?.[DAYS[dayIdx]]?.[periodIdx + 1];
+                        const subjects = !raw ? [] : Array.isArray(raw) ? raw : [raw];
                         return (
                           <td key={periodIdx} className="px-3 py-3 text-center border border-slate-50">
-                            {subjectCode ? (
-                              <span className="text-xs font-bold text-[#120c7a] bg-blue-50 px-3 py-1.5 rounded-lg inline-block">
-                                {subjectCode}
-                              </span>
+                            {subjects.length > 0 ? (
+                              <div className="flex flex-col gap-1">
+                                {subjects.map((s, si) => {
+                                  const code = s.split('|')[0];
+                                  return (
+                                    <span key={si} className="text-xs font-bold text-[#120c7a] bg-blue-50 px-3 py-1.5 rounded-lg inline-block">
+                                      {code}
+                                    </span>
+                                  );
+                                })}
+                              </div>
                             ) : (
                               <span className="text-xs text-slate-300 italic">Free</span>
                             )}

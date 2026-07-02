@@ -2,17 +2,18 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { 
-  CalendarCheck2, 
-  ChevronDown, 
-  Search, 
+import {
+  CalendarCheck2,
+  ChevronDown,
+  Search,
   Download,
   Users,
   AlertCircle,
   FileX,
   Save,
   Calendar,
-  FileText
+  FileText,
+  X
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -131,9 +132,13 @@ export default function Attendance() {
   // Per-date record states
   const [recordDates, setRecordDates] = useState([]);
   const [currentRecordData, setCurrentRecordData] = useState(null);
+  const [topicTaught, setTopicTaught] = useState("");
+  const [teachingAid, setTeachingAid] = useState("");
+  const [teachingMethodology, setTeachingMethodology] = useState("");
 
   // Report states
   const [showReport, setShowReport] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
   const [reportData, setReportData] = useState(null);
@@ -290,7 +295,7 @@ export default function Attendance() {
       }
 
       setSubjectContexts(contexts);
-      
+
       const uniqueSubjectAssignments = [];
       const seenAssignments = new Set();
 
@@ -317,6 +322,9 @@ export default function Attendance() {
       setAcademicYear("");
       setSemester("");
       setSection("");
+      setTopicTaught("");
+      setTeachingAid("");
+      setTeachingMethodology("");
       return;
     }
     setSubject(val);
@@ -324,7 +332,7 @@ export default function Attendance() {
     setBatch(selectedCtx.batch);
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
-    if (selectedCtx.section) setSection(selectedCtx.section);
+    setSection(selectedCtx.section || "");
   };
 
   const computePeriodStart = useCallback((i, config) => {
@@ -424,6 +432,9 @@ export default function Attendance() {
       setCurrentRecordData(null);
       setReportData(null);
       setShowReport(false);
+      setTopicTaught("");
+      setTeachingAid("");
+      setTeachingMethodology("");
       return;
     }
 
@@ -434,7 +445,7 @@ export default function Attendance() {
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
-    
+
     const fetchData = async () => {
       try {
         const [attendanceSnap, studentSnap] = await Promise.all([
@@ -493,22 +504,29 @@ export default function Attendance() {
     const dateRecord = attendanceData?.records?.[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
+    setTopicTaught(dateRecord?.topicTaught || "");
+    setTeachingAid(dateRecord?.teachingAid || "");
+    setTeachingMethodology(dateRecord?.teachingMethodology || "");
+
     const totalH = parseInt(dateRecord?.totalHours, 10) || 1;
 
     const masterListObj = {};
     Object.entries(masterList)
       .filter(([key]) => !key.startsWith('_'))
-      .forEach(([reg, name]) => { masterListObj[reg] = name; });
+      .forEach(([reg, nameVal]) => {
+        masterListObj[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
+      });
 
     const order = masterList._order;
 
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-      const hours = dateRecord?.students?.[reg] ?? 0;
+      const studentExists = dateRecord?.students?.[reg] !== undefined;
+      const hours = studentExists ? dateRecord.students[reg] : 0;
       return {
         reg,
         name,
         hours,
-        status: hours > 0 ? 'P' : 'A',
+        status: studentExists ? (hours > 0 ? 'P' : 'A') : '',
         percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
       };
     });
@@ -562,7 +580,9 @@ export default function Attendance() {
       const studentMap = {};
       Object.entries(masterList)
         .filter(([key]) => !key.startsWith('_'))
-        .forEach(([reg, name]) => { studentMap[reg] = name; });
+        .forEach(([reg, nameVal]) => {
+          studentMap[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
+        });
 
       const studentStats = Object.keys(studentMap).map(reg => {
         let attended = 0;
@@ -682,7 +702,7 @@ export default function Attendance() {
       1: { halign: 'left', cellWidth: 34 },
     };
     const lastIdx = 2 + dateColCount;
-    colStyles[lastIdx]     = { halign: 'center', cellWidth: 12 };
+    colStyles[lastIdx] = { halign: 'center', cellWidth: 12 };
     colStyles[lastIdx + 1] = { halign: 'center', cellWidth: 14 };
     colStyles[lastIdx + 2] = { halign: 'center', cellWidth: 12 };
     colStyles[lastIdx + 3] = { halign: 'center', cellWidth: 14 };
@@ -701,8 +721,8 @@ export default function Attendance() {
     doc.output('dataurlnewwindow');
   };
 
-  const filteredStudents = students.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const filteredStudents = students.filter(s =>
+    s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.reg.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -715,13 +735,25 @@ export default function Attendance() {
       alert("Please select a Period before saving attendance.");
       return;
     }
+    if (!topicTaught.trim()) {
+      alert("Please enter what topic was taught today.");
+      return;
+    }
+    if (!teachingAid) {
+      alert("Please select the Teaching Aid used today.");
+      return;
+    }
+    if (!teachingMethodology) {
+      alert("Please select the Teaching Methodology used today.");
+      return;
+    }
     setSaving(true);
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
-    
+
     const studentsMap = {};
     students.forEach(s => { studentsMap[s.reg] = s.hours; });
 
@@ -729,6 +761,9 @@ export default function Attendance() {
       period,
       totalHours: parseInt(totalConducted, 10) || 1,
       students: studentsMap,
+      topicTaught: topicTaught.trim(),
+      teachingAid,
+      teachingMethodology,
       updatedAt: new Date().toISOString()
     };
 
@@ -761,6 +796,9 @@ export default function Attendance() {
         const nextDate = nextDay.toISOString().split('T')[0];
         setAttendanceDate(nextDate);
         setPeriod("");
+        setTopicTaught("");
+        setTeachingAid("");
+        setTeachingMethodology("");
       }
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
@@ -811,7 +849,7 @@ export default function Attendance() {
             { icon: Users, label: 'Total Students', value: students.length, color: 'from-indigo-500 to-blue-600' },
             { icon: CalendarCheck2, label: 'Today\'s Attendance', value: `${pctPresent}%`, color: 'from-emerald-500 to-teal-600' },
             { icon: Calendar, label: 'Date', value: attendanceDate, color: 'from-violet-500 to-purple-600' },
-            { icon: FileText, label: 'Total Classes', value: recordDates.length, color: 'from-amber-500 to-orange-600' },
+            { icon: FileText, label: 'Total Classes', value: recordDates.length || '—', color: 'from-amber-500 to-orange-600' },
           ].map(({ icon: Icon, label, value, color }) => (
             <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 shadow-xl`}>
               <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/5" />
@@ -833,7 +871,7 @@ export default function Attendance() {
         <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200/60 p-5 md:p-6 transition-all">
           <div className="flex items-center gap-3 mb-5">
             <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
-              <Search size= {14} className="text-white" />
+              <Search size={14} className="text-white" />
             </div>
             <h3 className="text-sm font-bold text-slate-700">Filters</h3>
           </div>
@@ -846,7 +884,7 @@ export default function Attendance() {
               { label: 'Batch', value: batch, set: setBatch, opts: batches, display: formatBatchDisplay, disabled: true },
               { label: 'Academic Year', value: academicYear, set: setAcademicYear, opts: aYears, display: y => y, disabled: true },
               { label: 'Semester', value: semester, set: setSemester, opts: semesters, display: s => s, disabled: true },
-              { label: 'Section', value: section, set: setSection, opts: availableSections, display: s => s, disabled: true, placeholder: !availableSections.length ? 'No sections' : undefined },
+              { label: 'Section', value: section, set: setSection, opts: availableSections, display: s => s, disabled: !availableSections.length, placeholder: !availableSections.length ? 'No sections' : undefined },
             ].map(({ label, value, set, opts, display, disabled, valKey, placeholder }) => (
               <div key={label} className="space-y-1">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest px-0.5">{label}</label>
@@ -895,50 +933,73 @@ export default function Attendance() {
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-widest px-0.5">Total Classes</label>
               <div className="w-full bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs font-black text-emerald-700 cursor-not-allowed">
-                {recordDates.length}
+                {recordDates.length || '—'}
               </div>
             </div>
           </div>
 
-          {/* Report toggle */}
-          <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-slate-100">
-            <button onClick={() => { setShowReport(!showReport); if (!showReport && recordDates.length > 0) { setReportFromDate(recordDates[0]); setReportToDate(recordDates[recordDates.length - 1]); } }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm ${
-                showReport ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-amber-200' : 'bg-white text-amber-700 border border-amber-200 hover:border-amber-400'
-              }`}
-            >
-              <FileText size={14} />
-              {showReport ? 'Close Report' : 'Attendance Report'}
-            </button>
-          </div>
+          {/* Topic Taught, Teaching Aid, Teaching Methodology */}
+          {subject && (
+            <div className="mt-5 pt-5 border-t border-slate-100 space-y-4">
+              <div className="space-y-1">
+                <label className="block text-[10px] font-bold text-indigo-600 uppercase tracking-widest px-0.5">Topic Taught <span className="text-rose-500">*</span></label>
+                <textarea
+                  rows={3}
+                  value={topicTaught}
+                  onChange={e => setTopicTaught(e.target.value)}
+                  placeholder="Describe what topic you taught today in detail (e.g., Unit 1 - Introduction to DBMS, Entity-Relationship Models and schemas)..."
+                  className="w-full bg-gradient-to-r from-indigo-50/50 to-indigo-50/10 border border-indigo-200 rounded-xl px-4 py-3 text-sm font-semibold text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500 transition-all placeholder:text-slate-400 resize-y min-h-[90px]"
+                />
+              </div>
 
-          {/* Report date range */}
-          {showReport && (
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100 items-end">
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-amber-600 uppercase tracking-widest px-0.5">From</label>
-                <input type="date" value={reportFromDate} onChange={e => setReportFromDate(e.target.value)}
-                  className="w-full bg-amber-50/50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-700 outline-none focus:ring-2 focus:ring-amber-500/40 transition-all"
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-indigo-600 uppercase tracking-widest px-0.5">Teaching Aid <span className="text-rose-500">*</span></label>
+                  <div className="relative">
+                    <select
+                      value={teachingAid}
+                      onChange={e => setTeachingAid(e.target.value)}
+                      className="w-full appearance-none bg-gradient-to-r from-indigo-50 to-indigo-50/20 border border-indigo-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer"
+                    >
+                      <option value="">Select Teaching Aid</option>
+                      <option value="Black Board / White Board">Black Board / White Board</option>
+                      <option value="Projector / PPT">Projector / PPT</option>
+                      <option value="Smart Board / Interactive Flat Panel">Smart Board / Interactive Flat Panel</option>
+                      <option value="Google Classroom / LMS">Google Classroom / LMS</option>
+                      <option value="Charts / Physical Models">Charts / Physical Models</option>
+                      <option value="Tablet / Digital Stylus">Tablet / Digital Stylus</option>
+                      <option value="Video / Multimedia">Video / Multimedia</option>
+                      <option value="Handouts / Printed Material">Handouts / Printed Material</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-indigo-600 uppercase tracking-widest px-0.5">Teaching Methodology <span className="text-rose-500">*</span></label>
+                  <div className="relative">
+                    <select
+                      value={teachingMethodology}
+                      onChange={e => setTeachingMethodology(e.target.value)}
+                      className="w-full appearance-none bg-gradient-to-r from-indigo-50 to-indigo-50/20 border border-indigo-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer"
+                    >
+                      <option value="">Select Methodology</option>
+                      <option value="Lecture Method (Chalk & Talk)">Lecture Method (Chalk & Talk)</option>
+                      <option value="Power Point Presentation">Power Point Presentation</option>
+                      <option value="Demonstration / Practical Hands-on">Demonstration / Practical Hands-on</option>
+                      <option value="Interactive Discussion / Brainstorming">Interactive Discussion / Brainstorming</option>
+                      <option value="Flipped Classroom">Flipped Classroom</option>
+                      <option value="Group Discussion / Collaborative Learning">Group Discussion / Collaborative Learning</option>
+                      <option value="Peer Teaching / Seminar">Peer Teaching / Seminar</option>
+                      <option value="Case Study Analysis">Case Study Analysis</option>
+                      <option value="Problem-Based Learning">Problem-Based Learning</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-amber-600 uppercase tracking-widest px-0.5">To</label>
-                <input type="date" value={reportToDate} onChange={e => setReportToDate(e.target.value)}
-                  className="w-full bg-amber-50/50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-700 outline-none focus:ring-2 focus:ring-amber-500/40 transition-all"
-                />
-              </div>
-              <button onClick={handleGenerateReport}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-200"
-              >
-                <CalendarCheck2 size={14} /> Generate
-              </button>
-              {reportData && (
-                <button onClick={handleExportReport}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-amber-200 text-amber-700 rounded-xl text-xs font-bold hover:border-amber-400 hover:bg-amber-50 transition-all"
-                >
-                  <Download size={14} /> Export PDF
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -974,8 +1035,22 @@ export default function Attendance() {
                 {saving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={15} />}
                 Save
               </button>
-              <button onClick={handleExport} className="p-2 bg-white/15 hover:bg-white/25 text-white rounded-xl transition-all">
-                <Download size={16} />
+              <button
+                onClick={() => {
+                  if (!subject) {
+                    alert("Please select a subject first.");
+                    return;
+                  }
+                  setShowReportModal(true);
+                  if (recordDates.length > 0) {
+                    if (!reportFromDate) setReportFromDate(recordDates[0]);
+                    if (!reportToDate) setReportToDate(recordDates[recordDates.length - 1]);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-500/25"
+                title="Generate Attendance Report"
+              >
+                <Download size={15} /> Report
               </button>
             </div>
           </div>
@@ -1006,61 +1081,54 @@ export default function Attendance() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                    {filteredStudents.map(s => {
-                      const savedCount = cumulativeAttended[s.reg] || 0;
-                      const isCurrP = s.status === 'P' || s.status === 'OD';
-                      const alreadyCounted = currentRecordData?.students?.[s.reg] !== undefined && Number(currentRecordData.students[s.reg]) > 0;
-                      const displayCount = savedCount + (isCurrP ? 1 : 0) - (alreadyCounted ? 1 : 0);
-                      const totalDays = recordDates.length + (currentRecordData ? 0 : 1);
-                      const pct = totalDays > 0 ? ((displayCount / totalDays) * 100) : 0;
-                      const isLow = pct < 75;
-                      return (
-                      <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
-                        <td className="px-5 py-3.5">
-                          <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <span className="text-sm font-semibold text-slate-800">{s.name}</span>
-                        </td>
-                        <td className="px-3 py-3.5">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {[
-                              { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
-                              { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
-                              { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
-                            ].map(({ label, value, activeClass, hoverClass }) => (
-                              <button key={value}
-                                onClick={() => handleStatusChange(s.reg, value)}
-                                className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${
-                                  s.status === value
-                                    ? activeClass + ' border-transparent'
-                                    : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
+                  {filteredStudents.map(s => (
+                    <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
+                      <td className="px-5 py-3.5">
+                        <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="text-sm font-semibold text-slate-800">{s.name}</span>
+                      </td>
+                      <td className="px-3 py-3.5">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {[
+                            { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
+                            { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
+                            { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
+                          ].map(({ label, value, activeClass, hoverClass }) => (
+                            <button key={value}
+                              onClick={() => handleStatusChange(s.reg, value)}
+                              className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${s.status === value
+                                  ? activeClass + ' border-transparent'
+                                  : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
                                 }`}
-                              >
-                                {label}
-                              </button>
-                            ))}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-center">
+                          <span className="text-xs font-black text-indigo-600">
+                            {cumulativeAttended[s.reg] || 0}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-center gap-2.5">
+                          <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                            <div className={`h-full rounded-full transition-all duration-700 ${((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                              }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100, 100)}%` }} />
                           </div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center justify-center">
-                            <span className="text-xs font-black text-indigo-600">{displayCount}</span>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center justify-center gap-2.5">
-                            <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                              <div className={`h-full rounded-full transition-all duration-700 ${isLow ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'}`}
-                                style={{ width: `${Math.min(pct, 100)}%` }} />
-                            </div>
-                            <span className={`text-xs font-black min-w-[46px] text-right ${isLow ? 'text-rose-600' : 'text-emerald-600'}`}>
-                              {pct.toFixed(1)}%
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                      );
-                    })}
+                          <span className={`text-xs font-black min-w-[46px] text-right ${((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
+                            }`}>
+                            {((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
@@ -1110,57 +1178,139 @@ export default function Attendance() {
                   <p className="text-sm text-slate-400 font-medium">No data for the selected range.</p>
                 </div>
               ) : (
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-amber-50/50">
-                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
-                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
-                        {reportData.dates.map(d => (
-                          <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
-                            {reportData.keyLabels?.[d] || d}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {reportData.students.map(s => {
-                        const absent = s.totalClasses - s.attended;
-                        return (
-                          <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
-                            <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
-                            <td className="px-5 py-3.5"><span className="text-sm font-semibold text-slate-800">{s.name}</span></td>
-                            <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
-                            <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
-                            <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
-                            <td className="px-4 py-3.5">
-                              <div className="flex items-center justify-center gap-2">
-                                <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                                  <div className={`h-full rounded-full transition-all duration-700 ${
-                                    parseFloat(s.percentage) < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-amber-50/50">
+                      <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
+                      <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
+                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
+                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
+                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
+                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
+                      {reportData.dates.map(d => (
+                        <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
+                          {reportData.keyLabels?.[d] || d}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {reportData.students.map(s => {
+                      const absent = s.totalClasses - s.attended;
+                      return (
+                        <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
+                          <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
+                          <td className="px-5 py-3.5"><span className="text-sm font-semibold text-slate-800">{s.name}</span></td>
+                          <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
+                          <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
+                          <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center justify-center gap-2">
+                              <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                <div className={`h-full rounded-full transition-all duration-700 ${parseFloat(s.percentage) < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
                                   }`} style={{ width: `${Math.min(parseFloat(s.percentage), 100)}%` }} />
-                                </div>
-                                <span className={`text-xs font-black min-w-[44px] text-right ${
-                                  parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'
-                                }`}>{s.percentage}%</span>
                               </div>
-                            </td>
-                            {reportData.dates.map(d => (
-                              <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${
-                                s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'
+                              <span className={`text-xs font-black min-w-[44px] text-right ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'
+                                }`}>{s.percentage}%</span>
+                            </div>
+                          </td>
+                          {reportData.dates.map(d => (
+                            <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'
                               }`}>
-                                {s.dailyRecords[d] || '—'}
-                              </td>
-                            ))}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
+                              {s.dailyRecords[d] || '—'}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        )}
+        {/* ═══ Report Parameters Modal ═══ */}
+        {showReportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
+            {/* Backdrop blur */}
+            <div
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+              onClick={() => setShowReportModal(false)}
+            />
+
+            {/* Modal Container */}
+            <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden transform transition-all duration-300 scale-100 animate-scaleUp">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 px-6 py-5 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-white">
+                  <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                    <CalendarCheck2 size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm md:text-base">Retrieve Attendance Report</h3>
+                    <p className="text-blue-100 text-[10px] uppercase font-bold tracking-wider">Choose Date Range</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest px-0.5">From Date</label>
+                    <input
+                      type="date"
+                      value={reportFromDate}
+                      onChange={e => setReportFromDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest px-0.5">To Date</label>
+                    <input
+                      type="date"
+                      value={reportToDate}
+                      onChange={e => setReportToDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+                </div>
+
+                {/* Warning/Info */}
+                <div className="p-3.5 bg-blue-50/50 rounded-2xl border border-blue-100 flex gap-2.5">
+                  <FileText size={16} className="text-blue-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-blue-800 leading-relaxed font-medium">
+                    Selecting a date range will fetch and consolidate all attendance records recorded within those dates for the active subject.
+                  </p>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    handleGenerateReport();
+                    setShowReport(true);
+                    setShowReportModal(false);
+                  }}
+                  className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-500/20"
+                >
+                  <CalendarCheck2 size={14} />
+                  Generate Report
+                </button>
+              </div>
             </div>
           </div>
         )}

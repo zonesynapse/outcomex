@@ -71,7 +71,7 @@ const allPossibleItems = [
   { id: "vision_and_mission", icon: Target, label: "Vision and Mission", path: "/vision_and_mission" },
   { id: "academic-calendar", icon: Calendar, label: "Academic Calendar", path: "/academic-calendar" },
   { id: "attendance", icon: CheckCircle2, label: "Attendance", path: "/attendance" },
-  { id: "timetable", icon: Clock, label: "Time Table", path: "/tt" },
+  { id: "timetable-creation", icon: Calendar, label: "Time Table Creation", path: "/timetable-creation" },
   // { id: "regulation-formation", icon: Settings2, label: "Regulation Formation", path: "/regulation-formation" },
   { id: "co-po", icon: Network, label: "CO-PO Mapping", path: "/co-po" },
   { id: "po-attainment", icon: BarChart3, label: "PO Calculation & Attainment", path: "/po-attainment" },
@@ -126,14 +126,14 @@ const modules = [
     id: "academics",
     label: "Academics",
     icon: BookOpen,
-    itemIds: ["academic-calendar", "attendance", "timetable", "course-bank", "course-enrolment", "hod-role-configuration", "upload"]
+    itemIds: ["academic-calendar", "attendance", "course-bank", "course-enrolment", "hod-role-configuration", "upload", "timetable-creation"]
   },
   {
     id: "config",
     label: "Config",
     icon: Settings2,
     // itemIds: ["info-configuration", "regulation-formation", "admin-roles", "curriculum"]
-    itemIds: ["info-configuration", "admin-roles", "curriculum"]
+    itemIds: ["info-configuration", "timetable", "admin-roles", "curriculum"]
   },
   {
     id: "library",

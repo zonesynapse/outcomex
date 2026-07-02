@@ -28,6 +28,7 @@ import CourseEnrolment from "./pages/CourseEnrolment";
 import AcademicCalendar from "./pages/AcademicCalendar";
 import TimetableSetup from "./pages/TimetableSetup";
 import RegulationFormation from "./pages/RegulationFormation";
+import TimetableCreation from "./pages/TimetableCreation";
 import FacultyDashboard from "./pages/FacultyDashboard";
 import HODDashboard from "./pages/HODDashboard";
 import PrincipalDashboard from "./pages/PrincipalDashboard";
@@ -134,6 +135,7 @@ export default function App() {
         <Route path="/admissions/seats" element={<ProtectedRoute><SeatManagement /></ProtectedRoute>} />
         <Route path="/academic-calendar" element={<ProtectedRoute><AcademicCalendar /></ProtectedRoute>} />
         <Route path="/tt" element={<ProtectedRoute><TimetableSetup /></ProtectedRoute>} />
+        <Route path="/timetable-creation" element={<ProtectedRoute><TimetableCreation /></ProtectedRoute>} />
         <Route path="/regulation-formation" element={<ProtectedRoute><RegulationFormation /></ProtectedRoute>} />
 
         {/* Library Routes */}
