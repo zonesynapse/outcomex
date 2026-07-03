@@ -236,3 +236,18 @@
 - **Total classes read-only**: The "Total Classes" input is now `readOnly` with `tabIndex={-1}`, auto-incremented when a new period's first record is saved (no manual edit).
 - **Multi-period report filter fix**: `handleGenerateReport` date filter now extracts the date part from compound keys (`2025-03-15_P2` → `2025-03-15`) before comparing with `fromDate`/`toDate`. Previously compound keys on the boundary date were excluded because `"2025-03-15_P2" > "2025-03-15"` in string comparison.
 - **PDF export improvements**: `handleExportReport` is now async; subject JSON parsed into readable format (Subject: CEC340 - Computer Networks | Batch: 2023-2027 | Semester: 6 | Section: Sec-A); college logo (`public/logo.png`) fetched as base64 and added to first page; portrait default with landscape only when >10 columns; column widths tuned for Total/Attended/Absent/% headers to prevent wrapping; `startY` dynamically placed after logo. PDF opens in new tab via `doc.output('dataurlnewwindow')` for preview before download.
+
+### 22. Reports.jsx: exam dropdown — section filter + "Overall" weighted calculation
+- **Section-based exam filter**: Added `section` to the `marksDocKey` (marks doc ID); only exams with existing marks data for the selected section appear in the exam dropdown (prevents showing stale exams from other sections).
+- **Missing dep fix**: Added `enteredInternalExams`, `enteredInternalExamIds` to data-loading `useEffect` dependency array — was missing, causing intermittent stale data or errors.
+- **"Overall" exam option — REWORKED (Jul 3)**: Added "Overall (Weighted)" as an extra option in the exam `<select>`. When selected, reads `course_type_weightage` doc to get weighted exam percentages, calculates `SUM(marks * weight)/SUM(maxMarks * weight) * 100` per student. Falls back to equal-weight average if no weightage doc found. Displays overall percentage. **Later reworked**: The option now shows a table with all exams belonging to the subject's course type, grouped by category (Written Test, Activity, etc.), showing scored/max, percentage, and weighted contribution per exam per student. (`src/pages/Reports.jsx`)
+- **Course type badge**: Shows badge (Theory/Lab/Project/etc.) next to subject dropdown based on `course_type` from `subject_assignments`. (`src/pages/Reports.jsx`)
+- **Cleaned up**: Removed leftover `window._debugOverall` debug assignment. (`src/pages/Reports.jsx`)
+
+### 23. CoPoMapping.jsx: CO display from course_outcomes only
+- **Problem**: CO table headers showed hardcoded CO1–CO5 even when course had fewer COs (e.g., CO1–CO3 only).
+- **Fix**: Replaced static `['CO1','CO2','CO3','CO4','CO5']` with `configuredCoKeys` fetched from `course_outcomes` doc — only configured COs are displayed in the table. (`src/pages/CoPoMapping.jsx`)
+
+### 24. MarkEntry.jsx: Absent column for Project & Practical types
+- **Problem**: `showAbsentColumn` was `false` for Practical (and Assignment) — Project/Practical faculty couldn't mark students as absent.
+- **Fix**: Changed `showAbsentColumn` from `markType !== 'Assignment' && markType !== 'Practical'` to `markType !== 'Assignment'` — absent column now shows for Project, Practical, CO Wise, Overall, and all other mark types. (`src/pages/MarkEntry.jsx:805`)

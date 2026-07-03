@@ -802,7 +802,7 @@ export default function MarkEntry() {
   }, [programme, department, batch, academicYear, semester, subject, exam, markType, section]);
 
   const isAssignmentLike = markType === 'Assignment' || markType === 'Project' || markType === 'Practical';
-  const showAbsentColumn = markType !== 'Assignment' && markType !== 'Practical';
+  const showAbsentColumn = markType !== 'Assignment';
 
   const calculateTotal = (regno, currentMarks) => {
     const s = currentMarks[regno];

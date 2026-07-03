@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { db, auth } from "../firebase"; // Import db for Firestore
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, query, where } from "firebase/firestore"; // Firestore imports
+import { db, auth } from "../firebase";
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, query, where } from "firebase/firestore";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   ChevronDown,
   Plus,
@@ -28,6 +30,11 @@ import Layout from "../components/Layout";
 const sanitizeKey = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]]/g, '_');
+};
+
+const sanitizeKeyStrict = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
 };
 
 const deriveSemesterNumber = (semStr) => {
@@ -84,11 +91,14 @@ export default function Reports() {
   const [enteredInternalExamIds, setEnteredInternalExamIds] = useState([]);
   const [internalMarksRows, setInternalMarksRows] = useState([]);
   const [loadingInternalMarks, setLoadingInternalMarks] = useState(false);
-  const [overallMarksRows, setOverallMarksRows] = useState([]);
-  const [loadingOverallMarks, setLoadingOverallMarks] = useState(false);
   const [courseWeightageData, setCourseWeightageData] = useState({});
   const [internalSubjectCourseType, setInternalSubjectCourseType] = useState("");
   const [configuredCoKeys, setConfiguredCoKeys] = useState([]);
+  const [overallExamColumns, setOverallExamColumns] = useState([]);
+  const [overallStudentData, setOverallStudentData] = useState({});
+  const [loadingOverall, setLoadingOverall] = useState(false);
+  const [overallInternalPct, setOverallInternalPct] = useState(0);
+  const [overallCourseType, setOverallCourseType] = useState('');
 
   // Fetch actual CO keys from course_outcomes (set in COConfiguration.jsx)
   useEffect(() => {
@@ -179,8 +189,12 @@ export default function Reports() {
     }
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
+    const deptKeyStrict = sanitizeKeyStrict(department);
     (async () => {
       let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${internalSubject}`));
+      if (!snap.exists() && deptKeyStrict !== deptKey) {
+        snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKeyStrict}_${internalSubject}`));
+      }
       if (!snap.exists()) {
         snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${internalSubject}`));
       }
@@ -234,227 +248,178 @@ export default function Reports() {
     return () => { cancelled = true; };
   }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, internalSubject, section]);
 
-  // Fetch overall marks (weighted aggregate across all exams)
+  const getExamCategory = (config) => {
+    if (config.isAssignment) return "Activity";
+    if (config.isProject) return "Project";
+    if (config.isPractical) return "Practical";
+    if (config.isUniversity) return "ESE";
+    if (config.isIndirectAssessment) return "Indirect Assessment";
+    return "Written Test";
+  };
+
+  // Fetch overall data across all exams for the subject's course type
   useEffect(() => {
     if (module !== 'internal' || selectedInternalExam !== '__overall__' || !programme || !department || !batch || !academicYear || !semester || !internalSubject) {
-      setOverallMarksRows([]);
+      setOverallExamColumns([]);
+      setOverallStudentData({});
+      setOverallInternalPct(0);
+      setOverallCourseType('');
       return;
     }
+    const progKey = formatProgrammeKey(programme);
+    const regulation = getRegulationForBatch(progKey, batch);
+    if (!regulation) return;
+    const regKey = sanitizeKey(regulation);
+    const regKeyStrict = sanitizeKeyStrict(regulation);
+    const courseType = internalSubjectCourseType || '';
+
     let cancelled = false;
     const fetchOverall = async () => {
-      setLoadingOverallMarks(true);
+      setLoadingOverall(true);
       try {
-        const progKey = formatProgrammeKey(programme);
-        const regulation = getRegulationForBatch(progKey, batch);
-        if (!regulation) { setOverallMarksRows([]); setLoadingOverallMarks(false); return; }
-        const regKey = sanitizeKey(regulation);
+        const allCiaMap = Object.fromEntries(Object.entries(ciaConfigs || {}).map(([id, c]) => [id, { id, ...c }]));
 
-        const deptKey = sanitizeKey(department);
-        const subjectCode = internalSubject;
+        const weightageDoc = courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
+        const ctWeightage = weightageDoc[courseType] || weightageDoc[Object.keys(weightageDoc).find(k => !k.startsWith('_'))] || {};
+        const catConfigMap = ctWeightage._category_config || {};
+        const normalizedCatConfigMap = {};
+        Object.entries(catConfigMap).forEach(([k, v]) => { normalizedCatConfigMap[k.toUpperCase()] = v; });
+        const internalPct = Number(weightageDoc._percentages?.[courseType]) || 0;
 
-        let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${subjectCode}`));
-        if (!courseSnap.exists()) {
-          courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${subjectCode}`));
-        }
-        const courseType = courseSnap.exists() ? (courseSnap.data().type || 'Theory') : 'Theory';
+        const columns = [];
+        let allExamIds = [];
 
-        const weightage = courseWeightageData[regKey] || {};
-        const courseTypeData = weightage[courseType] || {};
-        const categoryConfig = courseTypeData._category_config;
+        const catOrder = ['Written Test', 'Activity', 'Practical', 'Project'];
+        const catEntries = Object.keys(normalizedCatConfigMap).length > 0
+          ? catOrder.filter(c => c.toUpperCase() in normalizedCatConfigMap).map(c => [c, normalizedCatConfigMap[c.toUpperCase()]])
+          : Object.entries(catConfigMap);
 
-        const overallMap = {};
+        catEntries.forEach(([catName, catCfg]) => {
+          if (catCfg.consider_for_internal === false) return;
+          const catWeight = Number(catCfg.weightage) || 0;
+          const examWeights = catCfg.exam_weightage || {};
+          const examIds = Object.keys(examWeights).filter(eid => allCiaMap[eid]);
+          if (examIds.length === 0) return;
+
+          const colExams = examIds.map(eid => {
+            const ciaConf = allCiaMap[eid];
+            const ew = Number(examWeights[eid]) || 0;
+            allExamIds.push(eid);
+            return {
+              id: eid,
+              examName: ciaConf?.examName || eid,
+              totalMarks: ciaConf?.totalMarks || 100,
+              category: catName,
+              catWeight,
+              examWeightage: ew,
+              hasExamWeights: ew > 0
+            };
+          });
+          columns.push({ category: catName, catWeight, exams: colExams });
+        });
+
+        // Fetch all marks docs for this subject and group by _meta fields
+        const marksSnap = await getDocs(collection(db, 'marks'));
+
+        // Group marks by ALL _meta identifiers for maximum matching
+        const marksByExam = {};
+        marksSnap.forEach(d => {
+          const md = d.data();
+          const m = md._meta || {};
+          if (m.programme !== programme || m.department !== department || m.batch !== batch ||
+              m.academic_year !== academicYear || m.semester_label !== semester ||
+              (internalSubject && m.subject !== internalSubject)) return;
+          if (section && m.section !== undefined && m.section !== section) return;
+
+          const students = {};
+          Object.entries(md.students || {}).forEach(([reg, s]) => {
+            const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+            const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
+            if (rawTotal <= 0 && !s.absent) return;
+            students[reg] = { scored: rawTotal, absent: !!s.absent };
+          });
+          if (Object.keys(students).length === 0) return;
+
+          // Index by every possible identifier from the marks doc
+          const addUnder = (key) => {
+            if (!key) return;
+            if (!marksByExam[key]) marksByExam[key] = {};
+            Object.assign(marksByExam[key], students);
+          };
+          addUnder(m.exam);
+          addUnder(m.exam_name);
+          addUnder(sanitizeKey(m.exam));
+          addUnder(sanitizeKey(m.exam_name));
+          // Also index by doc ID (marksDocId contains the exam value)
+          addUnder(d.id);
+          // Try extracting exam from doc parts: batch_prog_dept_subject_exam_ay_sem_type
+          const parts = d.id.split('_');
+          if (parts.length >= 8) {
+            const examFromDoc = parts[4]; // 5th segment after sanitizeKey
+            addUnder(examFromDoc);
+          }
+        });
+
+        // Match marks to columns using aggressive matching
+        const marksMap = {};
+        columns.forEach(col => {
+          col.exams.forEach(exCol => {
+            const ciaConf = allCiaMap[exCol.id];
+            const examName = ciaConf?.examName || '';
+            const matched = 
+              marksByExam[exCol.id] ||
+              marksByExam[sanitizeKey(exCol.id)] ||
+              marksByExam[examName] ||
+              marksByExam[sanitizeKey(examName)] ||
+              {};
+            marksMap[exCol.id] = matched;
+          });
+        });
+
+        // Build student data
+        const studentData = {};
         const stRef = studentsRef.current;
+        stRef.forEach(st => {
+          studentData[st.reg] = { name: st.name, exams: {} };
+        });
 
-        // Helper to get category for an exam config
-        const getExamCategory = (config) => {
-          if (config.isAssignment) return "Activity";
-          if (config.isProject) return "Project";
-          if (config.isPractical) return "Practical";
-          if (config.isUniversity) return "ESE";
-          if (config.isIndirectAssessment) return "Indirect Assessment";
-          return "Written Test";
-        };
-
-        if (!categoryConfig) {
-          // OLD LOGIC FALLBACK
-          const examWeightages = courseTypeData || {};
-          let courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-            if (config.isUniversity) return false;
-            if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.some(ct => ct.toLowerCase() === courseType.toLowerCase())) return false;
-            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-            if (config.department && config.department !== department) return false;
-            return true;
-          }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
-
-          if (courseTypeCiaConfigs.length === 0) {
-            courseTypeCiaConfigs = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-              if (config.isUniversity) return false;
-              if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-              if (config.department && config.department !== department) return false;
-              return true;
-            }).map(([id, config]) => ({ id, totalMarks: config.totalMarks || 100 }));
-          }
-
-          const examPromises = courseTypeCiaConfigs.map(async ({ id: examId, totalMarks: examTotal }) => {
-            const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
-            const snap = await getDocs(q);
-            const examData = {};
-            snap.forEach(doc => {
-              const data = doc.data();
-              const m = data._meta || {};
-              if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
-              Object.entries(data.students || {}).forEach(([reg, s]) => {
-                const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
-                const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
-                if (rawTotal <= 0 && !s.absent) return;
-                examData[reg] = { total: rawTotal, absent: !!s.absent };
-              });
-            });
-            return { examId, examTotal, data: examData, weight: examWeightages[examId] };
-          });
-
-          const examResults = await Promise.all(examPromises);
-          const configuredWt = examResults.reduce((s, r) => s + (Number(r.weight) > 0 ? Number(r.weight) : 0), 0);
-          const missingCount = examResults.filter(r => !r.weight || r.weight <= 0).length;
-          if (missingCount > 0) {
-            const eqWt = examResults.length > 0 ? (100 - configuredWt) / missingCount : 0;
-            examResults.forEach(r => { if (!r.weight || r.weight <= 0) r.weight = Math.max(0, eqWt); });
-          }
-
-          examResults.forEach(({ data: examData, weight, examTotal }) => {
-            if (!weight || weight <= 0) return;
-            Object.entries(examData).forEach(([reg, { total }]) => {
-              if (!overallMap[reg]) {
-                const st = stRef.find(s => s.reg === reg);
-                overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
+        columns.forEach(col => {
+          col.exams.forEach(exCol => {
+            const examMarks = marksMap[exCol.id] || {};
+            Object.entries(examMarks).forEach(([reg, { scored, absent }]) => {
+              if (!studentData[reg]) {
+                const found = stRef.find(s => s.reg === reg);
+                studentData[reg] = { name: found?.name || reg, exams: {} };
               }
-              overallMap[reg].weightedSum += (total / examTotal) * 100 * weight;
-              overallMap[reg].totalWeight += weight;
-            });
-          });
-        } else {
-          // NEW CATEGORY-BASED LOGIC
-          let validExams = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-            if (config.isUniversity) return false;
-            if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-            if (config.department && config.department !== department) return false;
-            if (config.courseTypes && config.courseTypes.length > 0 && !config.courseTypes.some(ct => ct.toLowerCase() === courseType.toLowerCase())) return false;
-            return true;
-          });
-
-          if (validExams.length === 0) {
-            validExams = Object.entries(ciaConfigs || {}).filter(([, config]) => {
-              if (config.isUniversity) return false;
-              if (config.program && formatProgrammeKey(config.program) !== progKey) return false;
-              if (config.department && config.department !== department) return false;
-              return true;
-            });
-          }
-
-          const examsByCategory = {};
-          validExams.forEach(([id, config]) => {
-            const cat = getExamCategory(config);
-            if (!examsByCategory[cat]) examsByCategory[cat] = [];
-            examsByCategory[cat].push({ id, totalMarks: config.totalMarks || 100 });
-          });
-
-          const examDataMap = {};
-          const allRegs = new Set();
-          
-          await Promise.all(validExams.map(async ([examId]) => {
-            const q = query(collection(db, 'marks'), where('_meta.exam', '==', examId));
-            const snap = await getDocs(q);
-            const eData = {};
-            snap.forEach(doc => {
-              const data = doc.data();
-              const m = data._meta || {};
-              if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
-              Object.entries(data.students || {}).forEach(([reg, s]) => {
-                const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
-                const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
-                if (rawTotal <= 0 && !s.absent) return;
-                eData[reg] = { total: rawTotal, absent: !!s.absent };
-                allRegs.add(reg);
-              });
-            });
-            examDataMap[examId] = eData;
-          }));
-
-          Object.entries(examsByCategory).forEach(([catName, exams]) => {
-            const catCfg = categoryConfig[catName] || {};
-            if (catCfg.consider_for_internal === false) return;
-            
-            const catWeight = Number(catCfg.weightage) || 0;
-            const finalCatWeight = catWeight > 0 ? catWeight : (Object.keys(categoryConfig).length > 0 ? 0 : 1);
-            if (finalCatWeight === 0 && Object.keys(categoryConfig).length > 0) return;
-
-            const examWeights = catCfg.exam_weightage || {};
-            const bestCount = Number(catCfg.best_count) || 0;
-            const hasExamWeights = Object.values(examWeights).some(v => v != null && v !== '' && Number(v) > 0);
-
-            allRegs.forEach(reg => {
-              const examPcts = [];
-              
-              exams.forEach(exam => {
-                const studentExamData = examDataMap[exam.id]?.[reg];
-                if (studentExamData) {
-                  const pct = (studentExamData.total / exam.totalMarks) * 100;
-                  examPcts.push({ id: exam.id, pct, weight: Number(examWeights[exam.id]) || 0 });
-                }
-              });
-
-              if (examPcts.length === 0) return;
-
-              let catScore = 0;
-              if (hasExamWeights) {
-                let sumWeightedPct = 0;
-                let sumWeights = 0;
-                examPcts.forEach(ep => {
-                  if (ep.weight > 0) {
-                    sumWeightedPct += ep.pct * ep.weight;
-                    sumWeights += ep.weight;
-                  }
-                });
-                if (sumWeights > 0) {
-                  catScore = sumWeightedPct / sumWeights;
-                } else {
-                  catScore = examPcts.reduce((s, ep) => s + ep.pct, 0) / examPcts.length;
-                }
-              } else if (bestCount > 0) {
-                examPcts.sort((a, b) => b.pct - a.pct);
-                const topN = examPcts.slice(0, bestCount);
-                catScore = topN.reduce((s, ep) => s + ep.pct, 0) / topN.length;
+              const pct = (scored / exCol.totalMarks) * 100;
+              let weightedPct = 0;
+              if (exCol.hasExamWeights && exCol.examWeightage > 0) {
+                weightedPct = pct * (exCol.examWeightage / 100);
               } else {
-                catScore = examPcts.reduce((s, ep) => s + ep.pct, 0) / examPcts.length;
+                const catCount = columns.find(c => c.category === exCol.category)?.exams.length || 1;
+                weightedPct = pct / catCount;
               }
-
-              if (!overallMap[reg]) {
-                const st = stRef.find(s => s.reg === reg);
-                overallMap[reg] = { reg, name: st?.name || reg, weightedSum: 0, totalWeight: 0 };
-              }
-              overallMap[reg].weightedSum += catScore * finalCatWeight;
-              overallMap[reg].totalWeight += finalCatWeight;
+              studentData[reg].exams[exCol.id] = { scored, maxMarks: exCol.totalMarks, pct: Math.round(pct * 100) / 100, weightedPct: Math.round(weightedPct * 100) / 100, absent };
             });
           });
+        });
+
+        if (!cancelled) {
+          setOverallExamColumns(columns);
+          setOverallStudentData(studentData);
+          setOverallInternalPct(internalPct);
+          setOverallCourseType(courseType);
         }
-
-        const rows = Object.values(overallMap).map(r => ({
-          reg: r.reg,
-          name: r.name,
-          mark: r.totalWeight > 0 ? Math.min(100, Math.round(r.weightedSum / r.totalWeight)) : 0
-        })).sort((a, b) => a.reg.localeCompare(b.reg));
-
-        if (!cancelled) setOverallMarksRows(rows);
       } catch (err) {
-        console.error("Fetch overall marks error:", err);
-        if (!cancelled) setOverallMarksRows([]);
+        console.error("Overall fetch error:", err);
+        if (!cancelled) { setOverallExamColumns([]); setOverallStudentData({}); setOverallInternalPct(0); setOverallCourseType(''); }
       } finally {
-        if (!cancelled) setLoadingOverallMarks(false);
+        if (!cancelled) setLoadingOverall(false);
       }
     };
     fetchOverall();
     return () => { cancelled = true; };
-  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, internalSubject, section, ciaConfigs, courseWeightageData, getRegulationForBatch]);
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, internalSubject, internalSubjectCourseType, section, ciaConfigs, courseWeightageData, getRegulationForBatch]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -1749,6 +1714,220 @@ export default function Reports() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadOverallPDF = async () => {
+    if (!overallExamColumns.length || !Object.keys(overallStudentData).length) return;
+
+    let logoDataUrl = null;
+    try {
+      const resp = await fetch('/logo.png');
+      const blob = await resp.blob();
+      logoDataUrl = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch { /* skip */ }
+
+    // Resolve subject name from syllabus data
+    let subjectName = '';
+    if (syllabusData?.semesters && semester) {
+      const semSubjects = syllabusData.semesters[deriveSemesterNumber(semester)] || [];
+      const match = semSubjects.find(s => s.code === internalSubject);
+      if (match) subjectName = match.name || '';
+    }
+
+    const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginLeft = 10;
+    const marginRight = 10;
+    const contentWidth = pageWidth - marginLeft - marginRight;
+    let yPos = 8;
+
+    // ── Logo ──
+    if (logoDataUrl) {
+      try {
+        const logoH = 16;
+        const logoW = contentWidth;
+        doc.addImage(logoDataUrl, 'PNG', marginLeft, yPos, logoW, logoH);
+        yPos += logoH + 3;
+      } catch { /* skip */ }
+    }
+
+    // ── Divider line ──
+    doc.setDrawColor(18, 12, 122);
+    doc.setLineWidth(0.5);
+    doc.line(marginLeft, yPos, pageWidth - marginRight, yPos);
+    yPos += 5;
+
+    // ── Title (centered) ──
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(18, 12, 122);
+    const title = 'Overall Internal Marks Report';
+    doc.text(title, pageWidth / 2, yPos, { align: 'center' });
+    yPos += 7;
+
+    // ── Subject line ──
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'bold');
+    const subjectText = `Subject: ${internalSubject}${subjectName ? ' - ' + subjectName : ''}${internalSubjectCourseType ? ' (' + internalSubjectCourseType + ')' : ''}`;
+    doc.text(subjectText, marginLeft, yPos);
+    yPos += 5;
+
+    // ── Details line ──
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(60, 60, 60);
+    const detailParts = [];
+    if (batch) detailParts.push(`Batch: ${batch}`);
+    if (academicYear) detailParts.push(`Academic Year: ${academicYear}`);
+    if (semester) detailParts.push(`Semester: ${semester}`);
+    if (section) detailParts.push(`Section: ${section}`);
+    if (programme) detailParts.push(`Programme: ${programme}`);
+    if (department) detailParts.push(`Department: ${department}`);
+    doc.text(detailParts.join('  |  '), marginLeft, yPos);
+    yPos += 4;
+
+    // ── Course type line ──
+    if (overallInternalPct > 0) {
+      doc.setFont(undefined, 'italic');
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Course Type: ${overallCourseType} | Internal Weightage: ${overallInternalPct}%`, marginLeft, yPos);
+      yPos += 4;
+    }
+
+    // ── Thin separator ──
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.2);
+    doc.line(marginLeft, yPos, pageWidth - marginRight, yPos);
+    yPos += 3;
+
+    // ── Table headers ──
+    const headers = [['#', 'Reg No', 'Student Name']];
+    overallExamColumns.forEach(col => {
+      col.exams.forEach(ex => {
+        headers[0].push(ex.examName);
+      });
+      headers[0].push(`${col.category}\nSub`);
+    });
+    headers[0].push('Overall %');
+    headers[0].push('Round\nOff');
+
+    // ── Table rows ──
+    const rows = [];
+    Object.entries(overallStudentData)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([reg, sData], idx) => {
+        const row = [String(idx + 1), reg, sData.name || reg];
+        let overallTotal = 0;
+        overallExamColumns.forEach(col => {
+          let catSum = 0;
+          col.exams.forEach(ex => {
+            const eData = sData.exams?.[ex.id];
+            const wp = eData?.weightedPct ?? 0;
+            catSum += wp;
+            if (eData) {
+              if (eData.absent) {
+                row.push({ content: 'AB', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
+              } else {
+                row.push(`${eData.scored}/${eData.maxMarks}\n(${eData.pct}%)${ex.examWeightage > 0 ? '\nW:' + eData.weightedPct + '%' : ''}`);
+              }
+            } else {
+              row.push({ content: '0', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
+            }
+          });
+          const catTotal = Math.round(catSum * 100) / 100;
+          row.push(`${catTotal}%`);
+          overallTotal += catSum * (col.catWeight / 100);
+        });
+        const finalValue = overallInternalPct > 0
+          ? Math.round(overallTotal * overallInternalPct) / 100
+          : Math.round(overallTotal * 100) / 100;
+        row.push(`${finalValue}%`);
+        row.push(String(Math.round(finalValue)));
+        rows.push(row);
+      });
+
+    // ── Column styles ──
+    const colStyles = {
+      0: { halign: 'center', fontStyle: 'bold', fontSize: 7 },     // #
+      1: { halign: 'left', fontStyle: 'bold', fontSize: 7 },       // Reg No
+      2: { halign: 'left', cellPadding: 2, fontSize: 7 },          // Student Name
+    };
+
+    let ci = 3;
+    overallExamColumns.forEach(col => {
+      col.exams.forEach(() => { colStyles[ci] = { halign: 'center', fontSize: 6.5 }; ci++; });
+      colStyles[ci] = { halign: 'center', fontStyle: 'bold', fontSize: 7 }; ci++;
+    });
+    // Overall %
+    colStyles[ci] = { halign: 'center', fontStyle: 'bold', fillColor: [236, 253, 245], fontSize: 7 }; ci++;
+    // Round Off
+    colStyles[ci] = { halign: 'center', fontStyle: 'bold', fillColor: [254, 243, 199], fontSize: 8 };
+
+    autoTable(doc, {
+      head: headers,
+      body: rows,
+      startY: yPos,
+      tableWidth: contentWidth,
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.8,
+        halign: 'center',
+        overflow: 'linebreak',
+        linebreak: [''],
+        textColor: [30, 30, 30],
+        lineWidth: 0.1,
+      },
+      headStyles: {
+        fillColor: [18, 12, 122],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 7,
+        cellPadding: 1.8,
+        halign: 'center',
+        valign: 'middle',
+      },
+      columnStyles: colStyles,
+      alternateRowStyles: { fillColor: [248, 247, 255] },
+      margin: { left: marginLeft, right: marginRight },
+      didDrawPage: (data) => {
+        // Footer on every page
+        const fY = pageHeight - 12;
+        doc.setFontSize(7);
+        doc.setTextColor(150, 150, 150);
+        doc.setFont(undefined, 'normal');
+        doc.text('C.K. College of Engineering & Technology', marginLeft, fY);
+        doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageWidth - marginRight, fY, { align: 'right' });
+      },
+    });
+
+    // ── Signatures ──
+    const finalY = doc.lastAutoTable.finalY || yPos;
+    const sigY = Math.min(finalY + 18, pageHeight - 18);
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'normal');
+    const sigSpacing = contentWidth / 4;
+    const sigBaseX = marginLeft + sigSpacing;
+
+    // Signature lines
+    doc.setDrawColor(150, 150, 150);
+    doc.setLineWidth(0.2);
+    [sigBaseX, sigBaseX + sigSpacing, sigBaseX + sigSpacing * 2].forEach(x => {
+      doc.line(x - 20, sigY, x + 20, sigY);
+    });
+
+    doc.setFont(undefined, 'bold');
+    doc.text('Faculty Signature', sigBaseX, sigY + 4, { align: 'center' });
+    doc.text('HOD Signature', sigBaseX + sigSpacing, sigY + 4, { align: 'center' });
+    doc.text('Principal Signature', sigBaseX + sigSpacing * 2, sigY + 4, { align: 'center' });
+
+    doc.output('dataurlnewwindow');
+  };
+
   const handleSaveStudents = async () => {
     if (!batch || !programme || !department) return;
 
@@ -1846,10 +2025,10 @@ export default function Reports() {
         }
       `}</style>
       {/* Main Content */}
-      <div className="p-6 md:p-10 max-w-6xl mx-auto">
+      <div className="p-4 sm:p-6 md:p-10 max-w-[1440px] mx-auto">
         {/* Selection Card */}
-        <div className="bg-white rounded-3xl shadow-xl p-8 mb-10 border border-white/20">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
+        <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-10 border border-white/20">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8">
             {/* Programme */}
             <div className="space-y-2">
               <label className="text-sm font-bold text-zinc-600 ml-1">Select Programme Name</label>
@@ -2240,24 +2419,24 @@ export default function Reports() {
         </div>
 
         {/* Internal Exam Marks Section */}
-        {module === "internal" && selectedInternalExam && (
-          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-10">
-            <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center">
+        {module === "internal" && selectedInternalExam && selectedInternalExam !== '__overall__' && (
+          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-6 sm:mb-10">
+            <div className="bg-zinc-50 px-4 sm:px-6 md:px-8 py-4 border-b border-zinc-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 shrink-0">
                   <FileText size={18} />
                 </div>
-                <h3 className="font-bold text-zinc-800 tracking-tight">
-                  {selectedInternalExam === '__overall__' ? 'Overall Marks' : (((() => { const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1]; return c?.examName || selectedInternalExam; })()))}
+                <h3 className="font-bold text-zinc-800 tracking-tight text-sm sm:text-base">
+                  {(() => { const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1]; return c?.examName || selectedInternalExam; })()}
                 </h3>
                 <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest whitespace-nowrap">
-                  {selectedInternalExam === '__overall__' ? 'Weighted' : (((() => {
+                  {(() => {
                     const c = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1];
                     if (c?.isAssignment) return "Activity";
                     if (c?.isProject) return "Project";
                     if (c?.isPractical) return "Practical";
                     return "Assessment";
-                  })()))} Marks
+                  })()} Marks
                 </span>
                 <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium whitespace-nowrap hidden sm:inline-block">
                   {batch} • {programme} • {department} {section ? `(Sec-${section})` : ''}
@@ -2265,7 +2444,7 @@ export default function Reports() {
               </div>
             </div>
 
-            <div className="p-8">
+            <div className="p-4 sm:p-6 md:p-8">
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
@@ -2276,48 +2455,7 @@ export default function Reports() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {selectedInternalExam === '__overall__' ? (
-                      loadingOverallMarks ? (
-                        <tr>
-                          <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
-                            <div className="flex flex-col items-center justify-center gap-2">
-                              <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                              <span>Loading marks...</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : overallMarksRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
-                            <div className="flex flex-col items-center gap-2">
-                              <AlertCircle size={24} className="text-zinc-400" />
-                              <p>No marks found for overall calculation.</p>
-                              {window._debugOverall && (
-                                <pre className="text-left text-xs bg-gray-100 p-2 mt-4 max-w-full overflow-auto w-full text-red-600">
-                                  {JSON.stringify(window._debugOverall, null, 2)}
-                                </pre>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        overallMarksRows.map((row) => (
-                          <tr key={row.reg} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
-                            <td className="p-4">
-                              <span className="text-sm font-mono text-zinc-700 font-medium">{row.reg}</span>
-                            </td>
-                            <td className="p-4">
-                              <span className="text-sm font-medium text-zinc-800">{row.name}</span>
-                            </td>
-                            <td className="p-4 text-center">
-                              <span className="text-sm font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md">
-                                {row.mark}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      )
-                    ) : loadingInternalMarks ? (
+                    {loadingInternalMarks ? (
                       <tr>
                         <td colSpan={3} className="text-center py-12 text-zinc-400 italic">
                           <div className="flex flex-col items-center justify-center gap-2">
@@ -2352,6 +2490,140 @@ export default function Reports() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Overall Internal Marks Section (all exams with weightage) */}
+        {module === "internal" && selectedInternalExam === '__overall__' && (
+          <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-6 sm:mb-10">
+            <div className="bg-zinc-50 px-4 sm:px-6 md:px-8 py-4 border-b border-zinc-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 shrink-0">
+                  <FileText size={18} />
+                </div>
+                <h3 className="font-bold text-zinc-800 tracking-tight text-sm sm:text-base">
+                  Overall Marks — {internalSubject}
+                  {internalSubjectCourseType && <span className="ml-2 text-xs font-normal text-zinc-500">({internalSubjectCourseType})</span>}
+                </h3>
+                <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium whitespace-nowrap hidden sm:inline-block">
+                  {batch} • {programme} • {department} {section ? `(Sec-${section})` : ''}
+                </span>
+              </div>
+              <button
+                onClick={downloadOverallPDF}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0"
+              >
+                <Download size={14} /> Download PDF
+              </button>
+            </div>
+            <div className="p-4 sm:p-6 md:p-8">
+              {loadingOverall ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-400 italic">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <span>Loading overall marks...</span>
+                </div>
+              ) : overallExamColumns.length === 0 || Object.keys(overallStudentData).length === 0 ? (
+                <div className="text-center py-12 text-zinc-400 italic">
+                  {!internalSubjectCourseType
+                    ? 'Subject has no course type configured.'
+                    : 'No marks data found for this subject\'s exams.'}
+                </div>
+              ) : (
+                <div className="overflow-x-auto -mx-4 sm:mx-0">
+                  <table className="w-full border-collapse min-w-[600px]">
+                    <thead>
+                      <tr className="bg-zinc-50">
+                        <th className="text-left p-2 sm:p-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200 sticky left-0 bg-zinc-50 z-10 whitespace-nowrap" rowSpan={2}>Reg No</th>
+                        <th className="text-left p-2 sm:p-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-200 sticky left-[90px] bg-zinc-50 z-10 whitespace-nowrap" rowSpan={2}>Student Name</th>
+                        {overallExamColumns.map(col => (
+                          <th key={col.category} colSpan={col.exams.length + 1} className="text-center p-1.5 sm:p-2 text-[10px] font-bold uppercase tracking-wider border-b border-r border-zinc-200 bg-slate-100/50 whitespace-nowrap"
+                            style={{ color: col.category === 'Written Test' ? '#2563eb' : col.category === 'Activity' ? '#ea580c' : col.category === 'Practical' ? '#0891b2' : col.category === 'Project' ? '#d97706' : '#7c3aed' }}>
+                            {col.category} {col.catWeight > 0 ? `(Wt: ${col.catWeight}%)` : ''}
+                          </th>
+                        ))}
+                        <th className="text-center p-1.5 sm:p-2 text-[10px] font-bold uppercase tracking-wider border-b border-zinc-200 bg-emerald-50 whitespace-nowrap text-emerald-700" rowSpan={2}>
+                          Overall %{overallInternalPct > 0 && <span className="block text-[8px] font-normal text-emerald-500">({overallCourseType}: {overallInternalPct}%)</span>}
+                        </th>
+                        <th className="text-center p-1.5 sm:p-2 text-[10px] font-bold uppercase tracking-wider border-b border-zinc-200 bg-amber-50 whitespace-nowrap text-amber-700" rowSpan={2}>
+                          Round Off
+                        </th>
+                      </tr>
+                      <tr className="bg-zinc-50/50">
+                        {overallExamColumns.flatMap(col => [
+                          ...col.exams.map(ex => (
+                            <th key={ex.id} className="text-center p-1.5 sm:p-2 text-[9px] font-bold text-zinc-500 border-b border-zinc-200 whitespace-nowrap">
+                              <div className="truncate max-w-[100px]">{ex.examName}</div>
+                              <div className="text-[8px] text-zinc-400 font-normal">Max: {ex.totalMarks}</div>
+                              {ex.examWeightage != null && <div className="text-[8px] text-blue-500">Wt: {ex.examWeightage}%</div>}
+                            </th>
+                          )),
+                          <th key={`cat-${col.category}`} className="text-center p-1.5 sm:p-2 text-[9px] font-bold border-b border-zinc-200 whitespace-nowrap" style={{ color: col.category === 'Written Test' ? '#2563eb' : col.category === 'Activity' ? '#ea580c' : col.category === 'Practical' ? '#0891b2' : col.category === 'Project' ? '#d97706' : '#7c3aed' }}>
+                            <div>{col.category}</div>
+                            <div>Subtotal</div>
+                          </th>
+                        ])}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {Object.entries(overallStudentData)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([reg, sData]) => {
+                          let overallTotal = 0;
+                          const catTotals = {};
+                          overallExamColumns.forEach(col => {
+                            let catSum = 0;
+                            col.exams.forEach(ex => {
+                              const exam = sData.exams?.[ex.id];
+                              if (exam) catSum += exam.weightedPct || 0;
+                            });
+                            catTotals[col.category] = Math.round(catSum * 100) / 100;
+                            overallTotal += catSum * (col.catWeight / 100);
+                          });
+                          return (
+                          <tr key={reg} className="hover:bg-blue-50/30 transition-colors">
+                            <td className="p-2 sm:p-3 text-xs font-mono text-zinc-700 font-medium sticky left-0 bg-white z-[5] whitespace-nowrap">{reg}</td>
+                            <td className="p-2 sm:p-3 text-xs font-medium text-zinc-800 sticky left-[90px] bg-white z-[5] whitespace-nowrap">{sData.name}</td>
+                            {overallExamColumns.flatMap(col => [
+                              ...col.exams.map(ex => {
+                                const exam = sData.exams?.[ex.id];
+                                return (
+                                  <td key={ex.id} className="p-1 sm:p-2 text-center border-b border-zinc-50">
+                                    {exam ? (
+                                      exam.absent ? (
+                                        <span className="text-[11px] sm:text-xs font-bold text-red-500">AB</span>
+                                      ) : (
+                                        <div className="flex flex-row items-center justify-center gap-1 whitespace-nowrap">
+                                          <span className="text-[11px] sm:text-xs font-bold text-zinc-700">{exam.scored}/{exam.maxMarks}</span>
+                                          <span className="text-[9px] sm:text-[10px] text-blue-600 font-semibold">({exam.pct}%)</span>
+                                          {ex.examWeightage != null && ex.examWeightage > 0 && (
+                                            <span className="text-[8px] sm:text-[9px] text-emerald-600 font-medium">W:{exam.weightedPct}%</span>
+                                          )}
+                                        </div>
+                                      )
+                                    ) : (
+                                      <span className="text-[11px] sm:text-xs font-bold text-red-500">0</span>
+                                    )}
+                                  </td>
+                                );
+                              }),
+                              <td key={`cat-${col.category}`} className="p-1 sm:p-2 text-center border-b border-zinc-100 font-bold" style={{ color: col.category === 'Written Test' ? '#2563eb' : col.category === 'Activity' ? '#ea580c' : col.category === 'Practical' ? '#0891b2' : col.category === 'Project' ? '#d97706' : '#7c3aed' }}>
+                                <span className="text-[11px] sm:text-xs">{catTotals[col.category] ?? '-'}%</span>
+                              </td>
+                            ])}
+                            <td className="p-1 sm:p-2 text-center border-b border-zinc-100 bg-emerald-50/50">
+                              <span className="text-[11px] sm:text-xs font-black text-emerald-700">{overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100}%</span>
+                              {overallInternalPct > 0 && <div className="text-[8px] text-emerald-500 font-normal">{Math.round(overallTotal * 100) / 100} × {overallInternalPct}%</div>}
+                            </td>
+                            <td className="p-1 sm:p-2 text-center border-b border-zinc-100 bg-amber-50/50">
+                              <span className="text-[11px] sm:text-xs font-black text-amber-700">{Math.round(overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100)}</span>
+                            </td>
+                          </tr>
+                        );})}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2782,7 +3054,11 @@ export default function Reports() {
                               <td key={co} className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals[co] || 0}</td>
                             ))}
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30">
-                              {consolidationCoKeys.reduce((sum, co) => sum + Number(totals[co] || 0), 0)}
+                              {(() => {
+                                const rawTotal = consolidationCoKeys.reduce((s, co) => s + Number(totals[co] || 0), 0);
+                                const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
+                                return maxTotal > 0 ? Math.round((rawTotal / maxTotal) * 100) : rawTotal;
+                              })()}
                             </td>
                           </tr>
                         );
@@ -2796,7 +3072,11 @@ export default function Reports() {
                             <td key={co} className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages[co]?.toFixed(2)}</td>
                           ))}
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
-                            {consolidationCoKeys.reduce((sum, co) => sum + (indirectCoAverages.averages[co] || 0), 0).toFixed(2)}
+                            {(() => {
+                              const rawAvg = consolidationCoKeys.reduce((s, co) => s + (indirectCoAverages.averages[co] || 0), 0);
+                              const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
+                              return maxTotal > 0 ? (Math.round((rawAvg / maxTotal) * 10000) / 100).toFixed(2) : rawAvg.toFixed(2);
+                            })()}
                           </td>
                         </tr>
                       )}
