@@ -58,6 +58,7 @@ export default function QuestionPaper() {
   const [exam, setExam] = useState("");
   const [customExam, setCustomExam] = useState("");
   const [numParts, setNumParts] = useState("");
+  const [eseMarkType, setEseMarkType] = useState("");
 
   // Parts Configuration State
   const [partsConfig, setPartsConfig] = useState([]);
@@ -109,6 +110,51 @@ export default function QuestionPaper() {
       (!config.semester || String(config.semester) === semNum)
     );
   }, [ciaConfigs, programme, department, batch, academicYear, semester]);
+
+  const selectedExamConfig = useMemo(() => {
+    if (!exam || exam === 'custom') return null;
+    return ciaConfigs.find(c => c.id === exam) || null;
+  }, [exam, ciaConfigs]);
+
+  const isESE = !!selectedExamConfig?.isUniversity;
+
+  const [eseHasQP, setEseHasQP] = useState(false);
+
+  useEffect(() => {
+    if (!isESE || !exam || !department || !academicYear || !semester || !subject) {
+      setEseHasQP(false);
+      return;
+    }
+    const semNum = deriveSemesterNumber(semester);
+    const subCode = typeof subject === 'object' ? subject.value : subject;
+    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
+
+    const unsub = onSnapshot(collection(db, 'generated_qps'), (snap) => {
+      let found = false;
+      snap.forEach(d => {
+        const docData = d.data();
+        Object.entries(docData).forEach(([, payload]) => {
+          if (payload && typeof payload === 'object' && payload.subject) {
+            if (norm(payload.department || '') === norm(department) &&
+                (!payload.programme || norm(payload.programme) === norm(programme)) &&
+                norm(payload.batch || '') === norm(batch) &&
+                norm(payload.academic_year || '') === norm(academicYear) &&
+                String(payload.semester || '').trim() === semNum &&
+                norm(payload.subject || '') === norm(subCode)) {
+              found = true;
+            }
+          }
+        });
+      });
+      setEseHasQP(found);
+    });
+    return () => unsub();
+  }, [isESE, exam, department, programme, batch, academicYear, semester, subject]);
+
+  const filteredExamOptions = useMemo(() => {
+    if (!isESE) return filteredExams;
+    return filteredExams.filter(e => e.isUniversity);
+  }, [filteredExams, isESE]);
 
   useEffect(() => {
     if (exam && exam !== 'custom') {
@@ -668,7 +714,7 @@ export default function QuestionPaper() {
               <div className="relative">
                 <select 
                   value={exam}
-                  onChange={(e) => setExam(e.target.value)}
+                  onChange={(e) => { setExam(e.target.value); setEseMarkType(''); }}
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
                 >
                   <option value="">Select Exam</option>
@@ -680,6 +726,25 @@ export default function QuestionPaper() {
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
               </div>
             </div>
+
+            {/* ESE Mark Type */}
+            {isESE && exam && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Mark Type</label>
+                <div className="relative">
+                  <select 
+                    value={eseMarkType}
+                    onChange={(e) => setEseMarkType(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
+                  >
+                    <option value="">Select Mark Type</option>
+                    <option value="Overall">Overall</option>
+                    {eseHasQP && <option value="CO Wise">CO Wise</option>}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+            )}
 
             {/* Number of Parts */}
             <div className="space-y-2">

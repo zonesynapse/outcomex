@@ -539,11 +539,11 @@ export default function MarkEntry() {
     const uniExams = ciaConfigs
       .filter(c => 
         (c.isUniversity || c.isIndirectAssessment) &&
-        formatProgDisplay(c.program) === formatProgDisplay(programme) &&
-        c.department === department &&
-        c.batch === batch &&
-        c.academicYear === academicYear &&
-        String(c.semester) === needSem
+        (!c.program || formatProgDisplay(c.program) === formatProgDisplay(programme)) &&
+        (!c.department || norm(c.department) === needDept) &&
+        (!c.batch || norm(c.batch) === needBatch) &&
+        (!c.academicYear || norm(c.academicYear) === needAy) &&
+        (!c.semester || String(c.semester) === needSem)
       )
       .map(c => {
         // Check if a QP exists for this university exam
@@ -594,12 +594,14 @@ export default function MarkEntry() {
         setIsUniversityExam(isUni);
         setIsIndirectAssessment(!!selectedExam.isIndirectAssessment);
 
-        if (isUni || selectedExam.isIndirectAssessment) {
-          if (selectedExam.isIndirectAssessment || selectedExam.hasQP) {
-            setMarkType("CO Wise");
-          } else {
-            setMarkType("Overall");
+        if (isUni) {
+          // ESE/University: let user choose CO Wise or Overall via dropdown — don't auto-set
+          // Keep existing markType if it's already a valid choice, otherwise leave empty
+          if (markType !== 'CO Wise' && markType !== 'Overall') {
+            setMarkType('');
           }
+        } else if (selectedExam.isIndirectAssessment) {
+          setMarkType("CO Wise");
         } else {
           setMarkType(selectedExam.type);
         }
@@ -1106,22 +1108,27 @@ export default function MarkEntry() {
       const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
       const examDocId = sanitizeKey(exam || (meta.qpaper_meta?.qpaper_name || 'exam'));
 
-      // Determine CO max marks for this exam
-      // co weightage for this exam
+      // Determine CO max marks for this exam — always derive from actual loaded QP data
       let coMaxMarks = {};
-      if (meta.qpaper_meta?.co_weightage && Object.keys(meta.qpaper_meta.co_weightage).length > 0) {
-        coMaxMarks = Object.entries(meta.qpaper_meta.co_weightage).reduce((acc, [k, v]) => {
-          acc[k.trim().toUpperCase()] = Number(v || 0);
-          return acc;
-        }, {});
-      } else if (isUniversityExam || isIndirectAssessment) {
-        // Default max marks for university (100) or indirect (3)
+      if (isUniversityExam || isIndirectAssessment) {
         const maxVal = isIndirectAssessment ? 3 : 100;
-        ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
-          coMaxMarks[co] = maxVal;
+        ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { coMaxMarks[co] = maxVal; });
+      } else if (isAssignmentLike) {
+        // Assignment/Project/Practical: derive from assignmentConfig mappings
+        const derived = {};
+        (assignmentConfig || []).forEach(q => {
+          (q.mappings || []).forEach(m => {
+            const co = String(m?.co || '').trim().toUpperCase();
+            if (!co || !/^CO\d+/i.test(co)) return;
+            const mapMarks = parseInt(m?.marks, 10) || 0;
+            if (mapMarks > 0) {
+              derived[co] = (derived[co] || 0) + mapMarks;
+            }
+          });
         });
+        coMaxMarks = derived;
       } else {
-        // Fallback for regular internal exams: derive max marks from qpParts structure
+        // Regular internal exams: derive max marks from qpParts structure
         const derived = {};
         qpParts.forEach(part => {
           const marks = Number(part.marks_per_question || 0);
@@ -1141,7 +1148,6 @@ export default function MarkEntry() {
         coMaxMarks = derived;
       }
 
-      // Ensure keys exist for common COs to prevent dashboard rendering issues
       ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { if (!(co in coMaxMarks)) coMaxMarks[co] = 0; });
 
       // Build per-student CO totals from the enrichedMarksData we just saved
@@ -1593,6 +1599,24 @@ export default function MarkEntry() {
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>
             </div>
+
+            {isUniversityExam && exam && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Mark Type</label>
+                <div className="relative">
+                  <select 
+                    value={markType}
+                    onChange={(e) => setMarkType(e.target.value)}
+                    className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
+                  >
+                    <option value="">Select Mark Type</option>
+                    <option value="CO Wise">CO Wise</option>
+                    <option value="Overall">Overall</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+                </div>
+              </div>
+            )}
 
 
           </div>

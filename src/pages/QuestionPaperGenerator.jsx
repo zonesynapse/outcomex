@@ -2670,10 +2670,13 @@ export default function QuestionPaperGenerator() {
         (q.mappings || []).forEach(m => {
           if (m.co) {
             const mapMarks = parseInt(m?.marks, 10) || 0;
-            co_weightage[m.co] = (co_weightage[m.co] || 0) + mapMarks;
+            if (mapMarks > 0) {
+              co_weightage[m.co] = (co_weightage[m.co] || 0) + mapMarks;
+            }
           }
         });
       });
+      Object.keys(co_weightage).forEach(k => { if (co_weightage[k] <= 0) delete co_weightage[k]; });
     } else {
       assignmentConfig.forEach(q => {
         overallTotal += q.marks;
@@ -3188,7 +3191,7 @@ export default function QuestionPaperGenerator() {
         return;
       }
 
-      const isSaved = await handleSaveQuestionPaper(true);
+      const isSaved = isAssignmentOrProject ? await handleSaveAssignment('draft') : await handleSaveQuestionPaper(true);
       if (!isSaved) return;
 
       function getImageDimensions(imgTag) {

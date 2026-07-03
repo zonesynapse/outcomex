@@ -3057,7 +3057,7 @@ export default function Reports() {
                               {(() => {
                                 const rawTotal = consolidationCoKeys.reduce((s, co) => s + Number(totals[co] || 0), 0);
                                 const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
-                                return maxTotal > 0 ? Math.round((rawTotal / maxTotal) * 100) : rawTotal;
+                                return maxTotal > 0 ? Math.min(100, Math.round((rawTotal / maxTotal) * 100)) : Math.min(100, rawTotal);
                               })()}
                             </td>
                           </tr>
@@ -3075,7 +3075,8 @@ export default function Reports() {
                             {(() => {
                               const rawAvg = consolidationCoKeys.reduce((s, co) => s + (indirectCoAverages.averages[co] || 0), 0);
                               const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
-                              return maxTotal > 0 ? (Math.round((rawAvg / maxTotal) * 10000) / 100).toFixed(2) : rawAvg.toFixed(2);
+                              const avgPct = maxTotal > 0 ? (Math.round((rawAvg / maxTotal) * 10000) / 100) : rawAvg;
+                              return Math.min(100, avgPct).toFixed(2);
                             })()}
                           </td>
                         </tr>
