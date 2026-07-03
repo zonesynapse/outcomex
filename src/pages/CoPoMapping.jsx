@@ -638,8 +638,10 @@ export default function CoPoMapping() {
   };
 
   const coCodes = useMemo(() => {
-    const codes = new Set(coList.map(co => co.code));
-    // Ensure any CO with data or mapping is included
+    const fromCoList = coList.map(co => co.code);
+    if (fromCoList.length > 0) return fromCoList;
+    // Fallback: use COs from summary or attainment data
+    const codes = new Set();
     Object.values(summary || {}).forEach(data => {
       if (data.co_counts) Object.keys(data.co_counts).forEach(c => codes.add(c));
     });
