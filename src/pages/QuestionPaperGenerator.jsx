@@ -22,6 +22,10 @@ const sanitizeKey = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]]/g, '_');
 };
+const sanitizeKeyStrict = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
+};
 
 export default function QuestionPaperGenerator() {
   const { departments: programToDepartments, durations } = useDepartments();
@@ -89,6 +93,17 @@ export default function QuestionPaperGenerator() {
   const isEditingQbRef = useRef(false);  // Track if we're editing an existing question
   const [showQbEditor, setShowQbEditor] = useState(true);
   const [qbEditorData, setQbEditorData] = useState('');
+
+  // Derive subject code from JSON subject state for Firestore paths
+  const subjectCode = useMemo(() => {
+    if (!subject) return '';
+    try { const p = JSON.parse(subject); return p.code || ''; } catch { return subject; }
+  }, [subject]);
+
+  const getSubjectCodeFrom = useCallback((subj) => {
+    if (!subj) return '';
+    try { const p = JSON.parse(subj); return p.code || ''; } catch { return subj; }
+  }, []);
 
   const initInlineQbEditor = useCallback(() => {
     try {
@@ -504,13 +519,18 @@ export default function QuestionPaperGenerator() {
       }
 
       const deptKey = sanitizeKey(department);
+      const deptKeyStrict = sanitizeKeyStrict(department);
       const regKey = sanitizeKey(regulation);
-      const subjectKey = sanitizeKey(subject);
+      const subjectKey = sanitizeKey(subjectCode);
 
       let courseData = null;
       try {
         let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${subjectKey}`);
         let snap = await getDoc(courseRef);
+        if (!snap.exists() && deptKeyStrict !== deptKey) {
+          courseRef = doc(db, 'courses', `${progKey}_${deptKeyStrict}_${subjectKey}`);
+          snap = await getDoc(courseRef);
+        }
         if (!snap.exists()) {
           courseRef = doc(db, 'courses', `${progKey}_Overall_${subjectKey}`);
           snap = await getDoc(courseRef);
@@ -564,7 +584,7 @@ export default function QuestionPaperGenerator() {
       }
 
       const secSuffix = section ? `_${sanitizeKey(section)}` : '';
-      const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${secSuffix}`;
+      const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${secSuffix}`;
       const summaryEntries = Object.entries(poSummaryMapping || {});
 
       if (!summaryEntries.length) {
@@ -1379,14 +1399,14 @@ export default function QuestionPaperGenerator() {
       return;
     }
 
-    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
+    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
     const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
 
     const poPsoDocId = `${progKey}_${sanitizeKey(regulation)}__${sanitizeKey(department)}`;
     const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
 
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
+    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
     const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
 
     const unsubscribePoPso = onSnapshot(poPsoRef, (snap) => { // Use onSnapshot for real-time updates
@@ -1411,9 +1431,34 @@ export default function QuestionPaperGenerator() {
         if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
           setNumParts(String(loadedCOs.length));
         }
-        // console.log("Loaded Course Outcomes:", loadedCOs);
       } else {
+        // Fallback: course_outcomes doc doesn't exist — try courses collection
         setCourseOutcomes([]);
+        (async () => {
+          try {
+            const fallbackDeptKey = sanitizeKey(department);
+            const fallbackStrictDept = sanitizeKeyStrict(department);
+            const fallbackSubjKey = sanitizeKey(subjectCode);
+            let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackDeptKey}_${fallbackSubjKey}`));
+            if (!courseSnap.exists() && fallbackStrictDept !== fallbackDeptKey) {
+              courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackStrictDept}_${fallbackSubjKey}`));
+            }
+            if (!courseSnap.exists()) {
+              courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fallbackSubjKey}`));
+            }
+            if (courseSnap.exists()) {
+              const bankData = courseSnap.data();
+              if (bankData.co && Array.isArray(bankData.co)) {
+                const bankCOs = bankData.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => {
+                  const numA = parseInt(String(a.code || '').replace(/\D/g, '')) || 0;
+                  const numB = parseInt(String(b.code || '').replace(/\D/g, '')) || 0;
+                  return numA - numB;
+                });
+                if (bankCOs.length > 0) setCourseOutcomes(bankCOs);
+              }
+            }
+          } catch (e) { console.error("Error fetching COs from course bank:", e); }
+        })();
       }
     });
 
@@ -1479,7 +1524,7 @@ export default function QuestionPaperGenerator() {
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const docId = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
+    const docId = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
 
     const checkExisting = async () => {
       try {
@@ -1544,7 +1589,7 @@ export default function QuestionPaperGenerator() {
           const progKey = formatProgrammeKey(qp.programme);
           const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
           if (!regulation) return;
-          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(getSubjectCodeFrom(qp.subject))}_${sanitizeKey(qp.academic_year)}`;
           const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
           const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
           const coData = coSnapshot.data(); // Use .data() for Firestore documents
@@ -1556,6 +1601,16 @@ export default function QuestionPaperGenerator() {
                 description: typeof val === 'object' && val !== null ? val.description : val
               }))
               .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+          } else {
+            try {
+              const fbDept = sanitizeKey(qp.department);
+              const fbStrictDept = sanitizeKeyStrict(qp.department);
+              const fbSubj = sanitizeKey(getSubjectCodeFrom(qp.subject));
+              let cs = await getDoc(doc(db, 'courses', `${progKey}_${fbDept}_${fbSubj}`));
+              if (!cs.exists() && fbStrictDept !== fbDept) cs = await getDoc(doc(db, 'courses', `${progKey}_${fbStrictDept}_${fbSubj}`));
+              if (!cs.exists()) cs = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fbSubj}`));
+              if (cs.exists()) { const bd = cs.data(); if (bd.co && Array.isArray(bd.co)) fetchedCOs = bd.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, '')) || 0) - (parseInt(String(b.code || '').replace(/\D/g, '')) || 0)); }
+            } catch (e) { console.error("Error fetching COs from course bank:", e); }
           }
           setCourseOutcomes(fetchedCOs);
 
@@ -1648,7 +1703,7 @@ export default function QuestionPaperGenerator() {
           const progKey = formatProgrammeKey(qp.programme);
           const regulation = getRegulationForBatch(progKey, qp.batch); // Ensure regulation is available
           if (!regulation) return;
-          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+          const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(getSubjectCodeFrom(qp.subject))}_${sanitizeKey(qp.academic_year)}`;
           const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
           const coSnapshot = await getDoc(coRef); // Use getDoc for Firestore
           const coData = coSnapshot.data(); // Use .data() for Firestore documents
@@ -1660,6 +1715,16 @@ export default function QuestionPaperGenerator() {
                 description: typeof val === 'object' && val !== null ? val.description : val
               }))
               .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+          } else {
+            try {
+              const fbDept = sanitizeKey(qp.department);
+              const fbStrictDept = sanitizeKeyStrict(qp.department);
+              const fbSubj = sanitizeKey(getSubjectCodeFrom(qp.subject));
+              let cs = await getDoc(doc(db, 'courses', `${progKey}_${fbDept}_${fbSubj}`));
+              if (!cs.exists() && fbStrictDept !== fbDept) cs = await getDoc(doc(db, 'courses', `${progKey}_${fbStrictDept}_${fbSubj}`));
+              if (!cs.exists()) cs = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fbSubj}`));
+              if (cs.exists()) { const bd = cs.data(); if (bd.co && Array.isArray(bd.co)) fetchedCOs = bd.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, '')) || 0) - (parseInt(String(b.code || '').replace(/\D/g, '')) || 0)); }
+            } catch (e) { console.error("Error fetching COs from course bank:", e); }
           }
           setCourseOutcomes(fetchedCOs);
 
@@ -2695,7 +2760,7 @@ export default function QuestionPaperGenerator() {
 
     // Use stable composite key not including examDisplay
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
     // Use qpId that includes set suffix so multiple sets do not overwrite each other when forwarded
     const qpId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`;
 
@@ -2987,7 +3052,7 @@ export default function QuestionPaperGenerator() {
     const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use stable composite key not including examDisplay
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subject)}${sectionSuffix}`;
+    const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
     // Use qpDocId that includes set suffix so multiple sets do not overwrite each other when forwarded. This is the document ID.
     const qpDocId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`;
 
