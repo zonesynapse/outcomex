@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot } from "firebase/firestore";
+import { doc, collection, onSnapshot, getDoc } from "firebase/firestore";
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
-  FileText, School, GraduationCap,
+  FileText, School, GraduationCap, Calendar,
   Search, X, Sparkles, Plus
 } from "lucide-react";
 
@@ -32,6 +32,65 @@ export default function FacultyDashboard() {
   const [pendingQps, setPendingQps] = useState([]);
   const [statusTab, setStatusTab] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+
+  const [timetableData, setTimetableData] = useState({});
+  const [loadingTimetable, setLoadingTimetable] = useState(false);
+
+  const sanitizeKey = (key) => {
+    if (!key) return '';
+    return String(key).replace(/[.#$[\]]/g, '_');
+  };
+
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  useEffect(() => {
+    if (!assignedGroups.length) {
+      setTimetableData({});
+      return;
+    }
+    setLoadingTimetable(true);
+    const fetchTimetables = async () => {
+      const results = {};
+      await Promise.all(assignedGroups.map(async (g) => {
+        const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+        const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
+        try {
+          const snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
+          if (snap.exists()) {
+            const data = snap.data();
+            const filterByFacultySubjects = {};
+            const subAlloc = data.subjectAllocation || {};
+            const facultyCodes = (g.codes || []).map(c => c.trim().toLowerCase());
+            Object.entries(subAlloc).forEach(([day, periods]) => {
+              Object.entries(periods || {}).forEach(([period, entries]) => {
+                const arr = Array.isArray(entries) ? entries : [entries];
+                arr.forEach(entry => {
+                  const code = String(entry || '').split('|')[0].trim().toLowerCase();
+                  if (code && facultyCodes.includes(code)) {
+                    if (!filterByFacultySubjects[day]) filterByFacultySubjects[day] = {};
+                    if (!filterByFacultySubjects[day][period]) filterByFacultySubjects[day][period] = [];
+                    filterByFacultySubjects[day][period].push(entry);
+                  }
+                });
+              });
+            });
+            results[compositeKey] = {
+              template: data,
+              subjectAllocation: data.subjectAllocation || {},
+              facultyEntries: filterByFacultySubjects,
+              periodsPerDay: parseInt(data.periodsPerDay, 10) || 0,
+              workingDays: parseInt(data.workingDays, 10) || 0
+            };
+          }
+        } catch (err) {
+          console.error(`Failed to fetch timetable for ${compositeKey}:`, err);
+        }
+      }));
+      setTimetableData(results);
+      setLoadingTimetable(false);
+    };
+    fetchTimetables();
+  }, [assignedGroups]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -370,6 +429,100 @@ export default function FacultyDashboard() {
             </div>
           )}
         </div>
+
+        {/* My Timetable */}
+        {assignedGroups.length > 0 && (
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">
+            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+                <Calendar size={20} className="text-[#120c7a]" />
+                My Timetable
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{Object.keys(timetableData).length}</span>
+              </h2>
+            </div>
+            {loadingTimetable ? (
+              <div className="flex items-center justify-center py-12 text-zinc-400 gap-3">
+                <Loader2 className="animate-spin" size={20} />
+                <span className="text-sm font-semibold">Loading timetable...</span>
+              </div>
+            ) : Object.keys(timetableData).length === 0 ? (
+              <div className="py-12 text-center">
+                <Calendar size={32} className="mx-auto text-zinc-300 mb-3" />
+                <p className="text-base font-bold text-zinc-500">No timetable allocated yet</p>
+                <p className="text-sm text-zinc-400 mt-1">Your timetable will appear here once allocated.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-zinc-100">
+                {assignedGroups.map((g) => {
+                  const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+                  const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
+                  const tt = timetableData[compositeKey];
+                  if (!tt || !tt.periodsPerDay) return null;
+
+                  return (
+                    <div key={`tt-${compositeKey}`} className="px-6 py-4">
+                      <div className="flex items-center gap-2 flex-wrap mb-3">
+                        <span className="text-sm font-bold text-zinc-800">{formatProgDisplay(g.progKey)}</span>
+                        <span className="text-[10px] text-zinc-300">|</span>
+                        <span className="text-sm font-semibold text-zinc-600">{g.department}</span>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
+                          <GraduationCap size={10} /> {g.batch}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                          Sem {g.semester}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                          {g.academicYear}
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-slate-50">
+                              <th className="px-2 py-1.5 text-left text-[10px] font-bold text-slate-500 uppercase border border-slate-200 w-24">Day</th>
+                              {Array.from({ length: tt.periodsPerDay }).map((_, i) => (
+                                <th key={i} className="px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 uppercase border border-slate-200">P{i + 1}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {DAYS.slice(0, tt.workingDays).map((day) => (
+                              <tr key={day} className="hover:bg-blue-50/20">
+                                <td className="px-2 py-1.5 font-bold text-slate-600 border border-slate-200">{day.slice(0, 3)}</td>
+                                {Array.from({ length: tt.periodsPerDay }).map((_, pi) => {
+                                  const pNum = String(pi + 1);
+                                  const facultyEntries = tt.facultyEntries?.[day]?.[pNum] || [];
+                                  const hasSubject = facultyEntries.length > 0;
+                                  return (
+                                    <td key={pi} className={`px-1.5 py-1.5 text-center border border-slate-200 ${hasSubject ? 'bg-indigo-50' : ''}`}>
+                                      {hasSubject ? (
+                                        <div className="flex flex-col gap-0.5">
+                                          {facultyEntries.map((entry, ei) => {
+                                            const parts = String(entry).split('|');
+                                            const code = parts[0] || '';
+                                            return (
+                                              <span key={ei} className="inline-block text-[10px] font-bold text-indigo-700 bg-white px-1.5 py-0.5 rounded border border-indigo-200">
+                                                {code}
+                                              </span>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : null}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Question Papers */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
