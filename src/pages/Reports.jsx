@@ -1784,15 +1784,14 @@ export default function Reports() {
         });
       }
       if (matchedUids.length > 0) {
-        const namePromises = matchedUids.map(async (uid) => {
-          try {
-            const userSnap = await getDoc(doc(db, 'users', uid));
-            const userData = userSnap.data();
-            return userData?.facultyName || userData?.displayName || userData?.name || uid;
-          } catch { return uid; }
+        // Build a UID→name map from users collection (more reliable than individual doc reads)
+        const userSnap = await getDocs(collection(db, 'users'));
+        const userMap = {};
+        userSnap.forEach(d => {
+          const ud = d.data();
+          userMap[d.id] = ud?.facultyName || ud?.displayName || ud?.studentName || ud?.name || d.id;
         });
-        const names = await Promise.all(namePromises);
-        facultyNames = [...new Set(names)].join(', ');
+        facultyNames = [...new Set(matchedUids.map(uid => userMap[uid] || uid))].join(', ');
       }
     } catch (e) {
       console.error("Failed to resolve faculty name:", e);
