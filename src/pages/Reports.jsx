@@ -1736,6 +1736,68 @@ export default function Reports() {
       if (match) subjectName = match.name || '';
     }
 
+    // Resolve faculty name(s) handling this subject
+    let facultyNames = '';
+    try {
+      const semNum = String(deriveSemesterNumber(semester) || '');
+      const deptKey = sanitizeKey(department);
+      const batchKey = sanitizeKey(batch);
+      const ayKey = sanitizeKey(academicYear);
+      // Try direct composite key first (same format HODRoleConfig uses)
+      const progKeyVariants = [formatProgrammeKey(programme), programme].filter(Boolean);
+      const uniqueProgKeys = [...new Set(progKeyVariants)];
+      const matchedUids = [];
+      for (const pk of uniqueProgKeys) {
+        const compositeKey = `${pk}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+        try {
+          const snap = await getDoc(doc(db, 'subject_assignments', compositeKey));
+          if (snap.exists()) {
+            const data = snap.data();
+            Object.keys(data).forEach(uid => {
+              if (Array.isArray(data[uid]) && data[uid].includes(internalSubject)) {
+                if (!matchedUids.includes(uid)) matchedUids.push(uid);
+              }
+            });
+            if (matchedUids.length > 0) break;
+          }
+        } catch {}
+      }
+      // Fallback: scan all docs with matching dept+batch+ay+sem
+      if (matchedUids.length === 0) {
+        const assignSnap = await getDocs(collection(db, 'subject_assignments'));
+        assignSnap.forEach(doc => {
+          const idParts = doc.id.split('_');
+          if (idParts.length < 5) return;
+          let sem = idParts.pop();
+          if (!/^\d+$/.test(sem) && idParts.length >= 5) {
+            sem = idParts.pop();
+          }
+          const ay = idParts.pop();
+          const btch = idParts.pop();
+          if (btch !== batchKey || ay !== ayKey || sem !== semNum) return;
+          const data = doc.data();
+          Object.keys(data).forEach(uid => {
+            if (Array.isArray(data[uid]) && data[uid].includes(internalSubject)) {
+              if (!matchedUids.includes(uid)) matchedUids.push(uid);
+            }
+          });
+        });
+      }
+      if (matchedUids.length > 0) {
+        const namePromises = matchedUids.map(async (uid) => {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', uid));
+            const userData = userSnap.data();
+            return userData?.facultyName || userData?.displayName || userData?.name || uid;
+          } catch { return uid; }
+        });
+        const names = await Promise.all(namePromises);
+        facultyNames = [...new Set(names)].join(', ');
+      }
+    } catch (e) {
+      console.error("Failed to resolve faculty name:", e);
+    }
+
     const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -1772,7 +1834,8 @@ export default function Reports() {
     doc.setFontSize(10);
     doc.setTextColor(0, 0, 0);
     doc.setFont(undefined, 'bold');
-    const subjectText = `Subject: ${internalSubject}${subjectName ? ' - ' + subjectName : ''}${internalSubjectCourseType ? ' (' + internalSubjectCourseType + ')' : ''}`;
+    const subjectExtra = facultyNames ? ` | Faculty: ${facultyNames}` : '';
+    const subjectText = `Subject: ${internalSubject}${subjectName ? ' - ' + subjectName : ''}${internalSubjectCourseType ? ' (' + internalSubjectCourseType + ')' : ''}${subjectExtra}`;
     doc.text(subjectText, marginLeft, yPos);
     yPos += 5;
 
@@ -1810,10 +1873,10 @@ export default function Reports() {
       col.exams.forEach(ex => {
         headers[0].push(ex.examName);
       });
-      headers[0].push(`${col.category}\nSub`);
+      headers[0].push(`${col.category}\nSubtotal`);
     });
     headers[0].push('Overall %');
-    headers[0].push('Round\nOff');
+    headers[0].push('Round Off');
 
     // ── Table rows ──
     const rows = [];
@@ -1832,25 +1895,38 @@ export default function Reports() {
               if (eData.absent) {
                 row.push({ content: 'AB', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
               } else {
-                row.push(`${eData.scored}/${eData.maxMarks}\n(${eData.pct}%)${ex.examWeightage > 0 ? '\nW:' + eData.weightedPct + '%' : ''}`);
+                const lines = [`${eData.scored}/${eData.maxMarks}`, `(${eData.pct}%)`];
+                if (ex.examWeightage > 0) lines.push(`W:${eData.weightedPct}%`);
+                row.push({ content: lines.join('\n'), styles: { fontSize: 6.5 } });
               }
             } else {
               row.push({ content: '0', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
             }
           });
           const catTotal = Math.round(catSum * 100) / 100;
-          row.push(`${catTotal}%`);
+          row.push({ content: `${catTotal}%`, styles: { fontStyle: 'bold', fontSize: 7 } });
           overallTotal += catSum * (col.catWeight / 100);
         });
         const finalValue = overallInternalPct > 0
           ? Math.round(overallTotal * overallInternalPct) / 100
           : Math.round(overallTotal * 100) / 100;
-        row.push(`${finalValue}%`);
-        row.push(String(Math.round(finalValue)));
+        const rawTotal = Math.round(overallTotal * 100) / 100;
+        const breakdownLines = [`${finalValue}%`];
+        if (overallInternalPct > 0) {
+          breakdownLines.push(`${rawTotal} × ${overallInternalPct}%`);
+        }
+        row.push({ content: breakdownLines.join('\n'), styles: { fontStyle: 'bold', fillColor: [236, 253, 245], fontSize: 7 } });
+        row.push({ content: String(Math.round(finalValue)), styles: { fontStyle: 'bold', fillColor: [254, 243, 199], fontSize: 8 } });
         rows.push(row);
       });
 
     // ── Column styles ──
+    const catColorMap = {
+      'Written Test': [37, 99, 235],
+      'Activity': [234, 88, 12],
+      'Practical': [8, 145, 178],
+      'Project': [217, 119, 6],
+    };
     const colStyles = {
       0: { halign: 'center', fontStyle: 'bold', fontSize: 7 },     // #
       1: { halign: 'left', fontStyle: 'bold', fontSize: 7 },       // Reg No
@@ -1859,8 +1935,9 @@ export default function Reports() {
 
     let ci = 3;
     overallExamColumns.forEach(col => {
+      const catColor = catColorMap[col.category] || [100, 100, 100];
       col.exams.forEach(() => { colStyles[ci] = { halign: 'center', fontSize: 6.5 }; ci++; });
-      colStyles[ci] = { halign: 'center', fontStyle: 'bold', fontSize: 7 }; ci++;
+      colStyles[ci] = { halign: 'center', fontStyle: 'bold', fontSize: 7, textColor: catColor }; ci++;
     });
     // Overall %
     colStyles[ci] = { halign: 'center', fontStyle: 'bold', fillColor: [236, 253, 245], fontSize: 7 }; ci++;
