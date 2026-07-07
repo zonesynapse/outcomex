@@ -22,6 +22,21 @@ const sanitizeKey = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]]/g, '_');
 };
+const sanitizeKeyStrict = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
+};
+
+const DEFAULT_GRADES = [
+  { grade: 'S', gradePoint: 10, mark: 100 },
+  { grade: 'A+', gradePoint: 9, mark: 90 },
+  { grade: 'A', gradePoint: 8, mark: 80 },
+  { grade: 'B+', gradePoint: 7, mark: 70 },
+  { grade: 'B', gradePoint: 6, mark: 60 },
+  { grade: 'C', gradePoint: 5, mark: 50 },
+  { grade: 'D', gradePoint: 4, mark: 40 },
+  { grade: 'F', gradePoint: 0, mark: 0 },
+];
 
 const deriveSemesterNumber = (label) => {
   if (!label) return '';
@@ -51,6 +66,7 @@ export default function MarkEntry() {
   const [userProgramme, setUserProgramme] = useState("");
   const [userDepartment, setUserDepartment] = useState("");
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
+  const [subjectCourseType, setSubjectCourseType] = useState("");
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -543,7 +559,8 @@ export default function MarkEntry() {
         (!c.department || norm(c.department) === needDept) &&
         (!c.batch || norm(c.batch) === needBatch) &&
         (!c.academicYear || norm(c.academicYear) === needAy) &&
-        (!c.semester || String(c.semester) === needSem)
+        (!c.semester || String(c.semester) === needSem) &&
+        (!subjectCourseType || (c.courseTypes && c.courseTypes.includes(subjectCourseType)))
       )
       .map(c => {
         // Check if a QP exists for this university exam
@@ -568,22 +585,24 @@ export default function MarkEntry() {
 
     const combined = [...uniExams, ...qpExams];
 
-    // Remove duplicates based on value, prioritizing hasQP
+    // Remove duplicates based on normalized display text, prioritizing hasQP
     const uniqueExams = [];
     const seen = new Set();
     for (const e of combined) {
-      if (e.value && !seen.has(e.value)) {
-        seen.add(e.value);
+      const normText = e.text ? String(e.text).toLowerCase().trim() : '';
+      if (normText && !seen.has(normText)) {
+        seen.add(normText);
         uniqueExams.push(e);
-      } else if (e.value && seen.has(e.value)) {
-        const existing = uniqueExams.find(ex => ex.value === e.value);
+      } else if (normText && seen.has(normText)) {
+        const existing = uniqueExams.find(ex => String(ex.text).toLowerCase().trim() === normText);
+        if (!existing) continue;
         if (e.hasQP) existing.hasQP = true;
       }
     }
 
     setAvailableExams(uniqueExams);
     setExam("");
-  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs]);
+  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs, subjectCourseType]);
 
   // Auto-set Mark Type when Exam is selected
   useEffect(() => {
@@ -612,6 +631,35 @@ export default function MarkEntry() {
       setIsIndirectAssessment(false);
     }
   }, [exam, availableExams]);
+
+  // Fetch course type for the selected subject
+  useEffect(() => {
+    if (!programme || !department || !batch || !subject) {
+      setSubjectCourseType("");
+      return;
+    }
+    const fetchCourseType = async () => {
+      const progKey = formatProgrammeKey(programme);
+      const deptKey = sanitizeKey(department);
+      const strictDept = sanitizeKeyStrict(department);
+      const subjKey = sanitizeKey(subject);
+      try {
+        let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${subjKey}`));
+        if (!snap.exists() && strictDept !== deptKey) {
+          snap = await getDoc(doc(db, 'courses', `${progKey}_${strictDept}_${subjKey}`));
+        }
+        if (!snap.exists()) {
+          snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${subjKey}`));
+        }
+        if (snap.exists()) {
+          setSubjectCourseType(snap.data().type || "");
+        } else {
+          setSubjectCourseType("");
+        }
+      } catch (e) { console.error("Error fetching course type:", e); setSubjectCourseType(""); }
+    };
+    fetchCourseType();
+  }, [programme, department, batch, subject]);
 
   // Fetch Question Paper
   useEffect(() => {
@@ -679,20 +727,64 @@ export default function MarkEntry() {
 
   // Fetch Grade Configs when regulation changes
   useEffect(() => {
-    if (programme && batch) {
-      const progKey = formatProgrammeKey(programme);
-      const regulation = getRegulationForBatch(progKey, batch);
-      if (regulation) { // Ensure regulation is available
-        const gradeRef = doc(db, 'grade_configs', sanitizeKey(regulation)); // Firestore doc reference
-        onSnapshot(gradeRef, (snapshot) => { // Use onSnapshot for real-time updates
-          if (snapshot.exists()) {
-            setGradeConfigs(snapshot.data()); // Use .data() for Firestore documents
-          } else {
-            setGradeConfigs([]);
-          }
-        });
-      }
+    if (!programme || !batch) {
+      setGradeConfigs([]);
+      return;
     }
+    const fetchGradeConfig = async () => {
+      try {
+        const progKey = formatProgrammeKey(programme);
+        const regulation = getRegulationForBatch(progKey, batch);
+
+        const parseGradeData = (data) => {
+          if (!data || typeof data !== 'object') return null;
+          // Handle { value: [...] } format (Curriculum.jsx saves as Object.assign({}, array) → { "0": {...} } then Firestore re-indexes)
+          if (data.value && Array.isArray(data.value)) return data.value;
+          // Handle { "0": {...}, "1": {...} } format
+          if (!Array.isArray(data)) {
+            const vals = Object.values(data).filter(v => v && typeof v === 'object' && v.grade);
+            if (vals.length > 0) return vals;
+          }
+          // Handle plain array
+          if (Array.isArray(data) && data.length > 0) return data;
+          return null;
+        };
+
+        // Try with the regulation from batchRegulations mapping
+        if (regulation) {
+          const docId = sanitizeKeyStrict(regulation);
+          console.log('[gradeConfigs] looking up:', docId);
+          const snap = await getDoc(doc(db, 'grade_configs', docId));
+          if (snap.exists()) {
+            const grades = parseGradeData(snap.data());
+            if (grades) { setGradeConfigs(grades); return; }
+          }
+          // Try raw regulation as doc ID (spaces may not be sanitized in Firestore)
+          const rawSnap = await getDoc(doc(db, 'grade_configs', regulation));
+          if (rawSnap.exists()) {
+            const grades = parseGradeData(rawSnap.data());
+            if (grades) { setGradeConfigs(grades); return; }
+          }
+        }
+
+        // Fallback: read ALL grade_configs docs and use the one with most entries
+        const allSnap = await getDocs(collection(db, 'grade_configs'));
+        let best = [];
+        allSnap.forEach(d => {
+          const grades = parseGradeData(d.data());
+          if (grades && grades.length > best.length) best = grades;
+        });
+        if (best.length > 0) {
+          setGradeConfigs(best);
+        } else {
+          setGradeConfigs(DEFAULT_GRADES);
+        }
+      } catch (e) {
+        console.error('[gradeConfigs] error:', e);
+        setGradeConfigs(DEFAULT_GRADES);
+      }
+    };
+    fetchGradeConfig();
   }, [programme, batch, getRegulationForBatch]);
 
   // Fetch Students and Saved Marks
