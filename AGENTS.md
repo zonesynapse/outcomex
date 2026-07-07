@@ -185,7 +185,11 @@
 - `/Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx`: Has Admit/Reject buttons — correct location for these actions
 - `/Users/ckcollege/Downloads/OBE/outcomex/src/services/enquiryService.js`: `getEnquiriesStats()` at line 421 — queries `getCountFromServer` for each status, stats reverse automatically when status changes
 
-### 17. PaymentEntries facultyCode field added
+### 24. FacultyDashboard assigned subjects not showing (flat doc ID parsing)
+- **Problem**: `assignedGroups` computation in `src/pages/FacultyDashboard.jsx` used nested `Object.entries` iteration (expecting `{ deptKey: { batchKey: { ... } } }` subcollection-style nesting), but HODRoleConfig saves with flat composite doc IDs (`B_Tech_CSE_2024-2027_2024-2025_3`) and flat data (`{ uid: [codes] }`). The nested iteration never finds the current faculty's UID, so assigned subjects appear empty.
+- **Fix**: Replaced nested iteration with flat doc ID parsing (same approach as HODRoleConfig's `allAssignments` listener) — splits composite key by `_`, extracts progKey (handling multi-part), dept, batch, ay, sem, optional section, then checks `doc.data()[currentUid]` directly.
+
+### 25. PaymentEntries facultyCode field added
 - Added `facultyCode` input field next to faculty name in both New Entry and Bulk Entry member rows in `src/pages/PaymentEntries.jsx`
 - Added `facultyCode` to `memberCash` helper, initial states, addMember/addCard defaults, save payloads, reset states, CSV export, and expanded member view
 - Added `facultyCode` to `memberCash` in `src/pages/PaymentReports.jsx` for reports/claim form display
@@ -251,3 +255,21 @@
 ### 24. MarkEntry.jsx: Absent column for Project & Practical types
 - **Problem**: `showAbsentColumn` was `false` for Practical (and Assignment) — Project/Practical faculty couldn't mark students as absent.
 - **Fix**: Changed `showAbsentColumn` from `markType !== 'Assignment' && markType !== 'Practical'` to `markType !== 'Assignment'` — absent column now shows for Project, Practical, CO Wise, Overall, and all other mark types. (`src/pages/MarkEntry.jsx:805`)
+
+### 26. Academic Calendar — Semester Configuration + FacultyDashboard active semester filter
+- **Goal**: Integrate Academic Calendar events into FacultyDashboard timetable (holidays in red with reason); add semester configuration in AcademicCalendar to drive which semester's data shows in FacultyDashboard
+- **AcademicCalendar.jsx** (`src/pages/AcademicCalendar.jsx`):
+  - Added `semester_config` collection read/write UI: inline form with Programme/Batch/Odd-Even/StartDate/EndDate fields, real-time computed preview of academic year + semester number
+  - List view with edit/delete buttons for existing configs
+  - Uses `useDepartments()` for programme dropdown, `getRecentBatches()` for batch dropdown
+  - Computation: Odd (Jul-Dec) → `academicYear = startYear-startYear+1`; Even (Jan-Jun) → `(startYear-1)-startYear`
+  - `semesterNumber = (yearNumber-1)*2+1` for Odd, `(yearNumber-1)*2+2` for Even
+  - Only visible to Admin role
+- **FacultyDashboard.jsx** (`src/pages/FacultyDashboard.jsx`):
+  - Added `semesterConfigs` state + `onSnapshot` listener on `semester_config` collection
+  - Added `activeSemesters` useMemo: finds configs where `today >= startDate && today <= endDate`
+  - Added `visibleGroups` useMemo: filters `assignedGroups` to matching `programme + batch + semesterNumber`
+  - When no semester configs exist (empty array), ALL assigned groups are shown (backward compatible)
+  - Timetable fetching, assigned subjects display, stats, and timetableGroups all use `visibleGroups`
+  - QP context filtering (`isInAssignedContext`) still uses full `assignedGroups` list (all semesters)
+  - No changes needed for `_` -> `u` or `\t` -> `t` or other unicode characters

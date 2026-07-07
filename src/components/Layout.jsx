@@ -94,7 +94,8 @@ const allPossibleItems = [
   { id: "payment-reports", icon: BarChart3, label: "Payment Reports", path: "/exam-payment/reports" },
 
   // COE Module
-  { id: "qp-converter", icon: FileText, label: "Question Paper Converter", path: "/qp-converter" }
+  { id: "qp-converter", icon: FileText, label: "Question Paper Converter", path: "/qp-converter" },
+  { id: "timetable", icon: Calendar, label: "Time Table Config", path: "/tt" }
 ];
 
 const modules = [

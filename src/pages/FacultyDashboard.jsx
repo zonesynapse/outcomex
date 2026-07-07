@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot, getDoc } from "firebase/firestore";
+import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar,
@@ -10,7 +10,109 @@ import {
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
-import { formatProgDisplay } from "../lib/utils";
+
+const progPrefixMap = [
+  { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
+  { key: 'M_E', display: 'M.E.' }, { key: 'M_Tech', display: 'M.Tech.' },
+  { key: 'B_Sc', display: 'B.Sc.' }, { key: 'M_Sc', display: 'M.Sc.' },
+  { key: 'B_C_A', display: 'B.C.A.' }, { key: 'M_C_A', display: 'M.C.A.' },
+  { key: 'B_B_A', display: 'B.B.A.' }, { key: 'M_B_A', display: 'M.B.A.' },
+  { key: 'B_Com', display: 'B.Com.' }, { key: 'M_Com', display: 'M.Com.' },
+  { key: 'B_A', display: 'B.A.' }, { key: 'M_A', display: 'M.A.' },
+];
+
+const formatProgDisplay = (prog) => {
+  if (prog === 'B_E') return 'B.E.';
+  if (prog === 'B_Tech') return 'B.Tech.';
+  if (prog === 'M_E') return 'M.E.';
+  if (prog === 'M_Tech') return 'M.Tech.';
+  return prog;
+};
+
+const cleanDept = (dept) => {
+  if (!dept) return '';
+  let result = dept;
+  let foundPrefix = false;
+  for (const { key, display } of progPrefixMap) {
+    const regex = new RegExp(`^${key.replace(/_/g, '[_ ]')}[_ ]*`, 'i');
+    if (regex.test(result)) {
+      result = result.replace(regex, display + ' ');
+      foundPrefix = true;
+      break;
+    }
+  }
+  return { clean: result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim(), foundPrefix };
+};
+
+const formatAssignmentDisplay = (progKey, deptKey) => {
+  const { clean } = cleanDept(deptKey);
+  return `${formatProgDisplay(progKey)} ${clean}`.trim();
+};
+
+function parseTimeToDate(timeStr) {
+  if (!timeStr) return null;
+  const parts = timeStr.split(':');
+  if (parts.length < 2) return null;
+  return new Date(1970, 0, 1, parseInt(parts[0], 10), parseInt(parts[1], 10), 0);
+}
+
+function formatTime(date) {
+  if (!date) return '';
+  let hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+}
+
+function getPeriodTimes(startTime, periodsPerDay, periodDurations, breaks, lunchAfterPeriod, lunchDuration) {
+  if (!startTime || !periodsPerDay) return [];
+  const pd = periodDurations || {};
+  const brks = Array.isArray(breaks) ? breaks : [];
+  const lunchAfter = parseInt(lunchAfterPeriod, 10) || 0;
+  const lunchDur = parseInt(lunchDuration, 10) || 0;
+  const times = [];
+  let current = parseTimeToDate(startTime);
+  for (let i = 1; i <= periodsPerDay; i++) {
+    const dur = parseInt(pd[i], 10) || 0;
+    const startStr = formatTime(current);
+    if (dur > 0) {
+      const end = new Date(current.getTime() + dur * 60 * 1000);
+      times.push({ start: startStr, end: formatTime(end), isBreak: false });
+      current = end;
+    } else {
+      times.push({ start: startStr, end: startStr, isBreak: true });
+    }
+    brks.forEach(br => {
+      const after = parseInt(br.after, 10) || 0;
+      const bdur = parseInt(br.duration, 10) || 0;
+      if (after === i && bdur > 0) {
+        current = new Date(current.getTime() + bdur * 60 * 1000);
+      }
+    });
+    if (lunchAfter === i && lunchDur > 0) {
+      current = new Date(current.getTime() + lunchDur * 60 * 1000);
+    }
+  }
+  return times;
+}
+
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+const formatDateKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const EVENT_STYLES = {
+  Holiday: { bg: 'bg-red-100 text-red-700 border-red-300' },
+  Exam: { bg: 'bg-amber-100 text-amber-700 border-amber-300' },
+  Event: { bg: 'bg-indigo-100 text-indigo-700 border-indigo-300' },
+  Academic: { bg: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
+};
+const getEventStyle = (type) => EVENT_STYLES[type]?.bg || 'bg-zinc-100 text-zinc-700 border-zinc-300';
 
 const statusConfig = {
   draft: { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock },
@@ -35,6 +137,9 @@ export default function FacultyDashboard() {
 
   const [timetableData, setTimetableData] = useState({});
   const [loadingTimetable, setLoadingTimetable] = useState(false);
+  const [academicEvents, setAcademicEvents] = useState({});
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  const [courseNames, setCourseNames] = useState({});
 
   const sanitizeKey = (key) => {
     if (!key) return '';
@@ -43,15 +148,44 @@ export default function FacultyDashboard() {
 
   const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+  const activeSemesters = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return semesterConfigs.filter(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return false;
+      const start = new Date(cfg.startDate + 'T00:00:00');
+      const end = new Date(cfg.endDate + 'T00:00:00');
+      return today >= start && today <= end;
+    });
+  }, [semesterConfigs]);
+
+  const visibleGroups = useMemo(() => {
+    if (activeSemesters.length === 0) {
+      if (semesterConfigs.length > 0) {
+        console.warn('[FacultyDashboard] No active semesters match today. Configure semester_config with dates covering today.');
+        return [];
+      }
+      return assignedGroups;
+    }
+    return assignedGroups.filter(g =>
+      activeSemesters.some(as =>
+        String(as.programme) === String(g.progKey) &&
+        String(as.batch) === String(g.batch) &&
+        String(as.semesterNumber) === String(g.semester)
+      )
+    );
+  }, [assignedGroups, activeSemesters, semesterConfigs]);
+
   useEffect(() => {
-    if (!assignedGroups.length) {
+    if (!visibleGroups.length) {
       setTimetableData({});
       return;
     }
     setLoadingTimetable(true);
+    let cancelled = false;
     const fetchTimetables = async () => {
       const results = {};
-      await Promise.all(assignedGroups.map(async (g) => {
+      await Promise.all(visibleGroups.map(async (g) => {
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
         const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
         try {
@@ -65,11 +199,19 @@ export default function FacultyDashboard() {
               Object.entries(periods || {}).forEach(([period, entries]) => {
                 const arr = Array.isArray(entries) ? entries : [entries];
                 arr.forEach(entry => {
-                  const code = String(entry || '').split('|')[0].trim().toLowerCase();
+                  const parts = String(entry || '').split('|');
+                  const code = parts[0].trim().toLowerCase();
+                  const span = parseInt(parts[1], 10) || 1;
                   if (code && facultyCodes.includes(code)) {
-                    if (!filterByFacultySubjects[day]) filterByFacultySubjects[day] = {};
-                    if (!filterByFacultySubjects[day][period]) filterByFacultySubjects[day][period] = [];
-                    filterByFacultySubjects[day][period].push(entry);
+                    for (let p = parseInt(period), end = p + span; p < end; p++) {
+                      const pStr = String(p);
+                      if (!filterByFacultySubjects[day]) filterByFacultySubjects[day] = {};
+                      if (!filterByFacultySubjects[day][pStr]) filterByFacultySubjects[day][pStr] = [];
+                      const entryToPush = p === parseInt(period) ? entry : `${parts[0]}|1`;
+                      if (!filterByFacultySubjects[day][pStr].includes(entryToPush)) {
+                        filterByFacultySubjects[day][pStr].push(entryToPush);
+                      }
+                    }
                   }
                 });
               });
@@ -86,11 +228,81 @@ export default function FacultyDashboard() {
           console.error(`Failed to fetch timetable for ${compositeKey}:`, err);
         }
       }));
-      setTimetableData(results);
-      setLoadingTimetable(false);
+      if (!cancelled) {
+        setTimetableData(results);
+        setLoadingTimetable(false);
+      }
     };
     fetchTimetables();
-  }, [assignedGroups]);
+    return () => { cancelled = true; };
+  }, [visibleGroups]);
+
+  useEffect(() => {
+    const eventsRef = collection(db, 'academic_calendar_events');
+    const unsub = onSnapshot(eventsRef, (snap) => {
+      const dateMap = {};
+      snap.forEach(doc => {
+        const ev = { id: doc.id, ...doc.data() };
+        const start = new Date(ev.fromDate);
+        const end = new Date(ev.toDate);
+        if (!ev.fromDate || !ev.toDate || isNaN(start.getTime()) || isNaN(end.getTime())) return;
+        let cursor = new Date(start);
+        while (cursor <= end) {
+          const dStr = formatDateKey(cursor);
+          if (!dateMap[dStr]) dateMap[dStr] = [];
+          dateMap[dStr].push(ev);
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      });
+      setAcademicEvents(dateMap);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'courses'));
+        const names = {};
+        snap.forEach(d => {
+          const data = d.data();
+          if (data.code && data.name) {
+            names[data.code] = data.name;
+          } else if (data.name && d.id.includes('_')) {
+            const code = d.id.split('_').pop();
+            names[code] = data.name;
+          } else {
+            Object.values(data).forEach(deptCourses => {
+              if (deptCourses && typeof deptCourses === 'object') {
+                Object.values(deptCourses).forEach(regCourses => {
+                  if (regCourses && typeof regCourses === 'object') {
+                    Object.entries(regCourses).forEach(([courseCode, courseData]) => {
+                      if (courseData && courseData.name) names[courseCode] = courseData.name;
+                    });
+                  }
+                });
+              }
+            });
+          }
+        });
+        setCourseNames(names);
+      } catch (e) {
+        console.error("Failed to fetch course names:", e);
+      }
+    };
+    fetchCourses();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
+      const configs = [];
+      snap.forEach(doc => {
+        configs.push({ id: doc.id, ...doc.data() });
+      });
+      setSemesterConfigs(configs);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -121,35 +333,47 @@ export default function FacultyDashboard() {
     const unsub = onSnapshot(
       assignmentsRef,
       (snapshot) => {
-        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         const groups = {};
 
-        Object.entries(data).forEach(([progKey, depts]) => {
-          Object.entries(depts || {}).forEach(([deptKey, batches]) => {
-            Object.entries(batches || {}).forEach(([batchKey, ays]) => {
-              Object.entries(ays || {}).forEach(([ayKey, sems]) => {
-                Object.entries(sems || {}).forEach(([semKey, facultyAssignments]) => {
-                  const codes = facultyAssignments?.[currentUid];
-                  if (!Array.isArray(codes) || codes.length === 0) return;
+        snapshot.forEach((doc) => {
+          const idParts = doc.id.split('_');
+          if (idParts.length < 5) return;
 
-                  const groupKey = `${progKey}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}`;
-                  if (!groups[groupKey]) {
-                    groups[groupKey] = {
-                      progKey,
-                      department: deptKey,
-                      batch: batchKey,
-                      academicYear: ayKey,
-                      semester: semKey,
-                      codes: []
-                    };
-                  }
+          let sectionExtracted = '';
+          let semKey = idParts.pop();
+          if (!/^\d+$/.test(semKey) && idParts.length >= 5) {
+            sectionExtracted = semKey;
+            semKey = idParts.pop();
+          }
+          const ayKey = idParts.pop();
+          const batchKey = idParts.pop();
+          let progKeyExtracted = idParts[0];
+          let deptStartIdx = 1;
+          if (['B', 'M'].includes(idParts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(idParts[1])) {
+            progKeyExtracted = `${idParts[0]}_${idParts[1]}`;
+            deptStartIdx = 2;
+          }
+          let deptKey = idParts.slice(deptStartIdx).join('_');
+          if (deptKey.startsWith('_')) deptKey = deptKey.slice(1);
 
-                  codes.forEach((code) => {
-                    if (!groups[groupKey].codes.includes(code)) groups[groupKey].codes.push(code);
-                  });
-                });
-              });
-            });
+          const facultyData = doc.data();
+          const codes = facultyData?.[currentUid];
+          if (!Array.isArray(codes) || codes.length === 0) return;
+
+          const groupKey = `${progKeyExtracted}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}`;
+          if (!groups[groupKey]) {
+            groups[groupKey] = {
+              progKey: progKeyExtracted,
+              department: deptKey,
+              batch: batchKey,
+              academicYear: ayKey,
+              semester: semKey,
+              codes: []
+            };
+          }
+
+          codes.forEach((code) => {
+            if (!groups[groupKey].codes.includes(code)) groups[groupKey].codes.push(code);
           });
         });
 
@@ -211,19 +435,12 @@ export default function FacultyDashboard() {
           return m ? m[1] : "";
         };
 
-        const isInAssignedContext = (qp) => {
-          return (assignedGroups || []).some((g) => {
-            const sameProgramme =
-              norm(g.progKey) === norm(qp.programme) ||
-              norm(formatProgDisplay(g.progKey)) === norm(formatProgDisplay(qp.programme));
-            const sameDepartment = norm(g.department) === norm(qp.department);
-            const sameBatch = norm(g.batch) === norm(qp.batch);
-            const sameAcademicYear = norm(g.academicYear) === norm(qp.academic_year);
-            const sameSemester = semNum(g.semester) === semNum(qp.semester);
-            const sameSubject = (g.codes || []).map(norm).includes(norm(qp.subject));
-
-            return sameProgramme && sameDepartment && sameBatch && sameAcademicYear && sameSemester && sameSubject;
-          });
+        const isInCurrentActiveSemester = (qp) => {
+          return activeSemesters.some(as =>
+            norm(as.programme) === norm(qp.programme) &&
+            norm(as.batch) === norm(qp.batch) &&
+            semNum(as.semesterNumber) === semNum(qp.semester)
+          );
         };
 
         const pending = all
@@ -231,12 +448,12 @@ export default function FacultyDashboard() {
             const status = String(qp?.status || "draft").toLowerCase();
             const isOwnedByMe = qp?.created_by === currentUid;
 
-            const isMyDraft = status === "draft" && isOwnedByMe;
-            const isMyDraftLegacy = status === "draft" && !qp?.created_by && isInAssignedContext(qp);
+            const isMyDraft = status === "draft" && isOwnedByMe && isInCurrentActiveSemester(qp);
+            const isMyDraftLegacy = status === "draft" && !qp?.created_by && isInCurrentActiveSemester(qp);
 
-            const isAwaitingHODReview = status === "forwarded" && qp?.forwarded_by === currentUid;
-            const isSentBackForRecorrection = status === "recorrected" && qp?.forwarded_to === currentUid;
-            const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe;
+            const isAwaitingHODReview = status === "forwarded" && qp?.forwarded_by === currentUid && isInCurrentActiveSemester(qp);
+            const isSentBackForRecorrection = status === "recorrected" && qp?.forwarded_to === currentUid && isInCurrentActiveSemester(qp);
+            const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe && isInCurrentActiveSemester(qp);
 
             return isMyDraft || isMyDraftLegacy || isAwaitingHODReview || isSentBackForRecorrection || isApprovedByHOD;
           })
@@ -256,11 +473,11 @@ export default function FacultyDashboard() {
     );
 
     return () => unsub();
-  }, [currentUid, assignedGroups]);
+  }, [currentUid, activeSemesters]);
 
   const assignedCount = useMemo(() => {
-    return (assignedGroups || []).reduce((sum, g) => sum + (g.codes?.length || 0), 0);
-  }, [assignedGroups]);
+    return (visibleGroups || []).reduce((sum, g) => sum + (g.codes?.length || 0), 0);
+  }, [visibleGroups]);
 
   const draftCount = useMemo(() => pendingQps.filter(q => q.status === 'draft').length, [pendingQps]);
   const forwardedCount = useMemo(() => pendingQps.filter(q => q.status === 'forwarded').length, [pendingQps]);
@@ -297,6 +514,51 @@ export default function FacultyDashboard() {
     amber: { bg: "bg-amber-50", text: "text-amber-600", iconBg: "bg-amber-100", gradient: "from-amber-500" },
   };
 
+  const timetableGroups = useMemo(() => {
+    const groups = {};
+    visibleGroups.forEach(g => {
+      const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+      const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
+      const tt = timetableData[compositeKey];
+      if (!tt || !tt.periodsPerDay) {
+        if (tt) console.warn(`TT for ${compositeKey}: missing periodsPerDay`);
+        return;
+      }
+      const tpl = tt.template || tt;
+      const lunchAfter = parseInt(tpl.lunchAfterPeriod, 10) || 0;
+      const lunchDur = parseInt(tpl.lunchDuration, 10) || 0;
+      const brks = Array.isArray(tpl.breaks) ? tpl.breaks : [];
+      const templateKey = [
+        tt.periodsPerDay, tt.workingDays, tpl.startTime || '',
+        JSON.stringify(tpl.periodDurations || {}),
+        lunchAfter, lunchDur, JSON.stringify(brks)
+      ].join('|');
+      const periodTimes = getPeriodTimes(tpl.startTime, tt.periodsPerDay, tpl.periodDurations, brks, lunchAfter, lunchDur);
+      if (!groups[templateKey]) {
+        const columns = [];
+        for (let i = 1; i <= parseInt(tt.periodsPerDay, 10); i++) {
+          columns.push({ type: 'period', num: i });
+          const brk = brks.find(b => parseInt(b.after, 10) === i);
+          if (brk && parseInt(brk.duration, 10) > 0) {
+            columns.push({ type: 'break', duration: parseInt(brk.duration, 10) });
+          }
+          if (lunchAfter === i && lunchDur > 0) {
+            columns.push({ type: 'lunch', duration: lunchDur });
+          }
+        }
+        groups[templateKey] = {
+          periodsPerDay: tt.periodsPerDay, workingDays: tt.workingDays,
+          periodTimes, columns,
+          entries: []
+        };
+      }
+      groups[templateKey].entries.push({ group: g, compositeKey, tt });
+      const feCount = Object.values(tt.facultyEntries || {}).reduce((s, d) => s + Object.keys(d).length, 0);
+      if (feCount === 0) console.warn(`TT for ${compositeKey}: codes=${g.codes}, SUBJ_ALLOC=${JSON.stringify(Object.keys(tt.subjectAllocation || {}))}`);
+    });
+    return Object.values(groups);
+  }, [timetableData, visibleGroups]);
+
   const tabs = [
     { key: "all", label: "All Papers", count: pendingQps.length },
     { key: "draft", label: "Drafts", count: draftCount },
@@ -304,6 +566,20 @@ export default function FacultyDashboard() {
     { key: "approved_by_hod", label: "Approved", count: approvedCount },
     { key: "recorrected", label: "Recorrection", count: recorrectCount },
   ];
+
+  const todayKey = useMemo(() => formatDateKey(new Date()), []);
+  const currentWeekDates = useMemo(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((day + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 6 }).map((_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d;
+    });
+  }, []);
 
   return (
     <Layout title="Faculty Dashboard">
@@ -328,7 +604,7 @@ export default function FacultyDashboard() {
               </div>
               <p className="text-blue-100/80 text-sm mt-2 max-w-xl">
                 {assignedCount > 0
-                  ? `You have <strong>${assignedCount}</strong> subject${assignedCount > 1 ? "s" : ""} assigned across ${assignedGroups.length} batch${assignedGroups.length > 1 ? "es" : ""}.`
+                  ? `You have <strong>${assignedCount}</strong> subject${assignedCount > 1 ? "s" : ""} assigned across ${visibleGroups.length} batch${visibleGroups.length > 1 ? "es" : ""}.`
                   : "No subjects assigned yet. Contact your HOD for assignments."}
               </p>
             </div>
@@ -363,166 +639,311 @@ export default function FacultyDashboard() {
           })}
         </div>
 
-        {/* Assigned Subjects */}
-        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">
-          <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
-            <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-              <BookOpen size={20} className="text-[#120c7a]" />
-              Assigned Subjects
-              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">{assignedCount}</span>
-            </h2>
-          </div>
-          {assignmentsLoading ? (
-            <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
-              <Loader2 className="animate-spin" size={20} />
-              <span className="text-sm font-semibold">Loading assignments...</span>
-            </div>
-          ) : assignedGroups.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center mx-auto mb-3">
-                <BookOpen size={28} />
-              </div>
-              <p className="text-lg font-bold text-zinc-700">No subjects assigned yet</p>
-              <p className="text-sm text-zinc-400 mt-1">Contact your HOD to get subject assignments.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-zinc-100">
-              {assignedGroups.map((g) => (
-                <div key={`${g.progKey}-${g.department}-${g.batch}-${g.academicYear}-${g.semester}`}
-                  className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <span className="text-sm font-bold text-zinc-800">{formatProgDisplay(g.progKey)}</span>
-                        <span className="text-[10px] text-zinc-300">|</span>
-                        <span className="text-sm font-semibold text-zinc-600">{g.department}</span>
-                        <span className="text-[10px] text-zinc-300">|</span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
-                          <GraduationCap size={10} /> {g.batch}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                          Sem {g.semester}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                          {g.academicYear}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(g.codes || []).map((code) => (
-                          <span key={code}
-                            className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-bold border border-indigo-100">
-                            {code}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => navigate(`/question-paper-generator?batch=${g.batch}&dept=${g.department}&prog=${g.progKey}&ay=${g.academicYear}&sem=${g.semester}`)}
-                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#120c7a]/5 text-[#120c7a] text-xs font-bold hover:bg-[#120c7a]/10 transition-all"
-                    >
-                      <FileText size={14} />
-                      Create QP
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* My Timetable */}
-        {assignedGroups.length > 0 && (
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">
+        {/* Assigned Subjects + Tasks */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Assigned Subjects */}
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                <Calendar size={20} className="text-[#120c7a]" />
-                My Timetable
-                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{Object.keys(timetableData).length}</span>
+                <BookOpen size={20} className="text-[#120c7a]" />
+                Assigned Subjects
+                <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">{assignedCount}</span>
               </h2>
             </div>
-            {loadingTimetable ? (
-              <div className="flex items-center justify-center py-12 text-zinc-400 gap-3">
+            {assignmentsLoading ? (
+              <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
                 <Loader2 className="animate-spin" size={20} />
-                <span className="text-sm font-semibold">Loading timetable...</span>
+                <span className="text-sm font-semibold">Loading assignments...</span>
               </div>
-            ) : Object.keys(timetableData).length === 0 ? (
-              <div className="py-12 text-center">
-                <Calendar size={32} className="mx-auto text-zinc-300 mb-3" />
-                <p className="text-base font-bold text-zinc-500">No timetable allocated yet</p>
-                <p className="text-sm text-zinc-400 mt-1">Your timetable will appear here once allocated.</p>
+            ) : visibleGroups.length === 0 ? (
+              <div className="py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center mx-auto mb-3">
+                  <BookOpen size={28} />
+                </div>
+                <p className="text-lg font-bold text-zinc-700">No subjects assigned yet</p>
+                <p className="text-sm text-zinc-400 mt-1">Contact your HOD to get subject assignments.</p>
               </div>
             ) : (
               <div className="divide-y divide-zinc-100">
-                {assignedGroups.map((g) => {
-                  const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
-                  const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
-                  const tt = timetableData[compositeKey];
-                  if (!tt || !tt.periodsPerDay) return null;
-
-                  return (
-                    <div key={`tt-${compositeKey}`} className="px-6 py-4">
-                      <div className="flex items-center gap-2 flex-wrap mb-3">
-                        <span className="text-sm font-bold text-zinc-800">{formatProgDisplay(g.progKey)}</span>
-                        <span className="text-[10px] text-zinc-300">|</span>
-                        <span className="text-sm font-semibold text-zinc-600">{g.department}</span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
-                          <GraduationCap size={10} /> {g.batch}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                          Sem {g.semester}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                          {g.academicYear}
-                        </span>
+                {visibleGroups.map((g) => (
+                  <div key={`${g.progKey}-${g.department}-${g.batch}-${g.academicYear}-${g.semester}`}
+                    className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-zinc-800">{formatAssignmentDisplay(g.progKey, g.department)}</span>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
+                            <GraduationCap size={10} /> {g.batch}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                            Sem {g.semester}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                            {g.academicYear}
+                          </span>
+                          {(g.codes || []).map((code) => (
+                            <span key={code}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
+                              <span>{code}</span>
+                              {courseNames[code] && <span className="text-indigo-400 font-medium">— {courseNames[code]}</span>}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-slate-50">
-                              <th className="px-2 py-1.5 text-left text-[10px] font-bold text-slate-500 uppercase border border-slate-200 w-24">Day</th>
-                              {Array.from({ length: tt.periodsPerDay }).map((_, i) => (
-                                <th key={i} className="px-2 py-1.5 text-center text-[10px] font-bold text-slate-500 uppercase border border-slate-200">P{i + 1}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {DAYS.slice(0, tt.workingDays).map((day) => (
-                              <tr key={day} className="hover:bg-blue-50/20">
-                                <td className="px-2 py-1.5 font-bold text-slate-600 border border-slate-200">{day.slice(0, 3)}</td>
-                                {Array.from({ length: tt.periodsPerDay }).map((_, pi) => {
-                                  const pNum = String(pi + 1);
-                                  const facultyEntries = tt.facultyEntries?.[day]?.[pNum] || [];
-                                  const hasSubject = facultyEntries.length > 0;
-                                  return (
-                                    <td key={pi} className={`px-1.5 py-1.5 text-center border border-slate-200 ${hasSubject ? 'bg-indigo-50' : ''}`}>
-                                      {hasSubject ? (
-                                        <div className="flex flex-col gap-0.5">
-                                          {facultyEntries.map((entry, ei) => {
-                                            const parts = String(entry).split('|');
-                                            const code = parts[0] || '';
-                                            return (
-                                              <span key={ei} className="inline-block text-[10px] font-bold text-indigo-700 bg-white px-1.5 py-0.5 rounded border border-indigo-200">
-                                                {code}
-                                              </span>
-                                            );
-                                          })}
-                                        </div>
-                                      ) : null}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <button
+                        onClick={() => navigate(`/question-paper-generator?batch=${g.batch}&dept=${g.department}&prog=${g.progKey}&ay=${g.academicYear}&sem=${g.semester}`)}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#120c7a]/5 text-[#120c7a] text-xs font-bold hover:bg-[#120c7a]/10 transition-all"
+                      >
+                        <FileText size={14} />
+                        Create QP
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        )}
+
+          {/* Tasks */}
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+                <CheckCircle2 size={20} className="text-[#120c7a]" />
+                Tasks
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{recorrectCount}</span>
+              </h2>
+            </div>
+            {pendingLoading ? (
+              <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
+                <Loader2 className="animate-spin" size={20} />
+                <span className="text-sm font-semibold">Loading tasks...</span>
+              </div>
+            ) : recorrectCount === 0 ? (
+              <div className="py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 size={28} />
+                </div>
+                <p className="text-lg font-bold text-zinc-700">No pending tasks</p>
+                <p className="text-sm text-zinc-400 mt-1">All caught up!</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-zinc-100">
+                {pendingQps.filter(q => q.status === 'recorrected').map((qp) => (
+                  <div key={`task-${qp.compositeKey}-${qp.id}`}
+                    className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-sm font-bold text-zinc-800">{qp.subject}</span>
+                          {qp.subject_name && (
+                            <>
+                              <span className="text-[10px] text-zinc-300">•</span>
+                              <span className="text-xs text-zinc-500 truncate">{qp.subject_name}</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-red-50 text-red-700 px-2 py-0.5 text-[10px] font-bold border border-red-200">
+                            <AlertCircle size={10} /> Recorrection
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
+                            <FileText size={10} /> {qp.exam_name || qp.qpaper_name}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                            {qp.batch || "-"}
+                          </span>
+                        </div>
+                        {qp.hod_comments && (
+                          <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                            <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                            <p className="text-xs text-amber-800 leading-relaxed">{qp.hod_comments}</p>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95"
+                      >
+                        <Edit2 size={14} />
+                        Fix & Re-forward
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* My Timetable */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">
+          <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+              <Calendar size={20} className="text-[#120c7a]" />
+              My Timetable
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{timetableGroups.length}</span>
+            </h2>
+          </div>
+          {loadingTimetable ? (
+            <div className="flex items-center justify-center py-12 text-zinc-400 gap-3">
+              <Loader2 className="animate-spin" size={20} />
+              <span className="text-sm font-semibold">Loading timetable...</span>
+            </div>
+          ) : timetableGroups.length === 0 ? (
+            <div className="py-12 text-center">
+              <Calendar size={32} className="mx-auto text-zinc-300 mb-3" />
+              <p className="text-base font-bold text-zinc-500">No timetable allocated yet</p>
+              <p className="text-sm text-zinc-400 mt-1">Your timetable will appear here once allocated.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-zinc-100">
+              {timetableGroups.map((tg, tgIdx) => (
+                <div key={`ttg-${tgIdx}`} className="px-6 py-5">
+                  <div className="flex items-center gap-2 flex-wrap mb-4">
+                    {tg.entries.map((e, ei) => (
+                      <span key={ei} className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#120c7a] to-[#1a12a8] text-white px-3.5 py-1.5 text-[10px] font-bold shadow-md">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        {formatAssignmentDisplay(e.group.progKey, e.group.department)} {e.group.batch} <span className="text-indigo-300">•</span> Sem {e.group.semester}
+                      </span>
+                    ))}
+                  </div>
+                      <div className="overflow-x-auto rounded-2xl border border-zinc-200 shadow-lg">
+                        <table className="w-full border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-gradient-to-r from-[#0f0a66] via-[#120c7a] to-[#1a12a8]">
+                              <th className="px-4 py-3.5 text-left text-[10px] font-black text-white uppercase tracking-widest border-b border-white/15 w-28 shadow-inner">Day</th>
+                              {tg.columns.map((col, ci) => {
+                                if (col.type === 'break') {
+                                  return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-slate-400/20 whitespace-nowrap tracking-wider text-slate-500">⏸ Break {col.duration}m</th>;
+                                }
+                                if (col.type === 'lunch') {
+                                  return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-amber-400/15 whitespace-nowrap tracking-wider text-amber-500">🍽 Lunch {col.duration}m</th>;
+                                }
+                                const pt = tg.periodTimes[col.num - 1];
+                                return (
+                                  <th key={ci} className="px-2 py-3.5 text-center text-[10px] font-black text-white uppercase border-b border-white/15 border-r border-r-white/10 whitespace-nowrap tracking-widest">
+                                    {pt ? `${pt.start} - ${pt.end}` : `P${col.num}`}
+                                  </th>
+                                );
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {DAYS.slice(0, tg.workingDays).map((day, idx) => {
+                              const dayDate = currentWeekDates[idx];
+                              const dateKey = formatDateKey(dayDate);
+                              const events = academicEvents[dateKey] || [];
+                              const isToday = dateKey === todayKey;
+                              const hasEvent = events.length > 0;
+                              const rowClass = hasEvent
+                                ? 'bg-gradient-to-r from-red-50 via-rose-50 to-red-50'
+                                : isToday
+                                  ? 'bg-gradient-to-r from-blue-50 via-indigo-50/40 to-blue-50'
+                                  : idx % 2 === 0
+                                    ? 'bg-white hover:bg-blue-50/40'
+                                    : 'bg-zinc-50/50 hover:bg-blue-50/40';
+                              const dayCellClass = hasEvent
+                                ? 'border-b border-red-200 border-r border-r-red-200'
+                                : isToday
+                                  ? 'border-b border-blue-200 border-r border-r-blue-200'
+                                  : 'border-b border-zinc-200 border-r border-r-zinc-150';
+                              return (
+                              <tr key={day} className={`transition-all duration-150 ${rowClass}`}>
+                                <td className={`px-3 py-3.5 font-bold ${dayCellClass}`}>
+                                  <div className="flex flex-col items-start gap-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`text-sm font-black ${hasEvent ? 'text-red-700' : isToday ? 'text-[#120c7a]' : 'text-zinc-800'}`}>{day.slice(0, 3)}</span>
+                                      {dayDate && <span className={`text-[10px] font-bold ${hasEvent ? 'text-red-500' : 'text-zinc-400'}`}>{dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                                      {isToday && <span className="text-[9px] font-black text-white bg-gradient-to-r from-[#120c7a] to-[#1a12a8] px-2.5 py-0.5 rounded-md shadow-sm">Today</span>}
+                                    </div>
+                                    {events.map(ev => (
+                                      <span key={ev.id} className={`inline-flex items-center gap-1 text-[10px] font-bold rounded-lg px-2 py-0.5 border shadow-sm ${getEventStyle(ev.type)}`}>
+                                        {ev.type === 'Holiday' ? '🎉' : ev.type === 'Exam' ? '📝' : '📌'}{ev.title}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                                {(() => {
+                                  const cells = [];
+                                  let ci = 0;
+                                  while (ci < tg.columns.length) {
+                                    const col = tg.columns[ci];
+                                    if (col.type === 'break') {
+                                      cells.push(
+                                        <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-slate-100/60">
+                                          <div className="flex flex-col items-center gap-1">
+                                            <span className="text-[10px] font-semibold text-slate-500 tracking-wide">Break</span>
+                                          </div>
+                                        </td>
+                                      );
+                                      ci++;
+                                      continue;
+                                    }
+                                    if (col.type === 'lunch') {
+                                      cells.push(
+                                        <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-amber-50/60">
+                                          <div className="flex flex-col items-center gap-1">
+                                            <span className="text-[10px] font-semibold text-amber-600 tracking-wide">Lunch</span>
+                                          </div>
+                                        </td>
+                                      );
+                                      ci++;
+                                      continue;
+                                    }
+                                    const pNum = String(col.num);
+                                    let maxSpan = 1;
+                                    const cellEntries = [];
+                                    tg.entries.forEach(e => {
+                                      const facultyEntries = e.tt.facultyEntries?.[day]?.[pNum] || [];
+                                      const batchLabel = `${formatAssignmentDisplay(e.group.progKey, e.group.department)} ${e.group.batch}`;
+                                      facultyEntries.forEach(entry => {
+                                        const parts = String(entry).split('|');
+                                        const code = parts[0] || '';
+                                        const span = parseInt(parts[1], 10) || 1;
+                                        if (span > maxSpan) maxSpan = span;
+                                        cellEntries.push({ code, batchLabel, span });
+                                      });
+                                    });
+                                    let actualSpan = 1;
+                                    if (maxSpan > 1) {
+                                      for (let s = 1; s < maxSpan; s++) {
+                                        const nextIdx = ci + s;
+                                        if (nextIdx < tg.columns.length && tg.columns[nextIdx].type === 'period') {
+                                          actualSpan = s + 1;
+                                        } else break;
+                                      }
+                                    }
+                                    cells.push(
+                                      <td key={ci} colSpan={actualSpan} className={`px-2 py-2.5 text-center border-b border-zinc-200 border-r border-r-zinc-100 ${cellEntries.length > 0 ? 'bg-gradient-to-b from-[#120c7a]/[0.04] via-indigo-50/40 to-white' : ''}`}>
+                                        {cellEntries.length > 0 ? (
+                                          <div className="flex flex-col gap-1.5 items-center">
+                                            {cellEntries.map((ce, ci2) => (
+                                              <span key={ci2} className="inline-flex flex-col items-center text-[11px] font-bold text-[#120c7a] bg-white px-3 py-1.5 rounded-xl border-2 border-[#120c7a]/15 shadow-md hover:shadow-lg hover:border-[#120c7a]/30 transition-all duration-150 min-w-[70px]">
+                                                <span className="font-black">{ce.code}{ce.span > 1 ? <span className="text-[9px] text-indigo-400 ml-0.5 font-bold">({ce.span}p)</span> : ''}</span>
+                                                {ce.batchLabel && <span className="text-[7px] text-zinc-400 font-bold mt-0.5 leading-tight text-center">{ce.batchLabel}</span>}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <span className="text-zinc-300 select-none text-sm">—</span>
+                                        )}
+                                      </td>
+                                    );
+                                    ci += actualSpan;
+                                  }
+                                  return cells;
+                                })()}
+                              </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
         {/* Question Papers */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
