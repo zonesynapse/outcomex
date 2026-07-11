@@ -177,9 +177,18 @@ export default function FacultyDashboard() {
     return assignedGroups.filter(g =>
       activeSemesters.some(as => {
         const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
-        return configBatches.some(b =>
+        const isBatchMatch = configBatches.some(b =>
           String(b) === String(g.batch)
         );
+        if (!isBatchMatch) return false;
+
+        const semNumMatch = String(g.semester).match(/\d+/);
+        const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
+        if (isNaN(semNum)) return true;
+
+        const isGroupOdd = semNum % 2 !== 0;
+        const isConfigOdd = String(as.semesterType || 'Odd').toLowerCase() === 'odd';
+        return isGroupOdd === isConfigOdd;
       })
     );
   }, [assignedGroups, activeSemesters, semesterConfigs]);
@@ -1049,143 +1058,143 @@ export default function FacultyDashboard() {
                       </span>
                     ))}
                   </div>
-                      <div className="overflow-x-auto rounded-2xl border border-zinc-200 shadow-lg">
-                        <table className="w-full border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-gradient-to-r from-[#0f0a66] via-[#120c7a] to-[#1a12a8]">
-                              <th className="px-4 py-3.5 text-left text-[10px] font-black text-white uppercase tracking-widest border-b border-white/15 w-28 shadow-inner">Day</th>
-                              {tg.columns.map((col, ci) => {
-                                if (col.type === 'break') {
-                                  return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-slate-400/20 whitespace-nowrap tracking-wider text-slate-500">⏸ Break {col.duration}m</th>;
-                                }
-                                if (col.type === 'lunch') {
-                                  return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-amber-400/15 whitespace-nowrap tracking-wider text-amber-500">🍽 Lunch {col.duration}m</th>;
-                                }
-                                const pt = tg.periodTimes[col.num - 1];
-                                return (
-                                  <th key={ci} className="px-2 py-3.5 text-center text-[10px] font-black text-white uppercase border-b border-white/15 border-r border-r-white/10 whitespace-nowrap tracking-widest">
-                                    {pt ? `${pt.start} - ${pt.end}` : `P${col.num}`}
-                                  </th>
-                                );
-                              })}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {DAYS.slice(0, tg.workingDays).map((day, idx) => {
-                              const dayDate = currentWeekDates[idx];
-                              const dateKey = formatDateKey(dayDate);
-                              const events = academicEvents[dateKey] || [];
-                              const isToday = dateKey === todayKey;
-                              const hasEvent = events.length > 0;
-                              const rowClass = hasEvent
-                                ? 'bg-gradient-to-r from-red-50 via-rose-50 to-red-50'
-                                : isToday
-                                  ? 'bg-gradient-to-r from-blue-50 via-indigo-50/40 to-blue-50'
-                                  : idx % 2 === 0
-                                    ? 'bg-white hover:bg-blue-50/40'
-                                    : 'bg-zinc-50/50 hover:bg-blue-50/40';
-                              const dayCellClass = hasEvent
-                                ? 'border-b border-red-200 border-r border-r-red-200'
-                                : isToday
-                                  ? 'border-b border-blue-200 border-r border-r-blue-200'
-                                  : 'border-b border-zinc-200 border-r border-r-zinc-150';
-                              return (
-                              <tr key={day} className={`transition-all duration-150 ${rowClass}`}>
-                                <td className={`px-3 py-3.5 font-bold ${dayCellClass}`}>
-                                  <div className="flex flex-col items-start gap-1.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`text-sm font-black ${hasEvent ? 'text-red-700' : isToday ? 'text-[#120c7a]' : 'text-zinc-800'}`}>{day.slice(0, 3)}</span>
-                                      {dayDate && <span className={`text-[10px] font-bold ${hasEvent ? 'text-red-500' : 'text-zinc-400'}`}>{dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
-                                      {isToday && <span className="text-[9px] font-black text-white bg-gradient-to-r from-[#120c7a] to-[#1a12a8] px-2.5 py-0.5 rounded-md shadow-sm">Today</span>}
-                                    </div>
-                                    {events.map(ev => (
-                                      <span key={ev.id} className={`inline-flex items-center gap-1 text-[10px] font-bold rounded-lg px-2 py-0.5 border shadow-sm ${getEventStyle(ev.type)}`}>
-                                        {ev.type === 'Holiday' ? '🎉' : ev.type === 'Exam' ? '📝' : '📌'}{ev.title}
-                                      </span>
-                                    ))}
+                  <div className="overflow-x-auto rounded-2xl border border-zinc-200 shadow-lg">
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gradient-to-r from-[#0f0a66] via-[#120c7a] to-[#1a12a8]">
+                          <th className="px-4 py-3.5 text-left text-[10px] font-black text-white uppercase tracking-widest border-b border-white/15 w-28 shadow-inner">Day</th>
+                          {tg.columns.map((col, ci) => {
+                            if (col.type === 'break') {
+                              return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-slate-400/20 whitespace-nowrap tracking-wider text-slate-500">⏸ Break {col.duration}m</th>;
+                            }
+                            if (col.type === 'lunch') {
+                              return <th key={ci} className="px-2 py-3.5 text-center text-[9px] font-bold uppercase border-b border-white/15 border-r border-r-white/10 bg-amber-400/15 whitespace-nowrap tracking-wider text-amber-500">🍽 Lunch {col.duration}m</th>;
+                            }
+                            const pt = tg.periodTimes[col.num - 1];
+                            return (
+                              <th key={ci} className="px-2 py-3.5 text-center text-[10px] font-black text-white uppercase border-b border-white/15 border-r border-r-white/10 whitespace-nowrap tracking-widest">
+                                {pt ? `${pt.start} - ${pt.end}` : `P${col.num}`}
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {DAYS.slice(0, tg.workingDays).map((day, idx) => {
+                          const dayDate = currentWeekDates[idx];
+                          const dateKey = formatDateKey(dayDate);
+                          const events = academicEvents[dateKey] || [];
+                          const isToday = dateKey === todayKey;
+                          const hasEvent = events.length > 0;
+                          const rowClass = hasEvent
+                            ? 'bg-gradient-to-r from-red-50 via-rose-50 to-red-50'
+                            : isToday
+                              ? 'bg-gradient-to-r from-blue-50 via-indigo-50/40 to-blue-50'
+                              : idx % 2 === 0
+                                ? 'bg-white hover:bg-blue-50/40'
+                                : 'bg-zinc-50/50 hover:bg-blue-50/40';
+                          const dayCellClass = hasEvent
+                            ? 'border-b border-red-200 border-r border-r-red-200'
+                            : isToday
+                              ? 'border-b border-blue-200 border-r border-r-blue-200'
+                              : 'border-b border-zinc-200 border-r border-r-zinc-150';
+                          return (
+                            <tr key={day} className={`transition-all duration-150 ${rowClass}`}>
+                              <td className={`px-3 py-3.5 font-bold ${dayCellClass}`}>
+                                <div className="flex flex-col items-start gap-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-sm font-black ${hasEvent ? 'text-red-700' : isToday ? 'text-[#120c7a]' : 'text-zinc-800'}`}>{day.slice(0, 3)}</span>
+                                    {dayDate && <span className={`text-[10px] font-bold ${hasEvent ? 'text-red-500' : 'text-zinc-400'}`}>{dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                                    {isToday && <span className="text-[9px] font-black text-white bg-gradient-to-r from-[#120c7a] to-[#1a12a8] px-2.5 py-0.5 rounded-md shadow-sm">Today</span>}
                                   </div>
-                                </td>
-                                {(() => {
-                                  const cells = [];
-                                  let ci = 0;
-                                  while (ci < tg.columns.length) {
-                                    const col = tg.columns[ci];
-                                    if (col.type === 'break') {
-                                      cells.push(
-                                        <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-slate-100/60">
-                                          <div className="flex flex-col items-center gap-1">
-                                            <span className="text-[10px] font-semibold text-slate-500 tracking-wide">Break</span>
-                                          </div>
-                                        </td>
-                                      );
-                                      ci++;
-                                      continue;
-                                    }
-                                    if (col.type === 'lunch') {
-                                      cells.push(
-                                        <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-amber-50/60">
-                                          <div className="flex flex-col items-center gap-1">
-                                            <span className="text-[10px] font-semibold text-amber-600 tracking-wide">Lunch</span>
-                                          </div>
-                                        </td>
-                                      );
-                                      ci++;
-                                      continue;
-                                    }
-                                    const pNum = String(col.num);
-                                    let maxSpan = 1;
-                                    const cellEntries = [];
-                                    tg.entries.forEach(e => {
-                                      const facultyEntries = e.tt.facultyEntries?.[day]?.[pNum] || [];
-                                      const batchLabel = `${formatAssignmentDisplay(e.group.progKey, e.group.department)} ${e.group.batch}`;
-                                      facultyEntries.forEach(entry => {
-                                        const parts = String(entry).split('|');
-                                        const code = parts[0] || '';
-                                        const span = parseInt(parts[1], 10) || 1;
-                                        if (span > maxSpan) maxSpan = span;
-                                        cellEntries.push({ code, batchLabel, span });
-                                      });
-                                    });
-                                    let actualSpan = 1;
-                                    if (maxSpan > 1) {
-                                      for (let s = 1; s < maxSpan; s++) {
-                                        const nextIdx = ci + s;
-                                        if (nextIdx < tg.columns.length && tg.columns[nextIdx].type === 'period') {
-                                          actualSpan = s + 1;
-                                        } else break;
-                                      }
-                                    }
+                                  {events.map(ev => (
+                                    <span key={ev.id} className={`inline-flex items-center gap-1 text-[10px] font-bold rounded-lg px-2 py-0.5 border shadow-sm ${getEventStyle(ev.type)}`}>
+                                      {ev.type === 'Holiday' ? '🎉' : ev.type === 'Exam' ? '📝' : '📌'}{ev.title}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              {(() => {
+                                const cells = [];
+                                let ci = 0;
+                                while (ci < tg.columns.length) {
+                                  const col = tg.columns[ci];
+                                  if (col.type === 'break') {
                                     cells.push(
-                                      <td key={ci} colSpan={actualSpan} className={`px-2 py-2.5 text-center border-b border-zinc-200 border-r border-r-zinc-100 ${cellEntries.length > 0 ? 'bg-gradient-to-b from-[#120c7a]/[0.04] via-indigo-50/40 to-white' : ''}`}>
-                                        {cellEntries.length > 0 ? (
-                                          <div className="flex flex-col gap-1.5 items-center">
-                                            {cellEntries.map((ce, ci2) => (
-                                              <span key={ci2} className="inline-flex flex-col items-center text-[11px] font-bold text-[#120c7a] bg-white px-3 py-1.5 rounded-xl border-2 border-[#120c7a]/15 shadow-md hover:shadow-lg hover:border-[#120c7a]/30 transition-all duration-150 min-w-[70px]">
-                                                <span className="font-black">{ce.code}{ce.span > 1 ? <span className="text-[9px] text-indigo-400 ml-0.5 font-bold">({ce.span}p)</span> : ''}</span>
-                                                {ce.batchLabel && <span className="text-[7px] text-zinc-400 font-bold mt-0.5 leading-tight text-center">{ce.batchLabel}</span>}
-                                              </span>
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <span className="text-zinc-300 select-none text-sm">—</span>
-                                        )}
+                                      <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-slate-100/60">
+                                        <div className="flex flex-col items-center gap-1">
+                                          <span className="text-[10px] font-semibold text-slate-500 tracking-wide">Break</span>
+                                        </div>
                                       </td>
                                     );
-                                    ci += actualSpan;
+                                    ci++;
+                                    continue;
                                   }
-                                  return cells;
-                                })()}
-                              </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                    </div>
+                                  if (col.type === 'lunch') {
+                                    cells.push(
+                                      <td key={ci} className="px-2 py-4 text-center border-b border-zinc-100 border-r border-r-zinc-100 bg-amber-50/60">
+                                        <div className="flex flex-col items-center gap-1">
+                                          <span className="text-[10px] font-semibold text-amber-600 tracking-wide">Lunch</span>
+                                        </div>
+                                      </td>
+                                    );
+                                    ci++;
+                                    continue;
+                                  }
+                                  const pNum = String(col.num);
+                                  let maxSpan = 1;
+                                  const cellEntries = [];
+                                  tg.entries.forEach(e => {
+                                    const facultyEntries = e.tt.facultyEntries?.[day]?.[pNum] || [];
+                                    const batchLabel = `${formatAssignmentDisplay(e.group.progKey, e.group.department)} ${e.group.batch}`;
+                                    facultyEntries.forEach(entry => {
+                                      const parts = String(entry).split('|');
+                                      const code = parts[0] || '';
+                                      const span = parseInt(parts[1], 10) || 1;
+                                      if (span > maxSpan) maxSpan = span;
+                                      cellEntries.push({ code, batchLabel, span });
+                                    });
+                                  });
+                                  let actualSpan = 1;
+                                  if (maxSpan > 1) {
+                                    for (let s = 1; s < maxSpan; s++) {
+                                      const nextIdx = ci + s;
+                                      if (nextIdx < tg.columns.length && tg.columns[nextIdx].type === 'period') {
+                                        actualSpan = s + 1;
+                                      } else break;
+                                    }
+                                  }
+                                  cells.push(
+                                    <td key={ci} colSpan={actualSpan} className={`px-2 py-2.5 text-center border-b border-zinc-200 border-r border-r-zinc-100 ${cellEntries.length > 0 ? 'bg-gradient-to-b from-[#120c7a]/[0.04] via-indigo-50/40 to-white' : ''}`}>
+                                      {cellEntries.length > 0 ? (
+                                        <div className="flex flex-col gap-1.5 items-center">
+                                          {cellEntries.map((ce, ci2) => (
+                                            <span key={ci2} className="inline-flex flex-col items-center text-[11px] font-bold text-[#120c7a] bg-white px-3 py-1.5 rounded-xl border-2 border-[#120c7a]/15 shadow-md hover:shadow-lg hover:border-[#120c7a]/30 transition-all duration-150 min-w-[70px]">
+                                              <span className="font-black">{ce.code}{ce.span > 1 ? <span className="text-[9px] text-indigo-400 ml-0.5 font-bold">({ce.span}p)</span> : ''}</span>
+                                              {ce.batchLabel && <span className="text-[7px] text-zinc-400 font-bold mt-0.5 leading-tight text-center">{ce.batchLabel}</span>}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span className="text-zinc-300 select-none text-sm">—</span>
+                                      )}
+                                    </td>
+                                  );
+                                  ci += actualSpan;
+                                }
+                                return cells;
+                              })()}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Question Papers */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
@@ -1219,16 +1228,14 @@ export default function FacultyDashboard() {
             <div className="flex gap-1 mt-4 overflow-x-auto">
               {tabs.map(tab => (
                 <button key={tab.key} onClick={() => setStatusTab(tab.key)}
-                  className={`relative px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                    statusTab === tab.key
+                  className={`relative px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${statusTab === tab.key
                       ? "bg-[#120c7a] text-white shadow-sm"
                       : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
-                  }`}>
+                    }`}>
                   {tab.label}
                   {tab.count > 0 && (
-                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${
-                      statusTab === tab.key ? "bg-white/20 text-white" : "bg-zinc-200 text-zinc-600"
-                    }`}>
+                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${statusTab === tab.key ? "bg-white/20 text-white" : "bg-zinc-200 text-zinc-600"
+                      }`}>
                       {tab.count}
                     </span>
                   )}
