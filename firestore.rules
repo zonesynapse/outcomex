@@ -135,6 +135,20 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
+    match /step_activities/{activityId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    match /step_config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isApproved() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Principal' ||
+        isMasterAdmin()
+      );
+    }
+
     match /{document=**} {
       allow read: if isApproved();
       allow write: if isApproved();

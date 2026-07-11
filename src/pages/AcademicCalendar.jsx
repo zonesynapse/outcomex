@@ -13,6 +13,7 @@ import {
   Clock, 
   MapPin, 
   X,
+  ChevronDown,
   CheckCircle2,
   Bell,
   Edit
@@ -41,7 +42,7 @@ export default function AcademicCalendar() {
   const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [showSemesterForm, setShowSemesterForm] = useState(false);
   const [editingSemesterId, setEditingSemesterId] = useState(null);
-  const [semesterForm, setSemesterForm] = useState({ programme: '', batch: '', semesterType: 'Odd', startDate: '', endDate: '' });
+  const [semesterForm, setSemesterForm] = useState({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' });
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { batchRegulations } = useRegulations();
 
@@ -248,17 +249,17 @@ export default function AcademicCalendar() {
   };
 
   const handleSaveSemesterConfig = async () => {
-    if (!semesterForm.programme || !semesterForm.batch || !semesterForm.startDate || !semesterForm.endDate) return;
+    if (!semesterForm.programme || semesterForm.batches.length === 0 || !semesterForm.startDate || !semesterForm.endDate) return;
     if (new Date(semesterForm.endDate) < new Date(semesterForm.startDate)) {
       alert("End date cannot be before start date.");
       return;
     }
     const academicYear = computeAcademicYear(semesterForm.semesterType, semesterForm.startDate);
-    const semesterNumber = computeSemesterNumber(semesterForm.batch, semesterForm.semesterType, semesterForm.startDate);
+    const semesterNumber = computeSemesterNumber(semesterForm.batches[0], semesterForm.semesterType, semesterForm.startDate);
     const data = {
       programme: formatProgrammeKey(semesterForm.programme),
       programmeDisplay: semesterForm.programme,
-      batch: semesterForm.batch,
+      batch: semesterForm.batches,
       semesterType: semesterForm.semesterType,
       startDate: semesterForm.startDate,
       endDate: semesterForm.endDate,
@@ -276,7 +277,7 @@ export default function AcademicCalendar() {
     }
     setShowSemesterForm(false);
     setEditingSemesterId(null);
-    setSemesterForm({ programme: '', batch: '', semesterType: 'Odd', startDate: '', endDate: '' });
+    setSemesterForm({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' });
   };
 
   const handleDeleteSemesterConfig = async (id) => {
@@ -322,7 +323,7 @@ export default function AcademicCalendar() {
                 <p className="text-xs text-zinc-400 font-medium mt-1">Define active semesters with date ranges</p>
               </div>
               <button
-                onClick={() => { setShowSemesterForm(true); setEditingSemesterId(null); setSemesterForm({ programme: '', batch: '', semesterType: 'Odd', startDate: '', endDate: '' }); }}
+                onClick={() => { setShowSemesterForm(true); setEditingSemesterId(null); setSemesterForm({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' }); }}
                 className="inline-flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-2xl font-bold text-sm hover:bg-blue-800 transition-all shadow-lg"
               >
                 <Plus size={16} /> Add Semester
@@ -340,10 +341,16 @@ export default function AcademicCalendar() {
                     <div className="w-2 h-2 rounded-full bg-green-500" />
                     <div>
                       <p className="font-bold text-zinc-800 text-sm">
-                        {cfg.programmeDisplay || formatProgDisplay(cfg.programme)} — {formatBatchDisplay(cfg.batch)}
+                        {cfg.programmeDisplay || formatProgDisplay(cfg.programme)}
                       </p>
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                        <span>Sem {cfg.semesterNumber}</span>
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 flex-wrap">
+                        {(Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).filter(Boolean).map(b => (
+                          <span key={b} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                            {formatBatchDisplay(b)}
+                            <span className="text-blue-300">→</span>
+                            <span>Sem {computeSemesterNumber(b, cfg.semesterType, cfg.startDate)}</span>
+                          </span>
+                        ))}
                         <span className="text-zinc-300">•</span>
                         <span>{cfg.academicYear}</span>
                         <span className="text-zinc-300">•</span>
@@ -359,7 +366,7 @@ export default function AcademicCalendar() {
                         setEditingSemesterId(cfg.id);
                         setSemesterForm({
                           programme: cfg.programmeDisplay || cfg.programme,
-                          batch: cfg.batch,
+                          batches: Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []),
                           semesterType: cfg.semesterType || 'Odd',
                           startDate: cfg.startDate || '',
                           endDate: cfg.endDate || '',
@@ -406,16 +413,35 @@ export default function AcademicCalendar() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Batch</label>
-                      <select
-                        value={semesterForm.batch}
-                        onChange={e => setSemesterForm({...semesterForm, batch: e.target.value})}
-                        className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                      >
-                        <option value="">Select Batch</option>
-                        {availableBatches.map(b => (
-                          <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                      <div className="relative">
+                        <select
+                          className="w-full appearance-none bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          value=""
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val && !semesterForm.batches.includes(val)) {
+                              setSemesterForm(prev => ({ ...prev, batches: [...prev.batches, val] }));
+                              e.target.value = "";
+                            }
+                          }}
+                        >
+                          <option value="">-- Add Batch --</option>
+                          {availableBatches.map(b => (
+                            <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {semesterForm.batches.map(b => (
+                          <span key={b} className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded flex items-center gap-1 border border-blue-100 uppercase tracking-tighter">
+                            {formatBatchDisplay(b)}
+                            <button type="button" onClick={() => setSemesterForm(prev => ({ ...prev, batches: prev.batches.filter(x => x !== b) }))} className="hover:text-red-500 transition-colors">
+                              <X size={12} />
+                            </button>
+                          </span>
                         ))}
-                      </select>
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -449,11 +475,19 @@ export default function AcademicCalendar() {
                       />
                     </div>
                   </div>
-                  {semesterForm.startDate && semesterForm.batch && semesterForm.programme && (
-                    <div className="bg-blue-50 rounded-2xl px-4 py-3 text-xs font-bold text-blue-700 flex items-center gap-4 flex-wrap">
+                  {semesterForm.startDate && semesterForm.batches.length > 0 && semesterForm.programme && (
+                    <div className="bg-blue-50 rounded-2xl px-4 py-3 text-xs font-bold text-blue-700 flex items-center gap-3 flex-wrap">
                       <span>📅 {computeAcademicYear(semesterForm.semesterType, semesterForm.startDate)}</span>
-                      <span>•</span>
-                      <span>Semester {computeSemesterNumber(semesterForm.batch, semesterForm.semesterType, semesterForm.startDate)}</span>
+                      <span className="text-blue-300">•</span>
+                      <span className="text-blue-500">{semesterForm.semesterType}</span>
+                      <span className="text-blue-300">•</span>
+                      {semesterForm.batches.map(b => (
+                        <span key={b} className="inline-flex items-center gap-1 bg-white/60 rounded-lg px-2 py-0.5">
+                          {formatBatchDisplay(b)}
+                          <span className="text-blue-400">→</span>
+                          <span className="text-blue-800">Sem {computeSemesterNumber(b, semesterForm.semesterType, semesterForm.startDate)}</span>
+                        </span>
+                      ))}
                     </div>
                   )}
                   <button

@@ -68,6 +68,16 @@ import PaymentRoles from "./pages/PaymentRoles";
 import PaymentEntries from "./pages/PaymentEntries";
 import PaymentReports from "./pages/PaymentReports";
 import QPConverter from "./pages/QPConverter";
+import StepPoints from "./pages/StepPoints";
+import StepSettings from "./pages/StepSettings";
+import StepAnalytics from "./pages/StepAnalytics";
+import InventoryDashboard from "./pages/inventory/InventoryDashboard";
+import InventoryItems from "./pages/inventory/InventoryItems";
+import InventoryRequest from "./pages/inventory/InventoryRequest";
+import InventoryMyRequests from "./pages/inventory/InventoryMyRequests";
+import InventoryApprovals from "./pages/inventory/InventoryApprovals";
+import InventoryFulfill from "./pages/inventory/InventoryFulfill";
+import StudentStepPoints from "./pages/student/StepPoints";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -159,6 +169,19 @@ export default function App() {
 
         {/* COE Routes */}
         <Route path="/qp-converter" element={<ProtectedRoute><QPConverter /></ProtectedRoute>} />
+        <Route path="/step-points" element={<ProtectedRoute><StepPoints /></ProtectedRoute>} />
+        <Route path="/step-analytics" element={<ProtectedRoute><StepAnalytics /></ProtectedRoute>} />
+        {/* Config Routes */}
+        <Route path="/step-settings" element={<ProtectedRoute><StepSettings /></ProtectedRoute>} />
+
+        {/* Inventory Routes */}
+        <Route path="/inventory" element={<ProtectedRoute><InventoryDashboard /></ProtectedRoute>} />
+        <Route path="/inventory/dashboard" element={<ProtectedRoute><InventoryDashboard /></ProtectedRoute>} />
+        <Route path="/inventory/items" element={<ProtectedRoute><InventoryItems /></ProtectedRoute>} />
+        <Route path="/inventory/request" element={<ProtectedRoute><InventoryRequest /></ProtectedRoute>} />
+        <Route path="/inventory/my-requests" element={<ProtectedRoute><InventoryMyRequests /></ProtectedRoute>} />
+        <Route path="/inventory/approvals" element={<ProtectedRoute><InventoryApprovals /></ProtectedRoute>} />
+        <Route path="/inventory/fulfill" element={<ProtectedRoute><InventoryFulfill /></ProtectedRoute>} />
 
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
@@ -181,6 +204,7 @@ export default function App() {
         <Route path="/student/courses" element={<ProtectedRoute><StudentLayout><StudentCourseReg /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/library" element={<ProtectedRoute><StudentLayout><StudentLibrary /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/placement" element={<ProtectedRoute><StudentLayout><StudentPlacement /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/step" element={<ProtectedRoute><StudentLayout><StudentStepPoints /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout><StudentDownloads /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout><StudentNotices /></StudentLayout></ProtectedRoute>} />
 

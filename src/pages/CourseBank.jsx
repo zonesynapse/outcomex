@@ -186,7 +186,17 @@ export default function CreateCourse() {
     try {
       const progKey = sanitizeKey(programme);
       const sanitizedDept = sanitizeKey(deptKey);
-      const courseKey = `${progKey}_${sanitizedDept}_${sanitizeKey(courseCode.trim())}`;
+      const sanitizedCode = sanitizeKey(courseCode.trim());
+
+      // If editing an existing course, reuse its exact doc key (preserves old or new format).
+      // If creating new, include regulation in the key to prevent cross-regulation overwrites.
+      let courseKey;
+      if (selectedExistingCourseKey && selectedExistingCourseKey !== "__new__") {
+        const [, docKey] = selectedExistingCourseKey.split(':');
+        courseKey = docKey;
+      } else {
+        courseKey = `${progKey}_${sanitizedDept}_${regKey}_${sanitizedCode}`;
+      }
       const payload = {
         code: courseCode.trim(),
         name: courseName.trim(),

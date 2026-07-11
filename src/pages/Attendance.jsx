@@ -267,7 +267,7 @@ export default function Attendance() {
         const data = doc.data();
 
         Object.entries(data).forEach(([uid, codes]) => {
-          if (userRole === 'Faculty' && uid !== currentUid) return;
+          if ((userRole === 'Faculty' || userRole === 'HOD') && uid !== currentUid) return;
           if (Array.isArray(codes)) {
             codes.forEach(code => {
               contexts.push({ code, batch, ay, sem, section: secSuffix, uid });

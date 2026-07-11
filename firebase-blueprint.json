@@ -37,6 +37,50 @@
         },
         "updatedAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "step_activities": {
+      "title": "STEP Activity Claim",
+      "description": "A claim submitted by a student for earning STEP Activity points under one of the 7 approved categories.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "regNo": { "type": "string" },
+        "batch": { "type": "string" },
+        "programme": { "type": "string" },
+        "department": { "type": "string" },
+        "semester": { "type": "integer" },
+        "category": { "type": "string" },
+        "activityType": { "type": "string" },
+        "activityName": { "type": "string" },
+        "date": { "type": "string" },
+        "durationHours": { "type": "number" },
+        "basePoints": { "type": "number" },
+        "bonusPoints": { "type": "number" },
+        "totalPoints": { "type": "number" },
+        "bonusCondition": { "type": "string" },
+        "evidenceUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Returned"] },
+        "comments": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "studentId", "regNo", "semester", "category", "activityType", "activityName", "basePoints", "status"]
+    },
+    "step_config": {
+      "title": "STEP System Configuration",
+      "description": "Stores dynamic college-wide configurations, rubrics, bonus weights, physical checklists, guidelines, and point milestones for the STEP Enrichment Programme.",
+      "type": "object",
+      "properties": {
+        "categories": { "type": "object", "description": "Map of category IDs to their specific point caps and activities list." },
+        "bonusWeights": { "type": "array", "description": "List of dynamic bonus weight conditions." },
+        "checklist": { "type": "array", "items": { "type": "string" }, "description": "Mandatory checklist for physical STEP file submission." },
+        "guidelines": { "type": "array", "items": { "type": "string" }, "description": "Program guidelines and non-qualifying activities." },
+        "milestones": { "type": "object", "description": "Configured points requirements for regular/lateral entries and semester caps." }
+      }
     }
   },
   "firestore": {
@@ -44,9 +88,17 @@
       "schema": "users",
       "description": "User profile documents."
     },
+    "/step_config/{configId}": {
+      "schema": "step_config",
+      "description": "System configurations for STEP categories, milestones, and checklists."
+    },
     "/students/{compositeKey}": {
       "schema": "students",
       "description": "Student list for a specific batch, programme, and department."
+    },
+    "/step_activities/{activityId}": {
+      "schema": "step_activities",
+      "description": "STEP activity point claims and submissions."
     }
   }
 }

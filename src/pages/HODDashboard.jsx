@@ -6,7 +6,7 @@ import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
-  Users, GraduationCap
+  Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw
 } from "lucide-react";
 
 import Layout from "../components/Layout";
@@ -69,7 +69,15 @@ export default function HODDashboard() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const [hodDepartment, setHodDepartment] = useState("");
+  const [hodProgramme, setHodProgramme] = useState("");
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
+  const [allStudentNames, setAllStudentNames] = useState({});
+  const [attendanceOverview, setAttendanceOverview] = useState({});
+  const [attendanceOverviewLoading, setAttendanceOverviewLoading] = useState(false);
+  const [subjectNamesMap, setSubjectNamesMap] = useState({});
+  const [timetableAllocation, setTimetableAllocation] = useState({});
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [sectionAllotmentPopup, setSectionAllotmentPopup] = useState({ open: false });
   const [sectionConfigs, setSectionConfigs] = useState({});
@@ -106,9 +114,11 @@ export default function HODDashboard() {
         getDoc(userRef).then(snap => {
           if (snap.exists()) {
             const ud = snap.data();
+            console.log('[HODDashboard] User doc fields:', Object.keys(ud).join(', '), '| Full:', ud);
             setCurrentHodSignature(ud.signatureUrl || '');
             setHodName(ud.facultyName || ud.displayName || ud.email || "HOD");
-            setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || "");
+            setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "");
+            setHodProgramme(ud.programme || "");
           }
           setHodLoading(false);
         });
@@ -202,6 +212,22 @@ export default function HODDashboard() {
   }, [hodDepartment]);
 
   useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'students'), (snap) => {
+      const map = {};
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        Object.entries(data).forEach(([key, val]) => {
+          if (key.startsWith('_')) return;
+          const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
+          if (name && typeof name === 'string') map[key] = name;
+        });
+      });
+      setAllStudentNames(map);
+    }, () => setAllStudentNames({}));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
     const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
@@ -209,6 +235,280 @@ export default function HODDashboard() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
+      const configs = [];
+      snap.forEach(d => { configs.push({ id: d.id, ...d.data() }); });
+      setSemesterConfigs(configs);
+    });
+    return () => unsub();
+  }, []);
+
+  // ─── Attendance Overview ───
+  useEffect(() => {
+    if (!currentUid) {
+      setAttendanceOverview({});
+      return;
+    }
+    setAttendanceOverviewLoading(true);
+
+    const today = new Date();
+    const month = today.getMonth() + 1;
+    const year = today.getFullYear();
+    const currentAy = month >= 7 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+    const deptKey = hodDepartment ? sanitizeKey(hodDepartment) : '';
+
+    const unsub = onSnapshot(collection(db, "subject_assignments"), async (snap) => {
+      const rawAssignments = [];
+      const derivedDeptSet = new Set();
+
+      snap.forEach(d => {
+        const parts = d.id.split('_');
+        const yearIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+        if (yearIdx < 2) return;
+        const deptFromDoc = parts[yearIdx - 1];
+
+        if (deptKey && deptFromDoc.toLowerCase() !== deptKey.toLowerCase()) return;
+
+        const progKey = parts.slice(0, yearIdx - 1).join('_');
+        const batchKey = parts[yearIdx];
+        const ayKey = parts[yearIdx + 1];
+        const semNum = parts[yearIdx + 2];
+        const secSuffix = parts.slice(yearIdx + 3).join('_');
+        const data = d.data();
+
+        // Track departments where currentUid appears (fallback when hodDepartment is empty)
+        if (data?.[currentUid]) derivedDeptSet.add(deptFromDoc);
+
+        Object.entries(data).forEach(([uid, codes]) => {
+          if (Array.isArray(codes)) {
+            codes.forEach(code => {
+              rawAssignments.push({ uid, subjectCode: code, batch: batchKey, ay: ayKey, sem: semNum, section: secSuffix, progKey, attDeptKey: deptFromDoc });
+            });
+          }
+        });
+      });
+
+      let filtered = rawAssignments.filter(a => a.ay === currentAy);
+      // If hodDepartment wasn't available, derive from docs containing currentUid
+      if (!deptKey && derivedDeptSet.size > 0) {
+        const derivedDept = Array.from(derivedDeptSet)[0];
+        console.log('[AttendanceOverview] hodDepartment empty, derived dept:', derivedDept, 'from', derivedDeptSet);
+        filtered = filtered.filter(a => a.attDeptKey.toLowerCase() === derivedDept.toLowerCase());
+      }
+
+      console.log('[AttendanceOverview] deptKey:', deptKey, '| currentAy:', currentAy, '| raw:', rawAssignments.length, '| filtered:', filtered.length, '| sample:', rawAssignments.slice(0, 3));
+      if (filtered.length === 0 && rawAssignments.length > 0) filtered = rawAssignments;
+
+      const seen = new Set();
+      const unique = [];
+      filtered.forEach(a => {
+        const key = `${a.batch}_${a.subjectCode}_${a.sem}_${a.section}`;
+        if (!seen.has(key)) { seen.add(key); unique.push(a); }
+      });
+
+      const results = [];
+      for (const a of unique) {
+        const sectionSuffix = a.section ? `_${sanitizeKey(a.section)}` : "";
+        const attDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
+        let attRecords = {};
+        try {
+          const attSnap = await getDoc(doc(db, "attendance", attDocId));
+          if (attSnap.exists()) {
+            attRecords = attSnap.data()?.records || {};
+          }
+        } catch { /* skip */ }
+        const fname = usersMap?.[a.uid]?.facultyName || usersMap?.[a.uid]?.displayName || usersMap?.[a.uid]?.email || "";
+        results.push({ ...a, attRecords, facultyUid: a.uid, facultyName: fname, attDocId });
+      }
+
+      const grouped = {};
+      results.forEach(r => {
+        if (!grouped[r.batch]) grouped[r.batch] = [];
+        grouped[r.batch].push(r);
+      });
+
+      // Fetch subject names from syllabus_data
+      const nameMap = {};
+      try {
+        const syllabusSnap = await getDocs(collection(db, "syllabus_data"));
+        syllabusSnap.forEach(snap => {
+          const data = snap.data();
+          Object.values(data?.semesters || {}).forEach(semList => {
+            if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) nameMap[s.code] = s.name; });
+          });
+        });
+      } catch (e) { console.warn('[AttendanceOverview] syllabus fetch error:', e); }
+      setSubjectNamesMap(nameMap);
+      setAttendanceOverview(grouped);
+      setAttendanceOverviewLoading(false);
+    }, () => { setAttendanceOverview({}); setAttendanceOverviewLoading(false); });
+    return () => unsub();
+  }, [hodDepartment, currentUid, usersMap]);
+
+  // ─── Fetch timetable allocation for each batch ───
+  useEffect(() => {
+    if (Object.keys(attendanceOverview).length === 0) { setTimetableAllocation({}); return; }
+    const fetchTimetables = async () => {
+      const newMap = {};
+      for (const [batch, items] of Object.entries(attendanceOverview)) {
+        const first = items[0];
+        if (!first) continue;
+        const ttKey = `${first.progKey}_${first.attDeptKey}_${sanitizeKey(first.batch)}_${sanitizeKey(first.ay)}_${first.sem}`;
+        console.log('[Timetable] Looking up key:', ttKey, '| batch:', batch, '| progKey:', first.progKey, '| deptKey:', first.attDeptKey);
+        try {
+          const snap = await getDoc(doc(db, 'timetable_allocations', ttKey));
+          if (snap.exists()) {
+            const data = snap.data();
+            console.log('[Timetable] Found for', batch, '| subjectAllocation:', data.subjectAllocation);
+            newMap[batch] = data.subjectAllocation || {};
+          } else {
+            console.log('[Timetable] No doc found for key:', ttKey);
+          }
+        } catch (e) { console.warn('[Timetable] fetch error for', ttKey, e); }
+      }
+      console.log('[Timetable] Final timetableAllocation:', newMap);
+      setTimetableAllocation(newMap);
+    };
+    fetchTimetables();
+  }, [attendanceOverview]);
+
+  const resolvedAttendanceOverview = useMemo(() => {
+    const resolved = {};
+    Object.entries(attendanceOverview).forEach(([batch, items]) => {
+      resolved[batch] = items.map(item => ({
+        ...item,
+        facultyName: item.facultyUid
+          ? (usersMap[item.facultyUid]?.facultyName || usersMap[item.facultyUid]?.displayName || usersMap[item.facultyUid]?.email || item.facultyUid)
+          : item.facultyUid,
+        subjectName: subjectNamesMap[item.subjectCode] || ""
+      }));
+    });
+    return resolved;
+  }, [attendanceOverview, usersMap, subjectNamesMap]);
+
+  const activeSemesters = useMemo(() => {
+    const selected = new Date(attendanceDate + 'T00:00:00');
+    return semesterConfigs.filter(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return false;
+      const start = new Date(cfg.startDate + 'T00:00:00');
+      const end = new Date(cfg.endDate + 'T00:00:00');
+      return selected >= start && selected <= end;
+    });
+  }, [semesterConfigs, attendanceDate]);
+
+  const availablePeriods = useMemo(() => Array.from({ length: 8 }, (_, i) => String(i + 1)), []);
+
+  const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
+
+  const studentNamesMap = useMemo(() => {
+    const map = {};
+    Object.assign(map, allStudentNames);
+    approvedStudentsList.forEach(s => { if (!map[s.reg]) map[s.reg] = s.name; });
+    return map;
+  }, [approvedStudentsList, allStudentNames]);
+
+  const attendanceWithPeriods = useMemo(() => {
+    const result = {};
+    const dayName = new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+    console.log('[AttWithPeriods] dayName:', dayName, '| timetableAllocation:', timetableAllocation, '| batches:', Object.keys(resolvedAttendanceOverview));
+    Object.entries(resolvedAttendanceOverview).forEach(([batch, items]) => {
+      const rows = [];
+      const daySchedule = (timetableAllocation[batch] || {})[dayName];
+      console.log('[AttWithPeriods] batch:', batch, '| daySchedule:', daySchedule, '| items count:', items.length);
+      if (daySchedule) {
+        Object.entries(daySchedule).forEach(([period, rawEntries]) => {
+          const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
+          entries.forEach(entry => {
+            const code = String(entry || '').split('|')[0].trim();
+            if (!code) return;
+            const item = items.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
+            if (!item) return;
+            const recordKey = `${attendanceDate}_P${period}`;
+            const rec = item.attRecords?.[recordKey];
+            if (rec) {
+              const stuMap = rec?.students || {};
+              const entries2 = Object.entries(stuMap);
+              const present = entries2.filter(([, h]) => h > 0);
+              const absent = entries2.filter(([, h]) => h === 0 || h === false);
+              const od = entries2.filter(([, h]) => h === -1 || h === 'OD');
+              rows.push({
+                period, hasRecord: true,
+                subjectCode: item.subjectCode, subjectName: item.subjectName,
+                section: item.section, facultyName: item.facultyName,
+                presentCount: present.length, absentCount: absent.length, odCount: od.length,
+                presentStudents: present, absentStudents: absent, odStudents: od,
+              });
+            } else {
+              rows.push({
+                period, hasRecord: false,
+                subjectCode: item.subjectCode, subjectName: item.subjectName,
+                section: item.section, facultyName: item.facultyName,
+                presentCount: 0, absentCount: 0, odCount: 0,
+                presentStudents: [], absentStudents: [], odStudents: [],
+              });
+            }
+          });
+        });
+      } else {
+        items.forEach(item => {
+          const recordKeys = Object.keys(item.attRecords || {});
+          const matchedPeriods = recordKeys
+            .map(rk => { const m = rk.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/); return m && m[1] === attendanceDate ? m[2] : null; })
+            .filter(Boolean);
+          if (matchedPeriods.length > 0) {
+            matchedPeriods.forEach(p => {
+              const recordKey = `${attendanceDate}_P${p}`;
+              const rec = item.attRecords[recordKey];
+              const stuMap = rec?.students || {};
+              const entries2 = Object.entries(stuMap);
+              const present = entries2.filter(([, h]) => h > 0);
+              const absent = entries2.filter(([, h]) => h === 0 || h === false);
+              const od = entries2.filter(([, h]) => h === -1 || h === 'OD');
+              rows.push({
+                period: p, hasRecord: true,
+                subjectCode: item.subjectCode, subjectName: item.subjectName,
+                section: item.section, facultyName: item.facultyName,
+                presentCount: present.length, absentCount: absent.length, odCount: od.length,
+                presentStudents: present, absentStudents: absent, odStudents: od,
+              });
+            });
+          } else {
+            rows.push({
+              period: '?', hasRecord: false,
+              subjectCode: item.subjectCode, subjectName: item.subjectName,
+              section: item.section, facultyName: item.facultyName,
+              presentCount: 0, absentCount: 0, odCount: 0,
+              presentStudents: [], absentStudents: [], odStudents: [],
+            });
+          }
+        });
+      }
+      rows.sort((a, b) => {
+        if (a.period === '?') return 1;
+        if (b.period === '?') return -1;
+        return Number(a.period) - Number(b.period);
+      });
+      result[batch] = { items: rows, section: items[0]?.section || '', sem: items[0]?.sem || '', hasTimetable: !!timetableAllocation[batch] };
+    });
+    if (activeSemesters.length > 0) {
+      const filtered = {};
+      Object.entries(result).forEach(([batchKey, data]) => {
+        const hasActive = activeSemesters.some(as => {
+          const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
+          return configBatches.some(b => {
+            const bStr = String(b || '');
+            return bStr.split('-')[0] === String(batchKey || '').split('-')[0] &&
+              bStr.slice(-2) === String(batchKey || '').slice(-2);
+          });
+        });
+        if (hasActive) filtered[batchKey] = data;
+      });
+      return filtered;
+    }
+    return result;
+  }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters]);
 
   const taskCount = useMemo(() => tasks.length, [tasks]);
 
@@ -627,7 +927,165 @@ export default function HODDashboard() {
           <ClipboardList size={14} />
           Papers forwarded to you by faculty appear here as tasks.
         </div>
+
+        {/* ═══ Attendance Overview ═══ */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 px-5 md:px-7 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                <CalendarCheck2 size={18} className="text-white" />
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-base leading-tight">Attendance Status</h2>
+                <p className="text-blue-200 text-[10px] font-bold uppercase tracking-widest">Current Academic Year</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+                className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+              <span className="text-[11px] font-bold text-blue-200 bg-white/10 px-2.5 py-1.5 rounded-lg">
+                {new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
+              </span>
+              {attendanceOverviewLoading && <RefreshCw size={16} className="text-white/60 animate-spin" />}
+              <button onClick={() => navigate("/attendance")}
+                className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold rounded-xl transition-all backdrop-blur-sm border border-white/20">
+                Go to Attendance
+              </button>
+            </div>
+          </div>
+
+          {attendanceOverviewLoading ? (
+            <div className="p-8 text-center">
+              <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-xs text-zinc-400 font-medium">Checking attendance records...</p>
+            </div>
+          ) : Object.keys(attendanceWithPeriods).length === 0 ? (
+            <div className="p-8 text-center">
+              <CalendarCheck2 size={36} className="mx-auto mb-3 text-zinc-200" />
+              <p className="text-sm font-bold text-zinc-400">No subject assignments found</p>
+              <p className="text-xs text-zinc-300 mt-1">No subjects allocated for your department in the current academic year.</p>
+            </div>
+          ) : (
+            <div>
+              <div className="divide-y divide-zinc-100">
+              {Object.entries(attendanceWithPeriods).sort().map(([batch, batchData]) => {
+                const { items: rows, section: sec, sem, hasTimetable } = batchData;
+                const totalSubjects = [...new Set(rows.map(r => r.subjectCode))].length;
+                const markedCount = rows.filter(r => r.hasRecord).length;
+                const totalCount = rows.length;
+                const pendingCount = totalCount - markedCount;
+                return (
+                  <div key={batch} className="p-5 md:p-6">
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
+                      <h3 className="text-sm font-black text-zinc-800">{batch}</h3>
+                      {sem && <span className="px-2 py-0.5 bg-violet-50 text-violet-700 text-[10px] font-bold rounded-full border border-violet-100">Sem {sem}</span>}
+                      {sec && <span className="px-2 py-0.5 bg-sky-50 text-sky-700 text-[10px] font-bold rounded-full border border-sky-100">{sec}</span>}
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full border border-blue-100">{totalSubjects} subjects</span>
+                      {markedCount > 0 && <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full border border-emerald-200">{markedCount} entered</span>}
+                      {pendingCount > 0 && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200">{pendingCount} pending</span>}
+                      {!hasTimetable && <span className="px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-bold rounded-full border border-red-200">No timetable</span>}
+                    </div>
+                    {rows.length === 0 ? (
+                      <p className="text-xs text-zinc-400 italic">No attendance recorded for {attendanceDate}.</p>
+                    ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-zinc-100">
+                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400 w-12">Period</th>
+                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Code</th>
+                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Name</th>
+                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Faculty</th>
+                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Present</th>
+                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Absent</th>
+                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">OD</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-50">
+                          {(() => {
+                            const periodGroups = {};
+                            rows.forEach((row, idx) => {
+                              if (!periodGroups[row.period]) periodGroups[row.period] = [];
+                              periodGroups[row.period].push({ ...row, _idx: idx });
+                            });
+                            return Object.entries(periodGroups).sort(([a], [b]) => {
+                              if (a === '?') return 1;
+                              if (b === '?') return -1;
+                              return Number(a) - Number(b);
+                            }).map(([, group]) => (
+                              group.map((row, gIdx) => (
+                                <tr key={row._idx} className="hover:bg-zinc-50/50 transition-colors">
+                                  {gIdx === 0 ? (
+                                    <td className={`px-3 py-2.5 text-xs text-center font-black border-b border-zinc-100 ${row.period === '?' ? 'text-amber-500' : 'text-indigo-700'}`} rowSpan={group.length}>{row.period === '?' ? '—' : `P${row.period}`}</td>
+                                  ) : null}
+                                  <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">{row.subjectCode}</td>
+                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.subjectName || ""}>{row.subjectName || "—"}</td>
+                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[120px] truncate" title={row.facultyName}>{row.facultyName}</td>
+                                  {row.hasRecord ? (
+                                    <>
+                                      <td className="px-3 py-2.5 text-xs text-center">
+                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Present`, students: row.presentStudents.map(([r]) => r) })}
+                                          className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer">{row.presentCount}</button>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs text-center">
+                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Absent`, students: row.absentStudents.map(([r]) => r) })}
+                                          className="inline-block px-2 py-0.5 bg-rose-50 text-rose-700 text-[11px] font-bold rounded-full border border-rose-200 hover:bg-rose-100 transition cursor-pointer">{row.absentCount}</button>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs text-center">
+                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — OD`, students: row.odStudents.map(([r]) => r) })}
+                                          className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-full border border-blue-200 hover:bg-blue-100 transition cursor-pointer">{row.odCount}</button>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <td className="px-3 py-2.5 text-xs text-center" colSpan={3}>
+                                      <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Pending</span>
+                                    </td>
+                                  )}
+                                </tr>
+                              ))
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ═══ Attendance Detail Modal ═══ */}
+      {detailModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setDetailModal({ open: false, title: '', students: [] })}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
+              <h3 className="text-sm font-black text-zinc-800">{detailModal.title}</h3>
+              <button onClick={() => setDetailModal({ open: false, title: '', students: [] })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+              {detailModal.students.length === 0 ? (
+                <p className="text-xs text-zinc-400 italic text-center py-4">No students</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {detailModal.students.map((reg, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-200">
+                      <span className="text-[11px] font-bold text-zinc-700 min-w-[80px]">{studentNamesMap[reg] || reg}</span>
+                      {studentNamesMap[reg] && <span className="text-[10px] text-zinc-400">({reg})</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-zinc-100 text-right">
+              <button onClick={() => setDetailModal({ open: false, title: '', students: [] })} className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-xs font-bold text-zinc-700 rounded-xl transition">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* QP Review Modal */}
       {showQPModal && selectedQP && (

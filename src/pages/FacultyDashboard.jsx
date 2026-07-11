@@ -4,8 +4,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
-  FileText, School, GraduationCap, Calendar,
-  Search, X, Sparkles, Plus
+  FileText, School, GraduationCap, Calendar, CalendarCheck2,
+  Search, X, Sparkles, Plus, RefreshCw, Users
 } from "lucide-react";
 
 import Layout from "../components/Layout";
@@ -141,6 +141,13 @@ export default function FacultyDashboard() {
   const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [courseNames, setCourseNames] = useState({});
 
+  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [facultyAttendanceLoading, setFacultyAttendanceLoading] = useState(false);
+  const [facultyAttendanceData, setFacultyAttendanceData] = useState({});
+  const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
+  const [approvedStudentsList, setApprovedStudentsList] = useState([]);
+  const [allStudentNames, setAllStudentNames] = useState({});
+
   const sanitizeKey = (key) => {
     if (!key) return '';
     return String(key).replace(/[.#$[\]]/g, '_');
@@ -168,11 +175,12 @@ export default function FacultyDashboard() {
       return assignedGroups;
     }
     return assignedGroups.filter(g =>
-      activeSemesters.some(as =>
-        String(as.programme) === String(g.progKey) &&
-        String(as.batch) === String(g.batch) &&
-        String(as.semesterNumber) === String(g.semester)
-      )
+      activeSemesters.some(as => {
+        const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
+        return configBatches.some(b =>
+          String(b) === String(g.batch)
+        );
+      })
     );
   }, [assignedGroups, activeSemesters, semesterConfigs]);
 
@@ -294,6 +302,43 @@ export default function FacultyDashboard() {
   }, []);
 
   useEffect(() => {
+    if (!currentUid || visibleGroups.length === 0) {
+      setFacultyAttendanceData({});
+      return;
+    }
+    setFacultyAttendanceLoading(true);
+    let cancelled = false;
+    const fetchAttendance = async () => {
+      const results = {};
+      const seen = new Set();
+      const prefixes = [];
+      for (const g of visibleGroups) {
+        for (const code of (g.codes || [])) {
+          const baseKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
+          if (!seen.has(baseKey)) {
+            seen.add(baseKey);
+            prefixes.push(baseKey);
+          }
+        }
+      }
+      try {
+        const allSnap = await getDocs(collection(db, 'attendance'));
+        allSnap.forEach(d => {
+          if (prefixes.some(p => d.id === p || d.id.startsWith(p + '_'))) {
+            results[d.id] = d.data();
+          }
+        });
+      } catch (e) { console.warn('[FacultyDashboard] Attendance fetch error:', e); }
+      if (!cancelled) {
+        setFacultyAttendanceData(results);
+        setFacultyAttendanceLoading(false);
+      }
+    };
+    fetchAttendance();
+    return () => { cancelled = true; };
+  }, [currentUid, visibleGroups]);
+
+  useEffect(() => {
     const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
       const configs = [];
       snap.forEach(doc => {
@@ -303,6 +348,39 @@ export default function FacultyDashboard() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'students'), (snap) => {
+      const map = {};
+      snap.forEach(d => {
+        const d2 = d.data();
+        if (d2.reg && d2.name) map[d2.reg] = d2.name;
+      });
+      setAllStudentNames(map);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const fetchApproved = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'approved_admissions'));
+        const list = [];
+        snap.forEach(d => {
+          const d2 = d.data();
+          if (d2.reg && d2.name) list.push({ reg: d2.reg, name: d2.name });
+        });
+        setApprovedStudentsList(list);
+      } catch (e) { console.warn('[FacultyDashboard] Failed to fetch approved admissions:', e); }
+    };
+    fetchApproved();
+  }, []);
+
+  const studentNamesMap = useMemo(() => {
+    const map = { ...allStudentNames };
+    approvedStudentsList.forEach(s => { if (!map[s.reg]) map[s.reg] = s.name; });
+    return map;
+  }, [approvedStudentsList, allStudentNames]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -436,11 +514,12 @@ export default function FacultyDashboard() {
         };
 
         const isInCurrentActiveSemester = (qp) => {
-          return activeSemesters.some(as =>
-            norm(as.programme) === norm(qp.programme) &&
-            norm(as.batch) === norm(qp.batch) &&
-            semNum(as.semesterNumber) === semNum(qp.semester)
-          );
+          return activeSemesters.some(as => {
+            const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
+            return configBatches.some(b =>
+              norm(b) === norm(qp.batch)
+            );
+          });
         };
 
         const pending = all
@@ -566,6 +645,52 @@ export default function FacultyDashboard() {
     { key: "approved_by_hod", label: "Approved", count: approvedCount },
     { key: "recorrected", label: "Recorrection", count: recorrectCount },
   ];
+
+  const facultyAttendanceRows = useMemo(() => {
+    const rows = [];
+    const dateObj = new Date(attendanceDate + 'T00:00:00');
+    const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+    visibleGroups.forEach(g => {
+      const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+      const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
+      const tt = timetableData[compositeKey];
+      const daySchedule = tt?.facultyEntries?.[dayName] || {};
+      Object.entries(daySchedule).forEach(([period, entries]) => {
+        entries.forEach(entry => {
+          const parts = String(entry).split('|');
+          const code = parts[0] || '';
+          const baseAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
+          const attData = facultyAttendanceData[baseAttDocId] || Object.entries(facultyAttendanceData).find(([k]) => k.startsWith(baseAttDocId + '_'))?.[1];
+          const recordKey = `${attendanceDate}_P${period}`;
+          const rec = attData?.records?.[recordKey];
+          const batchLabel = `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}`;
+          if (rec) {
+            const stuMap = rec.students || {};
+            const e2 = Object.entries(stuMap);
+            rows.push({
+              period, hasRecord: true, code, batchLabel,
+              presentCount: e2.filter(([, h]) => h > 0).length,
+              absentCount: e2.filter(([, h]) => h === 0 || h === false).length,
+              odCount: e2.filter(([, h]) => h === -1 || h === 'OD').length,
+              presentStudents: e2.filter(([, h]) => h > 0).map(([r]) => r),
+              absentStudents: e2.filter(([, h]) => h === 0 || h === false).map(([r]) => r),
+              odStudents: e2.filter(([, h]) => h === -1 || h === 'OD').map(([r]) => r),
+              subjectName: courseNames[code] || '',
+            });
+          } else {
+            rows.push({
+              period, hasRecord: false, code, batchLabel,
+              presentCount: 0, absentCount: 0, odCount: 0,
+              presentStudents: [], absentStudents: [], odStudents: [],
+              subjectName: courseNames[code] || '',
+            });
+          }
+        });
+      });
+    });
+    rows.sort((a, b) => Number(a.period) - Number(b.period));
+    return rows;
+  }, [visibleGroups, timetableData, facultyAttendanceData, attendanceDate, courseNames]);
 
   const todayKey = useMemo(() => formatDateKey(new Date()), []);
   const currentWeekDates = useMemo(() => {
@@ -774,6 +899,123 @@ export default function FacultyDashboard() {
             )}
           </div>
         </div>
+
+        {/* ═══ Attendance Status ═══ */}
+        <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 px-5 md:px-7 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                <CalendarCheck2 size={18} className="text-white" />
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-base leading-tight">Attendance Status</h2>
+                <p className="text-blue-200 text-[10px] font-bold uppercase tracking-widest">My Classes Today</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+                className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+              <span className="text-[11px] font-bold text-blue-200 bg-white/10 px-2.5 py-1.5 rounded-lg">
+                {new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
+              </span>
+              <button onClick={() => navigate("/attendance")}
+                className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold rounded-xl transition-all backdrop-blur-sm border border-white/20">
+                Go to Attendance
+              </button>
+            </div>
+          </div>
+
+          {facultyAttendanceLoading ? (
+            <div className="p-8 text-center">
+              <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-xs text-zinc-400 font-medium">Checking attendance records...</p>
+            </div>
+          ) : facultyAttendanceRows.length === 0 ? (
+            <div className="p-8 text-center">
+              <CalendarCheck2 size={36} className="mx-auto mb-3 text-zinc-200" />
+              <p className="text-sm font-bold text-zinc-400">No classes scheduled for today</p>
+              <p className="text-xs text-zinc-300 mt-1">Your timetable or attendance records for this date will appear here.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-zinc-100 bg-zinc-50/50">
+                    <th className="px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400 w-16">Period</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject</th>
+                    <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Batch</th>
+                    <th className="px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Present</th>
+                    <th className="px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Absent</th>
+                    <th className="px-4 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">OD</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-50">
+                  {facultyAttendanceRows.map((row, idx) => (
+                    <tr key={idx} className="hover:bg-zinc-50/50 transition-colors">
+                      <td className="px-4 py-3 text-xs text-center font-black text-indigo-700">P{row.period}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-zinc-800">{row.code}</span>
+                          {row.subjectName && <span className="text-[10px] text-zinc-400 truncate max-w-[180px]">{row.subjectName}</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-600">{row.batchLabel}</td>
+                      {row.hasRecord ? (
+                        <>
+                          <td className="px-4 py-3 text-xs text-center">
+                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.code} — Present`, students: row.presentStudents })}
+                              className="inline-block px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer">{row.presentCount}</button>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-center">
+                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.code} — Absent`, students: row.absentStudents })}
+                              className="inline-block px-2.5 py-1 bg-rose-50 text-rose-700 text-[11px] font-bold rounded-full border border-rose-200 hover:bg-rose-100 transition cursor-pointer">{row.absentCount}</button>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-center">
+                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.code} — OD`, students: row.odStudents })}
+                              className="inline-block px-2.5 py-1 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-full border border-blue-200 hover:bg-blue-100 transition cursor-pointer">{row.odCount}</button>
+                          </td>
+                        </>
+                      ) : (
+                        <td className="px-4 py-3 text-xs text-center" colSpan={3}>
+                          <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Not entered</span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* ═══ Detail Modal ═══ */}
+        {detailModal.open && (
+          <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setDetailModal({ open: false, title: '', students: [] })}>
+            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
+                <h3 className="text-sm font-black text-zinc-800">{detailModal.title}</h3>
+                <button onClick={() => setDetailModal({ open: false, title: '', students: [] })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
+              </div>
+              <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+                {detailModal.students.length === 0 ? (
+                  <p className="text-xs text-zinc-400 italic text-center py-4">No students</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {detailModal.students.map((reg, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-200">
+                        <span className="text-[11px] font-bold text-zinc-700 min-w-[80px]">{studentNamesMap[reg] || reg}</span>
+                        {studentNamesMap[reg] && <span className="text-[10px] text-zinc-400">({reg})</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="px-5 py-3 border-t border-zinc-100 text-right">
+                <button onClick={() => setDetailModal({ open: false, title: '', students: [] })} className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-xs font-bold text-zinc-700 rounded-xl transition">Close</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* My Timetable */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm mb-8 overflow-hidden">

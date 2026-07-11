@@ -40,7 +40,11 @@ import {
   Award,
   IndianRupee,
   ShieldAlert,
-  Layers
+  Layers,
+  Package,
+  Send,
+  ClipboardCheck,
+  PackageCheck
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -95,7 +99,18 @@ const allPossibleItems = [
 
   // COE Module
   { id: "qp-converter", icon: FileText, label: "Question Paper Converter", path: "/qp-converter" },
-  { id: "timetable", icon: Calendar, label: "Time Table Config", path: "/tt" }
+  { id: "timetable", icon: Calendar, label: "Time Table Config", path: "/tt" },
+  { id: "step-points", icon: Award, label: "STEP Activity Claims", path: "/step-points" },
+  { id: "step-analytics", icon: BarChart3, label: "STEP Analytics", path: "/step-analytics" },
+  { id: "step-settings", icon: Settings2, label: "STEP Settings", path: "/step-settings" },
+
+  // Inventory Module
+  { id: "inventory-dashboard", icon: LayoutDashboard, label: "Inventory Dashboard", path: "/inventory/dashboard" },
+  { id: "inventory-items", icon: Package, label: "Stock Management", path: "/inventory/items" },
+  { id: "inventory-request", icon: Send, label: "Request Item", path: "/inventory/request" },
+  { id: "inventory-my-requests", icon: ClipboardList, label: "My Requests", path: "/inventory/my-requests" },
+  { id: "inventory-approvals", icon: ClipboardCheck, label: "Request Approvals", path: "/inventory/approvals" },
+  { id: "inventory-fulfill", icon: PackageCheck, label: "Issue Items", path: "/inventory/fulfill" }
 ];
 
 const modules = [
@@ -104,6 +119,12 @@ const modules = [
     label: "OBE",
     icon: Target,
     itemIds: ["co_configuration", "po_and_pso_configuration", "co-po", "po-attainment", "vision_and_mission", "blooms-taxonomy"]
+  },
+  {
+    id: "step",
+    label: "STEP",
+    icon: Award,
+    itemIds: ["step-points", "step-analytics"]
   },
   {
     id: "ia",
@@ -134,7 +155,7 @@ const modules = [
     label: "Config",
     icon: Settings2,
     // itemIds: ["info-configuration", "regulation-formation", "admin-roles", "curriculum"]
-    itemIds: ["info-configuration", "timetable", "admin-roles", "curriculum"]
+    itemIds: ["info-configuration", "timetable", "admin-roles", "curriculum", "step-settings"]
   },
   {
     id: "library",
@@ -153,6 +174,12 @@ const modules = [
     label: "COE",
     icon: FileText,
     itemIds: ["payment-roles", "payment-entries", "payment-reports", "qp-converter"]
+  },
+  {
+    id: "inventory",
+    label: "Inventory",
+    icon: Package,
+    itemIds: ["inventory-dashboard", "inventory-items", "inventory-request", "inventory-my-requests", "inventory-approvals", "inventory-fulfill"]
   }
 ];
 

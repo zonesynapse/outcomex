@@ -135,7 +135,16 @@ export default function AdminRoleConfig() {
     { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles" },
     { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries" },
     { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports" },
-    { id: "qp-converter", label: "Question Paper Converter", path: "/qp-converter" }
+    { id: "qp-converter", label: "Question Paper Converter", path: "/qp-converter" },
+    { id: "step-points", label: "STEP Activity Points", path: "/step-points" },
+    { id: "step-settings", label: "STEP Settings Configuration", path: "/step-settings" },
+    { id: "step-analytics", label: "STEP Analytics & Insights", path: "/step-analytics" },
+    { id: "inventory-dashboard", label: "Inventory — Dashboard", path: "/inventory/dashboard" },
+    { id: "inventory-items", label: "Inventory — Stock Management", path: "/inventory/items" },
+    { id: "inventory-request", label: "Inventory — Request Item", path: "/inventory/request" },
+    { id: "inventory-my-requests", label: "Inventory — My Requests", path: "/inventory/my-requests" },
+    { id: "inventory-approvals", label: "Inventory — Request Approvals", path: "/inventory/approvals" },
+    { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill" }
   ];
 
   useEffect(() => {
