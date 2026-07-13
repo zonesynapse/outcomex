@@ -6,6 +6,7 @@ import {
   Award, Plus, Clock, Image, CheckCircle, AlertTriangle, 
   Trash2, Send, ArrowRight, Loader2, Info, Check, X, Eye, FileText, Printer, FileCheck
 } from "lucide-react";
+import { formatProgDisplay } from "../../lib/utils";
 
 export const STEP_CATEGORIES = {
   technical: {
@@ -1446,11 +1447,8 @@ export default function StudentStepPoints() {
       {/* Hidden Printable Official STEP Log Sheet Container */}
       <div id="printable-step-log-sheet" className="hidden">
         <div style={{ textAlign: 'center', marginBottom: '20px', borderBottom: '2px solid black', paddingBottom: '12px' }}>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', textTransform: 'uppercase' }}>COIMBATORE INSTITUTE OF TECHNOLOGY</div>
-          <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#374151', textTransform: 'uppercase' }}>
-            (A Government Aided Autonomous Institution Affiliated to Anna University)
-          </div>
-          <div style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', marginTop: '12px', color: '#111', letterSpacing: '0.5px' }}>
+          <img src="/logo.png" alt="College Logo" style={{ maxWidth: '520px', width: '100%', display: 'block', margin: '0 auto 10px auto' }} />
+          <div style={{ fontSize: '14px', fontWeight: '800', textTransform: 'uppercase', marginTop: '8px', color: '#111', letterSpacing: '0.5px' }}>
             STUDENTS&apos; TRANSFORMATION AND ENRICHMENT PROGRAMME (STEP)
           </div>
           <div style={{ fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', color: '#444', marginTop: '4px' }}>
@@ -1473,7 +1471,7 @@ export default function StudentStepPoints() {
           </div>
           <div style={{ fontSize: '11px', lineHeight: '1.5' }}>
             <span style={{ fontWeight: 'bold', display: 'inline-block', width: '130px' }}>Degree & Branch:</span> 
-            {userData?.programme || "B.E."} - {userData?.department || "N/A"}
+            {formatProgDisplay((userData?.programme || "B.E.").replace(/^UG\s*-\s*/, ''))} - {(userData?.department || "N/A").replace(/_/g, ' ')}
           </div>
           <div style={{ fontSize: '11px', lineHeight: '1.5' }}>
             <span style={{ fontWeight: 'bold', display: 'inline-block', width: '130px' }}>Batch:</span> 

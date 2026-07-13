@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
@@ -133,6 +133,7 @@ export default function FacultyDashboard() {
   const [pendingLoading, setPendingLoading] = useState(true);
   const [pendingQps, setPendingQps] = useState([]);
   const [statusTab, setStatusTab] = useState("all");
+  const [semesterTab, setSemesterTab] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
 
   const [timetableData, setTimetableData] = useState({});
@@ -516,32 +517,17 @@ export default function FacultyDashboard() {
           });
         });
 
-        const norm = (v) => String(v || "").trim().toLowerCase();
-        const semNum = (v) => {
-          const m = String(v || "").match(/(\d+)/);
-          return m ? m[1] : "";
-        };
-
-        const isInCurrentActiveSemester = (qp) => {
-          return activeSemesters.some(as => {
-            const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
-            return configBatches.some(b =>
-              norm(b) === norm(qp.batch)
-            );
-          });
-        };
-
         const pending = all
           .filter((qp) => {
             const status = String(qp?.status || "draft").toLowerCase();
             const isOwnedByMe = qp?.created_by === currentUid;
 
-            const isMyDraft = status === "draft" && isOwnedByMe && isInCurrentActiveSemester(qp);
-            const isMyDraftLegacy = status === "draft" && !qp?.created_by && isInCurrentActiveSemester(qp);
+            const isMyDraft = status === "draft" && isOwnedByMe;
+            const isMyDraftLegacy = status === "draft" && !qp?.created_by;
 
-            const isAwaitingHODReview = status === "forwarded" && qp?.forwarded_by === currentUid && isInCurrentActiveSemester(qp);
-            const isSentBackForRecorrection = status === "recorrected" && qp?.forwarded_to === currentUid && isInCurrentActiveSemester(qp);
-            const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe && isInCurrentActiveSemester(qp);
+            const isAwaitingHODReview = status === "forwarded" && qp?.forwarded_by === currentUid;
+            const isSentBackForRecorrection = status === "recorrected" && qp?.forwarded_to === currentUid;
+            const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe;
 
             return isMyDraft || isMyDraftLegacy || isAwaitingHODReview || isSentBackForRecorrection || isApprovedByHOD;
           })
@@ -561,19 +547,44 @@ export default function FacultyDashboard() {
     );
 
     return () => unsub();
-  }, [currentUid, activeSemesters]);
+  }, [currentUid]);
 
   const assignedCount = useMemo(() => {
     return (visibleGroups || []).reduce((sum, g) => sum + (g.codes?.length || 0), 0);
   }, [visibleGroups]);
 
-  const draftCount = useMemo(() => pendingQps.filter(q => q.status === 'draft').length, [pendingQps]);
-  const forwardedCount = useMemo(() => pendingQps.filter(q => q.status === 'forwarded').length, [pendingQps]);
-  const approvedCount = useMemo(() => pendingQps.filter(q => q.status === 'approved_by_hod').length, [pendingQps]);
-  const recorrectCount = useMemo(() => pendingQps.filter(q => q.status === 'recorrected').length, [pendingQps]);
+  const isInCurrentActiveSemester = useCallback((qp) => {
+    const norm = (v) => String(v || "").trim().toLowerCase();
+    return activeSemesters.some(as => {
+      const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
+      const batchMatch = configBatches.some(b => norm(b) === norm(qp.batch));
+      if (!batchMatch) return false;
+
+      const semNumMatch = String(qp.semester || "").match(/\d+/);
+      const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
+      if (isNaN(semNum)) return true;
+
+      const isQpOdd = semNum % 2 !== 0;
+      const isConfigOdd = String(as.semesterType || 'Odd').toLowerCase() === 'odd';
+      return isQpOdd === isConfigOdd;
+    });
+  }, [activeSemesters]);
+
+  const currentSemesterQps = useMemo(() => {
+    return pendingQps.filter(q => isInCurrentActiveSemester(q));
+  }, [pendingQps, isInCurrentActiveSemester]);
+
+  const baseQps = useMemo(() => {
+    return semesterTab === "current" ? currentSemesterQps : pendingQps;
+  }, [pendingQps, currentSemesterQps, semesterTab]);
+
+  const draftCount = useMemo(() => baseQps.filter(q => q.status === 'draft').length, [baseQps]);
+  const forwardedCount = useMemo(() => baseQps.filter(q => q.status === 'forwarded').length, [baseQps]);
+  const approvedCount = useMemo(() => baseQps.filter(q => q.status === 'approved_by_hod').length, [baseQps]);
+  const recorrectCount = useMemo(() => baseQps.filter(q => q.status === 'recorrected').length, [baseQps]);
 
   const filteredQps = useMemo(() => {
-    let result = pendingQps;
+    let result = baseQps;
     if (statusTab !== 'all') result = result.filter(q => q.status === statusTab);
     if (searchTerm.trim()) {
       const q = searchTerm.trim().toLowerCase();
@@ -584,14 +595,19 @@ export default function FacultyDashboard() {
       );
     }
     return result;
-  }, [pendingQps, statusTab, searchTerm]);
+  }, [baseQps, statusTab, searchTerm]);
+
+  const totalDraftCount = useMemo(() => pendingQps.filter(q => q.status === 'draft').length, [pendingQps]);
+  const totalForwardedCount = useMemo(() => pendingQps.filter(q => q.status === 'forwarded').length, [pendingQps]);
+  const totalApprovedCount = useMemo(() => pendingQps.filter(q => q.status === 'approved_by_hod').length, [pendingQps]);
+  const totalRecorrectCount = useMemo(() => pendingQps.filter(q => q.status === 'recorrected').length, [pendingQps]);
 
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },
-    { label: "Drafts", value: draftCount, icon: FileText, color: "slate" },
-    { label: "Pending Review", value: forwardedCount, icon: Clock, color: "blue" },
-    { label: "Approved", value: approvedCount, icon: CheckCircle2, color: "emerald" },
-    { label: "Recorrection", value: recorrectCount, icon: AlertCircle, color: "amber" },
+    { label: "Drafts", value: totalDraftCount, icon: FileText, color: "slate" },
+    { label: "Pending Review", value: totalForwardedCount, icon: Clock, color: "blue" },
+    { label: "Approved", value: totalApprovedCount, icon: CheckCircle2, color: "emerald" },
+    { label: "Recorrection", value: totalRecorrectCount, icon: AlertCircle, color: "amber" },
   ];
 
   const colorMap = {
@@ -648,7 +664,7 @@ export default function FacultyDashboard() {
   }, [timetableData, visibleGroups]);
 
   const tabs = [
-    { key: "all", label: "All Papers", count: pendingQps.length },
+    { key: "all", label: "All Papers", count: baseQps.length },
     { key: "draft", label: "Drafts", count: draftCount },
     { key: "forwarded", label: "Pending Review", count: forwardedCount },
     { key: "approved_by_hod", label: "Approved", count: approvedCount },
@@ -737,9 +753,11 @@ export default function FacultyDashboard() {
                 </div>
               </div>
               <p className="text-blue-100/80 text-sm mt-2 max-w-xl">
-                {assignedCount > 0
-                  ? `You have <strong>${assignedCount}</strong> subject${assignedCount > 1 ? "s" : ""} assigned across ${visibleGroups.length} batch${visibleGroups.length > 1 ? "es" : ""}.`
-                  : "No subjects assigned yet. Contact your HOD for assignments."}
+                {assignedCount > 0 ? (
+                  <>You have <strong>{assignedCount}</strong> subject{assignedCount > 1 ? "s" : ""} assigned across {visibleGroups.length} batch{visibleGroups.length > 1 ? "es" : ""}.</>
+                ) : (
+                  "No subjects assigned yet. Contact your HOD for assignments."
+                )}
               </p>
             </div>
             <button
@@ -1203,7 +1221,7 @@ export default function FacultyDashboard() {
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
                 <FileText size={20} className="text-[#120c7a]" />
                 My Question Papers
-                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold">{pendingQps.length}</span>
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold">{baseQps.length}</span>
               </h2>
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -1224,8 +1242,30 @@ export default function FacultyDashboard() {
               </div>
             </div>
 
+            {/* Semester filter */}
+            <div className="flex gap-1.5 mt-4 mb-2">
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider self-center mr-1">Semester:</span>
+              {[
+                { key: "all", label: "All Semesters" },
+                { key: "current", label: "Current Semester", badge: currentSemesterQps.length },
+              ].map(sf => (
+                <button key={sf.key} onClick={() => setSemesterTab(sf.key)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap ${semesterTab === sf.key
+                      ? "bg-indigo-100 text-indigo-700 shadow-sm"
+                      : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+                    }`}>
+                  {sf.label}
+                  {sf.badge > 0 && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[9px] ${semesterTab === sf.key ? "bg-indigo-200 text-indigo-700" : "bg-zinc-200 text-zinc-600"}`}>
+                      {sf.badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
             {/* Tabs */}
-            <div className="flex gap-1 mt-4 overflow-x-auto">
+            <div className="flex gap-1 mt-1 overflow-x-auto">
               {tabs.map(tab => (
                 <button key={tab.key} onClick={() => setStatusTab(tab.key)}
                   className={`relative px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${statusTab === tab.key
@@ -1249,7 +1289,7 @@ export default function FacultyDashboard() {
               <Loader2 className="animate-spin" size={20} />
               <span className="text-sm font-semibold">Loading question papers...</span>
             </div>
-          ) : pendingQps.length === 0 ? (
+          ) : baseQps.length === 0 ? (
             <div className="py-16 text-center">
               <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mx-auto mb-3">
                 <Sparkles size={28} />

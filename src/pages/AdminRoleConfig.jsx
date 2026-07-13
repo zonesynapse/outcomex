@@ -108,6 +108,9 @@ export default function AdminRoleConfig() {
     { id: "seat-management", label: "Seat Management", path: "/admissions/seats" },
     { id: "admission-confirmation", label: "Admission Confirmation", path: "/admissions/confirm" },
     { id: "fee-config", label: "Fee Configuration", path: "/admissions/fees" },
+    { id: "fee-dashboard", label: "Fee Dashboard", path: "/fee/dashboard" },
+    { id: "fee-operations", label: "Fee Operations", path: "/fee/operations" },
+    { id: "fee-control", label: "Fee Control", path: "/fee/control" },
     { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
     { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
     { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment" },
@@ -127,6 +130,7 @@ export default function AdminRoleConfig() {
     { id: "placement-companies", label: "Placement — Companies", path: "/placement/companies" },
     { id: "placement-drives", label: "Placement — Drives", path: "/placement/drives" },
     { id: "placement-students", label: "Placement — Students", path: "/placement/students" },
+    { id: "placement-activities", label: "Placement — Interviews & Training", path: "/placement/activities" },
     { id: "placement-applications", label: "Placement — Applications", path: "/placement/applications" },
     { id: "placement-interviews", label: "Placement — Interviews", path: "/placement/interviews" },
     { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers" },
@@ -507,7 +511,14 @@ export default function AdminRoleConfig() {
         if (b.email === defaultAdminEmail) return 1;
       }
 
-      // 4. When searching, bring name-matched users to top
+      // 4. Admin users before non-admin
+      const aIsAdmin = a.role === 'Admin';
+      const bIsAdmin = b.role === 'Admin';
+      if (aIsAdmin !== bIsAdmin) {
+        return aIsAdmin ? -1 : 1;
+      }
+
+      // 5. When searching, bring name-matched users to top
       if (term) {
         const aMatch = (a.displayName || a.facultyName || "").toLowerCase().includes(term);
         const bMatch = (b.displayName || b.facultyName || "").toLowerCase().includes(term);
@@ -515,12 +526,12 @@ export default function AdminRoleConfig() {
         if (!aMatch && bMatch) return 1;
       }
 
-      // 5. Pending before approved
+      // 6. Pending before approved
       if (a.isApproved !== b.isApproved) {
         return a.isApproved ? 1 : -1;
       }
 
-      // 6. Alphabetical by name
+      // 7. Alphabetical by name
       const nameA = (a.displayName || a.facultyName || "").toLowerCase();
       const nameB = (b.displayName || b.facultyName || "").toLowerCase();
       return nameA.localeCompare(nameB);

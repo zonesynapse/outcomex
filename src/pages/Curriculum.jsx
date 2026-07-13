@@ -1053,6 +1053,7 @@ export default function Curriculum() {
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
+                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Pass Mark</th>
                                         <th className="px-4 py-4 border border-gray-300 w-10"></th>
                                       </tr>
                                     </thead>
@@ -1078,7 +1079,7 @@ export default function Curriculum() {
                                                 </div>
                                               </div>
                                             </td>
-                                            <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
+                                            <td colSpan={6} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
                                             <td className="px-4 py-4 border border-gray-300"><button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
                                           </tr>
                                         ) : (
@@ -1134,23 +1135,26 @@ export default function Curriculum() {
                                                      <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
                                                        {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
                                                      </td>
-                                                     <td className="px-3 py-3 text-center border border-gray-300">
-                                                       <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
-                                                     </td>
-                                                   </>
-                                                 );
-                                                })()}
-                                               {ci === 0 && (
-                                                <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
-                                                  <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                                                </td>
+                                                      <td className="px-3 py-3 text-center border border-gray-300">
+                                                        <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
+                                                      </td>
+                                                      <td className="px-3 py-3 text-center border border-gray-300">
+                                                        <input type="number" min="0" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.pass_mark ?? ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'pass_mark', e.target.value === '' ? '' : Number(e.target.value))} />
+                                                      </td>
+                                                    </>
+                                                  );
+                                                 })()}
+                                                {ci === 0 && (
+                                                 <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
+                                                   <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                                 </td>
                                               )}
                                             </tr>
                                           ))
                                         );
                                       })}
                                       {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length === 0 && (
-                                        <tr><td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
+                                        <tr><td colSpan={9} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
                                       )}
                                     </tbody>
                                   </table>

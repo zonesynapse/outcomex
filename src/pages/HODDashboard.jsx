@@ -69,7 +69,7 @@ export default function HODDashboard() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const [hodDepartment, setHodDepartment] = useState("");
-  const [hodProgramme, setHodProgramme] = useState("");
+  const [deptMetadata, setDeptMetadata] = useState({});
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
   const [allStudentNames, setAllStudentNames] = useState({});
   const [attendanceOverview, setAttendanceOverview] = useState({});
@@ -118,7 +118,6 @@ export default function HODDashboard() {
             setCurrentHodSignature(ud.signatureUrl || '');
             setHodName(ud.facultyName || ud.displayName || ud.email || "HOD");
             setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "");
-            setHodProgramme(ud.programme || "");
           }
           setHodLoading(false);
         });
@@ -245,6 +244,15 @@ export default function HODDashboard() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'department_metadata'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setDeptMetadata(data);
+    });
+    return () => unsub();
+  }, []);
+
   // ─── Attendance Overview ───
   useEffect(() => {
     if (!currentUid) {
@@ -257,19 +265,34 @@ export default function HODDashboard() {
     const month = today.getMonth() + 1;
     const year = today.getFullYear();
     const currentAy = month >= 7 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
-    const deptKey = hodDepartment ? sanitizeKey(hodDepartment) : '';
+
+    // Build valid dept keys: both sanitized name AND code from deptMetadata
+    const stripDegreePrefix = (s) => s.replace(/^(B\.? ?Tech|M\.? ?Tech|B\.?E\.?|M\.?E\.?|B\.?Sc|M\.?Sc|Ph\.?D)\s+/i, '').trim();
+    const hodNorm = hodDepartment ? stripDegreePrefix(hodDepartment) : '';
+    const validDeptKeys = new Set();
+    if (hodDepartment) {
+      validDeptKeys.add(sanitizeKey(hodDepartment).toLowerCase());
+      validDeptKeys.add(sanitizeKey(hodNorm).toLowerCase());
+      Object.values(deptMetadata).forEach(depts => {
+        Object.entries(depts).forEach(([name, code]) => {
+          if (name === hodDepartment || name === hodNorm || code === hodDepartment || code === hodNorm ||
+              sanitizeKey(name).toLowerCase() === sanitizeKey(hodNorm).toLowerCase() ||
+              code.toLowerCase() === hodNorm.toLowerCase()) {
+            validDeptKeys.add(sanitizeKey(name).toLowerCase());
+            validDeptKeys.add(sanitizeKey(code).toLowerCase());
+          }
+        });
+      });
+    }
 
     const unsub = onSnapshot(collection(db, "subject_assignments"), async (snap) => {
-      const rawAssignments = [];
-      const derivedDeptSet = new Set();
+      const allAssignments = [];
 
       snap.forEach(d => {
         const parts = d.id.split('_');
         const yearIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
         if (yearIdx < 2) return;
         const deptFromDoc = parts[yearIdx - 1];
-
-        if (deptKey && deptFromDoc.toLowerCase() !== deptKey.toLowerCase()) return;
 
         const progKey = parts.slice(0, yearIdx - 1).join('_');
         const batchKey = parts[yearIdx];
@@ -278,28 +301,33 @@ export default function HODDashboard() {
         const secSuffix = parts.slice(yearIdx + 3).join('_');
         const data = d.data();
 
-        // Track departments where currentUid appears (fallback when hodDepartment is empty)
-        if (data?.[currentUid]) derivedDeptSet.add(deptFromDoc);
-
         Object.entries(data).forEach(([uid, codes]) => {
           if (Array.isArray(codes)) {
             codes.forEach(code => {
-              rawAssignments.push({ uid, subjectCode: code, batch: batchKey, ay: ayKey, sem: semNum, section: secSuffix, progKey, attDeptKey: deptFromDoc });
+              allAssignments.push({ uid, subjectCode: code, batch: batchKey, ay: ayKey, sem: semNum, section: secSuffix, progKey, attDeptKey: deptFromDoc });
             });
           }
         });
       });
 
-      let filtered = rawAssignments.filter(a => a.ay === currentAy);
-      // If hodDepartment wasn't available, derive from docs containing currentUid
-      if (!deptKey && derivedDeptSet.size > 0) {
-        const derivedDept = Array.from(derivedDeptSet)[0];
-        console.log('[AttendanceOverview] hodDepartment empty, derived dept:', derivedDept, 'from', derivedDeptSet);
-        filtered = filtered.filter(a => a.attDeptKey.toLowerCase() === derivedDept.toLowerCase());
+      // Filter by department using validDeptKeys (name + code matching)
+      let deptFiltered = allAssignments;
+      if (validDeptKeys.size > 0) {
+        const hodDirectKey = hodNorm ? sanitizeKey(hodNorm).toLowerCase() : '';
+        deptFiltered = allAssignments.filter(a => {
+          const normKey = sanitizeKey(a.attDeptKey.trim()).toLowerCase();
+          return validDeptKeys.has(normKey) || (hodDirectKey && normKey === hodDirectKey);
+        });
       }
 
-      console.log('[AttendanceOverview] deptKey:', deptKey, '| currentAy:', currentAy, '| raw:', rawAssignments.length, '| filtered:', filtered.length, '| sample:', rawAssignments.slice(0, 3));
-      if (filtered.length === 0 && rawAssignments.length > 0) filtered = rawAssignments;
+      let filtered = deptFiltered.filter(a => a.ay === currentAy);
+      if (filtered.length === 0 && deptFiltered.length > 0) {
+        filtered = deptFiltered;
+      }
+
+      const allDeptKeys = [...new Set(allAssignments.map(a => a.attDeptKey))];
+      const allNormKeys = [...new Set(allAssignments.map(a => sanitizeKey(a.attDeptKey.trim()).toLowerCase()))];
+      console.log('[AttendanceOverview] hodDepartment:', hodDepartment, '| hodNorm:', hodNorm, '| validDeptKeys:', [...validDeptKeys], '| allDeptKeys in data:', allDeptKeys, '| allNormKeys:', allNormKeys, '| currentAy:', currentAy, '| all:', allAssignments.length, '| deptFiltered:', deptFiltered.length, '| filtered:', filtered.length);
 
       const seen = new Set();
       const unique = [];
@@ -308,8 +336,7 @@ export default function HODDashboard() {
         if (!seen.has(key)) { seen.add(key); unique.push(a); }
       });
 
-      const results = [];
-      for (const a of unique) {
+      const attDocPromises = unique.map(async (a) => {
         const sectionSuffix = a.section ? `_${sanitizeKey(a.section)}` : "";
         const attDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
         let attRecords = {};
@@ -319,9 +346,24 @@ export default function HODDashboard() {
             attRecords = attSnap.data()?.records || {};
           }
         } catch { /* skip */ }
-        const fname = usersMap?.[a.uid]?.facultyName || usersMap?.[a.uid]?.displayName || usersMap?.[a.uid]?.email || "";
-        results.push({ ...a, attRecords, facultyUid: a.uid, facultyName: fname, attDocId });
-      }
+        return { ...a, attRecords, facultyUid: a.uid, attDocId };
+      });
+
+      const syllabusPromise = (async () => {
+        const nameMap = {};
+        try {
+          const syllabusSnap = await getDocs(collection(db, "syllabus_data"));
+          syllabusSnap.forEach(snap => {
+            const data = snap.data();
+            Object.values(data?.semesters || {}).forEach(semList => {
+              if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) nameMap[s.code] = s.name; });
+            });
+          });
+        } catch (e) { console.warn('[AttendanceOverview] syllabus fetch error:', e); }
+        return nameMap;
+      })();
+
+      const [results, nameMap] = await Promise.all([Promise.all(attDocPromises), syllabusPromise]);
 
       const grouped = {};
       results.forEach(r => {
@@ -329,23 +371,12 @@ export default function HODDashboard() {
         grouped[r.batch].push(r);
       });
 
-      // Fetch subject names from syllabus_data
-      const nameMap = {};
-      try {
-        const syllabusSnap = await getDocs(collection(db, "syllabus_data"));
-        syllabusSnap.forEach(snap => {
-          const data = snap.data();
-          Object.values(data?.semesters || {}).forEach(semList => {
-            if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) nameMap[s.code] = s.name; });
-          });
-        });
-      } catch (e) { console.warn('[AttendanceOverview] syllabus fetch error:', e); }
       setSubjectNamesMap(nameMap);
       setAttendanceOverview(grouped);
       setAttendanceOverviewLoading(false);
     }, () => { setAttendanceOverview({}); setAttendanceOverviewLoading(false); });
     return () => unsub();
-  }, [hodDepartment, currentUid, usersMap]);
+  }, [hodDepartment, currentUid, deptMetadata]);
 
   // ─── Fetch timetable allocation for each batch ───
   useEffect(() => {
