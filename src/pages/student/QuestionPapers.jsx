@@ -123,7 +123,7 @@ export default function QuestionPapers() {
       </div>
 
       {qpList.length === 0 ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <FileText size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No question papers available.</p>
         </div>
@@ -159,42 +159,42 @@ export default function QuestionPapers() {
           </div>
 
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5">
+            <div className="bg-[#120c7a] px-4 md:px-8 py-5">
               <h2 className="text-white font-bold text-xl">Available Question Papers ({filteredQPs.length})</h2>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50">
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Code</th>
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Name</th>
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Exam</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Semester</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Year</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Action</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Code</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Name</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Exam</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Semester</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Year</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredQPs.map((qp, idx) => (
                     <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-slate-700 font-mono">{qp.subject}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-slate-700">{qp.subjectName}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-slate-600">{qp.examName}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700 font-mono">{qp.subject}</td>
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700">{qp.subjectName}</td>
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-600">{qp.examName}</td>
+                      <td className="px-3 md:px-6 py-4 text-center">
                         <span className="text-sm font-bold text-[#120c7a] bg-blue-50 px-3 py-1 rounded-lg">
                           {qp.semester}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-center text-sm font-bold text-slate-600">{qp.academicYear}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-3 md:px-6 py-4 text-center text-sm font-bold text-slate-600">{qp.academicYear}</td>
+                      <td className="px-3 md:px-6 py-4 text-center">
                         {qp.fileUrl ? (
                           <a
                             href={qp.fileUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#120c7a]/90 transition-all"
+                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#120c7a]/90 transition-all"
                           >
                             <FileText size={14} /> Download
                           </a>

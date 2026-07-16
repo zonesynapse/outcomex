@@ -130,7 +130,7 @@ export default function CourseReg() {
       </div>
 
       {courses.length === 0 ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <ClipboardList size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No courses available for this semester.</p>
         </div>
@@ -156,33 +156,33 @@ export default function CourseReg() {
           </div>
 
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5">
+            <div className="bg-[#120c7a] px-4 md:px-8 py-5">
               <h2 className="text-white font-bold text-xl">{getOrdinal(Number(currentSem))} Semester Courses</h2>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50">
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Course Code</th>
-                    <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Course Name</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Credits</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
-                    <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Register</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Course Code</th>
+                    <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Course Name</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Credits</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
+                    <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Register</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {courses.map((course, idx) => (
                     <tr key={course.code || idx} className="hover:bg-blue-50/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-slate-700 font-mono">{course.code || "-"}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-slate-700">{course.name || course.subject || "-"}</td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700 font-mono">{course.code || "-"}</td>
+                      <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700">{course.name || course.subject || "-"}</td>
+                      <td className="px-3 md:px-6 py-4 text-center">
                         <span className="text-sm font-black text-[#120c7a] bg-blue-50 px-3 py-1 rounded-lg">
                           {course.credits || 0}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-3 md:px-6 py-4 text-center">
                         <span className={`text-[10px] font-bold px-3 py-1.5 rounded-full border uppercase ${
                           (course.type || "Theory").toLowerCase() === "elective"
                             ? "bg-purple-50 text-purple-600 border-purple-200"
@@ -191,10 +191,10 @@ export default function CourseReg() {
                           {course.type || "Theory"}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-center">
+                      <td className="px-3 md:px-6 py-4 text-center">
                         <button
                           onClick={() => toggleRegistered(course.code)}
-                          className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
                             registered[course.code]
                               ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
                               : "bg-slate-100 text-slate-500 border border-slate-200 hover:border-emerald-200 hover:text-emerald-600"

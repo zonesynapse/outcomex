@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
-import { doc, getDoc, setDoc, onSnapshot, collection } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot, collection, deleteField } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   CalendarCheck2,
@@ -771,7 +771,6 @@ export default function Attendance() {
       // Merge with existing records (don't overwrite other dates/periods)
       const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
       const existingRecords = attendanceData?.records || {};
-      const isEdit = !!existingRecords[recordKey];
       const updatedRecords = { ...existingRecords, [recordKey]: dateRecord };
       const nextTotal = parseInt(totalConducted, 10) + 1;
 
@@ -786,21 +785,38 @@ export default function Attendance() {
       setRecordDates(newRecordKeys);
       setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
 
-      if (isEdit) {
-        // Editing existing record — keep same date/period selected
-      } else {
-        // New record — auto-increment and move to next day
-        setTotalConducted(String(nextTotal));
-        const nextDay = new Date(attendanceDate);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDate = nextDay.toISOString().split('T')[0];
-        setAttendanceDate(nextDate);
-        setPeriod("");
-        setTopicTaught("");
-        setTeachingAid("");
-        setTeachingMethodology("");
-      }
+      // Keep same date/period selected after save
     } catch (err) { console.error(err); alert("Failed to save records."); }
+    setSaving(false);
+  };
+
+  const handleClearAttendance = async () => {
+    if (!period) return;
+    const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
+    if (!confirm(`Clear attendance for ${attendanceDate} (Period ${period})? This cannot be undone.`)) return;
+
+    setSaving(true);
+    try {
+      const progKey = formatProgrammeKey(programme);
+      const semNum = String(semester).match(/\d+/)?.[0];
+      const selectedSubjectObj = JSON.parse(subject);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
+
+      await setDoc(doc(db, "attendance", attendanceDocId), {
+        records: { [recordKey]: deleteField() }
+      }, { merge: true });
+
+      const updatedRecords = { ...(attendanceData?.records || {}) };
+      delete updatedRecords[recordKey];
+      setAttendanceData(prev => ({ ...prev, records: updatedRecords }));
+      setRecordDates(Object.keys(updatedRecords).sort());
+      setCurrentRecordData(null);
+      setTopicTaught("");
+      setTeachingAid("");
+      setTeachingMethodology("");
+      alert(`Attendance for ${attendanceDate} (Period ${period}) cleared.`);
+    } catch (err) { console.error(err); alert("Failed to clear attendance."); }
     setSaving(false);
   };
 
@@ -918,16 +934,23 @@ export default function Attendance() {
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Period <span className="text-rose-500">*</span></label>
-              <div className="relative">
-                <select value={period} onChange={e => setPeriod(e.target.value)}
-                  className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
-                >
-                  <option value="">Select Period</option>
-                  {availablePeriodsWithTiming.map(p => (
-                    <option key={p.value} value={p.value}>{p.label}</option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <select value={period} onChange={e => setPeriod(e.target.value)}
+                    className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
+                  >
+                    <option value="">Select Period</option>
+                    {availablePeriodsWithTiming.map(p => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+                </div>
+                {currentRecordData && period && (
+                  <span className="shrink-0 px-2.5 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-[10px] font-black text-amber-700 uppercase tracking-wider">
+                    Already marked
+                  </span>
+                )}
               </div>
             </div>
             <div className="space-y-1">
@@ -1035,6 +1058,13 @@ export default function Attendance() {
                 {saving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={15} />}
                 Save
               </button>
+              {currentRecordData && period && (
+                <button onClick={handleClearAttendance} disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
+                >
+                  <X size={15} /> Clear
+                </button>
+              )}
               <button
                 onClick={() => {
                   if (!subject) {

@@ -125,7 +125,7 @@ export default function LibraryPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-6">
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5">
+            <div className="bg-[#120c7a] px-4 md:px-8 py-5">
               <h2 className="text-white font-bold text-xl flex items-center gap-3">
                 <Search size={20} /> Search Books
               </h2>
@@ -151,7 +151,7 @@ export default function LibraryPage() {
               {filteredBooks.length > 0 && (
                 <div className="space-y-3">
                   {filteredBooks.map((book) => (
-                    <div key={book.id} className="flex items-start justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-[#120c7a]/20 transition-all">
+                    <div key={book.id} className="flex flex-wrap items-start justify-between gap-2 p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-[#120c7a]/20 transition-all">
                       <div className="min-w-0 flex-1">
                         <p className="font-bold text-slate-800">{book.title}</p>
                         <p className="text-xs text-slate-500 mt-0.5">{book.author || "Unknown Author"}</p>
@@ -192,7 +192,7 @@ export default function LibraryPage() {
 
         <div className="space-y-6">
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+            <div className="bg-[#120c7a] px-4 md:px-8 py-5 flex items-center gap-3">
               <BookOpen size={20} className="text-white" />
               <h2 className="text-white font-bold text-lg">My Issues</h2>
             </div>

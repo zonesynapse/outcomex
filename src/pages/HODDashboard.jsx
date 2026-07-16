@@ -457,7 +457,17 @@ export default function HODDashboard() {
             const item = items.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
             if (!item) return;
             const recordKey = `${attendanceDate}_P${period}`;
-            const rec = item.attRecords?.[recordKey];
+            let rec = item.attRecords?.[recordKey];
+            let substituteFaculty = '';
+            let substituteSubjectCode = '';
+            if (!rec) {
+              const fallback = items.find(i => i !== item && i.attRecords?.[recordKey]);
+              if (fallback) {
+                rec = fallback.attRecords[recordKey];
+                substituteFaculty = fallback.facultyName;
+                substituteSubjectCode = fallback.subjectCode;
+              }
+            }
             if (rec) {
               const stuMap = rec?.students || {};
               const entries2 = Object.entries(stuMap);
@@ -470,6 +480,7 @@ export default function HODDashboard() {
                 section: item.section, facultyName: item.facultyName,
                 presentCount: present.length, absentCount: absent.length, odCount: od.length,
                 presentStudents: present, absentStudents: absent, odStudents: od,
+                substituteFaculty, substituteSubjectCode,
               });
             } else {
               rows.push({
@@ -478,6 +489,7 @@ export default function HODDashboard() {
                 section: item.section, facultyName: item.facultyName,
                 presentCount: 0, absentCount: 0, odCount: 0,
                 presentStudents: [], absentStudents: [], odStudents: [],
+                substituteFaculty: '', substituteSubjectCode: '',
               });
             }
           });
@@ -1050,8 +1062,14 @@ export default function HODDashboard() {
                                     <td className={`px-3 py-2.5 text-xs text-center font-black border-b border-zinc-100 ${row.period === '?' ? 'text-amber-500' : 'text-indigo-700'}`} rowSpan={group.length}>{row.period === '?' ? '—' : `P${row.period}`}</td>
                                   ) : null}
                                   <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">{row.subjectCode}</td>
-                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.subjectName || ""}>{row.subjectName || "—"}</td>
-                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[120px] truncate" title={row.facultyName}>{row.facultyName}</td>
+                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.substituteSubjectCode ? `${row.subjectName} (entered under ${row.substituteSubjectCode})` : row.subjectName || ""}>
+                                    {row.subjectName || "—"}
+                                    {row.substituteSubjectCode && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteSubjectCode})</span>}
+                                  </td>
+                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[160px] truncate" title={row.substituteFaculty ? `${row.facultyName} (sub: ${row.substituteFaculty})` : row.facultyName}>
+                                    <span>{row.facultyName}</span>
+                                    {row.substituteFaculty && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteFaculty})</span>}
+                                  </td>
                                   {row.hasRecord ? (
                                     <>
                                       <td className="px-3 py-2.5 text-xs text-center">

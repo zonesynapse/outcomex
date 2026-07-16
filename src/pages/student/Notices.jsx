@@ -131,7 +131,7 @@ export default function Notices() {
       </div>
 
       {notices.length === 0 ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <Bell size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No notices available.</p>
         </div>
@@ -142,7 +142,7 @@ export default function Notices() {
               key={notice.id}
               className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6 transition-all hover:shadow-xl hover:border-slate-200"
             >
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-2 md:gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-2">
                     <h3 className="text-lg font-bold text-slate-800 truncate">{notice.title}</h3>

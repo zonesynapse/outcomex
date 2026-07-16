@@ -247,8 +247,10 @@ export default function Curriculum() {
       const payload = { _percentages: pcts };
       const wc = weightageConfigs[regKey] || {};
       for (const [ct, ctData] of Object.entries(wc)) {
-        if (ctData._category_config) {
-          payload[ct] = { _category_config: ctData._category_config };
+        if (ctData._category_config || ctData._type_pass_mark !== undefined) {
+          payload[ct] = {};
+          if (ctData._category_config) payload[ct]._category_config = ctData._category_config;
+          if (ctData._type_pass_mark !== undefined) payload[ct]._type_pass_mark = ctData._type_pass_mark;
         }
       }
       await setDoc(doc(db, 'course_type_weightage', regKey), payload, { merge: true });
@@ -265,6 +267,16 @@ export default function Curriculum() {
       const cc = { ...(ct._category_config || {}) };
       cc[catName] = { ...(cc[catName] || {}), [field]: value };
       ct._category_config = cc;
+      reg[courseType] = ct;
+      return { ...prev, [regKey]: reg };
+    });
+  };
+
+  const handleTypePassMarkChange = (regKey, courseType, value) => {
+    setWeightageConfigs(prev => {
+      const reg = { ...(prev[regKey] || {}) };
+      const ct = { ...(reg[courseType] || {}) };
+      ct._type_pass_mark = value === '' ? '' : Number(value);
       reg[courseType] = ct;
       return { ...prev, [regKey]: reg };
     });
@@ -1053,7 +1065,6 @@ export default function Curriculum() {
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
-                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Pass Mark</th>
                                         <th className="px-4 py-4 border border-gray-300 w-10"></th>
                                       </tr>
                                     </thead>
@@ -1079,23 +1090,27 @@ export default function Curriculum() {
                                                 </div>
                                               </div>
                                             </td>
-                                            <td colSpan={6} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
+                                            <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
                                             <td className="px-4 py-4 border border-gray-300"><button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
                                           </tr>
                                         ) : (
                                           catEntries.map(([catName, group], ci) => (
                                             <tr key={`${idx}_${ci}`}>
                                               {ci === 0 && (
-                                                <td className="px-6 py-4 border border-gray-300 align-middle font-bold text-slate-700" rowSpan={rowCount}>
-                                                  <div className="flex flex-col items-center gap-2">
-                                                    <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
-                                                    <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
-                                                      <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
-                                                      <span className="text-[10px] font-black text-amber-700">%</span>
-                                                    </div>
-                                                  </div>
-                                                </td>
-                                              )}
+                                                 <td className="px-6 py-4 border border-gray-300 align-middle font-bold text-slate-700" rowSpan={rowCount}>
+                                                   <div className="flex flex-col items-center gap-2">
+                                                     <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                                     <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                                       <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
+                                                       <span className="text-[10px] font-black text-amber-700">%</span>
+                                                     </div>
+                                                     <div className="flex items-center gap-1.5 bg-green-50 p-1.5 rounded-lg border border-green-200">
+                                                       <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-green-200 rounded text-center font-bold text-green-700 outline-none focus:ring-2 focus:ring-green-300 text-xs" value={weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._type_pass_mark ?? ''} onChange={(e) => handleTypePassMarkChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
+                                                       <span className="text-[10px] font-black text-green-700">Pass%</span>
+                                                     </div>
+                                                   </div>
+                                                 </td>
+                                               )}
                                               <td className="px-4 py-3 border border-gray-300">
                                                 <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tight border ${catColors[catName] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{catName}</span>
                                               </td>
@@ -1135,15 +1150,12 @@ export default function Curriculum() {
                                                      <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
                                                        {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
                                                      </td>
-                                                      <td className="px-3 py-3 text-center border border-gray-300">
-                                                        <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
-                                                      </td>
-                                                      <td className="px-3 py-3 text-center border border-gray-300">
-                                                        <input type="number" min="0" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.pass_mark ?? ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'pass_mark', e.target.value === '' ? '' : Number(e.target.value))} />
-                                                      </td>
-                                                    </>
-                                                  );
-                                                 })()}
+                                                       <td className="px-3 py-3 text-center border border-gray-300">
+                                                         <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
+                                                       </td>
+                                                     </>
+                                                   );
+                                                  })()}
                                                 {ci === 0 && (
                                                  <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
                                                    <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
@@ -1154,7 +1166,7 @@ export default function Curriculum() {
                                         );
                                       })}
                                       {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length === 0 && (
-                                        <tr><td colSpan={9} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
+                                        <tr><td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
                                       )}
                                     </tbody>
                                   </table>

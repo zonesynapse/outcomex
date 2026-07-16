@@ -70,7 +70,7 @@ export default function Reports() {
   // Student List States
   const [students, setStudents] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
-  const showAdmNoCol = useMemo(() => students.some(s => s.admNo), [students]);
+  const showAdmNoCol = useMemo(() => students.some(s => s.admNo) && students.some(s => !s.regNo), [students]);
   const showRegNoCol = useMemo(() => students.some(s => s.regNo), [students]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [syllabusData, setSyllabusData] = useState(null);
@@ -93,6 +93,7 @@ export default function Reports() {
   const [loadingInternalMarks, setLoadingInternalMarks] = useState(false);
   const [courseWeightageData, setCourseWeightageData] = useState({});
   const [internalSubjectCourseType, setInternalSubjectCourseType] = useState("");
+  const [extraSubjectCourseType, setExtraSubjectCourseType] = useState("");
   const [configuredCoKeys, setConfiguredCoKeys] = useState([]);
   const [overallExamColumns, setOverallExamColumns] = useState([]);
   const [overallStudentData, setOverallStudentData] = useState({});
@@ -201,6 +202,27 @@ export default function Reports() {
       setInternalSubjectCourseType(snap.exists() ? (snap.data().type || '') : '');
     })();
   }, [internalSubject, programme, department]);
+
+  // Fetch course type for consolidation subject
+  useEffect(() => {
+    if (!extraSubject || !programme || !department) {
+      setExtraSubjectCourseType("");
+      return;
+    }
+    const progKey = formatProgrammeKey(programme);
+    const deptKey = sanitizeKey(department);
+    const deptKeyStrict = sanitizeKeyStrict(department);
+    (async () => {
+      let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${extraSubject}`));
+      if (!snap.exists() && deptKeyStrict !== deptKey) {
+        snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKeyStrict}_${extraSubject}`));
+      }
+      if (!snap.exists()) {
+        snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${extraSubject}`));
+      }
+      setExtraSubjectCourseType(snap.exists() ? (snap.data().type || '') : '');
+    })();
+  }, [extraSubject, programme, department]);
 
   useEffect(() => {
     if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester || !internalSubject || selectedInternalExam === '__overall__') {
@@ -551,6 +573,25 @@ export default function Reports() {
     return exams;
   }, [expectedExams, programme, department, enteredInternalExamIds]);
 
+  const passMarkPct = useMemo(() => {
+    const subject = module === 'internal' ? internalSubject : extraSubject;
+    if (!subject || !programme || !batch || !syllabusData) return null;
+    const semNum = deriveSemesterNumber(semester);
+    const subjects = syllabusData?.semesters?.[semNum] || [];
+    const subInfo = subjects.find(s => s && s.code === subject);
+    const courseType = module === 'internal' ? internalSubjectCourseType : extraSubjectCourseType;
+    if (!courseType) return null;
+    const progKey = formatProgrammeKey(programme);
+    const regulation = getRegulationForBatch(progKey, batch);
+    if (!regulation) return null;
+    const regKey = sanitizeKey(regulation);
+    const regKeyStrict = sanitizeKeyStrict(regulation);
+    const weightageDoc = courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
+    const ctConfig = weightageDoc[courseType] || {};
+    const passPct = ctConfig._type_pass_mark;
+    return passPct != null && passPct !== '' ? Number(passPct) : null;
+  }, [module, internalSubject, extraSubject, programme, batch, semester, syllabusData, internalSubjectCourseType, extraSubjectCourseType, courseWeightageData, getRegulationForBatch]);
+
   const allExamsCompleted = useMemo(() => {
     if (expectedExams.length === 0) return false;
     // Exclude indirect assessments from the mandatory check
@@ -673,9 +714,39 @@ export default function Reports() {
     setStudents(newStudents);
   };
 
+  const dragIndex = useRef(null);
+
+  const handleDragStart = (idx) => (e) => {
+    dragIndex.current = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx);
+    setTimeout(() => e.target.closest('tr').classList.add('opacity-50'), 0);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (idx) => (e) => {
+    e.preventDefault();
+    const fromIdx = dragIndex.current;
+    if (fromIdx === null || fromIdx === idx) return;
+    const newStudents = [...students];
+    const [moved] = newStudents.splice(fromIdx, 1);
+    newStudents.splice(idx, 0, moved);
+    setStudents(newStudents);
+    dragIndex.current = null;
+  };
+
+  const handleDragEnd = () => {
+    document.querySelectorAll('tr.opacity-50').forEach(el => el.classList.remove('opacity-50'));
+    dragIndex.current = null;
+  };
+
   const handleAddRow = (index) => {
     const newStudents = [...students];
-    newStudents.splice(index + 1, 0, { reg: "", name: "" });
+    newStudents.splice(index + 1, 0, { reg: "", name: "", regNo: "" });
     setStudents(newStudents);
   };
 
@@ -995,11 +1066,6 @@ export default function Reports() {
             .map(([reg, nameVal]) => ({ reg, name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal }));
 
           const order = data._order || data.order;
-          if (order && Array.isArray(order)) {
-            studentList.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-          } else {
-            studentList.sort((a, b) => a.reg.localeCompare(b.reg));
-          }
 
           (async () => {
             let hasSectionIndex = false;
@@ -1020,6 +1086,24 @@ export default function Reports() {
             if (!cancelled) {
               if (!hasSectionIndex) {
                 studentList = studentList.map(s => ({ ...s, admNo: "", regNo: s.reg }));
+              }
+              // Apply any regNo overrides stored in _regNos
+              const regNos = data._regNos || {};
+              if (Object.keys(regNos).length > 0) {
+                studentList = studentList.map(s => ({
+                  ...s,
+                  regNo: regNos[s.reg] || s.regNo
+                }));
+              }
+              // Sort by regNo (displayed value) first, then by reg via _order
+              if (order && Array.isArray(order)) {
+                studentList.sort((a, b) => {
+                  const orderA = order.indexOf(a.reg);
+                  const orderB = order.indexOf(b.reg);
+                  return orderA !== -1 && orderB !== -1 ? orderA - orderB : (a.regNo || a.reg).localeCompare(b.regNo || b.reg);
+                });
+              } else {
+                studentList.sort((a, b) => (a.regNo || a.reg).localeCompare(b.regNo || b.reg));
               }
               setStudents(studentList);
               setLoadingStudents(false);
@@ -2007,10 +2091,10 @@ export default function Reports() {
   const handleSaveStudents = async () => {
     if (!batch || !programme || !department) return;
 
-    const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
+    const progKey = formatProgrammeKey(programme);
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
-    const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
+    const studentRef = doc(db, 'students', studentDocId);
 
     const dataToSave = {
       _meta: {
@@ -2022,15 +2106,45 @@ export default function Reports() {
       _order: students.map(s => s.reg)
     };
 
-    // Add each student to the object
     students.forEach(s => {
       if (s.reg && s.name) {
         dataToSave[s.reg] = s.name;
       }
     });
 
+    // Store regNo overrides for students where regNo differs from reg
+    const regNoOverrides = {};
+    students.forEach(s => {
+      if (s.reg && s.regNo && s.regNo !== s.reg) {
+        regNoOverrides[s.reg] = s.regNo;
+      }
+    });
+    if (Object.keys(regNoOverrides).length > 0) {
+      dataToSave._regNos = regNoOverrides;
+    }
+
     try {
-      await setDoc(studentRef, dataToSave); // Use setDoc for Firestore
+      // Update student_section_index FIRST so onSnapshot reads fresh data
+      if (section && students.some(s => s.regNo)) {
+        const sectionIndexRef = doc(db, 'student_section_index', studentDocId);
+        const sectionIndexSnap = await getDoc(sectionIndexRef);
+        if (sectionIndexSnap.exists()) {
+          const updateData = {};
+          students.forEach(s => {
+            if (s.reg && s.name) {
+              updateData[s.reg] = {
+                admissionNo: s.reg,
+                regNo: s.regNo || "",
+                name: s.name
+              };
+            }
+          });
+          await setDoc(sectionIndexRef, updateData);
+        }
+      }
+
+      await setDoc(studentRef, dataToSave);
+
       setIsEditing(false);
       setSuccessMessage("Student list saved successfully!");
       setShowSuccess(true);
@@ -2556,7 +2670,7 @@ export default function Reports() {
                             <span className="text-sm font-medium text-zinc-800">{row.name}</span>
                           </td>
                           <td className="p-4 text-center">
-                            <span className="text-sm font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+                            <span className={`text-sm font-bold px-2.5 py-1 rounded-md ${passMarkPct != null && row.mark < passMarkPct ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50'}`}>
                               {row.mark}
                             </span>
                           </td>
@@ -2687,8 +2801,8 @@ export default function Reports() {
                                 <span className="text-[11px] sm:text-xs">{catTotals[col.category] ?? '-'}%</span>
                               </td>
                             ])}
-                            <td className="p-1 sm:p-2 text-center border-b border-zinc-100 bg-emerald-50/50">
-                              <span className="text-[11px] sm:text-xs font-black text-emerald-700">{overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100}%</span>
+                            <td className={`p-1 sm:p-2 text-center border-b border-zinc-100 ${passMarkPct != null && (overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100) < passMarkPct ? 'bg-red-50' : 'bg-emerald-50/50'}`}>
+                              <span className={`text-[11px] sm:text-xs font-black ${passMarkPct != null && (overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100) < passMarkPct ? 'text-red-600' : 'text-emerald-700'}`}>{overallInternalPct > 0 ? Math.round(overallTotal * overallInternalPct) / 100 : Math.round(overallTotal * 100) / 100}%</span>
                               {overallInternalPct > 0 && <div className="text-[8px] text-emerald-500 font-normal">{Math.round(overallTotal * 100) / 100} × {overallInternalPct}%</div>}
                             </td>
                             <td className="p-1 sm:p-2 text-center border-b border-zinc-100 bg-amber-50/50">
@@ -2769,36 +2883,73 @@ export default function Reports() {
                     <thead>
                       <tr className="bg-zinc-50">
                         {isEditing && <th className="w-10 p-4"></th>}
-                        {showAdmNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Admission Number</th>}
-                        {!isEditing && showRegNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Register Number</th>}
+                        {isEditing ? (
+                          <>
+                            <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Register Number</th>
+                            <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Admission Number</th>
+                          </>
+                        ) : (
+                          <>
+                            {showRegNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Register Number</th>}
+                            {showAdmNoCol && <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Admission Number</th>}
+                          </>
+                        )}
                         <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Name</th>
                         {isEditing && <th className="w-24 p-4 text-center text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100">Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {students.map((student, idx) => (
-                        <tr key={idx} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
+                        <tr
+                          key={idx}
+                          draggable={isEditing}
+                          onDragStart={isEditing ? handleDragStart(idx) : undefined}
+                          onDragOver={handleDragOver}
+                          onDrop={isEditing ? handleDrop(idx) : undefined}
+                          onDragEnd={handleDragEnd}
+                          className={`group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors ${isEditing ? 'cursor-default' : ''}`}
+                        >
                           {isEditing && (
                             <td className="p-4 text-center">
-                              <GripVertical className="text-zinc-300 cursor-grab active:cursor-grabbing" size={18} />
+                              <GripVertical
+                                className="text-zinc-300 cursor-grab active:cursor-grabbing"
+                                size={18}
+                                onMouseDown={(e) => { e.target.closest('tr').draggable = true; }}
+                              />
                             </td>
                           )}
-                          {showAdmNoCol && <td className="p-4">
-                            {isEditing ? (
-                              <input
-                                value={student.reg}
-                                onChange={(e) => handleStudentChange(idx, "reg", e.target.value)}
-                                className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                placeholder="Admission No"
-                              />
-                            ) : (
-                              <span className="text-sm font-mono text-zinc-600">{student.admNo}</span>
-                            )}
-                          </td>}
-                          {!isEditing && showRegNoCol && (
-                            <td className="p-4">
-                              <span className="text-sm font-mono text-zinc-600">{student.regNo}</span>
-                            </td>
+                          {isEditing ? (
+                            <>
+                              <td className="p-4">
+                                <input
+                                  value={student.regNo || ''}
+                                  onChange={(e) => handleStudentChange(idx, "regNo", e.target.value)}
+                                  className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                                  placeholder="Register No"
+                                />
+                              </td>
+                              <td className="p-4">
+                                <input
+                                  value={student.reg}
+                                  onChange={(e) => handleStudentChange(idx, "reg", e.target.value)}
+                                  className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                  placeholder="Admission No"
+                                />
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              {showRegNoCol && (
+                                <td className="p-4">
+                                  <span className="text-sm font-mono text-zinc-600">{student.regNo}</span>
+                                </td>
+                              )}
+                              {showAdmNoCol && (
+                                <td className="p-4">
+                                  <span className="text-sm font-mono text-zinc-600">{student.admNo}</span>
+                                </td>
+                              )}
+                            </>
                           )}
                           <td className="p-4">
                             {isEditing ? (
@@ -2834,9 +2985,9 @@ export default function Reports() {
                       ))}
                       {isEditing && students.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="p-4 text-center">
+                          <td colSpan={5} className="p-4 text-center">
                             <button
-                              onClick={() => setStudents([{ reg: "", name: "" }])}
+                              onClick={() => setStudents([{ reg: "", name: "", regNo: "" }])}
                               className="text-blue-500 hover:underline text-sm font-bold"
                             >
                               + Add First Student
@@ -3129,13 +3280,17 @@ export default function Reports() {
                             {consolidationCoKeys.map(co => (
                               <td key={co} className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals[co] || 0}</td>
                             ))}
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30">
-                              {(() => {
-                                const rawTotal = consolidationCoKeys.reduce((s, co) => s + Number(totals[co] || 0), 0);
-                                const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
-                                return maxTotal > 0 ? Math.min(100, Math.round((rawTotal / maxTotal) * 100)) : Math.min(100, rawTotal);
-                              })()}
-                            </td>
+                            {(() => {
+                              const rawTotal = consolidationCoKeys.reduce((s, co) => s + Number(totals[co] || 0), 0);
+                              const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
+                              const pct = maxTotal > 0 ? Math.min(100, Math.round((rawTotal / maxTotal) * 100)) : Math.min(100, rawTotal);
+                              const failed = passMarkPct != null && pct < passMarkPct;
+                              return (
+                                <td className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold ${failed ? 'text-red-600 bg-red-50' : 'text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30'}`}>
+                                  {pct}
+                                </td>
+                              );
+                            })()}
                           </tr>
                         );
                       })}
@@ -3376,7 +3531,7 @@ export default function Reports() {
                       <strong>Subject Code & Name:</strong> {extraSubject || "________________"}
                     </div>
                     <div style={{ fontSize: "11px", marginBottom: "8px" }}>
-                      <strong>Minimum Pass Percentage:</strong> {mappingCutoff || "_____"}
+                      <strong>Minimum Pass Percentage:</strong> {passMarkPct != null ? `${passMarkPct}%` : mappingCutoff || "_____"}
                     </div>
 
                     <table style={{ ...logTableStyle, marginBottom: "14px" }}>

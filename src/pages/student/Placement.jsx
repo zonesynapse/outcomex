@@ -132,7 +132,7 @@ export default function Placement() {
       </div>
 
       {hasNoData ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <Briefcase size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No placement data available.</p>
         </div>
@@ -140,7 +140,7 @@ export default function Placement() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-              <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+              <div className="bg-[#120c7a] px-4 md:px-8 py-5 flex items-center gap-3">
                 <Briefcase size={20} className="text-white" />
                 <h2 className="text-white font-bold text-xl">Upcoming Drives</h2>
               </div>
@@ -155,7 +155,7 @@ export default function Placement() {
                     .filter((d) => d.status !== "completed")
                     .map((drive) => (
                       <div key={drive.id} className="p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-[#120c7a]/20 transition-all">
-                        <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <Building2 size={16} className="text-slate-400 shrink-0" />
@@ -189,7 +189,7 @@ export default function Placement() {
             </div>
 
             <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-              <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+              <div className="bg-[#120c7a] px-4 md:px-8 py-5 flex items-center gap-3">
                 <GraduationCap size={20} className="text-white" />
                 <h2 className="text-white font-bold text-xl">My Applications</h2>
               </div>
@@ -201,7 +201,7 @@ export default function Placement() {
               ) : (
                 <div className="p-6 space-y-4">
                   {applications.map((app) => (
-                    <div key={app.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div key={app.id} className="flex flex-wrap items-center justify-between gap-2 p-4 bg-slate-50 rounded-2xl border border-slate-100">
                       <div>
                         <p className="font-bold text-slate-800">{app.companyName || "Company"}</p>
                         <p className="text-xs text-slate-500 mt-0.5">{app.jobTitle || "Position"}</p>
@@ -221,7 +221,7 @@ export default function Placement() {
           <div className="space-y-6">
             {offers.length > 0 && (
               <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-                <div className="bg-[#120c7a] px-8 py-5 flex items-center gap-3">
+                <div className="bg-[#120c7a] px-4 md:px-8 py-5 flex items-center gap-3">
                   <Award size={20} className="text-white" />
                   <h2 className="text-white font-bold text-lg">My Offers</h2>
                 </div>
@@ -261,7 +261,7 @@ export default function Placement() {
               </div>
             )}
 
-            <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 rounded-[2.5rem] p-8 text-white shadow-2xl shadow-blue-900/40 relative overflow-hidden">
+            <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 rounded-[2.5rem] p-4 md:p-8 text-white shadow-2xl shadow-blue-900/40 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16" />
               <h4 className="text-sm font-bold mb-4">Placement Summary</h4>
               <div className="grid grid-cols-2 gap-4">

@@ -19,6 +19,7 @@ export default function Marks() {
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [marksList, setMarksList] = useState([]);
+  const [expandedExam, setExpandedExam] = useState(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -46,9 +47,7 @@ export default function Marks() {
         const batchKey = sanitizeKey(batch);
         const prefix = `${batchKey}_${progKey}_${deptKey}`;
         const normPrefix = prefix.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
-        console.log('Marks prefix:', prefix);
 
-        // Attempt to resolve canonical ID (admission number) from student_index
         let canonicalId = null;
         try {
           const idxRef = doc(db, 'student_index', sanitizeKey(regNo));
@@ -58,17 +57,14 @@ export default function Marks() {
           }
         } catch (_) {}
         const lookupKeys = [regNo, canonicalId].filter(Boolean);
-        console.log('Lookup keys:', lookupKeys);
 
         const snapshot = await getDocs(collection(db, "marks"));
-        let matchedCount = 0;
         const results = [];
 
         for (const docSnap of snapshot.docs) {
           const id = docSnap.id;
           const normId = id.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
           if (!normId.startsWith(normPrefix)) continue;
-          matchedCount++;
 
           const data = docSnap.data();
           const meta = data._meta || {};
@@ -97,14 +93,6 @@ export default function Marks() {
             isAbsent,
           });
         }
-        console.log('Marks docs matched:', matchedCount, 'results:', results.length);
-        if (matchedCount > 0 && results.length === 0) {
-          const sampleDoc = snapshot.docs.find(d => d.id.replace(/\s+/g, '_').replace(/_{2,}/g, '_').startsWith(normPrefix));
-          if (sampleDoc) {
-            const sampleKeys = Object.keys(sampleDoc.data().students || {}).slice(0, 5);
-            console.log('Sample doc students keys:', sampleKeys, 'lookup keys:', lookupKeys);
-          }
-        }
 
         setMarksList(results);
       } catch (err) { console.error(err); }
@@ -114,52 +102,79 @@ export default function Marks() {
     fetchMarks();
   }, [studentData]);
 
-  const grouped = useMemo(() => {
+  const subjectGroups = useMemo(() => {
     const map = {};
     marksList.forEach((r) => {
-      const key = r.exam;
-      if (!map[key]) map[key] = { exam: key, subjects: [] };
-      map[key].subjects.push(r);
+      const key = r.subject;
+      if (!map[key]) map[key] = { subject: key, exams: [], academicYear: r.academicYear, semester: r.semester };
+      map[key].exams.push(r);
     });
     Object.values(map).forEach(g => {
-      g.subjects.sort((a, b) => (a.subject || '').localeCompare(b.subject || ''));
+      g.exams.sort((a, b) => (a.exam || '').localeCompare(b.exam || ''));
     });
-    return Object.values(map);
+    return Object.values(map).sort((a, b) => a.subject.localeCompare(b.subject));
   }, [marksList]);
 
-  const getExamDetails = (exam) => {
+  const getExamDetail = (exam) => {
     const { marks, markType, isAbsent } = exam;
-    if (isAbsent) return { label: "Absent", value: "AB" };
+    if (isAbsent) return "Absent";
 
     if (markType === "CO Wise" || markType === "CO wise") {
       const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].filter(co => marks[co] !== undefined && marks[co] !== "");
       const total = cos.reduce((s, co) => s + (Number(marks[co]) || 0), 0);
-      return { label: `CO Total (${cos.length} COs)`, value: total };
+      return total;
     }
 
     if (markType === "Overall") {
-      return { label: "Mark", value: marks.overall || marks.total || 0, grade: marks.grade, gradePoint: marks.gradePoint };
+      return marks.overall || marks.total || 0;
     }
 
     if (markType === "Assignment") {
       const qMarks = Object.values(marks.assignment || {}).filter(m => m !== "").map(Number);
-      const total = qMarks.reduce((s, m) => s + (isNaN(m) ? 0 : m), 0);
-      return { label: `Total (${qMarks.length} Qs)`, value: total };
+      return qMarks.reduce((s, m) => s + (isNaN(m) ? 0 : m), 0);
     }
 
-    // Internal / default: Part A + B + C
     const partATotal = Object.values(marks.partA || {}).reduce((s, m) => s + (Number(m) || 0), 0);
     const partBTotal = Object.values(marks.partB || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
     const partCTotal = Object.values(marks.partC || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
-    const total = Math.min(partATotal + partBTotal + partCTotal, 100);
-    return { label: "Total", value: total };
+    return Math.min(partATotal + partBTotal + partCTotal, 100);
   };
 
-  const getCOScores = (exam) => {
-    const { marks } = exam;
-    return ['CO1', 'CO2', 'CO3', 'CO4', 'CO5']
-      .filter(co => marks[co] !== undefined && marks[co] !== "")
-      .map(co => ({ co, value: Number(marks[co]) || 0 }));
+  const getDetailBreakdown = (exam) => {
+    const { marks, markType, isAbsent } = exam;
+    if (isAbsent) return null;
+
+    if (markType === "CO Wise" || markType === "CO wise") {
+      return ['CO1', 'CO2', 'CO3', 'CO4', 'CO5']
+        .filter(co => marks[co] !== undefined && marks[co] !== "")
+        .map(co => ({ label: co, value: Number(marks[co]) || 0 }));
+    }
+
+    if (markType === "Overall") {
+      const rows = [];
+      if (marks.overall !== undefined) rows.push({ label: "Overall", value: marks.overall });
+      if (marks.grade) rows.push({ label: "Grade", value: marks.grade });
+      if (marks.gradePoint) rows.push({ label: "GP", value: marks.gradePoint });
+      return rows.length > 0 ? rows : null;
+    }
+
+    if (markType === "Assignment") {
+      return Object.entries(marks.assignment || {})
+        .filter(([, m]) => m !== "")
+        .map(([qKey, mark]) => ({ label: qKey, value: mark }));
+    }
+
+    const rows = [];
+    if (Object.keys(marks.partA || {}).length > 0) {
+      rows.push({ label: "Part A", value: Object.values(marks.partA).reduce((s, m) => s + (Number(m) || 0), 0) });
+    }
+    if (Object.keys(marks.partB || {}).length > 0) {
+      rows.push({ label: "Part B", value: Object.values(marks.partB).reduce((s, m) => s + (Number(m.mark) || 0), 0) });
+    }
+    if (Object.keys(marks.partC || {}).length > 0) {
+      rows.push({ label: "Part C", value: Object.values(marks.partC).reduce((s, m) => s + (Number(m.mark) || 0), 0) });
+    }
+    return rows.length > 0 ? rows : null;
   };
 
   if (loading) {
@@ -191,144 +206,95 @@ export default function Marks() {
         </div>
       </div>
 
-      {grouped.length === 0 ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+      {subjectGroups.length === 0 ? (
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <FileText size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No marks records found.</p>
         </div>
       ) : (
-        grouped.map((group, gi) => (
+        subjectGroups.map((group, gi) => (
           <div key={gi} className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-6 py-2.5">
-              <h2 className="text-white font-bold text-base">{group.exam}</h2>
+            <div className="bg-[#120c7a] px-4 md:px-8 py-4">
+              <h2 className="text-white font-bold text-lg">{group.subject}</h2>
+              <p className="text-blue-200 text-[11px] mt-0.5">{group.academicYear}{group.semester ? ` • ${group.semester}` : ''}</p>
             </div>
-            <div className="p-6 space-y-6">
-              {group.subjects.map((exam, ei) => {
-                const details = getExamDetails(exam);
-                const coScores = getCOScores(exam);
-                return (
-                  <div key={ei} className="border border-slate-200 rounded-2xl overflow-hidden">
-                    <div className="bg-slate-50 px-6 py-3 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-700">
-                          {exam.subject} <span className="text-xs font-normal text-slate-400">({formatExamName(exam.exam, exam.markType)})</span>
-                        </h3>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          {exam.academicYear}{exam.semester ? ` • ${exam.semester}` : ''}
-                        </p>
-                      </div>
-                      {!exam.isAbsent && (
-                        <div className="text-right">
-                          <span className="text-lg font-black text-[#120c7a]">{details.value}</span>
-                          {details.grade && <span className="text-xs font-bold text-slate-400 ml-2">Grade: {details.grade}</span>}
-                          {details.gradePoint && <span className="text-xs font-bold text-slate-400 ml-2">GP: {details.gradePoint}</span>}
-                        </div>
-                      )}
-                      {exam.isAbsent && (
-                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-bold">ABSENT</span>
-                      )}
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50/50">
-                            {exam.markType === "CO Wise" || exam.markType === "CO wise" ? (
-                              <>
-                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">CO</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Scored</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</th>
-                              </>
-                            ) : exam.markType === "Overall" ? (
-                              <>
-                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Component</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Mark</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Grade</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Grade Point</th>
-                              </>
-                            ) : exam.markType === "Assignment" ? (
-                              <>
-                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Question</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Mark</th>
-                              </>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50">
+                    <th className="px-4 md:px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Exam</th>
+                    <th className="px-4 md:px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
+                    <th className="px-4 md:px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Score</th>
+                    <th className="px-4 md:px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest hidden md:table-cell">Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {group.exams.map((exam, ei) => {
+                    const score = getExamDetail(exam);
+                    const breakdown = getDetailBreakdown(exam);
+                    const examKey = `${gi}-${ei}`;
+                    const isExpanded = expandedExam === examKey;
+                    return (
+                      <>
+                        <tr
+                          key={ei}
+                          className={`transition-colors cursor-pointer ${isExpanded ? 'bg-blue-50/40' : 'hover:bg-slate-50'}`}
+                          onClick={() => setExpandedExam(isExpanded ? null : examKey)}
+                        >
+                          <td className="px-4 md:px-6 py-3">
+                            <span className="text-sm font-bold text-slate-700">{exam.exam || '—'}</span>
+                          </td>
+                          <td className="px-4 md:px-6 py-3 text-center">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase ${
+                              exam.markType === 'Assignment' ? 'bg-purple-50 text-purple-600 border-purple-200'
+                              : exam.markType === 'CO Wise' || exam.markType === 'CO wise' ? 'bg-cyan-50 text-cyan-600 border-cyan-200'
+                              : exam.markType === 'Overall' ? 'bg-amber-50 text-amber-600 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                            }`}>
+                              {exam.markType || 'Internal'}
+                            </span>
+                          </td>
+                          <td className="px-4 md:px-6 py-3 text-center">
+                            {exam.isAbsent ? (
+                              <span className="text-xs font-bold text-red-500">ABSENT</span>
                             ) : (
-                              <>
-                                <th className="px-6 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Part</th>
-                                <th className="px-6 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Scored</th>
-                              </>
+                              <span className="text-sm font-black text-[#120c7a]">{score}</span>
                             )}
+                          </td>
+                          <td className="px-4 md:px-6 py-3 text-center hidden md:table-cell">
+                            {breakdown && !exam.isAbsent && (
+                              <span className="text-[10px] font-bold text-slate-400">
+                                {breakdown.map(b => `${b.label}: ${b.value}`).join(' | ')}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && breakdown && !exam.isAbsent && (
+                          <tr key={`${ei}-detail`}>
+                            <td colSpan={4} className="px-4 md:px-6 py-3 bg-slate-50/60">
+                              <div className="flex flex-wrap gap-3">
+                                {breakdown.map((b, bi) => (
+                                  <div key={bi} className="bg-white rounded-xl border border-slate-200 px-4 py-2 flex items-center gap-3">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">{b.label}</span>
+                                    <span className="text-sm font-black text-slate-700">{b.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {exam.isAbsent ? (
-                            <tr>
-                              <td colSpan={4} className="px-6 py-6 text-center text-sm font-bold text-red-400">Student was absent for this exam</td>
-                            </tr>
-                          ) : exam.markType === "CO Wise" || exam.markType === "CO wise" ? (
-                            coScores.length > 0 ? coScores.map((cs, ci) => (
-                              <tr key={ci} className="hover:bg-slate-50 transition-colors">
-                                <td className="px-6 py-3 text-sm font-bold text-slate-600">{cs.co}</td>
-                                <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{cs.value}</td>
-                                <td className="px-6 py-3 text-center text-sm text-slate-400">—</td>
-                              </tr>
-                            )) : (
-                              <tr>
-                                <td colSpan={3} className="px-6 py-4 text-center text-sm text-slate-400">No CO data available</td>
-                              </tr>
-                            )
-                          ) : exam.markType === "Overall" ? (
-                            <tr className="hover:bg-slate-50 transition-colors">
-                              <td className="px-6 py-3 text-sm font-bold text-slate-600">Overall</td>
-                              <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{exam.marks.overall || exam.marks.total || '—'}</td>
-                              <td className="px-6 py-3 text-center text-sm font-bold text-slate-700">{exam.marks.grade || '—'}</td>
-                              <td className="px-6 py-3 text-center text-sm font-bold text-slate-700">{exam.marks.gradePoint || '—'}</td>
-                            </tr>
-                          ) : exam.markType === "Assignment" ? (
-                            (exam.marks.assignment && Object.keys(exam.marks.assignment).length > 0) ? (
-                              Object.entries(exam.marks.assignment).map(([qKey, mark], ai) => (
-                                <tr key={ai} className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">{qKey}</td>
-                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">{mark}</td>
-                                </tr>
-                              ))
-                            ) : (
-                              <tr>
-                                <td colSpan={2} className="px-6 py-4 text-center text-sm text-slate-400">No assignment marks</td>
-                              </tr>
-                            )
-                          ) : (
-                            <>
-                              {Object.keys(exam.marks.partA || {}).length > 0 && (
-                                <tr className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part A</td>
-                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
-                                    {Object.values(exam.marks.partA).reduce((s, m) => s + (Number(m) || 0), 0)}
-                                  </td>
-                                </tr>
-                              )}
-                              {Object.keys(exam.marks.partB || {}).length > 0 && (
-                                <tr className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part B</td>
-                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
-                                    {Object.values(exam.marks.partB).reduce((s, m) => s + (Number(m.mark) || 0), 0)}
-                                  </td>
-                                </tr>
-                              )}
-                              {Object.keys(exam.marks.partC || {}).length > 0 && (
-                                <tr className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-6 py-3 text-sm font-bold text-slate-600">Part C</td>
-                                  <td className="px-6 py-3 text-center text-sm font-black text-slate-700">
-                                    {Object.values(exam.marks.partC).reduce((s, m) => s + (Number(m.mark) || 0), 0)}
-                                  </td>
-                                </tr>
-                              )}
-                            </>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })}
+                        )}
+                        {isExpanded && exam.isAbsent && (
+                          <tr key={`${ei}-absent`}>
+                            <td colSpan={4} className="px-4 md:px-6 py-3 bg-red-50/60 text-center">
+                              <span className="text-xs font-bold text-red-400">Student was absent for this exam</span>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         ))

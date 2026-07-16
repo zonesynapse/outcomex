@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { formatProgDisplay } from "../../lib/utils";
 import { 
@@ -10,10 +10,17 @@ import {
   Briefcase, IndianRupee, Loader2, User, ClipboardList, Download
 } from "lucide-react";
 
+const sanitizeKey = (key) => {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+};
+
 export default function StudentDashboard() {
   const navigate = useNavigate();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [attendancePct, setAttendancePct] = useState(null);
+  const [attLoading, setAttLoading] = useState(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -29,6 +36,41 @@ export default function StudentDashboard() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!userData) return;
+    const { regNo, programme, department, batch } = userData;
+    if (!regNo || !programme || !department || !batch) { setAttLoading(false); return; }
+
+    const fetchAttendance = async () => {
+      try {
+        const progKey = sanitizeKey(programme);
+        const deptKey = sanitizeKey(department);
+        const batchKey = sanitizeKey(batch);
+        const snapshot = await getDocs(collection(db, "attendance"));
+        let totalPresent = 0, totalClasses = 0;
+
+        snapshot.forEach((docSnap) => {
+          const id = docSnap.id;
+          if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
+          const data = docSnap.data();
+          const records = data?.records;
+          if (!records) return;
+
+          Object.values(records).forEach(rec => {
+            totalClasses++;
+            const hours = rec?.students?.[regNo];
+            if (hours !== undefined && hours > 0) totalPresent++;
+          });
+        });
+
+        setAttendancePct(totalClasses > 0 ? (totalPresent / totalClasses) * 100 : null);
+      } catch (err) { console.error(err); }
+      setAttLoading(false);
+    };
+
+    fetchAttendance();
+  }, [userData]);
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -81,14 +123,15 @@ export default function StudentDashboard() {
   return (
     <div className="max-w-6xl mx-auto px-4 md:px-8 py-8">
       {/* Welcome Section */}
-      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-5 text-white mb-6 shadow-lg">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
-            <GraduationCap size={32} />
+      <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-4 md:p-5 text-white mb-6 shadow-lg">
+        <div className="flex items-center gap-3 md:gap-4">
+          <div className="w-12 h-12 md:w-16 md:h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30 shrink-0">
+            <GraduationCap size={28} className="md:hidden" />
+            <GraduationCap size={32} className="hidden md:block" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold">Welcome, {userData?.studentName || "Student"}</h1>
-            <p className="text-blue-200 text-sm mt-1">
+          <div className="min-w-0">
+            <h1 className="text-lg md:text-2xl font-bold truncate">Welcome, {userData?.studentName || "Student"}</h1>
+            <p className="text-blue-200 text-[11px] md:text-sm mt-1 truncate">
               {userData?.regNo} • {formatProgDisplay(userData?.programme)} • {cleanDept(userData?.department)} • Batch {userData?.batch}
             </p>
           </div>
@@ -103,7 +146,15 @@ export default function StudentDashboard() {
               <CheckCircle size={20} className="text-blue-600" />
             </div>
           </div>
-          <p className="text-2xl font-bold text-zinc-800">--</p>
+          <p className="text-2xl font-bold text-zinc-800">
+            {attLoading ? (
+              <Loader2 size={20} className="animate-spin inline" />
+            ) : attendancePct !== null ? (
+              `${attendancePct.toFixed(1)}%`
+            ) : (
+              '--'
+            )}
+          </p>
           <p className="text-xs text-zinc-500 mt-1">Attendance %</p>
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm border border-zinc-100">

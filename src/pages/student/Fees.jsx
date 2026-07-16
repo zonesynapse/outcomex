@@ -166,18 +166,18 @@ export default function Fees() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Fee</p>
-          <p className="text-3xl font-black text-[#120c7a] mt-2">{formatCurrency(totalFee)}</p>
+          <p className="text-2xl md:text-3xl font-black text-[#120c7a] mt-2">{formatCurrency(totalFee)}</p>
         </div>
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Paid</p>
-          <p className="text-3xl font-black text-emerald-600 mt-2">{formatCurrency(totalPaid)}</p>
+          <p className="text-2xl md:text-3xl font-black text-emerald-600 mt-2">{formatCurrency(totalPaid)}</p>
         </div>
         <div className={`rounded-2xl shadow-lg border p-6 ${pending > 0 ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'}`}>
           <p className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
             <AlertCircle size={14} className={pending > 0 ? 'text-red-500' : 'text-emerald-500'} />
             <span className={pending > 0 ? 'text-red-600' : 'text-emerald-600'}>Pending Dues</span>
           </p>
-          <p className={`text-3xl font-black mt-2 ${pending > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+          <p className={`text-2xl md:text-3xl font-black mt-2 ${pending > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
             {formatCurrency(pending)}
           </p>
         </div>

@@ -238,7 +238,7 @@ export default function StudentLayout({ children, title }) {
             </button>
 
             {isNoticesOpen && (
-              <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
+              <div className="absolute right-0 mt-3 w-72 sm:w-96 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
                 <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-4 text-white flex items-center justify-between">
                   <h4 className="font-bold text-sm font-sans">Notifications</h4>
                   <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">
@@ -297,7 +297,7 @@ export default function StudentLayout({ children, title }) {
               </span>
             </button>
             {isProfileOpen && (
-              <div className="absolute right-0 mt-3 w-72 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
+              <div className="absolute right-0 mt-3 w-64 sm:w-72 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
                 <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-5 text-white">
                   <div className="flex items-center gap-3">
                     <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">

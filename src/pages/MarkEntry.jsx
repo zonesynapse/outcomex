@@ -1122,10 +1122,14 @@ export default function MarkEntry() {
             const qIndex = parseInt(qKey.replace('Q', '')) - 1;
             if (mark === '' || mark === undefined || mark === null) return;
             const qMappings = assignmentConfig[qIndex]?.mappings || [];
+            const questionTotal = Number(assignmentConfig[qIndex]?.marks) || 0;
+            const totalAllocated = qMappings.reduce((sum, m) => sum + (parseInt(m?.marks, 10) || 0), 0);
+            const divisor = questionTotal > 0 ? questionTotal : totalAllocated;
             qMappings.forEach(m => {
               const coKey = (m.co || '').trim().toUpperCase();
-              if (coKey && /^CO\d+/i.test(coKey)) {
-                coTotals[coKey] = (coTotals[coKey] || 0) + Number(mark || 0);
+              if (coKey && /^CO\d+/i.test(coKey) && divisor > 0) {
+                const alloc = parseInt(m?.marks, 10) || 0;
+                coTotals[coKey] = (coTotals[coKey] || 0) + Math.round((Number(mark) * alloc) / divisor);
               }
             });
           });
@@ -1206,7 +1210,7 @@ export default function MarkEntry() {
         const maxVal = isIndirectAssessment ? 3 : 100;
         ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { coMaxMarks[co] = maxVal; });
       } else if (isAssignmentLike) {
-        // Assignment/Project/Practical: derive from assignmentConfig mappings
+        // Assignment/Project/Practical: CO max marks = allocated marks per CO from mappings
         const derived = {};
         (assignmentConfig || []).forEach(q => {
           (q.mappings || []).forEach(m => {

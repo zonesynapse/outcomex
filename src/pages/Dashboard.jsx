@@ -333,6 +333,36 @@ export default function Dashboard() {
     return options;
   };
 
+  const dragIndex = useRef(null);
+
+  const handleDragStart = (idx) => (e) => {
+    dragIndex.current = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx);
+    setTimeout(() => e.target.closest('tr').classList.add('opacity-50'), 0);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (idx) => (e) => {
+    e.preventDefault();
+    const fromIdx = dragIndex.current;
+    if (fromIdx === null || fromIdx === idx) return;
+    const newStudents = [...students];
+    const [moved] = newStudents.splice(fromIdx, 1);
+    newStudents.splice(idx, 0, moved);
+    setStudents(newStudents);
+    dragIndex.current = null;
+  };
+
+  const handleDragEnd = () => {
+    document.querySelectorAll('tr.opacity-50').forEach(el => el.classList.remove('opacity-50'));
+    dragIndex.current = null;
+  };
+
   const handleStudentChange = (index, field, value) => {
     const newStudents = [...students];
     newStudents[index][field] = value;
@@ -1792,7 +1822,15 @@ export default function Dashboard() {
                     </thead>
                     <tbody>
                       {students.map((student, idx) => (
-                        <tr key={idx} className="group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors">
+                        <tr
+                          key={idx}
+                          draggable={isEditing}
+                          onDragStart={isEditing ? handleDragStart(idx) : undefined}
+                          onDragOver={handleDragOver}
+                          onDrop={isEditing ? handleDrop(idx) : undefined}
+                          onDragEnd={handleDragEnd}
+                          className={`group border-b border-zinc-50 hover:bg-blue-50/30 transition-colors ${isEditing ? 'cursor-default' : ''}`}
+                        >
                           {isEditing && (
                             <td className="p-4 text-center">
                               <GripVertical className="text-zinc-300 cursor-grab active:cursor-grabbing" size={18} />

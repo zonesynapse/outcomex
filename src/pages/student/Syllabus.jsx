@@ -114,7 +114,7 @@ export default function Syllabus() {
       </div>
 
       {!syllabus ? (
-        <div className="bg-white rounded-[2.5rem] shadow-2xl p-20 text-center border border-slate-100">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <BookOpen size={48} className="mx-auto text-slate-200 mb-4" />
           <p className="text-lg font-bold text-slate-400">No syllabus data available.</p>
         </div>
@@ -136,7 +136,7 @@ export default function Syllabus() {
           </div>
 
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-            <div className="bg-[#120c7a] px-8 py-5">
+            <div className="bg-[#120c7a] px-4 md:px-8 py-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <Layers size={20} className="text-white" />
@@ -170,25 +170,25 @@ export default function Syllabus() {
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200">
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Code</th>
-                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Name</th>
-                        <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Credits</th>
-                        <th className="px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
+                        <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
+                        <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Code</th>
+                        <th className="px-3 md:px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject Name</th>
+                        <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Credits</th>
+                        <th className="px-3 md:px-6 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Type</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {currentSubjects.map((sub, idx) => (
                         <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
-                          <td className="px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
-                          <td className="px-6 py-4 text-sm font-bold text-slate-700 font-mono">{sub.code || '-'}</td>
-                          <td className="px-6 py-4 text-sm font-bold text-slate-700">{sub.name || '-'}</td>
-                          <td className="px-6 py-4 text-center">
+                          <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
+                          <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700 font-mono">{sub.code || '-'}</td>
+                          <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700">{sub.name || '-'}</td>
+                          <td className="px-3 md:px-6 py-4 text-center">
                             <span className="text-sm font-black text-[#120c7a] bg-blue-50 px-3 py-1 rounded-lg">
                               {sub.credits || 0}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-center">
+                          <td className="px-3 md:px-6 py-4 text-center">
                             <span className="text-[10px] font-bold px-3 py-1.5 rounded-full border bg-purple-50 text-purple-600 border-purple-200 uppercase">
                               {sub.type || 'Theory'}
                             </span>
