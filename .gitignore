@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Activity Module design docs
+CKCET_Activity_Registry.xlsx
+OutcomeX_Activity_Module_DeveloperBrief.docx
+OutcomeX_Activity_Compliance_Design_Document.docx
