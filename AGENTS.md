@@ -273,3 +273,11 @@
   - Timetable fetching, assigned subjects display, stats, and timetableGroups all use `visibleGroups`
   - QP context filtering (`isInAssignedContext`) still uses full `assignedGroups` list (all semesters)
   - No changes needed for `_` -> `u` or `\t` -> `t` or other unicode characters
+
+### 27. PrincipalDashboard Attendance quick action — department-wise absentee modal
+- **Problem**: Clicking Attendance in Quick Actions navigated to `/attendance` page instead of showing a summary.
+- **Fix**: Changed Attendance action from `href: "/attendance"` to `onClick: "attendanceModal"`. Quick action button rendering checks for `onClick` first (calls `openAttendanceModal()`), falls back to `navigate(href)`.
+- **Data flow**: `openAttendanceModal()` fetches ALL attendance docs via `getDocs(collection(db, 'attendance'))`, builds a `nameMap` from `approvedAdmissionsDocs` + `studentsList`, then for each attendance doc: parses dept from doc ID (progKey=2 segments, dept=segments between progKey and batch), filters to active batches only, checks each record for today's date, collects students with `hours === 0 || false`.
+- **Modal UI**: Date picker (defaults to today), department selector chips with absent counts, "All" view shows per-dept lists, single-dept view shows expanded grid. Each student card shows avatar initial, name, and regNo. Loading spinner and "No Absences Found" empty state.
+- **Doc ID parsing**: Attendance doc ID format is `{progKey}_{deptKey}_{batch}_{ay}_{sem}_{subjectCode}[_Sec-{section}]`. progKey is always 2 segments (e.g., `B_E`, `B_Tech`), so deptKey = `parts.slice(2, batchIdx).join('_')` where `batchIdx` is the index of `YYYY-YYYY`. This handles multi-word dept keys like `Computer_Science`.
+- **Active batch filter**: Only active semester batches are included (same as student strength).
