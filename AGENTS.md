@@ -281,3 +281,17 @@
 - **Modal UI**: Date picker (defaults to today), department selector chips with absent counts, "All" view shows per-dept lists, single-dept view shows expanded grid. Each student card shows avatar initial, name, and regNo. Loading spinner and "No Absences Found" empty state.
 - **Doc ID parsing**: Attendance doc ID format is `{progKey}_{deptKey}_{batch}_{ay}_{sem}_{subjectCode}[_Sec-{section}]`. progKey is always 2 segments (e.g., `B_E`, `B_Tech`), so deptKey = `parts.slice(2, batchIdx).join('_')` where `batchIdx` is the index of `YYYY-YYYY`. This handles multi-word dept keys like `Computer_Science`.
 - **Active batch filter**: Only active semester batches are included (same as student strength).
+
+### 28. Activity Module — NBA/NAAC Compliance Activity Management System
+- **Source**: CKCET_Activity_Registry.xlsx (53 activities), OutcomeX_Activity_Module_DeveloperBrief.docx, OutcomeX_Activity_Compliance_Design_Document.docx
+- **Structure**: Part A (21 Student Activities), Part B (9 Department Activities), Part C (13 Faculty Activities) — each with NBA/NAAC/NIRF criterion mapping, evidence requirements, and approval workflow
+- **Files created**:
+  - `src/data/activityRegistry.js` — Complete activity registry with fields, validation, evidence specs, multi-row support
+  - `src/pages/ActivityList.jsx` — Tabbed list (Student/Faculty/Dept), filters (batch, dept, section, status, activity code, search), stats cards, review modal with evidence preview, approve/reject/return actions, CSV export
+  - `src/pages/ActivityEntry.jsx` — Dynamic form per activity type, multi-row for internships/MOOCs/publications, evidence upload (PDF/JPG/PNG, 10MB, max 5), draft save & submit for approval, auto-fills user profile
+- **Firestore collections**: `activity_entries` (parent table), `notifications` (approval alerts)
+- **Routing**: `/activities` (list), `/activities/:code/new` (new entry), `/activities/:code/edit/:id` (edit)
+- **Layout integration**: New "Activity" module in sidebar with 6 items: Student Activities, Faculty Activities, Department Activities, Approval Queue, Monthly Reports, NBA Export
+- **Approval workflow**: Faculty submits → HOD reviews (approve/reject/return with comments) → auto-notification → IQAC consolidation
+- **NBA/NAAC mapping**: Each activity tagged with criterion codes (C1–C9, NAAC 1.1–7.2) for auto-extraction in reports
+- **Follows STEP module patterns**: Real-time listeners, role-based filters, status tabs, evidence preview, gradient headers, pixel-perfect Tailwind UI
