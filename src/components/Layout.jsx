@@ -110,7 +110,15 @@ const allPossibleItems = [
   { id: "inventory-request", icon: Send, label: "Request Item", path: "/inventory/request" },
   { id: "inventory-my-requests", icon: ClipboardList, label: "My Requests", path: "/inventory/my-requests" },
   { id: "inventory-approvals", icon: ClipboardCheck, label: "Request Approvals", path: "/inventory/approvals" },
-  { id: "inventory-fulfill", icon: PackageCheck, label: "Issue Items", path: "/inventory/fulfill" }
+  { id: "inventory-fulfill", icon: PackageCheck, label: "Issue Items", path: "/inventory/fulfill" },
+
+  // Activity Module
+  { id: "activity-student", icon: GraduationCap, label: "Student Activities (Part A)", path: "/activities" },
+  { id: "activity-faculty", icon: User, label: "Faculty Activities (Part C)", path: "/activities" },
+  { id: "activity-department", icon: Building2, label: "Department Activities (Part B)", path: "/activities" },
+  { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities" },
+  { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities" },
+  { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities" },
 ];
 
 const modules = [
@@ -180,6 +188,12 @@ const modules = [
     label: "Inventory",
     icon: Package,
     itemIds: ["inventory-dashboard", "inventory-items", "inventory-request", "inventory-my-requests", "inventory-approvals", "inventory-fulfill"]
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    icon: Award,
+    itemIds: ["activity-student", "activity-faculty", "activity-department", "activity-approval", "activity-reports", "activity-nba-export"]
   }
 ];
 

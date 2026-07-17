@@ -78,6 +78,10 @@ import InventoryMyRequests from "./pages/inventory/InventoryMyRequests";
 import InventoryApprovals from "./pages/inventory/InventoryApprovals";
 import InventoryFulfill from "./pages/inventory/InventoryFulfill";
 import StudentStepPoints from "./pages/student/StepPoints";
+import ActivityList from "./pages/ActivityList";
+import ActivityEntry from "./pages/ActivityEntry";
+import ActivityList from "./pages/ActivityList";
+import ActivityEntry from "./pages/ActivityEntry";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -182,6 +186,11 @@ export default function App() {
         <Route path="/inventory/my-requests" element={<ProtectedRoute><InventoryMyRequests /></ProtectedRoute>} />
         <Route path="/inventory/approvals" element={<ProtectedRoute><InventoryApprovals /></ProtectedRoute>} />
         <Route path="/inventory/fulfill" element={<ProtectedRoute><InventoryFulfill /></ProtectedRoute>} />
+
+        {/* Activity Module Routes */}
+        <Route path="/activities" element={<ProtectedRoute><ActivityList /></ProtectedRoute>} />
+        <Route path="/activities/:code/new" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />
+        <Route path="/activities/:code/edit/:id" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />
 
         {/* Placeholder Routes */}
         <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
