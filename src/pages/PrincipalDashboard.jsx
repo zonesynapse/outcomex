@@ -360,24 +360,22 @@ export default function PrincipalDashboard() {
     if (batchIdx < 1) return null;
     const batch = parts[batchIdx];
 
-    const knownProgKeys = [
-      'UG_B_Tech', 'UG_B_Tech_', 'UG_M_Tech', 'UG_M_Tech_',
-      'UG_B_E', 'UG_B_E_', 'UG_M_E', 'UG_M_E_',
-      'B_Tech', 'B_Tech_', 'M_Tech', 'M_Tech_',
-      'B_E', 'B_E_', 'M_E', 'M_E_'
-    ];
+    const knownProgKeys = ['UG_B_Tech', 'UG_M_Tech', 'UG_B_E', 'UG_M_E', 'B_Tech', 'M_Tech', 'B_E', 'M_E'];
+    const progDisplayMap = { B_E: 'B.E.', B_Tech: 'B.Tech.', M_E: 'M.E.', M_Tech: 'M.Tech.' };
     let progEndIdx = -1;
+    let progDisplay = '';
     for (const pk of knownProgKeys) {
       const pkParts = pk.split('_');
       if (parts.slice(0, pkParts.length).join('_') === pk) {
         progEndIdx = pkParts.length;
+        const baseKey = pk.replace(/^UG_/, '');
+        progDisplay = progDisplayMap[baseKey] || '';
         break;
       }
     }
     if (progEndIdx < 0) progEndIdx = 1;
-    const deptKey = parts.slice(progEndIdx, batchIdx).join('_').replace(/^_+|_+$/g, '').trim();
-    if (!deptKey) return null;
-    return { batch, deptKey };
+    const deptKey = parts.slice(progEndIdx, batchIdx).join('_').trim();
+    return { batch, deptKey, progDisplay };
   };
 
   const fetchAbsenteesForDate = async (date) => {
@@ -414,8 +412,9 @@ export default function PrincipalDashboard() {
 
           Object.entries(record.students || {}).forEach(([regNo, hours]) => {
             if (Number(hours) === 0 || hours === false) {
-              if (!absentees[parsed.deptKey]) absentees[parsed.deptKey] = {};
-              absentees[parsed.deptKey][regNo] = nameMap[regNo] || regNo;
+              const deptLabel = parsed.progDisplay ? `${parsed.progDisplay} ${parsed.deptKey}` : parsed.deptKey;
+              if (!absentees[deptLabel]) absentees[deptLabel] = {};
+              absentees[deptLabel][regNo] = nameMap[regNo] || regNo;
             }
           });
         });
