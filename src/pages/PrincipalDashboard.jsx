@@ -354,11 +354,27 @@ export default function PrincipalDashboard() {
 
   const closeDetailModal = () => setDetailModal({ open: false, enquiry: null });
 
-  const openAttendanceModal = async () => {
-    const today = new Date().toISOString().split('T')[0];
-    setAttendanceDate(today);
-    setAttendanceModal({ open: true });
-    setSelectedAbsentDept('All');
+  const parseAttendanceDocId = (docId) => {
+    const parts = docId.split('_');
+    const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+    if (batchIdx < 1) return null;
+    const batch = parts[batchIdx];
+
+    const knownProgKeys = ['UG_B_Tech', 'UG_M_Tech', 'UG_B_E', 'UG_M_E', 'B_Tech', 'M_Tech', 'B_E', 'M_E'];
+    let progEndIdx = -1;
+    for (const pk of knownProgKeys) {
+      const pkParts = pk.split('_');
+      if (parts.slice(0, pkParts.length).join('_') === pk) {
+        progEndIdx = pkParts.length;
+        break;
+      }
+    }
+    if (progEndIdx < 0) progEndIdx = 1;
+    const deptKey = parts.slice(progEndIdx, batchIdx).join('_').trim();
+    return { batch, deptKey };
+  };
+
+  const fetchAbsenteesForDate = async (date) => {
     setAbsenteesLoading(true);
     try {
       const snap = await getDocs(collection(db, 'attendance'));
@@ -380,29 +396,20 @@ export default function PrincipalDashboard() {
       });
 
       snap.forEach(docSnap => {
-        const docId = docSnap.id;
         const data = docSnap.data();
         if (!data?.records) return;
 
-        const parts = docId.split('_');
-        const batchMatch = docId.match(/(\d{4}-\d{4})/);
-        if (!batchMatch) return;
-        const batch = batchMatch[1];
-        if (!activeBatches.has(batch)) return;
-
-        const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-        if (batchIdx < 2) return;
-        const deptKey = parts.slice(2, batchIdx).join('_');
-        if (!deptKey) return;
+        const parsed = parseAttendanceDocId(docSnap.id);
+        if (!parsed || !activeBatches.has(parsed.batch)) return;
 
         Object.entries(data.records).forEach(([recordKey, record]) => {
           const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
-          if (datePart !== today) return;
+          if (datePart !== date) return;
 
           Object.entries(record.students || {}).forEach(([regNo, hours]) => {
             if (Number(hours) === 0 || hours === false) {
-              if (!absentees[deptKey]) absentees[deptKey] = {};
-              absentees[deptKey][regNo] = nameMap[regNo] || regNo;
+              if (!absentees[parsed.deptKey]) absentees[parsed.deptKey] = {};
+              absentees[parsed.deptKey][regNo] = nameMap[regNo] || regNo;
             }
           });
         });
@@ -410,10 +417,18 @@ export default function PrincipalDashboard() {
 
       setTodayAbsentees(absentees);
     } catch (err) {
-      console.error("Error fetching today's absentees:", err);
+      console.error("Error fetching absentees:", err);
     } finally {
       setAbsenteesLoading(false);
     }
+  };
+
+  const openAttendanceModal = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    setAttendanceDate(today);
+    setAttendanceModal({ open: true });
+    setSelectedAbsentDept('All');
+    await fetchAbsenteesForDate(today);
   };
 
   const handleConfirmReject = async () => {
@@ -1249,55 +1264,8 @@ export default function PrincipalDashboard() {
                   onChange={async (e) => {
                     const d = e.target.value;
                     setAttendanceDate(d);
-                    setAbsenteesLoading(true);
                     setSelectedAbsentDept('All');
-                    try {
-                      const snap = await getDocs(collection(db, 'attendance'));
-                      const absentees = {};
-                      const nameMap = {};
-                      approvedAdmissionsDocs.forEach(doc => {
-                        Object.entries(doc).forEach(([key, val]) => {
-                          if (key.startsWith('_') || key === 'id') return;
-                          if (typeof val === 'string' && val.trim()) nameMap[key] = val.trim();
-                        });
-                      });
-                      studentsList.forEach(doc => {
-                        Object.entries(doc).forEach(([key, val]) => {
-                          if (key.startsWith('_') || key === 'id') return;
-                          const name = typeof val === 'object' && val !== null ? (val.name || '') : String(val);
-                          if (name && name.trim()) nameMap[key] = name.trim();
-                        });
-                      });
-                      snap.forEach(docSnap => {
-                        const docId = docSnap.id;
-                        const data = docSnap.data();
-                        if (!data?.records) return;
-                        const parts = docId.split('_');
-                        const batchMatch2 = docId.match(/(\d{4}-\d{4})/);
-                        if (!batchMatch2) return;
-                        const batch = batchMatch2[1];
-                        if (!activeBatches.has(batch)) return;
-                        const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-                        if (batchIdx < 2) return;
-                        const deptKey = parts.slice(2, batchIdx).join('_');
-                        if (!deptKey) return;
-                        Object.entries(data.records).forEach(([recordKey, record]) => {
-                          const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
-                          if (datePart !== d) return;
-                          Object.entries(record.students || {}).forEach(([regNo, hours]) => {
-                            if (Number(hours) === 0 || hours === false) {
-                              if (!absentees[deptKey]) absentees[deptKey] = {};
-                              absentees[deptKey][regNo] = nameMap[regNo] || regNo;
-                            }
-                          });
-                        });
-                      });
-                      setTodayAbsentees(absentees);
-                    } catch (err) {
-                      console.error("Error fetching absentees:", err);
-                    } finally {
-                      setAbsenteesLoading(false);
-                    }
+                    await fetchAbsenteesForDate(d);
                   }}
                   className="ml-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100" />
               </label>
