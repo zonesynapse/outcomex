@@ -360,7 +360,12 @@ export default function PrincipalDashboard() {
     if (batchIdx < 1) return null;
     const batch = parts[batchIdx];
 
-    const knownProgKeys = ['UG_B_Tech', 'UG_M_Tech', 'UG_B_E', 'UG_M_E', 'B_Tech', 'M_Tech', 'B_E', 'M_E'];
+    const knownProgKeys = [
+      'UG_B_Tech', 'UG_B_Tech_', 'UG_M_Tech', 'UG_M_Tech_',
+      'UG_B_E', 'UG_B_E_', 'UG_M_E', 'UG_M_E_',
+      'B_Tech', 'B_Tech_', 'M_Tech', 'M_Tech_',
+      'B_E', 'B_E_', 'M_E', 'M_E_'
+    ];
     let progEndIdx = -1;
     for (const pk of knownProgKeys) {
       const pkParts = pk.split('_');
@@ -370,7 +375,8 @@ export default function PrincipalDashboard() {
       }
     }
     if (progEndIdx < 0) progEndIdx = 1;
-    const deptKey = parts.slice(progEndIdx, batchIdx).join('_').trim();
+    const deptKey = parts.slice(progEndIdx, batchIdx).join('_').replace(/^_+|_+$/g, '').trim();
+    if (!deptKey) return null;
     return { batch, deptKey };
   };
 
