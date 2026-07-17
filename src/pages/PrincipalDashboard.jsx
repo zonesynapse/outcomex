@@ -13,7 +13,7 @@ import AddEnquiryModal from "../components/AddEnquiryModal";
 import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
-import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc } from "firebase/firestore";
+import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils } from "../lib/utils";
 
 const sanitizeKey = (key) => {
@@ -58,6 +58,16 @@ export default function PrincipalDashboard() {
   const [bookCount, setBookCount] = useState(0);
   const [activeIssues, setActiveIssues] = useState(0);
   const [statsLoading, setStatsLoading] = useState(true);
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  const [approvedAdmissionsDocs, setApprovedAdmissionsDocs] = useState([]);
+  const [studentsList, setStudentsList] = useState([]);
+  const [strengthModal, setStrengthModal] = useState({ open: false });
+  const [selectedStrengthDept, setSelectedStrengthDept] = useState('All');
+  const [attendanceModal, setAttendanceModal] = useState({ open: false });
+  const [attendanceDate, setAttendanceDate] = useState('');
+  const [todayAbsentees, setTodayAbsentees] = useState({});
+  const [absenteesLoading, setAbsenteesLoading] = useState(false);
+  const [selectedAbsentDept, setSelectedAbsentDept] = useState('All');
 
   useEffect(() => {
     setLoading(true);
@@ -98,6 +108,43 @@ export default function PrincipalDashboard() {
     loadStats();
   }, []);
 
+  // Fetch semester configs
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
+      const configs = [];
+      snap.forEach(d => { configs.push({ id: d.id, ...d.data() }); });
+      setSemesterConfigs(configs);
+    });
+    return () => unsub();
+  }, []);
+
+  // Fetch approved_admissions (unassigned students by batch/prog/dept)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'approved_admissions'), (snap) => {
+      const docs = [];
+      snap.forEach(d => {
+        docs.push({ id: d.id, ...d.data() });
+      });
+      setApprovedAdmissionsDocs(docs);
+    });
+    return () => unsub();
+  }, []);
+
+  // Fetch all students (section-assigned)
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'students'));
+        const list = [];
+        snap.forEach(d => { list.push({ id: d.id, ...d.data() }); });
+        setStudentsList(list);
+      } catch (err) {
+        console.error("Error fetching students:", err);
+      }
+    };
+    fetchStudents();
+  }, []);
+
   const admissionItems = useMemo(() => applications.filter((e) => e.status === "Admission"), [applications]);
 
   const stats = useMemo(() => {
@@ -120,6 +167,98 @@ export default function PrincipalDashboard() {
   const departmentList = useMemo(() => {
     return Object.values(allDeptMap || {}).flat().sort((a, b) => a.localeCompare(b));
   }, [allDeptMap]);
+
+  const activeBatches = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const set = new Set();
+    semesterConfigs.forEach(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return;
+      const start = new Date(cfg.startDate + 'T00:00:00');
+      const end = new Date(cfg.endDate + 'T00:00:00');
+      if (today < start || today > end) return;
+      const batches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+      batches.forEach(b => set.add(b));
+    });
+    return set;
+  }, [semesterConfigs]);
+
+  const deptBatchStrength = useMemo(() => {
+    if (activeBatches.size === 0) return {};
+
+    // department -> batch -> { approved, assigned, total }
+    const deptMap = {};
+
+    const ensureDept = (dept, batch) => {
+      if (!deptMap[dept]) deptMap[dept] = {};
+      if (!deptMap[dept][batch]) deptMap[dept][batch] = { batch, approved: 0, assigned: 0, total: 0 };
+    };
+
+    const parseDocId = (docId) => {
+      // Format: {batch}_{progKey}_{deptKey}[_section]
+      // batch is always YYYY-YYYY format
+      const batchMatch = docId.match(/(\d{4}-\d{4})/);
+      const batch = batchMatch ? batchMatch[1] : '';
+      // dept is last segment (before optional Sec- section suffix)
+      const parts = docId.split('_');
+      let dept = '';
+      if (parts.length > 1) {
+        const lastPart = parts[parts.length - 1];
+        // If last part is a section suffix like Sec-A, use second-to-last
+        if (/^Sec-/i.test(lastPart) && parts.length > 2) {
+          dept = parts[parts.length - 2];
+        } else {
+          dept = lastPart;
+        }
+      }
+      return { batch, dept };
+    };
+
+    // approved_admissions: each doc = {batch}_{progKey}_{deptKey}, data = { [regNo]: name, _order: [...] }
+    approvedAdmissionsDocs.forEach(d => {
+      const { batch, dept } = parseDocId(d.id || '');
+      if (!batch || !dept || !activeBatches.has(batch)) return;
+      ensureDept(dept, batch);
+      // Count student entries (skip meta fields and the synthetic 'id' field)
+      Object.entries(d).forEach(([key, val]) => {
+        if (key.startsWith('_') || key === 'id') return;
+        if (typeof val === 'string' && val.trim()) {
+          deptMap[dept][batch].approved++;
+          deptMap[dept][batch].total++;
+        }
+      });
+    });
+
+    // students collection: each doc = {batch}_{progKey}_{deptKey}[_section], data = { [regNo]: name or {name}, _meta? }
+    studentsList.forEach(d => {
+      const { batch, dept } = parseDocId(d.id || '');
+      if (!batch || !dept || !activeBatches.has(batch)) return;
+      ensureDept(dept, batch);
+      // Count student entries (skip meta fields and the synthetic 'id' field)
+      Object.entries(d).forEach(([key, val]) => {
+        if (key.startsWith('_') || key === 'id') return;
+        const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
+        if (name && typeof name === 'string') {
+          deptMap[dept][batch].assigned++;
+          deptMap[dept][batch].total++;
+        }
+      });
+    });
+
+    return deptMap;
+  }, [activeBatches, approvedAdmissionsDocs, studentsList]);
+
+  const totalStrength = useMemo(() => {
+    let total = 0;
+    Object.values(deptBatchStrength).forEach(batchMap => {
+      Object.values(batchMap).forEach(b => { total += b.total; });
+    });
+    return total;
+  }, [deptBatchStrength]);
+
+  const departmentsWithData = useMemo(() => {
+    return Object.keys(deptBatchStrength).sort();
+  }, [deptBatchStrength]);
 
   const openViewModal = async (app) => {
     setViewModal({ open: true, enquiry: app, loading: true });
@@ -215,6 +354,68 @@ export default function PrincipalDashboard() {
 
   const closeDetailModal = () => setDetailModal({ open: false, enquiry: null });
 
+  const openAttendanceModal = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    setAttendanceDate(today);
+    setAttendanceModal({ open: true });
+    setSelectedAbsentDept('All');
+    setAbsenteesLoading(true);
+    try {
+      const snap = await getDocs(collection(db, 'attendance'));
+      const absentees = {};
+      const nameMap = {};
+
+      approvedAdmissionsDocs.forEach(d => {
+        Object.entries(d).forEach(([key, val]) => {
+          if (key.startsWith('_') || key === 'id') return;
+          if (typeof val === 'string' && val.trim()) nameMap[key] = val.trim();
+        });
+      });
+      studentsList.forEach(d => {
+        Object.entries(d).forEach(([key, val]) => {
+          if (key.startsWith('_') || key === 'id') return;
+          const name = typeof val === 'object' && val !== null ? (val.name || '') : String(val);
+          if (name && name.trim()) nameMap[key] = name.trim();
+        });
+      });
+
+      snap.forEach(docSnap => {
+        const docId = docSnap.id;
+        const data = docSnap.data();
+        if (!data?.records) return;
+
+        const parts = docId.split('_');
+        const batchMatch = docId.match(/(\d{4}-\d{4})/);
+        if (!batchMatch) return;
+        const batch = batchMatch[1];
+        if (!activeBatches.has(batch)) return;
+
+        const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+        if (batchIdx < 2) return;
+        const deptKey = parts.slice(2, batchIdx).join('_');
+        if (!deptKey) return;
+
+        Object.entries(data.records).forEach(([recordKey, record]) => {
+          const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
+          if (datePart !== today) return;
+
+          Object.entries(record.students || {}).forEach(([regNo, hours]) => {
+            if (Number(hours) === 0 || hours === false) {
+              if (!absentees[deptKey]) absentees[deptKey] = {};
+              absentees[deptKey][regNo] = nameMap[regNo] || regNo;
+            }
+          });
+        });
+      });
+
+      setTodayAbsentees(absentees);
+    } catch (err) {
+      console.error("Error fetching today's absentees:", err);
+    } finally {
+      setAbsenteesLoading(false);
+    }
+  };
+
   const handleConfirmReject = async () => {
     const app = rejectModal.enquiry;
     if (!app?.enquiryId) return;
@@ -235,7 +436,7 @@ export default function PrincipalDashboard() {
   const dateStr = today.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   const kpiCards = [
-    { key: "students", label: "Total Students", value: studentCount, icon: GraduationCap, color: "blue", href: "/course-enrolment", format: (v) => v.toLocaleString() },
+    { key: "students", label: "Student Strength", value: totalStrength, icon: GraduationCap, color: "blue", href: null, onClick: "strengthModal", format: (v) => v.toLocaleString() },
     { key: "pending", label: "Admission Pending Approvals", value: stats.admission, icon: Clock, color: "amber", href: null, onClick: "pendingPopup", format: (v) => String(v) },
     { key: "enquiries", label: "Total Enquiries", value: stats.total, icon: FileText, color: "indigo", href: "/admissions/enquiries", format: (v) => v.toLocaleString() },
     { key: "placed", label: "Students Placed", value: placedCount, icon: Briefcase, color: "emerald", href: "/placement/dashboard", format: (v) => v.toLocaleString() },
@@ -257,7 +458,7 @@ export default function PrincipalDashboard() {
     { label: "Fee Dashboard", icon: DollarSign, desc: "Fee collection & reports", href: "/fee/dashboard", color: "bg-violet-500" },
     { label: "Placement Overview", icon: Briefcase, desc: "Drives, offers & placements", href: "/placement/dashboard", color: "bg-blue-500" },
     { label: "Library", icon: Library, desc: "Catalog, circulation & reports", href: "/library/catalog", color: "bg-amber-500" },
-    { label: "Attendance", icon: Activity, desc: "Daily & overall attendance", href: "/attendance", color: "bg-rose-500" },
+    { label: "Attendance", icon: Activity, desc: "Daily & overall attendance", color: "bg-rose-500", onClick: "attendanceModal" },
     { label: "Course Enrolment", icon: BookOpen, desc: "Student course registration", href: "/course-enrolment", color: "bg-cyan-500" },
     { label: "Academic Calendar", icon: Calendar, desc: "Events & holidays", href: "/academic-calendar", color: "bg-orange-500" },
     { label: "Marks Entry", icon: Award, desc: "Internal assessment marks", href: "/markk", color: "bg-teal-500" },
@@ -363,6 +564,7 @@ export default function PrincipalDashboard() {
               const navHref = kpi.href;
               const handleClick = () => {
                 if (kpi.onClick === "pendingPopup") openPendingPopup();
+                else if (kpi.onClick === "strengthModal") setStrengthModal({ open: true });
                 else if (navHref) navigate(navHref);
               };
               const clickable = !!(navHref || kpi.onClick);
@@ -402,7 +604,10 @@ export default function PrincipalDashboard() {
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
               {quickActions.map((action) => (
                 <button key={action.label}
-                  onClick={() => navigate(action.href)}
+                  onClick={() => {
+                    if (action.onClick === 'attendanceModal') openAttendanceModal();
+                    else if (action.href) navigate(action.href);
+                  }}
                   className="group bg-white rounded-2xl border border-zinc-200 p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-center"
                 >
                   <div className={`w-10 h-10 rounded-xl ${action.color} flex items-center justify-center mx-auto mb-2 shadow-sm group-hover:scale-110 transition-transform duration-200`}>
@@ -861,6 +1066,351 @@ export default function PrincipalDashboard() {
                   <XCircle size={16} /> Reject
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Strength Modal */}
+      {strengthModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setStrengthModal({ open: false })}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl animate-in zoom-in-95 duration-200 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-100 text-blue-600">
+                  <GraduationCap size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-zinc-800">Student Strength by Department</h3>
+                  <p className="text-[11px] text-zinc-500">{totalStrength.toLocaleString()} total students across {departmentsWithData.length} departments</p>
+                </div>
+              </div>
+              <button onClick={() => setStrengthModal({ open: false })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              {departmentsWithData.length === 0 ? (
+                <p className="text-xs text-zinc-400 italic text-center py-12">No student data available for active semesters</p>
+              ) : (
+                <div className="space-y-6">
+                  {/* Department selector */}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setSelectedStrengthDept('All')}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                        selectedStrengthDept === 'All'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                      }`}
+                    >
+                      All ({departmentsWithData.length})
+                    </button>
+                    {departmentsWithData.map(dept => (
+                      <button
+                        key={dept}
+                        onClick={() => setSelectedStrengthDept(dept)}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                          selectedStrengthDept === dept
+                            ? 'bg-indigo-600 text-white shadow-md'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                        }`}
+                      >
+                        {dept}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Chart */}
+                  {(() => {
+                    if (selectedStrengthDept === 'All') {
+                      // Comparative chart: one bar per department (total)
+                      const deptTotals = departmentsWithData.map(dept => {
+                        const total = Object.values(deptBatchStrength[dept]).reduce((s, b) => s + b.total, 0);
+                        return { dept, total };
+                      });
+                      const maxVal = Math.max(...deptTotals.map(d => d.total), 1);
+                      const MAX_BAR_H = 160;
+                      const barColors = ['bg-indigo-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500', 'bg-blue-500', 'bg-orange-500'];
+                      const borderColors = ['border-indigo-600', 'border-emerald-600', 'border-violet-600', 'border-amber-600', 'border-rose-600', 'border-cyan-600', 'border-blue-600', 'border-orange-600'];
+                      return (
+                        <div>
+                          <p className="text-[11px] font-bold text-zinc-500 mb-3 uppercase tracking-wider">Comparative — Total per Department</p>
+                          <div className="bg-zinc-50 rounded-xl p-5 border border-zinc-100">
+                            <div className="flex items-end justify-around gap-2" style={{ height: `${MAX_BAR_H + 52}px` }}>
+                              {deptTotals.map((d, i) => {
+                                const barH = Math.max((d.total / maxVal) * MAX_BAR_H, 6);
+                                return (
+                                  <div key={d.dept} className="flex flex-col items-center flex-1 min-w-0">
+                                    <span className="text-lg font-black text-zinc-800 mb-1">{d.total}</span>
+                                    <div
+                                      className={`w-full max-w-[48px] rounded-t-xl ${barColors[i % barColors.length]} border-b-4 ${borderColors[i % borderColors.length]} shadow-md`}
+                                      style={{ height: `${barH}px` }}
+                                      title={d.dept}
+                                    />
+                                    <span className="text-[9px] font-bold text-zinc-500 text-center leading-tight mt-2 truncate w-full">{d.dept}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {/* Per-department summary cards */}
+                          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {deptTotals.map(d => (
+                              <div key={d.dept} className="flex items-center justify-between p-3 bg-white rounded-xl border border-zinc-100">
+                                <p className="text-[11px] font-bold text-zinc-700">{d.dept}</p>
+                                <p className="text-base font-black text-indigo-700">{d.total}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      // Selected department: batch-wise chart
+                      const deptData = deptBatchStrength[selectedStrengthDept];
+                      if (!deptData) return <p className="text-xs text-zinc-400 italic text-center py-8">No data for this department</p>;
+                      const batchArr = Object.values(deptData).sort((a, b) => a.batch.localeCompare(b.batch));
+                      const maxVal = Math.max(...batchArr.map(b => b.total), 1);
+                      const MAX_BAR_H = 160;
+                      const barColors = ['bg-indigo-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500'];
+                      const borderColors = ['border-indigo-600', 'border-emerald-600', 'border-violet-600', 'border-amber-600', 'border-rose-600', 'border-cyan-600'];
+                      return (
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Batch-wise — {selectedStrengthDept}</p>
+                            <p className="text-lg font-black text-indigo-700">{batchArr.reduce((s, b) => s + b.total, 0)}</p>
+                          </div>
+                          <div className="bg-zinc-50 rounded-xl p-5 border border-zinc-100">
+                            <div className="flex items-end justify-around gap-3" style={{ height: `${MAX_BAR_H + 52}px` }}>
+                              {batchArr.map((b, i) => {
+                                const barH = Math.max((b.total / maxVal) * MAX_BAR_H, 6);
+                                return (
+                                  <div key={b.batch} className="flex flex-col items-center flex-1 min-w-0">
+                                    <span className="text-lg font-black text-zinc-800 mb-1">{b.total}</span>
+                                    <div
+                                      className={`w-full max-w-[56px] rounded-t-xl ${barColors[i % barColors.length]} border-b-4 ${borderColors[i % borderColors.length]} shadow-md`}
+                                      style={{ height: `${barH}px` }}
+                                    />
+                                    <span className="text-[10px] font-bold text-zinc-600 text-center leading-tight mt-2">{b.batch}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {/* Per-batch summary */}
+                          <div className="mt-4 space-y-2">
+                            {batchArr.map(b => (
+                              <div key={b.batch} className="flex items-center justify-between p-3 bg-white rounded-xl border border-zinc-100">
+                                <div>
+                                  <p className="text-sm font-bold text-zinc-800">{b.batch}</p>
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-[11px] text-emerald-600 font-semibold">{b.assigned} assigned</span>
+                                    <span className="text-[11px] text-amber-600 font-semibold">{b.approved} unassigned</span>
+                                  </div>
+                                </div>
+                                <p className="text-2xl font-black text-indigo-700">{b.total}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                  })()}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Attendance Absentees Modal */}
+      {attendanceModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setAttendanceModal({ open: false })}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl animate-in zoom-in-95 duration-200 max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-rose-100 text-rose-600">
+                  <Activity size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-zinc-800">Today's Absentees</h3>
+                  <p className="text-[11px] text-zinc-500">
+                    {attendanceDate
+                      ? new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                      : '-'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setAttendanceModal({ open: false })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-zinc-50 shrink-0">
+              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-500">
+                <Calendar size={14} />
+                Date
+                <input type="date" value={attendanceDate}
+                  onChange={async (e) => {
+                    const d = e.target.value;
+                    setAttendanceDate(d);
+                    setAbsenteesLoading(true);
+                    setSelectedAbsentDept('All');
+                    try {
+                      const snap = await getDocs(collection(db, 'attendance'));
+                      const absentees = {};
+                      const nameMap = {};
+                      approvedAdmissionsDocs.forEach(doc => {
+                        Object.entries(doc).forEach(([key, val]) => {
+                          if (key.startsWith('_') || key === 'id') return;
+                          if (typeof val === 'string' && val.trim()) nameMap[key] = val.trim();
+                        });
+                      });
+                      studentsList.forEach(doc => {
+                        Object.entries(doc).forEach(([key, val]) => {
+                          if (key.startsWith('_') || key === 'id') return;
+                          const name = typeof val === 'object' && val !== null ? (val.name || '') : String(val);
+                          if (name && name.trim()) nameMap[key] = name.trim();
+                        });
+                      });
+                      snap.forEach(docSnap => {
+                        const docId = docSnap.id;
+                        const data = docSnap.data();
+                        if (!data?.records) return;
+                        const parts = docId.split('_');
+                        const batchMatch2 = docId.match(/(\d{4}-\d{4})/);
+                        if (!batchMatch2) return;
+                        const batch = batchMatch2[1];
+                        if (!activeBatches.has(batch)) return;
+                        const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+                        if (batchIdx < 2) return;
+                        const deptKey = parts.slice(2, batchIdx).join('_');
+                        if (!deptKey) return;
+                        Object.entries(data.records).forEach(([recordKey, record]) => {
+                          const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
+                          if (datePart !== d) return;
+                          Object.entries(record.students || {}).forEach(([regNo, hours]) => {
+                            if (Number(hours) === 0 || hours === false) {
+                              if (!absentees[deptKey]) absentees[deptKey] = {};
+                              absentees[deptKey][regNo] = nameMap[regNo] || regNo;
+                            }
+                          });
+                        });
+                      });
+                      setTodayAbsentees(absentees);
+                    } catch (err) {
+                      console.error("Error fetching absentees:", err);
+                    } finally {
+                      setAbsenteesLoading(false);
+                    }
+                  }}
+                  className="ml-1 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100" />
+              </label>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              {absenteesLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="w-8 h-8 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : Object.keys(todayAbsentees).length === 0 ? (
+                <div className="text-center py-16">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
+                    <CheckCircle2 size={28} />
+                  </div>
+                  <p className="text-base font-bold text-zinc-800">No Absences Found</p>
+                  <p className="text-xs text-zinc-500 mt-1">All students marked present on this date.</p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Department selector */}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setSelectedAbsentDept('All')}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                        selectedAbsentDept === 'All'
+                          ? 'bg-rose-600 text-white shadow-md'
+                          : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                      }`}
+                    >
+                      All ({Object.values(todayAbsentees).reduce((s, v) => s + Object.keys(v).length, 0)})
+                    </button>
+                    {Object.keys(todayAbsentees).sort().map(dept => (
+                      <button
+                        key={dept}
+                        onClick={() => setSelectedAbsentDept(dept)}
+                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                          selectedAbsentDept === dept
+                            ? 'bg-rose-600 text-white shadow-md'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                        }`}
+                      >
+                        {dept} ({Object.keys(todayAbsentees[dept]).length})
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Absentee list */}
+                  {(() => {
+                    if (selectedAbsentDept === 'All') {
+                      const depts = Object.keys(todayAbsentees).sort();
+                      return depts.map(dept => {
+                        const students = Object.entries(todayAbsentees[dept]);
+                        return (
+                          <div key={dept}>
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-sm font-bold text-zinc-800">{dept}</h4>
+                              <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg">{students.length} absent</span>
+                            </div>
+                            <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-3 max-h-48 overflow-y-auto">
+                              {students.length === 0 ? (
+                                <p className="text-xs text-zinc-400 italic">No absentees</p>
+                              ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                  {students.map(([regNo, name]) => (
+                                    <div key={regNo} className="flex items-center gap-2 px-2.5 py-1.5 bg-white rounded-lg border border-zinc-100 text-xs">
+                                      <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-[9px] font-bold shrink-0">
+                                        {(String(name || regNo).charAt(0) || '?').toUpperCase()}
+                                      </span>
+                                      <span className="font-semibold text-zinc-700 truncate">{String(name)}</span>
+                                      {name !== regNo && (
+                                        <span className="text-[10px] text-zinc-400 truncate shrink-0">({regNo})</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+                    } else {
+                      const students = Object.entries(todayAbsentees[selectedAbsentDept] || {});
+                      return (
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-bold text-zinc-800">{selectedAbsentDept}</h4>
+                            <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg">{students.length} absent</span>
+                          </div>
+                          {students.length === 0 ? (
+                            <p className="text-xs text-zinc-400 italic py-8 text-center">No absentees</p>
+                          ) : (
+                            <div className="bg-zinc-50 rounded-xl border border-zinc-100 p-3 max-h-96 overflow-y-auto">
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                {students.map(([regNo, name]) => (
+                                  <div key={regNo} className="flex items-center gap-2 px-2.5 py-1.5 bg-white rounded-lg border border-zinc-100 text-xs">
+                                    <span className="w-5 h-5 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center text-[9px] font-bold shrink-0">
+                                      {(String(name || regNo).charAt(0) || '?').toUpperCase()}
+                                    </span>
+                                    <span className="font-semibold text-zinc-700 truncate">{String(name)}</span>
+                                    {name !== regNo && (
+                                      <span className="text-[10px] text-zinc-400 truncate shrink-0">({regNo})</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         </div>

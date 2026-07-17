@@ -78,6 +78,12 @@ export default function Attendance() {
 
   const [timetableConfig, setTimetableConfig] = useState(null);
   const [availablePeriodsWithTiming, setAvailablePeriodsWithTiming] = useState([]);
+  // Real-time clock for period locking
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   // Get current user identity
   useEffect(() => {
@@ -352,6 +358,27 @@ export default function Attendance() {
     }
     return t;
   }, []);
+
+  const lockedPeriods = useMemo(() => {
+    if (!timetableConfig || !attendanceDate) return new Set();
+    const locked = new Set();
+    const today = attendanceDate === new Date().toISOString().split('T')[0];
+    if (!today) return locked;
+    const periodsPerDay = parseInt(timetableConfig.periodsPerDay, 10) || 0;
+    for (let i = 1; i <= periodsPerDay; i++) {
+      const start = computePeriodStart(i, timetableConfig);
+      if (!start) continue;
+      const periodStartToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), start.getHours(), start.getMinutes(), 0);
+      if (periodStartToday > now) locked.add(String(i));
+    }
+    if (attendanceData?.records) {
+      const todayPrefix = `${attendanceDate}_P`;
+      locked.forEach(pVal => {
+        if (attendanceData.records[`${todayPrefix}${pVal}`]) locked.delete(pVal);
+      });
+    }
+    return locked;
+  }, [timetableConfig, attendanceDate, now, computePeriodStart, attendanceData]);
 
   useEffect(() => {
     const fetchTimetableConfig = async () => {
@@ -940,7 +967,7 @@ export default function Attendance() {
                     className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
                   >
                     <option value="">Select Period</option>
-                    {availablePeriodsWithTiming.map(p => (
+                    {availablePeriodsWithTiming.filter(p => !lockedPeriods.has(p.value) || p.value === period).map(p => (
                       <option key={p.value} value={p.value}>{p.label}</option>
                     ))}
                   </select>

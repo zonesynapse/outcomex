@@ -88,6 +88,8 @@ export default function HODDashboard() {
   const [filterBatch, setFilterBatch] = useState("");
   const [filterSemester, setFilterSemester] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [batchStrengthModal, setBatchStrengthModal] = useState({ open: false });
+  const [sectionStudents, setSectionStudents] = useState([]);
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -184,20 +186,37 @@ export default function HODDashboard() {
       return;
     }
     setStudentsLoading(true);
-    const deptKeySpace = bsKey(hodDepartment);
-    const deptKeyNoSpace = sanitizeKey(hodDepartment);
+    const hodNorm = sanitizeKey(hodDepartment).toLowerCase().replace(/[_ ]+/g, '');
     const unsub = onSnapshot(
       collection(db, 'approved_admissions'),
       (snap) => {
         const all = [];
         snap.forEach(docSnap => {
           const docId = docSnap.id;
-          if (!docId.endsWith(`_${deptKeySpace}`) && !docId.endsWith(`_${deptKeyNoSpace}`)) return;
           const data = docSnap.data();
+          // 1) Try _meta.department first
+          let deptMatch = false;
+          if (data._meta?.department) {
+            const metaDept = sanitizeKey(data._meta.department).toLowerCase().replace(/[_ ]+/g, '');
+            deptMatch = metaDept === hodNorm || metaDept.includes(hodNorm) || hodNorm.includes(metaDept);
+          }
+          // 2) Fall back to doc ID: last segment before end is deptKey
+          if (!deptMatch) {
+            const parts = docId.split('_');
+            if (parts.length > 1) {
+              const lastPart = parts[parts.length - 1].toLowerCase();
+              deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
+            }
+          }
+          if (!deptMatch) return;
+
+          // Extract batch from doc ID (first segment with dash)
+          let batch = "";
+          const batchMatch = docId.match(/(\d{4}-\d{4})/);
+          if (batchMatch) batch = batchMatch[1];
+
           Object.entries(data).forEach(([key, val]) => {
             if (key === '_order' || key.startsWith('_')) return;
-            const parts = docId.split('_');
-            const batch = parts[0] || "";
             all.push({ reg: key, name: val, batch, docId });
           });
         });
@@ -225,6 +244,62 @@ export default function HODDashboard() {
     }, () => setAllStudentNames({}));
     return () => unsub();
   }, []);
+
+  // Fetch section-assigned students per batch for this dept
+  useEffect(() => {
+    if (!hodDepartment) { setSectionStudents([]); return; }
+    const hodNorm = sanitizeKey(hodDepartment).toLowerCase().replace(/[_ ]+/g, '');
+    const unsub = onSnapshot(collection(db, 'students'), (snap) => {
+      const list = [];
+      snap.forEach(docSnap => {
+        const docId = docSnap.id;
+        const data = docSnap.data();
+        // 1) Try _meta.department first (most reliable)
+        let deptMatch = false;
+        if (data._meta?.department) {
+          const metaDept = sanitizeKey(data._meta.department).toLowerCase().replace(/[_ ]+/g, '');
+          deptMatch = metaDept === hodNorm || metaDept.includes(hodNorm) || hodNorm.includes(metaDept);
+        }
+        // 2) Fall back to doc ID parsing: {batch}_{progKey}_{deptKey}[_section]
+        if (!deptMatch) {
+          const parts = docId.split('_');
+          // Find batch (contains a dash like 2024-2028)
+          const batchIdx = parts.findIndex(p => /\d{4}-\d{4}/.test(p));
+          if (batchIdx >= 0) {
+            // deptKey is the part right before the batch or after progKey
+            // But since progKey can be multi-part (B_Tech), dept is the last part before batch
+            // Actually in {batch}_{progKey}_{deptKey}, batch is FIRST
+            // So: parts[0] = batch, rest is {progKey}_{deptKey}[_section]
+            // deptKey = second-to-last segment (or last if no section)
+            const afterBatch = parts.slice(1);
+            // Remove section suffix if present (last part starts with Sec-)
+            const coreParts = afterBatch.length > 0 && afterBatch[afterBatch.length - 1].match(/^Sec-/)
+              ? afterBatch.slice(0, -1)
+              : afterBatch;
+            // deptKey is the last part of core
+            if (coreParts.length > 0) {
+              const lastPart = coreParts[coreParts.length - 1].toLowerCase();
+              deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
+            }
+          }
+        }
+        if (!deptMatch) return;
+
+        // Extract batch from doc ID
+        let batch = "";
+        const batchMatch = docId.match(/(\d{4}-\d{4})/);
+        if (batchMatch) batch = batchMatch[1];
+
+        Object.entries(data).forEach(([key, val]) => {
+          if (key.startsWith('_')) return;
+          const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
+          if (name && typeof name === 'string') list.push({ reg: key, name, batch, docId });
+        });
+      });
+      setSectionStudents(list);
+    }, () => setSectionStudents([]));
+    return () => unsub();
+  }, [hodDepartment]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
@@ -432,6 +507,39 @@ export default function HODDashboard() {
   const availablePeriods = useMemo(() => Array.from({ length: 8 }, (_, i) => String(i + 1)), []);
 
   const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
+
+  const batchStrength = useMemo(() => {
+    // Only include batches that have an ACTIVE semester_config (today within startDate→endDate)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const activeBatches = new Set();
+    semesterConfigs.forEach(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return;
+      const start = new Date(cfg.startDate + 'T00:00:00');
+      const end = new Date(cfg.endDate + 'T00:00:00');
+      if (today < start || today > end) return; // skip expired/future configs
+      const batches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+      batches.forEach(b => activeBatches.add(b));
+    });
+    if (activeBatches.size === 0) return [];
+
+    const counts = {};
+    // Approved (not yet section-assigned)
+    approvedStudentsList.forEach(s => {
+      if (!activeBatches.has(s.batch)) return;
+      if (!counts[s.batch]) counts[s.batch] = { batch: s.batch, approved: 0, sectionAssigned: 0, total: 0 };
+      counts[s.batch].approved++;
+      counts[s.batch].total++;
+    });
+    // Already section-assigned
+    sectionStudents.forEach(s => {
+      if (!activeBatches.has(s.batch)) return;
+      if (!counts[s.batch]) counts[s.batch] = { batch: s.batch, approved: 0, sectionAssigned: 0, total: 0 };
+      counts[s.batch].sectionAssigned++;
+      counts[s.batch].total++;
+    });
+    return Object.values(counts).sort((a, b) => a.batch.localeCompare(b.batch));
+  }, [approvedStudentsList, sectionStudents, semesterConfigs]);
 
   const studentNamesMap = useMemo(() => {
     const map = {};
@@ -707,7 +815,8 @@ export default function HODDashboard() {
   }, []);
 
   const statsCards = [
-    { key: "pending", label: "Section Allotment", value: approvedStudentsList.length, icon: Users, color: "amber", onClick: () => setSectionAllotmentPopup({ open: true }) },
+    { key: "sectionAllotment", label: "Section Allotment", value: approvedStudentsList.length, icon: Users, color: "amber", onClick: () => setSectionAllotmentPopup({ open: true }) },
+    { key: "studentStrength", label: "Student Strength", value: Object.values(batchStrength).reduce((s, b) => s + b.total, 0) || approvedStudentsList.length, icon: GraduationCap, color: "blue", onClick: () => setBatchStrengthModal({ open: true }) },
     { key: "today", label: "Reviewed Today", value: reviewedToday, icon: TrendingUp, color: "emerald" },
     { key: "week", label: "This Week", value: reviewedThisWeek, icon: BarChart3, color: "violet" },
     { key: "total", label: "Total QP Tasks", value: tasks.length + reviewedThisWeek, icon: BookOpen, color: "indigo" },
@@ -777,7 +886,7 @@ export default function HODDashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 mb-8">
           {statsCards.map((s) => {
             const c = colorMap[s.color];
             const Icon = s.icon;
@@ -1339,6 +1448,73 @@ export default function HODDashboard() {
                 className="px-4 py-2 rounded-xl bg-zinc-200 text-zinc-700 text-xs font-bold hover:bg-zinc-300 transition-all active:scale-95">
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Strength Modal */}
+      {batchStrengthModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setBatchStrengthModal({ open: false })}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-100 text-blue-600">
+                  <GraduationCap size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-zinc-800">Student Strength</h3>
+                  <p className="text-[11px] text-zinc-500">{hodDepartment}</p>
+                </div>
+              </div>
+              <button onClick={() => setBatchStrengthModal({ open: false })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <div className="p-5 max-h-[65vh] overflow-y-auto">
+              {batchStrength.length === 0 ? (
+                <p className="text-xs text-zinc-400 italic text-center py-8">No student data available</p>
+              ) : (
+                <div>
+                  {/* Total summary */}
+                  <div className="text-center mb-5">
+                    <p className="text-4xl font-black text-indigo-700">{batchStrength.reduce((s, b) => s + b.total, 0)}</p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">Total Students</p>
+                    <div className="flex items-center justify-center gap-4 mt-2">
+                      <span className="text-[11px] font-bold text-emerald-600">{batchStrength.reduce((s, b) => s + b.sectionAssigned, 0)} assigned</span>
+                      <span className="text-[11px] font-bold text-amber-600">{batchStrength.reduce((s, b) => s + b.approved, 0)} unassigned</span>
+                    </div>
+                  </div>
+
+                  {/* Chart */}
+                  {(() => {
+                    const maxVal = Math.max(...batchStrength.map(b => b.total), 1);
+                    const MAX_BAR_H = 140;
+                    const barColors = ['bg-indigo-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500'];
+                    const borderColors = ['border-indigo-600', 'border-emerald-600', 'border-violet-600', 'border-amber-600', 'border-rose-600', 'border-cyan-600'];
+                    return (
+                      <div className="bg-zinc-50 rounded-xl p-4 border border-zinc-100">
+                        <div className="flex items-end justify-around gap-3" style={{ height: `${MAX_BAR_H + 52}px` }}>
+                          {batchStrength.map((b, i) => {
+                            const barH = Math.max((b.total / maxVal) * MAX_BAR_H, 6);
+                            return (
+                              <div key={b.batch} className="flex flex-col items-center flex-1 min-w-0">
+                                <span className="text-lg font-black text-zinc-800 mb-1">{b.total}</span>
+                                <div
+                                  className={`w-full max-w-[56px] rounded-t-xl ${barColors[i % barColors.length]} border-b-4 ${borderColors[i % borderColors.length]} shadow-md`}
+                                  style={{ height: `${barH}px` }}
+                                />
+                                <span className="text-[10px] font-bold text-zinc-600 text-center leading-tight mt-2">{b.batch}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-zinc-100 text-right">
+              <button onClick={() => setBatchStrengthModal({ open: false })} className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-xs font-bold text-zinc-700 rounded-xl transition">Close</button>
             </div>
           </div>
         </div>
