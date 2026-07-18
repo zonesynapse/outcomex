@@ -69,6 +69,7 @@ export default function HODDashboard() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const [hodDepartment, setHodDepartment] = useState("");
+  const [hodProgramme, setHodProgramme] = useState("");
   const [deptMetadata, setDeptMetadata] = useState({});
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
   const [allStudentNames, setAllStudentNames] = useState({});
@@ -83,6 +84,7 @@ export default function HODDashboard() {
   const [sectionConfigs, setSectionConfigs] = useState({});
   const [sectionAssignments, setSectionAssignments] = useState({});
   const [savingSection, setSavingSection] = useState(false);
+  const [deptMetadataLoaded, setDeptMetadataLoaded] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterBatch, setFilterBatch] = useState("");
@@ -120,6 +122,7 @@ export default function HODDashboard() {
             setCurrentHodSignature(ud.signatureUrl || '');
             setHodName(ud.facultyName || ud.displayName || ud.email || "HOD");
             setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "");
+            setHodProgramme(ud.programme || "");
           }
           setHodLoading(false);
         });
@@ -324,17 +327,21 @@ export default function HODDashboard() {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setDeptMetadata(data);
+      setDeptMetadataLoaded(true);
     });
     return () => unsub();
   }, []);
 
   // ─── Attendance Overview ───
   useEffect(() => {
-    if (!currentUid) {
+    if (!currentUid || !deptMetadataLoaded) {
       setAttendanceOverview({});
+      setAttendanceOverviewLoading(false);
       return;
     }
     setAttendanceOverviewLoading(true);
+
+    let cancelled = false;
 
     const today = new Date();
     const month = today.getMonth() + 1;
@@ -367,13 +374,54 @@ export default function HODDashboard() {
         const parts = d.id.split('_');
         const yearIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
         if (yearIdx < 2) return;
-        const deptFromDoc = parts[yearIdx - 1];
 
-        const progKey = parts.slice(0, yearIdx - 1).join('_');
         const batchKey = parts[yearIdx];
         const ayKey = parts[yearIdx + 1];
         const semNum = parts[yearIdx + 2];
         const secSuffix = parts.slice(yearIdx + 3).join('_');
+
+        const combinedBeforeBatch = parts.slice(0, yearIdx).join('_');
+        let progKey = '';
+        let deptFromDoc = '';
+
+        // Strategy 1: use hodProgramme (from user doc) as the known programme key
+        if (hodProgramme && combinedBeforeBatch.startsWith(hodProgramme + '_')) {
+          progKey = hodProgramme;
+          deptFromDoc = combinedBeforeBatch.slice(hodProgramme.length + 1);
+        }
+
+        // Strategy 2: try matching against deptMetadata
+        if (!progKey) {
+          for (const [pk, depts] of Object.entries(deptMetadata)) {
+            if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
+            const deptCandidate = combinedBeforeBatch.slice(pk.length + 1);
+            for (const [deptName, deptCode] of Object.entries(depts)) {
+              if (sanitizeKey(deptName) === deptCandidate || deptCode === deptCandidate) {
+                progKey = pk;
+                deptFromDoc = deptCandidate;
+                break;
+              }
+            }
+            if (progKey) break;
+          }
+        }
+
+        // Strategy 3: try all programme keys from deptMetadata and match dept by name/code
+        if (!progKey) {
+          for (const [pk, depts] of Object.entries(deptMetadata)) {
+            if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
+            progKey = pk;
+            deptFromDoc = combinedBeforeBatch.slice(pk.length + 1);
+            break;
+          }
+        }
+
+        // Strategy 4: fallback — old parsing (single-word dept names only)
+        if (!progKey) {
+          deptFromDoc = parts[yearIdx - 1];
+          progKey = parts.slice(0, yearIdx - 1).join('_');
+        }
+
         const data = d.data();
 
         Object.entries(data).forEach(([uid, codes]) => {
@@ -395,14 +443,12 @@ export default function HODDashboard() {
         });
       }
 
+      console.log('[AttendanceOverview] hodProgramme:', hodProgramme, '| hodDept:', hodDepartment, '| validDeptKeys:', [...validDeptKeys], '| allAssignments:', allAssignments.length, '| deptFiltered:', deptFiltered.length);
+
       let filtered = deptFiltered.filter(a => a.ay === currentAy);
       if (filtered.length === 0 && deptFiltered.length > 0) {
         filtered = deptFiltered;
       }
-
-      const allDeptKeys = [...new Set(allAssignments.map(a => a.attDeptKey))];
-      const allNormKeys = [...new Set(allAssignments.map(a => sanitizeKey(a.attDeptKey.trim()).toLowerCase()))];
-      console.log('[AttendanceOverview] hodDepartment:', hodDepartment, '| hodNorm:', hodNorm, '| validDeptKeys:', [...validDeptKeys], '| allDeptKeys in data:', allDeptKeys, '| allNormKeys:', allNormKeys, '| currentAy:', currentAy, '| all:', allAssignments.length, '| deptFiltered:', deptFiltered.length, '| filtered:', filtered.length);
 
       const seen = new Set();
       const unique = [];
@@ -440,6 +486,8 @@ export default function HODDashboard() {
 
       const [results, nameMap] = await Promise.all([Promise.all(attDocPromises), syllabusPromise]);
 
+      if (cancelled) return;
+
       const grouped = {};
       results.forEach(r => {
         if (!grouped[r.batch]) grouped[r.batch] = [];
@@ -449,9 +497,9 @@ export default function HODDashboard() {
       setSubjectNamesMap(nameMap);
       setAttendanceOverview(grouped);
       setAttendanceOverviewLoading(false);
-    }, () => { setAttendanceOverview({}); setAttendanceOverviewLoading(false); });
-    return () => unsub();
-  }, [hodDepartment, currentUid, deptMetadata]);
+    }, () => { if (!cancelled) { setAttendanceOverview({}); setAttendanceOverviewLoading(false); } });
+    return () => { cancelled = true; unsub(); };
+  }, [hodDepartment, hodProgramme, currentUid, deptMetadata, deptMetadataLoaded]);
 
   // ─── Fetch timetable allocation for each batch ───
   useEffect(() => {
