@@ -310,7 +310,14 @@ export default function PrincipalDashboard() {
       if (!existingData[regNo]) {
         order.push(regNo);
       }
-      await setDoc(studentRef, { ...existingData, [regNo]: name, _order: order });
+      const joiningAY = existingData._joiningAY || {};
+      await setDoc(studentRef, {
+        ...existingData,
+        [regNo]: name,
+        _order: order,
+        _meta: { ...(existingData._meta || {}), department: app.department },
+        _joiningAY: { ...joiningAY, [regNo]: app.academicYear || "" }
+      });
     } catch (err) {
       console.error("Failed to add student to namelist:", err);
     }

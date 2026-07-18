@@ -295,3 +295,23 @@
 - **Approval workflow**: Faculty submits → HOD reviews (approve/reject/return with comments) → auto-notification → IQAC consolidation
 - **NBA/NAAC mapping**: Each activity tagged with criterion codes (C1–C9, NAAC 1.1–7.2) for auto-extraction in reports
 - **Follows STEP module patterns**: Real-time listeners, role-based filters, status tabs, evidence preview, gradient headers, pixel-perfect Tailwind UI
+
+### 29. Lateral Entry — Joining AY filtering for MarkEntry/Attendance
+- **Problem**: Lateral entry students admitted mid-batch (e.g., joining batch 2024-2028 in AY 2025-2026) appeared in MarkEntry/Attendance for ALL academic years of their batch, including past years (AY 2024-2025) where they hadn't yet joined.
+- **Fix**: Store `_joiningAY` (academic year of joining) per student in the `students` doc and filter it in MarkEntry/Attendance — lateral entry students only show from their joining AY onwards.
+- **Storage** (`_joiningAY: { regNo: academicYear }`):
+  - `PrincipalDashboard.jsx` `addStudentToNamelist` (line 313): Store `app.academicYear` per student in `approved_admissions._joiningAY`
+  - `AdmissionConfirmation.jsx` `addStudentToNamelist` (line 263): Store `data.academicYear` per student in `students._joiningAY`
+  - `HODDashboard.jsx` section assignment (line 1445): Copy `_joiningAY` from `approved_admissions` to the `students` doc when assigning section
+- **Display filtering**:
+  - `MarkEntry.jsx` (line 821): After loading student list, filter out students whose `_joiningAY[reg]` > selected `academicYear`
+  - `Attendance.jsx` (line 540): Same filter applied when building `masterListObj` from the `students` doc
+- **Backward compatibility**: Students without `_joiningAY` (existing data) are always shown (unfiltered)
+
+### 30. Principal → HOD section allotment not showing approved students
+- **Problem**: After Principal clicks "Admit" in PrincipalDashboard, the student didn't appear in HODDashboard's Section Allotment popup.
+- **Root cause 1** (PrincipalDashboard.jsx): `addStudentToNamelist` never stored `_meta.department` in the `approved_admissions` doc — HODDashboard's primary matching path (line 201-204) used `data._meta.department` but it was undefined.
+- **Root cause 2** (HODDashboard.jsx): The fallback doc ID parsing used only `parts[last]` (last segment) to match the department, which fails for multi-word dept names like "Computer_Science_and_Engineering" where `lastPart = "Engineering"` doesn't match `hodNorm = "computerscienceandengineering"`.
+- **Fixes**:
+  - `PrincipalDashboard.jsx` `addStudentToNamelist` (line 313): Added `_meta: { ...(existingData._meta || {}), department: app.department }` to the approved_admissions doc
+  - `HODDashboard.jsx` approved_admissions listener (line 207-213): Replaced `lastPart` matching with full composite string match after batch — `normComposite.includes(hodNorm) || hodNorm.includes(normComposite)` — which correctly matches multi-segment dept keys

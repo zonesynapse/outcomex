@@ -260,7 +260,13 @@ export default function AdmissionConfirmation() {
       if (!existingData[regNo]) {
         order.push(regNo);
       }
-      await setDoc(studentRef, { ...existingData, [regNo]: name, _order: order });
+      const joiningAY = existingData._joiningAY || {};
+      await setDoc(studentRef, {
+        ...existingData,
+        [regNo]: name,
+        _order: order,
+        _joiningAY: { ...joiningAY, [regNo]: data.academicYear || "" }
+      });
     } catch (err) {
       console.error("Failed to add student to namelist:", err);
     }

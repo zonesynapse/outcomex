@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot, query, where, orderBy, doc, getDoc, setDoc, getDocs } from "firebase/firestore";
@@ -23,12 +24,15 @@ const getCategoryFromCode = (code) => {
 };
 
 export default function ActivityList() {
+  const [searchParams] = useSearchParams();
   const [currentUserData, setCurrentUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState([]);
   const [studentsIndex, setStudentsIndex] = useState({});
   const [facultyIndex, setFacultyIndex] = useState({});
-  const [activeTab, setActiveTab] = useState("student"); // student, faculty, department
+  const tabParam = searchParams.get("tab");
+  const initialTab = tabParam === "approvals" ? "student" : (tabParam || "student");
+  const [activeTab, setActiveTab] = useState(initialTab); // student, faculty, department
   
   // Filters
   const [selectedBatch, setSelectedBatch] = useState("");
@@ -72,6 +76,13 @@ export default function ActivityList() {
     });
     return () => unsub();
   }, []);
+
+  // Set status filter to Pending when approvals tab is active
+  useEffect(() => {
+    if (tabParam === "approvals") {
+      setSelectedStatus("Pending");
+    }
+  }, [tabParam]);
 
   // Real-time activities listener
   useEffect(() => {

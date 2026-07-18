@@ -44,7 +44,8 @@ import {
   Package,
   Send,
   ClipboardCheck,
-  PackageCheck
+  PackageCheck,
+  Download
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -113,12 +114,12 @@ const allPossibleItems = [
   { id: "inventory-fulfill", icon: PackageCheck, label: "Issue Items", path: "/inventory/fulfill" },
 
   // Activity Module
-  { id: "activity-student", icon: GraduationCap, label: "Student Activities (Part A)", path: "/activities" },
-  { id: "activity-faculty", icon: User, label: "Faculty Activities (Part C)", path: "/activities" },
-  { id: "activity-department", icon: Building2, label: "Department Activities (Part B)", path: "/activities" },
-  { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities" },
-  { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities" },
-  { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities" },
+  { id: "activity-student", icon: GraduationCap, label: "Student Activities (Part A)", path: "/activities?tab=student" },
+  { id: "activity-faculty", icon: User, label: "Faculty Activities (Part C)", path: "/activities?tab=faculty" },
+  { id: "activity-department", icon: Building2, label: "Department Activities (Part B)", path: "/activities?tab=department" },
+  { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities?tab=approvals" },
+  { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
+  { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities/nba-export" },
 ];
 
 const modules = [

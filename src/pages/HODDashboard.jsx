@@ -203,12 +203,21 @@ export default function HODDashboard() {
             const metaDept = sanitizeKey(data._meta.department).toLowerCase().replace(/[_ ]+/g, '');
             deptMatch = metaDept === hodNorm || metaDept.includes(hodNorm) || hodNorm.includes(metaDept);
           }
-          // 2) Fall back to doc ID: last segment before end is deptKey
+          // 2) Fall back to doc ID: {batch}_{progKey}_{deptKey} where deptKey can span multiple segments
           if (!deptMatch) {
             const parts = docId.split('_');
             if (parts.length > 1) {
-              const lastPart = parts[parts.length - 1].toLowerCase();
-              deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
+              // Try matching the full composite after batch against the HOD dept name
+              const batchMatch2 = docId.match(/(\d{4}-\d{4})/);
+              if (batchMatch2) {
+                const afterBatch = docId.slice(docId.indexOf(batchMatch2[1]) + batchMatch2[1].length + 1);
+                const normComposite = afterBatch.toLowerCase().replace(/[_ ]+/g, '');
+                deptMatch = normComposite === hodNorm || normComposite.includes(hodNorm) || hodNorm.includes(normComposite);
+              } else {
+                // Fallback: last segment only
+                const lastPart = parts[parts.length - 1].toLowerCase();
+                deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
+              }
             }
           }
           if (!deptMatch) return;
@@ -1442,7 +1451,14 @@ export default function HODDashboard() {
                                     const secData = secSnap.exists() ? secSnap.data() : {};
                                     const secOrder = secData._order || [];
                                     if (!secData[s.reg]) secOrder.push(s.reg);
-                                    await setDoc(doc(db, 'students', secDocId), { ...secData, [s.reg]: studentVal, _order: secOrder });
+                                    const joiningAY = currentData._joiningAY || {};
+                                    const secJoiningAY = secData._joiningAY || {};
+                                    await setDoc(doc(db, 'students', secDocId), {
+                                      ...secData,
+                                      [s.reg]: studentVal,
+                                      _order: secOrder,
+                                      _joiningAY: { ...secJoiningAY, [s.reg]: joiningAY[s.reg] || "" }
+                                    });
 
                                     // Write to student_index for dual-ID lookup
                                     const now = new Date().toISOString();

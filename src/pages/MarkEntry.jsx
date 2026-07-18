@@ -818,6 +818,16 @@ export default function MarkEntry() {
           } else {
             studentList.sort((a, b) => a.reg.localeCompare(b.reg));
           }
+
+          // Filter by joining academic year — lateral entry students only show from their joining AY
+          const joiningAY = studentData._joiningAY || {};
+          if (academicYear && Object.keys(joiningAY).length > 0) {
+            studentList = studentList.filter(s => {
+              const jAY = joiningAY[s.reg];
+              if (!jAY) return true;
+              return jAY <= academicYear;
+            });
+          }
         }
         setStudents(studentList);
 

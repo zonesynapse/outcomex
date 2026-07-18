@@ -80,8 +80,8 @@ import InventoryFulfill from "./pages/inventory/InventoryFulfill";
 import StudentStepPoints from "./pages/student/StepPoints";
 import ActivityList from "./pages/ActivityList";
 import ActivityEntry from "./pages/ActivityEntry";
-import ActivityList from "./pages/ActivityList";
-import ActivityEntry from "./pages/ActivityEntry";
+import ActivityReports from "./pages/ActivityReports";
+import ActivityNbaExport from "./pages/ActivityNbaExport";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -189,6 +189,8 @@ export default function App() {
 
         {/* Activity Module Routes */}
         <Route path="/activities" element={<ProtectedRoute><ActivityList /></ProtectedRoute>} />
+        <Route path="/activities/reports" element={<ProtectedRoute><ActivityReports /></ProtectedRoute>} />
+        <Route path="/activities/nba-export" element={<ProtectedRoute><ActivityNbaExport /></ProtectedRoute>} />
         <Route path="/activities/:code/new" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />
         <Route path="/activities/:code/edit/:id" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />
 

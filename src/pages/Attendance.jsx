@@ -537,9 +537,16 @@ export default function Attendance() {
 
     const totalH = parseInt(dateRecord?.totalHours, 10) || 1;
 
+    const joiningAY = masterList._joiningAY || {};
     const masterListObj = {};
     Object.entries(masterList)
       .filter(([key]) => !key.startsWith('_'))
+      .filter(([reg]) => {
+        if (!academicYear) return true;
+        const jAY = joiningAY[reg];
+        if (!jAY) return true;
+        return jAY <= academicYear;
+      })
       .forEach(([reg, nameVal]) => {
         masterListObj[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
       });
