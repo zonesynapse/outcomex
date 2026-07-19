@@ -271,16 +271,6 @@ export default function Fees() {
         </div>
       )}
 
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-[#120c7a]/10 rounded-2xl">
-          <IndianRupee size={28} className="text-[#120c7a]" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-black text-slate-800">Fee Details</h1>
-          <p className="text-sm text-slate-500">{studentData.studentName} &middot; {studentData.regNo} &middot; {formatBatchDisplay(studentData.batch)}</p>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Fee</p>

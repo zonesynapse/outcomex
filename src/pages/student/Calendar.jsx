@@ -99,16 +99,6 @@ export default function Calendar() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-[#120c7a]/10 rounded-2xl">
-          <CalendarDays size={28} className="text-[#120c7a]" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-black text-slate-800">Academic Calendar</h1>
-          <p className="text-sm text-slate-500">Important dates and events</p>
-        </div>
-      </div>
-
       <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
         {/* Month Navigation */}
         <div className="flex items-center justify-between px-3 md:px-6 py-4 bg-slate-50/50 border-b border-slate-100">

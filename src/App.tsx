@@ -203,21 +203,21 @@ export default function App() {
         <Route path="/cia-configuration" element={<ProtectedRoute><CIAConfiguration /></ProtectedRoute>} />
 
         {/* Student Routes */}
-        <Route path="/student/dashboard" element={<ProtectedRoute><StudentLayout><StudentDashboard /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/profile" element={<ProtectedRoute><StudentLayout><StudentProfile /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/attendance" element={<ProtectedRoute><StudentLayout><StudentAttendance /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/marks" element={<ProtectedRoute><StudentLayout><StudentMarks /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/timetable" element={<ProtectedRoute><StudentLayout><StudentTimetable /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/fees" element={<ProtectedRoute><StudentLayout><StudentFees /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/syllabus" element={<ProtectedRoute><StudentLayout><StudentSyllabus /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/question-papers" element={<ProtectedRoute><StudentLayout><StudentQuestionPapers /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/calendar" element={<ProtectedRoute><StudentLayout><StudentCalendar /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/courses" element={<ProtectedRoute><StudentLayout><StudentCourseReg /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/library" element={<ProtectedRoute><StudentLayout><StudentLibrary /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/placement" element={<ProtectedRoute><StudentLayout><StudentPlacement /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/step" element={<ProtectedRoute><StudentLayout><StudentStepPoints /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout><StudentDownloads /></StudentLayout></ProtectedRoute>} />
-        <Route path="/student/notices" element={<ProtectedRoute><StudentLayout><StudentNotices /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/dashboard" element={<ProtectedRoute><StudentLayout title="Dashboard"><StudentDashboard /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/profile" element={<ProtectedRoute><StudentLayout title="My Profile"><StudentProfile /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/attendance" element={<ProtectedRoute><StudentLayout title="Attendance"><StudentAttendance /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/marks" element={<ProtectedRoute><StudentLayout title="Marks & Results"><StudentMarks /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/timetable" element={<ProtectedRoute><StudentLayout title="Timetable"><StudentTimetable /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/fees" element={<ProtectedRoute><StudentLayout title="Fee Details"><StudentFees /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/syllabus" element={<ProtectedRoute><StudentLayout title="Syllabus"><StudentSyllabus /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/question-papers" element={<ProtectedRoute><StudentLayout title="Question Papers"><StudentQuestionPapers /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/calendar" element={<ProtectedRoute><StudentLayout title="Academic Calendar"><StudentCalendar /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/courses" element={<ProtectedRoute><StudentLayout title="Course Registration"><StudentCourseReg /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/library" element={<ProtectedRoute><StudentLayout title="Library"><StudentLibrary /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/placement" element={<ProtectedRoute><StudentLayout title="Placements"><StudentPlacement /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/step" element={<ProtectedRoute><StudentLayout title="STEP Activity Points"><StudentStepPoints /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout title="Downloads"><StudentDownloads /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />

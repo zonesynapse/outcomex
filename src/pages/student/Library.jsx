@@ -112,16 +112,6 @@ export default function LibraryPage() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-[#120c7a]/10 rounded-2xl">
-          <Library size={28} className="text-[#120c7a]" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-black text-slate-800">Library</h1>
-          <p className="text-sm text-slate-500">{studentData.studentName} &middot; {studentData.regNo}</p>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         <div className="xl:col-span-2 space-y-6">
           <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">

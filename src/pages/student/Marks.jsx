@@ -196,16 +196,6 @@ export default function Marks() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-[#120c7a]/10 rounded-2xl">
-          <Award size={28} className="text-[#120c7a]" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-black text-slate-800">Marks & Results</h1>
-          <p className="text-sm text-slate-500">{studentData.studentName} &middot; {studentData.regNo}</p>
-        </div>
-      </div>
-
       {subjectGroups.length === 0 ? (
         <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
           <FileText size={48} className="mx-auto text-slate-200 mb-4" />

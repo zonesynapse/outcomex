@@ -606,13 +606,6 @@ export default function StudentStepPoints() {
               <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center border border-white/20 shadow-inner">
                 <Award size={32} className="text-yellow-400" />
               </div>
-              <div>
-                <span className="text-[10px] font-bold tracking-widest text-blue-200 uppercase">Enrichment Programme</span>
-                <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight mt-0.5">STEP Activity Portal</h1>
-                <p className="text-blue-100 text-xs md:text-sm mt-1">
-                  Students&apos; Transformation and Enrichment Programme • {userData?.batch}
-                </p>
-              </div>
             </div>
             
             <button
