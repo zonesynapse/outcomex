@@ -1,16 +1,59 @@
-import { useState, useEffect, useMemo } from "react";
-import { db, auth } from "../../firebase";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { db, auth, functions } from "../../firebase";
 import { doc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import { onAuthStateChanged } from "firebase/auth";
-import { IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2 } from "lucide-react";
+import {
+  IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2,
+  ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
+  Ban,
+} from "lucide-react";
 import { formatBatchDisplay, formatProgrammeKey } from "../../lib/utils";
+
+const PAYMENT_STATUS = {
+  PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+  SUCCESS: { label: "Paid", color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200" },
+  FAILED: { label: "Failed", color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
+};
 
 export default function Fees() {
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [feeConfigs, setFeeConfigs] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0, mode: "upi" });
+  const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0 });
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState(null);
+
+  const verifyPaymentOnReturn = useCallback(async (orderId) => {
+    try {
+      const verifyFn = httpsCallable(functions, "verifyPayment");
+      const result = await verifyFn({ orderId });
+      const data = result.data;
+      if (data.success) {
+        setToast({ type: "success", message: `Payment of ₹${data.amount?.toLocaleString('en-IN')} completed successfully!` });
+      } else {
+        setToast({ type: "error", message: `Payment ${data.status.toLowerCase()}. Please try again or contact accounts.` });
+      }
+    } catch (err) {
+      console.error("Verify payment error:", err);
+      const msg = err.code === "unavailable"
+        ? "Payment verification service is temporarily down. Your payment may still have been processed — please check Payment History."
+        : "Could not verify payment status. Check Payment History.";
+      setToast({ type: "warning", message: msg });
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order_id");
+    if (orderId) {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+      verifyPaymentOnReturn(orderId);
+    }
+  }, [verifyPaymentOnReturn]);
 
   useEffect(() => {
     let unsubUser = () => {};
@@ -72,16 +115,17 @@ export default function Fees() {
         });
         setFeeConfigs(configs);
 
+        const currentUid = auth.currentUser?.uid;
         const payList = [];
         paySnap.forEach((d) => {
           const data = d.data();
-          if (data.studentId === auth.currentUser?.uid || data.examNumber === studentData.regNo) {
-            payList.push({ id: d.id, ...data });
+          if (data.uid === currentUid) {
+            payList.push({ id: d.id, ...data, _docId: d.id });
           }
         });
         payList.sort((a, b) => {
-          const da = a.paymentDate?.toDate?.() || new Date(0);
-          const db2 = b.paymentDate?.toDate?.() || new Date(0);
+          const da = a.createdAt?.toDate?.() || new Date(0);
+          const db2 = b.createdAt?.toDate?.() || new Date(0);
           return db2 - da;
         });
         setPayments(payList);
@@ -91,6 +135,12 @@ export default function Fees() {
 
     fetchData();
   }, [studentData]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const groupedFeeConfigs = useMemo(() => {
     const sorted = [...feeConfigs].sort((a, b) => {
@@ -125,13 +175,60 @@ export default function Fees() {
   }, [feeConfigs]);
 
   const totalPaid = useMemo(() => {
-    return payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    return payments
+      .filter((p) => p.status === "SUCCESS")
+      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
   }, [payments]);
 
   const pending = Math.max(0, totalFee - totalPaid);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  };
+
+  const formatDate = (ts) => {
+    if (!ts) return "-";
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  };
+
+  const formatTime = (ts) => {
+    if (!ts) return "";
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const handlePayClick = async () => {
+    const amount = Number(payModal.amount);
+    if (!amount || amount < 1) { setError("Enter a valid amount"); return; }
+    if (amount > payModal.maxAmount) { setError(`Cannot pay more than ${formatCurrency(payModal.maxAmount)}`); return; }
+
+    setError("");
+    setProcessing(true);
+    try {
+      const createSession = httpsCallable(functions, "createPaymentSession");
+      const returnUrl = `${window.location.origin}/student/fees`;
+      const result = await createSession({
+        amount,
+        feeHead: payModal.feeHead,
+        returnUrl,
+        phone: studentData?.phone || "",
+      });
+
+      const { paymentUrl, orderId } = result.data;
+      setPayModal({ ...payModal, open: false });
+      window.location.href = paymentUrl;
+    } catch (err) {
+      console.error("Payment session error:", err);
+      const msg = err.code === "unavailable"
+        ? "Payment gateway is temporarily down. Please try again in a few minutes."
+        : err.code === "unauthenticated"
+          ? "Your session has expired. Please log in again."
+          : err.message || "Payment could not be initiated. Please try again.";
+      setError(msg);
+    } finally {
+      setProcessing(false);
+    }
   };
 
   if (loading) {
@@ -153,6 +250,27 @@ export default function Fees() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
+      {toast && (
+        <div className={`fixed top-6 right-6 z-[200] max-w-md animate-in slide-in-from-right-2 fade-in duration-300 ${
+          toast.type === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
+          toast.type === "error" ? "bg-red-50 border-red-200 text-red-800" :
+          "bg-amber-50 border-amber-200 text-amber-800"
+        } border-2 rounded-2xl px-5 py-4 shadow-2xl flex items-start gap-3`}>
+          <div className={`p-1 rounded-full ${
+            toast.type === "success" ? "bg-emerald-100" :
+            toast.type === "error" ? "bg-red-100" : "bg-amber-100"
+          }`}>
+            {toast.type === "success" ? <CheckCircle2 size={18} className="text-emerald-600" /> :
+             toast.type === "error" ? <Ban size={18} className="text-red-600" /> :
+             <AlertCircle size={18} className="text-amber-600" />}
+          </div>
+          <p className="text-sm font-semibold flex-1">{toast.message}</p>
+          <button onClick={() => setToast(null)} className="p-1 hover:bg-black/5 rounded-lg shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center gap-4">
         <div className="p-3 bg-[#120c7a]/10 rounded-2xl">
           <IndianRupee size={28} className="text-[#120c7a]" />
@@ -222,8 +340,14 @@ export default function Fees() {
                             {idx === 0 ? (
                               <td className="px-4 py-3 text-xs font-bold text-slate-600 align-top border border-slate-200" rowSpan={semGroup.rows.length}>{semGroup.semester}</td>
                             ) : null}
-                            <td className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), maxAmount: Number(cfg.amount), mode: "upi" }); }}>{cfg.head || 'Fee'}</td>
-                            <td className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a]" onClick={() => { if (window.confirm(`Want to pay ${formatCurrency(cfg.amount)} for "${cfg.head}"?`)) setPayModal({ open: true, feeHead: cfg.head, amount: String(cfg.amount), maxAmount: Number(cfg.amount), mode: "upi" }); }}>{formatCurrency(cfg.amount)}</td>
+                            <td
+                              className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30 transition-all"
+                              onClick={() => setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(cfg.amount), maxAmount: Number(cfg.amount) })}
+                            >{cfg.head || 'Fee'}</td>
+                            <td
+                              className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30 transition-all"
+                              onClick={() => setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(cfg.amount), maxAmount: Number(cfg.amount) })}
+                            >{formatCurrency(cfg.amount)}</td>
                           </tr>
                         );
                         return tr;
@@ -269,28 +393,50 @@ export default function Fees() {
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Receipt No</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Receipt / Order</th>
                     <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Head</th>
                     <th className="px-3 py-3 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Amount</th>
                     <th className="px-3 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {payments.map((p, i) => (
-                    <tr key={i} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-3 py-3 text-xs font-bold text-slate-600">
-                        {p.paymentDate?.toDate ? new Date(p.paymentDate.toDate()).toLocaleDateString('en-IN') : p.paymentDate || '-'}
-                      </td>
-                      <td className="px-3 py-3 text-xs font-mono font-bold text-slate-700">{p.receiptNo || '-'}</td>
-                      <td className="px-3 py-3 text-xs font-bold text-slate-600">{p.feeHead || '-'}</td>
-                      <td className="px-3 py-3 text-right text-xs font-black text-slate-700">{formatCurrency(p.amount)}</td>
-                      <td className="px-3 py-3 text-center">
-                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
-                          Paid
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {payments.map((p, i) => {
+                    const st = PAYMENT_STATUS[p.status] || PAYMENT_STATUS.PENDING;
+                    return (
+                      <tr key={p.id || i} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-3 py-3 text-xs font-bold text-slate-600">
+                          <span className="block">{formatDate(p.createdAt)}</span>
+                          {p.createdAt && <span className="text-[10px] text-slate-400">{formatTime(p.createdAt)}</span>}
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className="text-xs font-mono font-bold text-slate-700 block">{p.orderId || '-'}</span>
+                          {p.gatewayResponse?.rrn && (
+                            <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-xs font-bold text-slate-600">{p.feeHead || '-'}</td>
+                        <td className="px-3 py-3 text-right text-xs font-black text-slate-700">
+                          {p.status === "SUCCESS"
+                            ? formatCurrency(p.chargedAmount || p.amount)
+                            : formatCurrency(p.amount)}
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          {p.status === "PENDING" ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border inline-flex items-center gap-1`}>
+                                <Clock size={10} />
+                                {st.label}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border`}>
+                              {st.label}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               </div>
@@ -300,46 +446,78 @@ export default function Fees() {
       </div>
 
       {payModal.open && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => setPayModal({ ...payModal, open: false })}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => { if (!processing) setPayModal({ ...payModal, open: false }); }}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
               <h3 className="font-bold text-zinc-800">Pay Fee</h3>
-              <button onClick={() => setPayModal({ ...payModal, open: false })} className="p-2 hover:bg-zinc-100 rounded-xl"><X size={18} /></button>
+              <button
+                onClick={() => { if (!processing) setPayModal({ ...payModal, open: false }); }}
+                disabled={processing}
+                className="p-2 hover:bg-zinc-100 rounded-xl disabled:opacity-30"
+              ><X size={18} /></button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="p-3 bg-zinc-50 rounded-xl">
-                <p className="text-xs text-zinc-500">Fee Head</p>
-                <p className="text-sm font-bold text-zinc-800 mt-0.5">{payModal.feeHead}</p>
+              <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100">
+                <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Fee Head</p>
+                <p className="text-lg font-black text-zinc-800 mt-1">{payModal.feeHead}</p>
+                <div className="mt-3 pt-3 border-t border-blue-100/50">
+                  <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Amount to Pay</p>
+                  <div className="flex items-baseline gap-1 mt-1">
+                    <IndianRupee size={18} className="text-zinc-700" />
+                    <input
+                      type="number"
+                      min={1}
+                      max={payModal.maxAmount}
+                      value={payModal.amount}
+                      onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
+                      disabled={processing}
+                      className="w-40 bg-transparent text-3xl font-black text-zinc-800 outline-none disabled:opacity-50"
+                    />
+                    <span className="text-sm text-zinc-400">/ {formatCurrency(payModal.maxAmount)}</span>
+                  </div>
+                  {Number(payModal.amount) > payModal.maxAmount && (
+                    <p className="text-xs font-bold text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle size={12} /> Cannot exceed {formatCurrency(payModal.maxAmount)}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount (₹)</label>
-                <input type="number" min={1} max={payModal.maxAmount} value={payModal.amount} onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
-                {Number(payModal.amount) > payModal.maxAmount && (
-                  <p className="text-[10px] font-bold text-red-500 mt-1">Cannot exceed ₹{payModal.maxAmount.toLocaleString('en-IN')}</p>
-                )}
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+                <div className="flex items-start gap-2">
+                  <Banknote size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-700">HDFC SmartGateway</p>
+                    <p className="text-[10px] text-amber-600 mt-0.5">
+                      Secure payment via HDFC Bank. You will be redirected to the payment page.
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Mode</label>
-                <select value={payModal.mode} onChange={e => setPayModal({ ...payModal, mode: e.target.value })}
-                  className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
-                  <option value="upi">UPI</option>
-                  <option value="card">Card</option>
-                  <option value="netbanking">Net Banking</option>
-                  <option value="wallet">Wallet</option>
-                </select>
-              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 rounded-xl border border-red-200 flex items-start gap-2">
+                  <AlertCircle size={14} className="text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-xs font-semibold text-red-700">{error}</p>
+                </div>
+              )}
             </div>
             <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3">
-              <button onClick={() => setPayModal({ ...payModal, open: false })} className="px-5 py-2.5 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl">Cancel</button>
-              <button onClick={() => {
-                const val = Number(payModal.amount);
-                if (!val || val < 1) { alert("Enter a valid amount"); return; }
-                if (val > payModal.maxAmount) { alert(`Cannot pay more than ${formatCurrency(payModal.maxAmount)}`); return; }
-                setPayModal({ ...payModal, open: false }); alert("Payment gateway not connected");
-              }}
-                className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 flex items-center gap-2 shadow-lg shadow-[#120c7a]/20">
-                <CheckCircle2 size={16} /> Pay ₹{Number(payModal.amount).toLocaleString('en-IN')}
+              <button
+                onClick={() => { if (!processing) setPayModal({ ...payModal, open: false }); }}
+                disabled={processing}
+                className="px-5 py-2.5 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl disabled:opacity-30"
+              >Cancel</button>
+              <button
+                onClick={handlePayClick}
+                disabled={processing}
+                className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-[#120c7a]/20 transition-all"
+              >
+                {processing ? (
+                  <><Loader2 size={16} className="animate-spin" /> Processing...</>
+                ) : (
+                  <><ArrowRight size={16} /> Pay {formatCurrency(Number(payModal.amount) || 0)}</>
+                )}
               </button>
             </div>
           </div>

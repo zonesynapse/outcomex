@@ -123,8 +123,13 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
-    // New Fee collections — disabled until verified
-    match /fee_payments/{docId} { allow read, write: if false; }
+    // Fee Payments — students read own records; write only via Cloud Function (Admin SDK)
+    match /fee_payments/{docId} {
+      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isApproved());
+      allow write: if false;
+      allow create: if false;
+      allow delete: if false;
+    }
     match /fee_receipts/{docId} { allow read, write: if false; }
     match /fee_concessions/{docId} { allow read, write: if false; }
     match /fee_heads/{docId} { allow read, write: if false; }
