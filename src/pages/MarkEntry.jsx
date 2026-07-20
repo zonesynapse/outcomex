@@ -810,7 +810,7 @@ export default function MarkEntry() {
         if (studentData) {
           studentList = Object.entries(studentData)
             .filter(([key]) => !key.startsWith('_'))
-            .map(([reg, name]) => ({ reg, name }));
+            .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
             
           const order = studentData._order || studentData.order;
           if (order && Array.isArray(order)) {
@@ -831,11 +831,10 @@ export default function MarkEntry() {
         }
         setStudents(studentList);
 
-        // Check course enrollments for this subject and semester
+        // Check course enrolments for this subject and semester
         if (subject) {
-          const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${subject}${sectionSuffix}`;
-          const enrollSnap = await getDoc(doc(db, 'course_enrollments', enrollDocId)); // Firestore doc reference
+          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${sanitizeKey(subject)}`;
+          const enrollSnap = await getDoc(doc(db, 'course_enrolments', enrollDocId));
           const enrolled = {};
           if (enrollSnap.exists()) {
             const obj = enrollSnap.data(); // Use .data() for Firestore documents
@@ -941,7 +940,7 @@ export default function MarkEntry() {
     }
     try { // Firestore subcollection path
       const progKey = formatProgrammeKey(programme); // Ensure progKey is sanitized
-      const enrollRef = doc(db, 'course_enrollments', progKey, sanitizeKey(department), sanitizeKey(batch), sanitizeKey(academicYear), deriveSemesterNumber(semester), subject, reg);
+      const enrollRef = doc(db, 'course_enrolments', progKey, sanitizeKey(department), sanitizeKey(batch), sanitizeKey(academicYear), deriveSemesterNumber(semester), subject, reg);
       await setDoc(enrollRef, { enrolled: checked }, { merge: true }); // Use setDoc for Firestore
       setEnrolledRegs(prev => ({ ...prev, [reg]: !!checked }));
       showToastMsg('Enrollment updated', 'success');

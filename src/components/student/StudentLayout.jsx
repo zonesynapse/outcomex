@@ -30,12 +30,12 @@ const studentMenuItems = [
 
 export default function StudentLayout({ children, title }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNoticesOpen, setIsNoticesOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [notices, setNotices] = useState([]);
   const [userData, setUserData] = useState(null);
-  const profileRef = useRef(null);
   const noticesRef = useRef(null);
+  const profileRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -58,7 +58,8 @@ export default function StudentLayout({ children, title }) {
                 for (const docSnap of studentsSnap.docs) {
                   const sData = docSnap.data();
                   if (sData[data.regNo]) {
-                     foundName = sData[data.regNo];
+                     const raw = sData[data.regNo];
+                     foundName = (raw !== null && typeof raw === 'object') ? (raw.name || '') : String(raw);
                      
                      const meta = sData._meta || {};
                      if (meta.department && meta.batch && meta.programme_name) {
@@ -173,11 +174,11 @@ export default function StudentLayout({ children, title }) {
 
   useEffect(() => {
     function handleClickOutside(event) {
-      if (profileRef.current && !profileRef.current.contains(event.target)) {
-        setIsProfileOpen(false);
-      }
       if (noticesRef.current && !noticesRef.current.contains(event.target)) {
         setIsNoticesOpen(false);
+      }
+      if (profileRef.current && !profileRef.current.contains(event.target)) {
+        setIsProfileOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -291,55 +292,36 @@ export default function StudentLayout({ children, title }) {
           </div>
 
           <div className="relative" ref={profileRef}>
-            <button onClick={() => setIsProfileOpen(!isProfileOpen)} className="w-[42px] h-[42px] rounded-xl overflow-hidden flex items-center justify-center cursor-pointer border-2 border-white/20 bg-white/10 hover:bg-white/20 transition-all">
+            <button
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className="w-[42px] h-[42px] rounded-xl overflow-hidden flex items-center justify-center border-2 border-white/20 bg-white/10 hover:bg-white/20 transition-all"
+              title="My Profile"
+            >
               <span className="font-bold text-sm text-white">
                 {userData?.studentName ? userData.studentName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'S'}
               </span>
             </button>
             {isProfileOpen && (
-              <div className="absolute right-0 mt-3 w-64 sm:w-72 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
-                <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-5 text-white">
-                  <div className="flex items-center gap-3">
-                    <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
-                      <span className="text-xl font-bold">
-                        {userData?.studentName ? userData.studentName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'S'}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-bold truncate">{userData?.studentName || "Student"}</h3>
-                      <p className="text-blue-200 text-xs mt-0.5">{userData?.regNo}</p>
-                    </div>
-                  </div>
+              <div className="absolute right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">
+                <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-4 text-white relative">
+                  <p className="font-bold text-sm">{userData?.studentName || 'Student'}</p>
+                  <p className="text-[11px] text-white/70 mt-1">{displayDept(userData?.department)}</p>
+                  <p className="text-[11px] text-white/50">{userData?.regNo || ''}</p>
+                  <button
+                    onClick={() => { setIsProfileOpen(false); navigate("/student/profile"); }}
+                    className="absolute top-2 right-2 p-1.5 rounded-lg hover:bg-white/20 transition-all text-white/70 hover:text-white"
+                    title="Edit Profile"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                  </button>
                 </div>
-                <div className="p-4 space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Programme</p>
-                      <p className="text-sm font-semibold text-zinc-700">{formatProgDisplay(userData?.programme) || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Department</p>
-                      <p className="text-sm font-semibold text-zinc-700">{displayDept(userData?.department) || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Batch</p>
-                      <p className="text-sm font-semibold text-zinc-700">{userData?.batch || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-zinc-400 tracking-wider">Role</p>
-                      <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-100 text-blue-700">
-                        Student
-                      </span>
-                    </div>
-                  </div>
-                  <div className="pt-2 border-t border-zinc-100">
-                    <p className="text-[10px] font-bold text-zinc-400 tracking-wider mb-1">Email</p>
-                    <p className="text-sm font-medium text-zinc-600 truncate">{userData?.email}</p>
-                  </div>
-                </div>
-                <div className="p-2 border-t border-zinc-100">
-                  <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 py-3 text-sm font-bold text-red-600 hover:bg-red-50 rounded-xl transition-colors">
-                    <X size={18} /> Sign Out
+                <div className="p-2">
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl hover:bg-red-50 transition-all text-sm font-bold text-red-600"
+                  >
+                    <X size={16} />
+                    Sign Out
                   </button>
                 </div>
               </div>

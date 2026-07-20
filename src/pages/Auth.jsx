@@ -297,7 +297,8 @@ export default function Auth() {
             const sData = d.data();
             if (sData && typeof sData === 'object' && sanitizedRegNo in sData && !sanitizedRegNo.startsWith('_')) {
               foundBatch = studentBatch;
-              foundName = sData[sanitizedRegNo] || "";
+              const raw = sData[sanitizedRegNo];
+              foundName = (raw !== null && typeof raw === 'object') ? (raw.name || '') : String(raw || '');
               const parsed = parseStudentDocId(d.id, Object.keys(PROGRAMME_DEPARTMENTS));
               foundDept = parsed.department;
               foundProg = parsed.programme;

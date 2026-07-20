@@ -15,6 +15,36 @@ const sanitizeKey = (key) => {
   return String(key).replace(/[.#$[\]]/g, '_');
 };
 
+const ADMISSION_FIELDS = [
+  'title','firstName','lastName','studentName','fatherGuardianName','motherName',
+  'guardianName','gender','dateOfBirth','age','nationality','religion','community',
+  'caste','motherTongue','bloodGroup','maritalStatus','aadharNo',
+  'mobile','parentMobile','parentWhatsAppNo','studentWhatsAppNo','landline','emailId',
+  'address','presentHouseNo','presentStreet','presentLocality','presentCity',
+  'presentAddress','presentPincode','presentDistrict','presentState','presentCountry',
+  'permanentAddress','permanentCity','permanentPincode','permanentDistrict',
+  'permanentState','permanentCountry',
+  'parentOccupation','motherOccupation','fatherOccupationSector','motherOccupationSector',
+  'fatherOrganisation','motherOrganisation','fatherDesignation','motherDesignation',
+  'fatherAnnualIncome','motherAnnualIncome','familyAnnualIncome',
+  'schoolCollege','mediumOfInstruction','examinationPassedAppeared','studentCategory',
+  'seatCategory','scholarshipDetails','hostellerDayScholar','transportRequired',
+  'transportRoute','transportStage','emsUmsNo',
+  'qualifyingExamProgrammes','qualifyingExamInstitute','qualifyingExamBoardUniversity',
+  'qualifyingExamMonthYear','qualifyingExamAttempts','qualifyingExamMarks',
+  'qualifyingExam10thInstitute','qualifyingExam10thBoard','qualifyingExam10thMonthYear',
+  'qualifyingExam10thAttempts','qualifyingExam10thMarks',
+  'qualifyingExam11thInstitute','qualifyingExam11thBoard','qualifyingExam11thMonthYear',
+  'qualifyingExam11thAttempts','qualifyingExam11thMarks',
+  'qualifyingExam12thInstitute','qualifyingExam12thBoard','qualifyingExam12thMonthYear',
+  'qualifyingExam12thAttempts','qualifyingExam12thMarks',
+  'qualifyingExamDipDegInstitute','qualifyingExamDipDegBoard','qualifyingExamDipDegMonthYear',
+  'qualifyingExamDipDegAttempts','qualifyingExamDipDegMarks',
+  'mathsMark','physicsMark','chemistryMark','totalMarks','cutoff','eligibility',
+  'department','department2','department3','quotaAskedFor','reference','enquiryFor',
+  'enquiryDate','enquiryAttendedBy','status','applicationNo'
+];
+
 export default function Upload() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { regulations, getRegulationForBatch } = useRegulations();
@@ -263,13 +293,57 @@ export default function Upload() {
     return s;
   };
 
-  const handleDownloadTemplate = () => {
-    const csvContent = "Exam No,Name\n420722104001,John Doe\n420722104002,Jane Smith\n";
+  const handleDownloadTemplate = async () => {
+    if (!batch || !programme || !department) {
+      setMessage({ type: "error", text: "Please select Batch, Programme, and Department before downloading template." });
+      return;
+    }
+
+    const progKey = formatProgrammeKey(programme);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+    const studentsRef = doc(db, 'students', studentDocId);
+
+    let existingStudents = [];
+    try {
+      const snap = await getDoc(studentsRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        existingStudents = Object.entries(data)
+          .filter(([key]) => !key.startsWith('_'))
+          .map(([key, val]) => ({
+            examNo: key,
+            name: typeof val === 'object' && val !== null ? (val.name || '') : String(val || '')
+          }));
+        const order = data._order || data.order;
+        if (order && Array.isArray(order)) {
+          existingStudents.sort((a, b) => order.indexOf(a.examNo) - order.indexOf(b.examNo));
+        } else {
+          existingStudents.sort((a, b) => a.examNo.localeCompare(b.examNo));
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching existing students:", err);
+    }
+
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const allHeaders = ['Exam No', 'Name', ...ADMISSION_FIELDS];
+    const headerRow = allHeaders.join(',');
+
+    const dataRows = existingStudents.length > 0
+      ? existingStudents.map(s => [esc(s.examNo), esc(s.name), ...ADMISSION_FIELDS.map(() => '')].join(','))
+      : [['', '', ...ADMISSION_FIELDS.map(() => '')].join(',')];
+
+    const csvContent = '\uFEFF' + [headerRow, ...dataRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "student_list_template.csv");
+    link.setAttribute("download", `students_${batch}_${progKey}_${sanitizeKey(department)}${sectionSuffix}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -346,6 +420,7 @@ export default function Upload() {
           complete: async (results) => {
             const rows = results.data;
             const studentsMap = {};
+            const studentsData = {};
             
             // Find columns
             const headers = results.meta.fields || [];
@@ -365,11 +440,24 @@ export default function Upload() {
               return;
             }
 
+            // Detect which admission fields are present as columns
+            const presentAdmissionFields = ADMISSION_FIELDS.filter(f => headers.includes(f));
+
             rows.forEach(row => {
               const examNo = normalizeExamNo(row[examKey]);
               const name = String(row[nameKey] || '').trim();
               if (examNo && name) {
                 studentsMap[examNo] = name;
+                const extra = {};
+                presentAdmissionFields.forEach(f => {
+                  const v = row[f];
+                  if (v !== undefined && v !== null && String(v).trim() !== '') {
+                    extra[f] = String(v).trim();
+                  }
+                });
+                if (Object.keys(extra).length > 0) {
+                  studentsData[examNo] = extra;
+                }
               }
             });
 
@@ -384,16 +472,33 @@ export default function Upload() {
             const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
             const studentsRef = doc(db, 'students', studentDocId); // Firestore doc reference
 
-            const payload = {
-              _meta: {
-                batch,
-                programme_name: programme,
-                department,
-                section: section || '',
-                count: Object.keys(studentsMap).length
-              },
-              ...studentsMap
+            // Read existing doc to merge data (preserve students not in CSV)
+            const existingSnap = await getDoc(studentsRef);
+            const existingData = existingSnap.exists() ? existingSnap.data() : {};
+
+            // Build payload: start with existing data, overwrite with new CSV data
+            const payload = { ...existingData };
+
+            // Overwrite/merge student names from CSV
+            Object.keys(studentsMap).forEach(reg => {
+              payload[reg] = studentsMap[reg];
+            });
+
+            // Update _meta with current selection
+            const totalCount = Object.keys(payload).filter(k => !k.startsWith('_')).length;
+            payload._meta = {
+              batch,
+              programme_name: programme,
+              department,
+              section: section || '',
+              count: totalCount
             };
+
+            // Merge extra admission fields into _student_data
+            if (Object.keys(studentsData).length > 0) {
+              const existingStudentData = existingData._student_data || {};
+              payload._student_data = { ...existingStudentData, ...studentsData };
+            }
 
             await setDoc(studentsRef, payload); // Use setDoc for Firestore
             setSuccessMessage(`Saved ${Object.keys(studentsMap).length} students to database.`);
@@ -757,7 +862,7 @@ export default function Upload() {
                   </select>
                 </div>
               </div>
-              <p className="text-sm text-zinc-500">Upload CSV with columns: Exam No, Name (headers optional).</p>
+              <p className="text-sm text-zinc-500">Upload CSV with columns: Exam No, Name + optional admission fields. <a href="#" onClick={(e) => { e.preventDefault(); handleDownloadTemplate(); }} className="text-[#120c7a] underline">Download template</a> for full column list.</p>
             </div>
           )}
 
@@ -773,7 +878,7 @@ export default function Upload() {
               />
               <div className="mt-2 flex items-center justify-between">
                 <p className="text-sm text-zinc-500">
-                  Upload CSV with columns: Exam No, Name
+                  Upload CSV with Exam No, Name + optional admission data columns
                 </p>
                 <button
                   type="button"

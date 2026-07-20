@@ -658,28 +658,42 @@ export default function Dashboard() {
       const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
       const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
       
-      const unsubscribe = onSnapshot(studentRef, (snapshot) => { // Use onSnapshot for real-time updates
-        const data = snapshot.data(); // Use .data() for Firestore documents
+      const unsubscribe = onSnapshot(studentRef, (snapshot) => {
+        const data = snapshot.data();
         if (data) {
-          // Filter out metadata keys and convert to array
-          const studentList = Object.entries(data)
+          let studentList = Object.entries(data)
             .filter(([key]) => !key.startsWith('_'))
-            .map(([reg, name]) => ({ reg, name }));
-            
-          // Sort by order if it exists in the data
+            .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
+
           const order = data._order || data.order;
           if (order && Array.isArray(order)) {
             studentList.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
           } else {
-            // Default sort by register number
             studentList.sort((a, b) => a.reg.localeCompare(b.reg));
           }
-          
-          setStudents(studentList);
+
+          (async () => {
+            if ((module === "consolidation" || module === "log-report") && selectedSubject && academicYear && semester) {
+              const subjectCode = selectedSubject.split(' - ')[0];
+              const enrolDocId = `${formatProgrammeKey(programme)}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${sanitizeKey(subjectCode)}`;
+              try {
+                const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+                if (enrolSnap.exists()) {
+                  const enrolledData = enrolSnap.data();
+                  const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k]));
+                  studentList = studentList.filter(s => enrolledKeys.has(s.reg));
+                }
+              } catch (e) {
+                console.warn('Enrollment filter failed, showing all students:', e);
+              }
+            }
+            setStudents(studentList);
+            setLoadingStudents(false);
+          })();
         } else {
           setStudents([]);
+          setLoadingStudents(false);
         }
-        setLoadingStudents(false);
       }, (error) => {
         console.error("RTDB Fetch Error:", error);
         setLoadingStudents(false);
@@ -687,7 +701,7 @@ export default function Dashboard() {
 
       return () => unsubscribe();
     }
-  }, [module, programme, department, batch, section]);
+  }, [module, programme, department, batch, section, selectedSubject, semester, academicYear]);
 
   // Fetch Syllabus when filters change
   useEffect(() => {
@@ -1357,6 +1371,13 @@ export default function Dashboard() {
     });
 
     try {
+      // Preserve extra admission data from existing doc
+      try {
+        const snap = await getDoc(studentRef);
+        if (snap.exists() && snap.data()._student_data) {
+          dataToSave._student_data = snap.data()._student_data;
+        }
+      } catch (_) {}
       await setDoc(studentRef, dataToSave); // Use setDoc for Firestore
       setIsEditing(false);
       setSuccessMessage("Student list saved successfully!");

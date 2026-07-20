@@ -1083,7 +1083,7 @@ export default function Reports() {
                 }
               } catch (e) { }
             }
-            if (!cancelled) {
+              if (!cancelled) {
               if (!hasSectionIndex) {
                 studentList = studentList.map(s => ({ ...s, admNo: "", regNo: s.reg }));
               }
@@ -1094,6 +1094,21 @@ export default function Reports() {
                   ...s,
                   regNo: regNos[s.reg] || s.regNo
                 }));
+              }
+              // Filter by course enrolments for subject-specific modules
+              if ((module === "consolidation" || module === "internal" || module === "log-report") && selectedSubject && academicYear && semester) {
+                const subjectCode = selectedSubject.split(' - ')[0];
+                const enrolDocId = `${formatProgrammeKey(programme)}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${sanitizeKey(subjectCode)}`;
+                try {
+                  const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+                  if (enrolSnap.exists()) {
+                    const enrolledData = enrolSnap.data();
+                    const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k]));
+                    studentList = studentList.filter(s => enrolledKeys.has(s.reg));
+                  }
+                } catch (e) {
+                  console.warn('Enrollment filter failed, showing all students:', e);
+                }
               }
               // Sort by regNo (displayed value) first, then by reg via _order
               if (order && Array.isArray(order)) {
@@ -1127,7 +1142,7 @@ export default function Reports() {
         unsubscribe();
       };
     }
-  }, [module, programme, department, batch, section]);
+  }, [module, programme, department, batch, section, selectedSubject, semester, academicYear]);
 
   // Fetch Syllabus when filters change
   useEffect(() => {
@@ -2143,6 +2158,13 @@ export default function Reports() {
         }
       }
 
+      // Preserve extra admission data from existing doc
+      try {
+        const snap = await getDoc(studentRef);
+        if (snap.exists() && snap.data()._student_data) {
+          dataToSave._student_data = snap.data()._student_data;
+        }
+      } catch (_) {}
       await setDoc(studentRef, dataToSave);
 
       setIsEditing(false);

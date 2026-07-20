@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase";
-import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs, query, orderBy, limit, startAfter, getCountFromServer, where } from "firebase/firestore";
+import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs, query, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search } from "lucide-react";
 import Layout from "../components/Layout";
@@ -15,15 +15,11 @@ export default function AdminRoleConfig() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [userSearchTerm, setUserSearchTerm] = useState("");
-  const [allUsers, setAllUsers] = useState([]);
   const [masterAdminUser, setMasterAdminUser] = useState(null);
   const [defaultAdminUser, setDefaultAdminUser] = useState(null);
 
   // Pagination
-  const [pageCursors, setPageCursors] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [totalUserCount, setTotalUserCount] = useState(0);
   const PAGE_SIZE = 20;
 
   // Revoke Modal State
@@ -48,43 +44,10 @@ export default function AdminRoleConfig() {
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
   const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
 
-  const loadUsersPage = async (page, cursor) => {
-    setLoading(true);
-    try {
-      const usersRef = collection(db, "users");
-      const constraints = [orderBy("displayName"), limit(PAGE_SIZE + 1)];
-      if (cursor) constraints.push(startAfter(cursor));
-      const q = query(usersRef, ...constraints);
-      const snapshot = await getDocs(q);
-      const docs = snapshot.docs;
-      const items = docs.slice(0, PAGE_SIZE).map((docSnap) => ({
-        ...docSnap.data(),
-        uid: docSnap.id,
-        role: docSnap.data().role || "Faculty",
-        isApproved: docSnap.data().isApproved || false
-      }));
-      setHasMore(docs.length > PAGE_SIZE);
-      setUsers(items);
-      setPageCursors((prev) => {
-        const next = [...prev];
-        next[page - 1] = docs.length > 0 ? docs[Math.min(docs.length, PAGE_SIZE) - 1] : null;
-        return next;
-      });
-    } catch (err) {
-      console.error("Error fetching users:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const goToPage = (page) => {
     if (page < 1) return;
-    const cursor = page > 1 ? pageCursors[page - 2] : null;
     setCurrentPage(page);
-    loadUsersPage(page, cursor);
   };
-
-  const refreshPage = () => goToPage(currentPage);
 
   // All available system pages
   const ALL_PAGES = [
@@ -173,9 +136,22 @@ export default function AdminRoleConfig() {
       }
     });
 
-    // Load first page of users
-    loadUsersPage(1, null);
-    getCountFromServer(collection(db, "users")).then((snap) => setTotalUserCount(snap.data().count)).catch(() => {});
+    // Real-time listener for all non-student users
+    const usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
+      const all = snap.docs
+        .filter(d => d.data().role !== "Student")
+        .map(d => ({
+          ...d.data(),
+          uid: d.id,
+          role: d.data().role || "Faculty",
+          isApproved: d.data().isApproved || false
+        }));
+      setUsers(all);
+      setLoading(false);
+    }, (err) => {
+      console.error("Error fetching users:", err);
+      setLoading(false);
+    });
 
     // Fetch master admin and default admin user data so they always appear in the list
     const fetchAdminUsers = async () => {
@@ -239,35 +215,11 @@ export default function AdminRoleConfig() {
 
     return () => {
       unsubscribeAuth();
+      usersUnsub();
       unsubscribePerms();
       unsubscribeUserData();
     };
   }, []);
-
-  // Fetch all users when search is active (to search across pages)
-  useEffect(() => {
-    if (!userSearchTerm.trim()) {
-      setAllUsers([]);
-      return;
-    }
-    const fetchAllUsers = async () => {
-      try {
-        const snap = await getDocs(collection(db, "users"));
-        const all = snap.docs
-          .filter(d => d.data().role !== "Student")
-          .map(d => ({
-            ...d.data(),
-            uid: d.id,
-            role: d.data().role || "Faculty",
-            isApproved: d.data().isApproved || false
-          }));
-        setAllUsers(all);
-      } catch (err) {
-        console.error("Error fetching all users:", err);
-      }
-    };
-    fetchAllUsers();
-  }, [userSearchTerm]);
 
   const handleTogglePermission = (role, pageId) => {
     const currentPerms = rolePermissions[role] || [];
@@ -350,7 +302,6 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { role: newRole });
       showNotification(`Role updated to ${newRole}`);
-      refreshPage();
     } catch (error) {
       console.error("Error updating role:", error);
       showNotification("Failed to update role.");
@@ -361,7 +312,6 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { isApproved: true });
       showNotification(`User approved successfully`);
-      refreshPage();
     } catch (error) {
       console.error("Error approving user:", error);
       showNotification("Failed to approve user.");
@@ -381,8 +331,6 @@ export default function AdminRoleConfig() {
       showNotification("User request rejected and removed");
       setRejectModalOpen(false);
       setUserToReject(null);
-      refreshPage();
-      getCountFromServer(collection(db, "users")).then((snap) => setTotalUserCount(snap.data().count)).catch(() => {});
     } catch (error) {
       console.error("Error rejecting user:", error);
       showNotification("Failed to reject user.");
@@ -421,7 +369,6 @@ export default function AdminRoleConfig() {
       showNotification(`User access revoked`);
       setRevokeModalOpen(false);
       setUserToRevoke(null);
-      refreshPage();
     } catch (error) {
       console.error("Error revoking user:", error);
       showNotification("Failed to revoke user access.");
@@ -433,7 +380,6 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { programme: newProgramme || null, department: "" });
       showNotification("Programme updated");
-      refreshPage();
     } catch (err) {
       console.error("Error updating programme:", err);
       showNotification("Failed to update programme.");
@@ -444,7 +390,6 @@ export default function AdminRoleConfig() {
     try {
       await updateDoc(doc(db, "users", uid), { department: newDepartment || null });
       showNotification("Department updated");
-      refreshPage();
     } catch (err) {
       console.error("Error updating department:", err);
       showNotification("Failed to update department.");
@@ -457,16 +402,12 @@ export default function AdminRoleConfig() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
-  const isEmptyUsers = !loading && totalUserCount === 0;
-
   // Filter and Sort users based on requested logic
   const filteredAndSortedUsers = useMemo(() => {
-    // Use allUsers (cross-page) when searching, else paginated users
-    const source = userSearchTerm.trim() ? allUsers : users;
     const isMasterAdminLoggedIn = user?.email === masterAdminEmail;
 
     // Exclude students from admin management
-    let list = source.filter(u => u.role !== 'Student');
+    let list = users.filter(u => u.role !== 'Student');
 
     if (!isMasterAdminLoggedIn) {
       list = list.filter(u => u.email !== masterAdminEmail);
@@ -540,7 +481,14 @@ export default function AdminRoleConfig() {
       const nameB = (b.displayName || b.facultyName || "").toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  }, [users, allUsers, userSearchTerm, masterAdminEmail, defaultAdminEmail, user?.email, masterAdminUser, defaultAdminUser]);
+  }, [users, userSearchTerm, masterAdminEmail, defaultAdminEmail, user?.email, masterAdminUser, defaultAdminUser]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAndSortedUsers.length / PAGE_SIZE));
+  const currentPageClamped = Math.min(currentPage, totalPages);
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPageClamped - 1) * PAGE_SIZE;
+    return filteredAndSortedUsers.slice(start, start + PAGE_SIZE);
+  }, [filteredAndSortedUsers, currentPageClamped]);
 
   if (loading) {
     return (
@@ -662,14 +610,14 @@ export default function AdminRoleConfig() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {filteredAndSortedUsers.length === 0 ? (
+                    {paginatedUsers.length === 0 ? (
                       <tr>
                         <td colSpan="8" className="px-6 py-8 text-center text-zinc-500">
                           No users found.
                         </td>
                       </tr>
                     ) : (
-                      filteredAndSortedUsers.map((user) => (
+                      paginatedUsers.map((user) => (
                         <tr key={user.uid} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-2">
@@ -764,24 +712,25 @@ export default function AdminRoleConfig() {
               </div>
             </div>
 
-            {!isEmptyUsers && (
+            {paginatedUsers.length > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-zinc-500">
-                  Page {currentPage} of {Math.max(1, Math.ceil(totalUserCount / PAGE_SIZE))} ({totalUserCount} total)
+                  Page {currentPageClamped} of {totalPages} ({filteredAndSortedUsers.length} total)
                 </span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={currentPage === 1}
-                    onClick={() => goToPage(currentPage - 1)}
+                    disabled={currentPageClamped <= 1}
+                    onClick={() => goToPage(currentPageClamped - 1)}
                     className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Previous
                   </button>
                   <button
                     type="button"
-                    disabled={!hasMore}
-                    onClick={() => goToPage(currentPage + 1)}
+                    disabled={currentPageClamped >= totalPages}
+
+                    onClick={() => goToPage(currentPageClamped + 1)}
                     className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-700 transition-colors hover:border-[#120c7a] hover:text-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Next

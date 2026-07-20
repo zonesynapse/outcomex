@@ -481,8 +481,29 @@ export default function Attendance() {
         ]);
 
         const attData = attendanceSnap.data();
-        const rawMaster = studentSnap.data() || {};
+        let rawMaster = studentSnap.data() || {};
         setAttendanceData(attData);
+
+        // Filter to only enrolled students from course_enrolments
+        try {
+          const enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
+          const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+          if (enrolSnap.exists()) {
+            const enrolledData = enrolSnap.data();
+            const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k]));
+            const filtered = { _meta: rawMaster._meta };
+            if (rawMaster._order) filtered._order = rawMaster._order;
+            if (rawMaster._joiningAY) filtered._joiningAY = rawMaster._joiningAY;
+            Object.keys(rawMaster).forEach(k => {
+              if (k !== '_meta' && k !== '_order' && k !== '_joiningAY' && enrolledKeys.has(k)) {
+                filtered[k] = rawMaster[k];
+              }
+            });
+            rawMaster = filtered;
+          }
+        } catch (e) {
+          console.warn('Enrollment filter failed, showing all students:', e);
+        }
         setMasterList(rawMaster);
         setStudents([]);
 

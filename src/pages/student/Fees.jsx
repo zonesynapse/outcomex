@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth, functions } from "../../firebase";
-import { doc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -8,7 +8,7 @@ import {
   ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
   Ban,
 } from "lucide-react";
-import { formatBatchDisplay, formatProgrammeKey } from "../../lib/utils";
+import { formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
 
 const PAYMENT_STATUS = {
   PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
@@ -25,6 +25,7 @@ export default function Fees() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
+  const [seatCategory, setSeatCategory] = useState("");
 
   const verifyPaymentOnReturn = useCallback(async (orderId) => {
     try {
@@ -79,6 +80,36 @@ export default function Fees() {
     };
   }, []);
 
+  // Load seatCategory from _student_data or _profile_data (reactive)
+  useEffect(() => {
+    if (!studentData) return;
+    const reg = studentData.regNo;
+    if (!reg) {
+      // Fallback: read from _profile_data on users doc
+      setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
+      return;
+    }
+
+    (async () => {
+      try {
+        const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+        if (idxSnap.exists()) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await getDoc(doc(db, 'students', sDocId));
+            if (sSnap.exists()) {
+              const extra = sSnap.data()._student_data?.[reg] || {};
+              setSeatCategory(extra.quotaAskedFor || "");
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+      // Fallback: read from _profile_data on users doc
+      setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
+    })();
+  }, [studentData]);
+
   useEffect(() => {
     if (!studentData) return;
     const { programme, department, batch } = studentData;
@@ -108,8 +139,9 @@ export default function Fees() {
           const isProgMatch = normDataProg && normDataProg === normStudentProg;
           const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
           const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
+          const isQuotaMatch = !seatCategory || !data.quota || data.quota === seatCategory;
 
-          if (isProgMatch && isDeptMatch && isBatchMatch) {
+          if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch) {
             configs.push({ id: d.id, ...data });
           }
         });
@@ -134,7 +166,7 @@ export default function Fees() {
     };
 
     fetchData();
-  }, [studentData]);
+  }, [studentData, seatCategory]);
 
   useEffect(() => {
     if (!toast) return;

@@ -315,3 +315,21 @@
 - **Fixes**:
   - `PrincipalDashboard.jsx` `addStudentToNamelist` (line 313): Added `_meta: { ...(existingData._meta || {}), department: app.department }` to the approved_admissions doc
   - `HODDashboard.jsx` approved_admissions listener (line 207-213): Replaced `lastPart` matching with full composite string match after batch — `normComposite.includes(hodNorm) || hodNorm.includes(normComposite)` — which correctly matches multi-segment dept keys
+
+### 31. Attendance/MarkEntry enrollment-based student filtering
+- **Problem**: Both pages showed ALL uploaded students regardless of whether they're enrolled in the subject's `course_enrolments` doc. MarkEntry had a broken attempt (wrong collection name `course_enrollments` with double `l` and wrong doc ID format).
+- **Fixes**:
+  - `MarkEntry.jsx` (line 834-837): Fixed collection name `course_enrollments` → `course_enrolments` (single `l`), removed `sectionSuffix` from doc ID, used `sanitizeKey(subject)` instead of raw `subject` — doc ID now matches CourseEnrolment's save format exactly.
+  - `MarkEntry.jsx` (line 943): Fixed collection name `course_enrollments` → `course_enrolments` in `toggleStudentEnrollment`.
+  - `Attendance.jsx` (line 487-507): Added enrollment filter block after fetching `masterList` — reads `course_enrolments/{progKey}_{deptKey}_{batchKey}_{yearKey}_{semNum}_{subjectKey}`, preserves `_meta`/`_order`/`_joiningAY`, keeps only enrolled students. Falls back to showing all students if enrollment doc doesn't exist (backward compatible).
+  - `Dashboard.jsx` (line 675-689): Added enrollment filter in `onSnapshot` callback for "consolidation"/"log-report" modules — reads `course_enrolments` doc, filters student list before setting state. Added `selectedSubject`, `semester`, `academicYear` to dep array.
+  - `Reports.jsx` (line 1098-1112): Added enrollment filter inside async IIFE for "consolidation"/"internal"/"log-report" modules — reads `course_enrolments` doc, filters student list after regNo enrichment. Added `selectedSubject`, `semester`, `academicYear` to dep array.
+
+### 31b. CourseEnrolment auto-select user programme/department
+- **Problem**: Faculty/HOD had to manually select programme and department each time.
+- **Fix**: Added `onAuthStateChanged` listener that fetches `users/{uid}` doc and auto-sets programme+department for non-Admin users. Made both dropdowns `disabled` with `cursor-not-allowed` when user-locked. Admin users (no userProgramme) can still freely change.
+
+### 32. AdminRoleConfig role/department/approve not reflecting in real-time
+- **Problem**: `loadUsersPage` used `getDocs` (one-time fetch) with cursor-based pagination. After mutations (role change, department change, approve), calling `refreshPage()` didn't reliably show the update — required full browser refresh.
+- **Root cause**: Paginated `getDocs` with `startAfter` cursors meant the re-fetched page might exclude the updated document due to cursor position. Additionally, the `getCountFromServer` call showed stale totals.
+- **Fix**: Replaced `loadUsersPage`/`getDocs` with `onSnapshot` real-time listener on the `users` collection. All non-student users are now stored in `users` state and filtered/sorted/paginated client-side via `useMemo`. Removed `pageCursors`, `hasMore`, `totalUserCount` state vars, and all `refreshPage()` calls. Removed unused Firestore imports (`orderBy`, `limit`, `startAfter`, `getCountFromServer`).

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
-import { db } from "../firebase"; // Import db for Firestore
-import { doc, setDoc, getDoc, getDocs, collection, onSnapshot } from "firebase/firestore"; // Firestore imports
+import { db, auth } from "../firebase";
+import { doc, setDoc, getDoc, getDocs, collection, onSnapshot } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import { 
   Users, 
   Search, 
@@ -56,6 +57,27 @@ export default function CourseEnrolment() {
   // Success Feedback State
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+
+  const [userProgramme, setUserProgramme] = useState("");
+  const [userDepartment, setUserDepartment] = useState("");
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const snap = await getDoc(doc(db, "users", user.uid));
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.role !== 'Admin') {
+            setUserProgramme(data.programme || "");
+            setUserDepartment(data.department || "");
+            setProgramme(data.programme || "");
+            setDepartment(data.department || "");
+          }
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   const batches = useMemo(() => {
     const progKey = formatProgrammeKey(programme);
@@ -174,8 +196,10 @@ export default function CourseEnrolment() {
             // Filter by section if selected
             if (section && meta.section !== section) return;
             Object.entries(data).forEach(([key, value]) => {
-              if (key !== '_meta' && typeof value === 'string' && value.trim()) {
-                allStudents[key] = value;
+              if (key.startsWith('_')) return;
+              const studentName = (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '');
+              if (studentName.trim()) {
+                allStudents[key] = studentName;
               }
             });
           }
@@ -290,13 +314,16 @@ export default function CourseEnrolment() {
                 <div className="relative">
                   <select 
                     value={programme}
+                    disabled={!!userProgramme}
                     onChange={(e) => {
-                      setProgramme(e.target.value);
-                      setDepartment("");
-                      setBatch("");
-                      setSection("");
+                      if (!userProgramme) {
+                        setProgramme(e.target.value);
+                        setDepartment("");
+                        setBatch("");
+                        setSection("");
+                      }
                     }}
-                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium"
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="">Select</option>
                     {Object.keys(deptMap).map(p => (
@@ -313,12 +340,14 @@ export default function CourseEnrolment() {
                 <div className="relative">
                   <select 
                     value={department}
-                    disabled={!programme}
+                    disabled={!programme || !!userDepartment}
                     onChange={(e) => {
-                      setDepartment(e.target.value);
-                      setSection("");
+                      if (!userDepartment) {
+                        setDepartment(e.target.value);
+                        setSection("");
+                      }
                     }}
-                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="">Select</option>
                     {programme && deptMap[programme]?.map(d => (

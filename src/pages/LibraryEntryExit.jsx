@@ -42,8 +42,9 @@ export default function LibraryEntryExit() {
 
           Object.entries(data).forEach(([key, value]) => {
             if (key.startsWith("_")) return;
+            const studentName = (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '');
             map[key] = {
-              name: String(value || ""),
+              name: studentName,
               batch: batchLabel,
               programme: programmeLabel,
               department: deptLabel,
