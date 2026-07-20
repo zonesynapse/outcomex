@@ -148,7 +148,11 @@ export default function AdminRoleConfig() {
     { id: "inventory-request", label: "Inventory — Request Item", path: "/inventory/request" },
     { id: "inventory-my-requests", label: "Inventory — My Requests", path: "/inventory/my-requests" },
     { id: "inventory-approvals", label: "Inventory — Request Approvals", path: "/inventory/approvals" },
-    { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill" }
+    { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill" },
+    { id: "activity-list", label: "Activity — Dashboard", path: "/activities" },
+    { id: "activity-approval", label: "Activity — Approval Queue", path: "/activities" },
+    { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities" },
+    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities" }
   ];
 
   useEffect(() => {

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { 
   Award, Clock, Eye, Download, Check, X, Search, Filter, Users, Loader2,
   Settings, Plus, Trash2, Save, BookOpen, ListTodo, Target, ChevronRight, Info,
@@ -14,6 +14,9 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
+import { formatProgrammeKey, sanitizeKey, getAcademicYears, formatProgDisplay } from "../lib/utils";
+
+const BASIC_INFO_KEYS = new Set(["programme", "department", "batch", "academicYear", "semester", "section", "date", "submittedBy", "month"]);
 
 const getCategoryFromCode = (code) => {
   if (code.startsWith("A")) return "student";
@@ -36,10 +39,65 @@ export default function ActivityEntry() {
   const [uploadProgress, setUploadProgress] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [draftId, setDraftId] = useState(null);
+  const [sectionConfigs, setSectionConfigs] = useState({});
 
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches } = useBatches(durations);
-  const activeBatchesList = useMemo(() => getActiveBatches(), [getActiveBatches]);
+  const activeBatchesList = useMemo(() => {
+    if (!formData.programme) return [];
+    const progKey = formatProgrammeKey(formData.programme);
+    const allActive = getActiveBatches(progKey);
+    if (!formData.department) return allActive;
+    const deptKey = sanitizeKey(formData.department);
+    const configuredBatches = new Set();
+    Object.values(sectionConfigs).forEach(cfg => {
+      if (cfg.progKey === progKey && cfg.deptKey === deptKey) {
+        configuredBatches.add(cfg.batch);
+      }
+    });
+    if (configuredBatches.size === 0) return allActive;
+    return allActive.filter(b => configuredBatches.has(b));
+  }, [formData.programme, formData.department, getActiveBatches, sectionConfigs]);
+
+  const availableSections = useMemo(() => {
+    const prog = formData.programme;
+    const dept = formData.department;
+    const batch = formData.batch;
+    if (!prog || !dept || !batch) return [];
+    const progKey = formatProgrammeKey(prog);
+    const deptKey = sanitizeKey(dept);
+    const batchKey = sanitizeKey(batch);
+    const docId = `${progKey}_${deptKey}_${batchKey}`;
+
+    let cfg = sectionConfigs[docId];
+
+    // Fallback: search through stored field values
+    if (!cfg?.numSections) {
+      const entry = Object.values(sectionConfigs).find(v =>
+        v.batch === batch &&
+        v.department === dept &&
+        (v.programme === prog || formatProgrammeKey(v.programme) === progKey)
+      );
+      if (entry) cfg = entry;
+    }
+
+    if (!cfg?.numSections) return [];
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: cfg.numSections }, (_, i) => `Sec-${letters[i]}`);
+  }, [formData.programme, formData.department, formData.batch, sectionConfigs]);
+
+  const semesterOptions = useMemo(() => {
+    const batch = formData.batch;
+    const acYear = formData.academicYear;
+    if (!batch || !acYear) return [];
+    const batchStart = parseInt(batch.split("-")[0]);
+    const acStart = parseInt(acYear.split("-")[0]);
+    if (isNaN(batchStart) || isNaN(acStart)) return [];
+    const yearNumber = acStart - batchStart + 1;
+    if (yearNumber < 1) return [];
+    const firstSem = (yearNumber - 1) * 2 + 1;
+    return [firstSem, firstSem + 1];
+  }, [formData.batch, formData.academicYear]);
 
   // Multi-row state for activities like A5, A7, A8
   const [rows, setRows] = useState([{}]);
@@ -71,6 +129,16 @@ export default function ActivityEntry() {
     return () => unsub();
   }, []);
 
+  // Load batch section configs
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
+
   // Load activity configuration
   useEffect(() => {
     if (code) {
@@ -90,7 +158,16 @@ export default function ActivityEntry() {
         return newRows;
       });
     } else {
-      setFormData(prev => ({ ...prev, [field]: value }));
+      setFormData(prev => {
+        const next = { ...prev, [field]: value };
+        // Auto-fill month from date
+        if ((field === 'date' || field === 'fromDate') && value) {
+          const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+          const d = new Date(value);
+          if (!isNaN(d)) next.month = monthNames[d.getMonth()];
+        }
+        return next;
+      });
       if (errors[field]) {
         setErrors(prev => ({ ...prev, [field]: null }));
       }
@@ -129,6 +206,7 @@ export default function ActivityEntry() {
     if (activityConfig?.isMultiRow) {
       dataToValidate.forEach((row, idx) => {
         activityConfig.fields.forEach(field => {
+          if (BASIC_INFO_KEYS.has(field.key)) return;
           if (field.required && !row[field.key]) {
             newErrors[`${field.key}_${idx}`] = `${field.label} is required`;
           }
@@ -136,6 +214,7 @@ export default function ActivityEntry() {
       });
     } else {
       activityConfig?.fields.forEach(field => {
+        if (BASIC_INFO_KEYS.has(field.key)) return;
         if (field.required && !formData[field.key]) {
           newErrors[field.key] = `${field.label} is required`;
         }
@@ -266,8 +345,8 @@ export default function ActivityEntry() {
           <AlertTriangle className="text-amber-500 mx-auto mb-4" size={48} />
           <h2 className="text-lg font-black text-zinc-800">Activity Not Found</h2>
           <p className="text-xs text-zinc-400 font-medium mt-1">The activity code "{code}" does not exist in the registry.</p>
-          <button onClick={() => navigate("/activities")} className="mt-4 px-4 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-[#120c7a]/90">
-            Back to Activities
+          <button onClick={() => navigate("/activities/new")} className="mt-4 px-4 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-[#120c7a]/90">
+            Back to New Activity
           </button>
         </div>
       </Layout>
@@ -326,33 +405,34 @@ export default function ActivityEntry() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
+                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Programme <span className="text-red-500">*</span></label>
+                <select
+                  value={formData.programme}
+                  onChange={e => handleInputChange('programme', e.target.value)}
+                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  required
+                >
+                  <option value="">Select Programme</option>
+                  {Object.keys(PROGRAMME_DEPARTMENTS).sort().map(p => (
+                    <option key={p} value={formatProgDisplay(p)}>{formatProgDisplay(p)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department <span className="text-red-500">*</span></label>
                 <select
                   value={formData.department}
                   onChange={e => handleInputChange('department', e.target.value)}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  disabled={!formData.programme}
                   required
                 >
-                  <option value="">Select Department</option>
-                  {Object.values(PROGRAMME_DEPARTMENTS).flat().sort().map(d => (
+                  <option value="">{formData.programme ? "Select Department" : "Select Programme first"}</option>
+                  {formData.programme && (PROGRAMME_DEPARTMENTS[formatProgrammeKey(formData.programme)] || []).sort().map(d => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
                 {errors.department && <p className="text-[10px] text-red-500 mt-1">{errors.department}</p>}
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Programme</label>
-                <select
-                  value={formData.programme}
-                  onChange={e => handleInputChange('programme', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                >
-                  <option value="">Select Programme</option>
-                  <option value="B.E.">B.E.</option>
-                  <option value="B.Tech.">B.Tech.</option>
-                  <option value="M.E.">M.E.</option>
-                  <option value="M.Tech.">M.Tech.</option>
-                </select>
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Batch <span className="text-red-500">*</span></label>
@@ -360,12 +440,41 @@ export default function ActivityEntry() {
                   value={formData.batch}
                   onChange={e => handleInputChange('batch', e.target.value)}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  disabled={!formData.programme}
                   required
                 >
-                  <option value="">Select Batch</option>
+                  <option value="">{formData.programme ? "Select Batch" : "Select Programme first"}</option>
                   {activeBatchesList.map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
                 {errors.batch && <p className="text-[10px] text-red-500 mt-1">{errors.batch}</p>}
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Academic Year <span className="text-red-500">*</span></label>
+                <select
+                  value={formData.academicYear}
+                  onChange={e => handleInputChange('academicYear', e.target.value)}
+                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  disabled={!formData.batch}
+                  required
+                >
+                  <option value="">{formData.batch ? "Select Academic Year" : "Select Batch first"}</option>
+                  {formData.batch && getAcademicYears(formData.batch).map(ay => (
+                    <option key={ay} value={ay}>{ay}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Semester <span className="text-red-500">*</span></label>
+                <select
+                  value={formData.semester}
+                  onChange={e => handleInputChange('semester', e.target.value)}
+                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  disabled={!formData.batch || !formData.academicYear || semesterOptions.length === 0}
+                  required
+                >
+                  <option value="">{!formData.batch || !formData.academicYear ? "Select Batch & Academic Year first" : "Select Semester"}</option>
+                  {semesterOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Section</label>
@@ -373,11 +482,10 @@ export default function ActivityEntry() {
                   value={formData.section}
                   onChange={e => handleInputChange('section', e.target.value)}
                   className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                  disabled={!formData.programme || !formData.department || !formData.batch || availableSections.length === 0}
                 >
-                  <option value="">Select Section</option>
-                  <option value="Sec-A">Sec-A</option>
-                  <option value="Sec-B">Sec-B</option>
-                  <option value="Sec-C">Sec-C</option>
+                  <option value="">{availableSections.length === 0 && formData.programme && formData.department && formData.batch ? "No sections configured" : "Select Section"}</option>
+                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -423,7 +531,7 @@ export default function ActivityEntry() {
                       )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {activityConfig.fields.map(field => (
+                      {activityConfig.fields.filter(f => !BASIC_INFO_KEYS.has(f.key)).map(field => (
                         <div key={field.key} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
                           <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
                             {field.label} {field.required && <span className="text-red-500">*</span>}
@@ -471,7 +579,7 @@ export default function ActivityEntry() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activityConfig.fields.filter(f => f.key !== 'evidence').map(field => (
+                {activityConfig.fields.filter(f => f.key !== 'evidence' && !BASIC_INFO_KEYS.has(f.key)).map(field => (
                   <div key={field.key} className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
                     <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
                       {field.label} {field.required && <span className="text-red-500">*</span>}
@@ -559,8 +667,8 @@ export default function ActivityEntry() {
 
           {/* Action Buttons */}
           <div className="flex items-center justify-between gap-4">
-            <button type="button" onClick={() => navigate("/activities")} className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1">
-              <ArrowLeft size={14} /> Back to List
+            <button type="button" onClick={() => navigate("/activities/new")} className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1">
+              <ArrowLeft size={14} /> Back to New Activity
             </button>
             <div className="flex gap-2 ml-auto">
               <button type="button" onClick={saveDraft} disabled={saving} className="px-5 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-extrabold rounded-xl transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">

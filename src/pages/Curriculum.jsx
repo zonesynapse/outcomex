@@ -21,7 +21,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatProgrammeKey, getRecentBatches as getRecentBatchesUtil, formatBatchDisplay } from "../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay, getRecentBatches } from "../lib/utils";
 
 function sanitizeKey(key) {
   if (!key) return "";
@@ -31,7 +31,15 @@ function sanitizeKey(key) {
 export default function Curriculum() {
   const { departments, durations, addDepartment, removeDepartment, removeProgram, renameProgram, renameDepartment, setDuration } = useDepartments();
   const { regulations, batchRegulations, addRegulation, mapBatchToRegulation } = useRegulations();
-  const { batchStatus, toggleBatchStatus } = useBatches(durations);
+  const { batchStatus, toggleBatchStatus, getActiveBatches } = useBatches(durations);
+
+  const getBatchesForProg = (prog) => {
+    const progKey = formatProgrammeKey(prog);
+    const active = getActiveBatches(progKey);
+    if (active.length > 0) return active;
+    const duration = durations[progKey] || 4;
+    return getRecentBatches(duration).sort((a, b) => b.localeCompare(a));
+  };
 
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
@@ -451,11 +459,6 @@ export default function Curriculum() {
     setTimeout(() => setShowSuccess(false), 3000);
   };
 
-  const getRecentBatches = (prog) => {
-    const progKey = formatProgrammeKey(prog);
-    const duration = durations[progKey] || 4;
-    return getRecentBatchesUtil(duration);
-  };
 
   const mappedBatches = useMemo(() => {
     if (!mappingProgram || !mappingRegulation) return [];
@@ -1360,7 +1363,7 @@ export default function Curriculum() {
                           onChange={(e) => setMappingBatch(e.target.value)}
                         >
                           <option value="">{mappingBatch ? formatBatchDisplay(mappingBatch) : "Select Batch..."}</option>
-                          {getRecentBatches(mappingProgram).map(b => (
+                          {getBatchesForProg(mappingProgram).map(b => (
                             <option key={b} value={b}>{formatBatchDisplay(b)}</option>
                           ))}
                         </select>
@@ -1477,7 +1480,7 @@ export default function Curriculum() {
                 <div className="relative">
                   <select className="w-full appearance-none bg-white border border-slate-300 rounded-lg px-3 py-2.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300 transition-all disabled:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" value={sectionBatch} onChange={e => setSectionBatch(e.target.value)} disabled={!sectionProg}>
                     <option value="">Select Batch</option>
-                    {sectionProg && getRecentBatches(sectionProg).map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
+                    {sectionProg && getBatchesForProg(sectionProg).map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
                   </select>
                   <ChevronDown size={16} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>

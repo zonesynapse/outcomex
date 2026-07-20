@@ -522,23 +522,67 @@ export default function HODRoleConfig() {
         }
       };
 
-      // Only update the requesting department's timetable
       await updateDeptAssignment(fromKey, request.allocatedFacultyUid, newFacultyUid);
-      
-      const statusUpdate = { 
-        ...request, 
+
+      const statusUpdate = {
+        ...request,
         allocatedFacultyUid: newFacultyUid,
-        processedAt: Date.now() 
+        processedAt: Date.now()
       };
 
       batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, request.id), statusUpdate);
       batch.set(doc(db, 'inter_dept_requests', 'fulfilled', toKey, request.id), statusUpdate);
-      
+
       await batch.commit();
       showToast("Assigned faculty updated successfully!");
     } catch (err) {
       console.error("Error updating faculty:", err);
       showToast("Error updating faculty", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRevokeFulfilledRequest = async (request) => {
+    setSaving(true);
+    try {
+      const fromKey = sanitizeKey(request.fromDept);
+      const toKey = sanitizeKey(request.toDept);
+      const progKey = formatProgrammeKey(request.programme);
+      const batchKey = sanitizeKey(request.batch);
+      const ayKey = sanitizeKey(request.academicYear);
+      const sem = request.semester;
+
+      const batch = writeBatch(db);
+
+      const sectionSuffix = request.section ? `_${sanitizeKey(request.section)}` : '';
+      const compKey = `${progKey}_${fromKey}_${batchKey}_${ayKey}_${sem}${sectionSuffix}`;
+      const ref = doc(db, 'subject_assignments', compKey);
+      const snap = await getDoc(ref);
+      const data = snap.exists() ? snap.data() : {};
+
+      if (request.allocatedFacultyUid) {
+        const oldSubs = (data[request.allocatedFacultyUid] || []).filter(code => code !== request.subjectCode);
+        batch.set(ref, { [request.allocatedFacultyUid]: oldSubs }, { merge: true });
+      }
+
+      // Move request back to incoming as pending (so same HOD can reassign)
+      const statusUpdate = {
+        ...request,
+        status: 'pending',
+        allocatedFacultyUid: null,
+        processedAt: Date.now()
+      };
+
+      batch.delete(doc(db, 'inter_dept_requests', 'fulfilled', toKey, request.id));
+      batch.set(doc(db, 'inter_dept_requests', 'incoming', toKey, request.id), statusUpdate);
+      batch.set(doc(db, 'inter_dept_requests', 'outgoing', fromKey, request.id), statusUpdate);
+
+      await batch.commit();
+      showToast("Allocation revoked — request is back in incoming for reassignment");
+    } catch (err) {
+      console.error("Error revoking request:", err);
+      showToast("Error revoking request", "error");
     } finally {
       setSaving(false);
     }
@@ -808,19 +852,29 @@ export default function HODRoleConfig() {
                           </div>
                           
                           {req.status === 'accepted' && (
-                            <div className="flex items-center gap-3">
-                              <div className="flex-1">
-                                <select 
-                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+                            <div className="flex items-center gap-2 pt-2 border-t border-slate-100 flex-wrap">
+                              <div className="flex-1 min-w-[200px]">
+                                <select
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-100 transition-all"
                                   value={req.allocatedFacultyUid || ""}
                                   onChange={(e) => handleUpdateFulfilledRequest(req, e.target.value)}
                                   disabled={saving}
                                 >
-                                  <option value="">Select Faculty</option>
+                                  <option value="">{usersMap[req.allocatedFacultyUid]?.facultyName ? `Change: ${usersMap[req.allocatedFacultyUid]?.facultyName}` : 'Select Faculty'}</option>
                                   {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
                                 </select>
                               </div>
-                              <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest whitespace-nowrap">Change Faculty</span>
+                              <button
+                                onClick={() => {
+                                  if (window.confirm(`Revoke allocation for ${req.subjectCode}? The request will return to Incoming for reassignment.`)) {
+                                    handleRevokeFulfilledRequest(req);
+                                  }
+                                }}
+                                disabled={saving}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1"
+                              >
+                                <X size={10} /> Revoke
+                              </button>
                             </div>
                           )}
                         </div>

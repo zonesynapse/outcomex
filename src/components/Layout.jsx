@@ -45,7 +45,8 @@ import {
   Send,
   ClipboardCheck,
   PackageCheck,
-  Download
+  Download,
+  Plus
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -117,6 +118,7 @@ const allPossibleItems = [
   { id: "activity-student", icon: GraduationCap, label: "Student Activities (Part A)", path: "/activities?tab=student" },
   { id: "activity-faculty", icon: User, label: "Faculty Activities (Part C)", path: "/activities?tab=faculty" },
   { id: "activity-department", icon: Building2, label: "Department Activities (Part B)", path: "/activities?tab=department" },
+  { id: "activity-new", icon: Plus, label: "New Activity", path: "/activities/new" },
   { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities?tab=approvals" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
   { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities/nba-export" },
@@ -194,7 +196,7 @@ const modules = [
     id: "activity",
     label: "Activity",
     icon: Award,
-    itemIds: ["activity-student", "activity-faculty", "activity-department", "activity-approval", "activity-reports", "activity-nba-export"]
+    itemIds: ["activity-list", "activity-new", "activity-approval", "activity-reports", "activity-nba-export"]
   }
 ];
 
