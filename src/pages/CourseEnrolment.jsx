@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
 import { db } from "../firebase"; // Import db for Firestore
-import { doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore"; // Firestore imports
+import { doc, setDoc, getDoc, getDocs, collection, onSnapshot } from "firebase/firestore"; // Firestore imports
 import { 
   Users, 
   Search, 
@@ -41,11 +41,13 @@ export default function CourseEnrolment() {
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
   const [subject, setSubject] = useState("");
+  const [section, setSection] = useState("");
 
   // Data States
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [enrolments, setEnrolments] = useState({}); // { examNo: boolean }
+  const [sectionConfigs, setSectionConfigs] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -79,6 +81,27 @@ export default function CourseEnrolment() {
 
     return allSems.map(semNum => `${getOrdinal(semNum)} Semester`);
   }, [batch, academicYear, academicYearsAvailable]);
+
+  // Section configs listener
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    });
+    return () => unsub();
+  }, []);
+
+  const availableSections = useMemo(() => {
+    if (!batch || !department || !programme) return [];
+    const progKey = formatProgrammeKey(programme);
+    const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
+    const cfg = sectionConfigs[docId];
+    if (!cfg || !cfg.numSections) return [];
+    const count = cfg.numSections;
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+  }, [batch, department, programme, sectionConfigs]);
 
   // Fetch Subjects from Syllabus
   useEffect(() => {
@@ -148,6 +171,8 @@ export default function CourseEnrolment() {
           const data = d.data();
           const meta = data?._meta || {};
           if (meta.batch === batch && meta.programme_name === programme && meta.department === department) {
+            // Filter by section if selected
+            if (section && meta.section !== section) return;
             Object.entries(data).forEach(([key, value]) => {
               if (key !== '_meta' && typeof value === 'string' && value.trim()) {
                 allStudents[key] = value;
@@ -175,7 +200,7 @@ export default function CourseEnrolment() {
     };
 
     fetchData();
-  }, [programme, department, batch, academicYear, semester, subject]);
+  }, [programme, department, batch, academicYear, semester, subject, section]);
 
   const toggleEnrolment = (examNo) => {
     setEnrolments(prev => ({
@@ -258,7 +283,7 @@ export default function CourseEnrolment() {
         {/* Filters Card */}
         {showFilters && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100 animate-in fade-in slide-in-from-top-4 duration-300">
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-6">
               {/* Programme */}
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Programme</label>
@@ -269,6 +294,7 @@ export default function CourseEnrolment() {
                       setProgramme(e.target.value);
                       setDepartment("");
                       setBatch("");
+                      setSection("");
                     }}
                     className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium"
                   >
@@ -288,7 +314,10 @@ export default function CourseEnrolment() {
                   <select 
                     value={department}
                     disabled={!programme}
-                    onChange={(e) => setDepartment(e.target.value)}
+                    onChange={(e) => {
+                      setDepartment(e.target.value);
+                      setSection("");
+                    }}
                     className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
                   >
                     <option value="">Select</option>
@@ -311,6 +340,7 @@ export default function CourseEnrolment() {
                       setBatch(e.target.value);
                       setAcademicYear("");
                       setSemester("");
+                      setSection("");
                     }}
                     className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
                   >
@@ -378,6 +408,23 @@ export default function CourseEnrolment() {
                     {subjects.map(s => (
                       <option key={s.id} value={s.id}>{s.id} - {s.name}</option>
                     ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
+                </div>
+              </div>
+
+              {/* Section */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Section</label>
+                <div className="relative">
+                  <select 
+                    value={section}
+                    disabled={!department || !batch || availableSections.length === 0}
+                    onChange={(e) => setSection(e.target.value)}
+                    className="w-full pl-4 pr-10 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-zinc-700 font-medium disabled:opacity-50"
+                  >
+                    <option value="">All Sections</option>
+                    {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
