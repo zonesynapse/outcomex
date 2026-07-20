@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
 import { db } from "../firebase"; // Import db for Firestore
-import { doc, setDoc, getDoc } from "firebase/firestore"; // Firestore imports
+import { doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore"; // Firestore imports
 import { 
   Users, 
   Search, 
@@ -125,7 +125,7 @@ export default function CourseEnrolment() {
 
   // Fetch Students and Existing Enrolments
   useEffect(() => {
-    const fetchData = () => {
+    const fetchData = async () => {
       if (!programme || !department || !batch || !academicYear || !semester || !subject) {
         setStudents([]);
         setEnrolments({});
@@ -140,28 +140,38 @@ export default function CourseEnrolment() {
       const semNum = deriveSemesterNumber(semester);
       const subjectKey = sanitizeKey(subject);
 
-      // Path for Student List
-      const studentListDocId = `${batchKey}_${progKey}_${deptKey}`;
-      const studentsRef = doc(db, 'students', studentListDocId); // Firestore doc reference
+      try {
+        // Query ALL students docs matching this batch/programme/dept (handles section-specific docs)
+        const studentsSnap = await getDocs(collection(db, 'students'));
+        const allStudents = {};
+        studentsSnap.forEach(d => {
+          const data = d.data();
+          const meta = data?._meta || {};
+          if (meta.batch === batch && meta.programme_name === programme && meta.department === department) {
+            Object.entries(data).forEach(([key, value]) => {
+              if (key !== '_meta' && typeof value === 'string' && value.trim()) {
+                allStudents[key] = value;
+              }
+            });
+          }
+        });
 
-      // Path for Enrolments
-      const enrolmentDocId = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
-      const enrolmentsRef = doc(db, 'course_enrolments', enrolmentDocId); // Firestore doc reference
-
-      // Sequential fetching
-      getDoc(studentsRef).then(studentSnap => { // Use getDoc for Firestore
-        const studentData = studentSnap.data() || {}; // Use .data() for Firestore documents
-        const studentsList = Object.entries(studentData)
-          .filter(([key]) => key !== '_meta')
+        const studentsList = Object.entries(allStudents)
           .map(([examNo, name]) => ({ examNo, name }));
 
         setStudents(studentsList.sort((a,b) => a.examNo.localeCompare(b.examNo)));
 
-        getDoc(enrolmentsRef).then(enrolSnap => {
-          setEnrolments(enrolSnap.data() || {});
-          setLoading(false);
-        });
-      });
+        // Fetch existing enrolments
+        const enrolmentDocId = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
+        const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolmentDocId));
+        setEnrolments(enrolSnap.data() || {});
+      } catch (error) {
+        console.error("Error fetching data:", error);
+        setStudents([]);
+        setEnrolments({});
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchData();
