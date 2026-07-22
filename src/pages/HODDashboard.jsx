@@ -606,13 +606,12 @@ export default function HODDashboard() {
   }, [approvedStudentsList, allStudentNames]);
 
   const attendanceWithPeriods = useMemo(() => {
+    const getH = (v) => (typeof v === 'object' && v !== null ? (v.hours ?? 0) : (v ?? 0));
     const result = {};
     const dayName = new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
-    console.log('[AttWithPeriods] dayName:', dayName, '| timetableAllocation:', timetableAllocation, '| batches:', Object.keys(resolvedAttendanceOverview));
     Object.entries(resolvedAttendanceOverview).forEach(([batch, items]) => {
       const rows = [];
       const daySchedule = (timetableAllocation[batch] || {})[dayName];
-      console.log('[AttWithPeriods] batch:', batch, '| daySchedule:', daySchedule, '| items count:', items.length);
       if (daySchedule) {
         Object.entries(daySchedule).forEach(([period, rawEntries]) => {
           const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
@@ -622,23 +621,19 @@ export default function HODDashboard() {
             const item = items.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
             if (!item) return;
             const recordKey = `${attendanceDate}_P${period}`;
-            let rec = item.attRecords?.[recordKey];
+            const rec = item.attRecords?.[recordKey];
             let substituteFaculty = '';
             let substituteSubjectCode = '';
-            if (!rec) {
-              const fallback = items.find(i => i !== item && i.attRecords?.[recordKey]);
-              if (fallback) {
-                rec = fallback.attRecords[recordKey];
-                substituteFaculty = fallback.facultyName;
-                substituteSubjectCode = fallback.subjectCode;
-              }
+            if (rec && rec.markedBy && item.facultyUid && rec.markedBy !== item.facultyUid) {
+              substituteFaculty = usersMap[rec.markedBy]?.facultyName || usersMap[rec.markedBy]?.displayName || rec.markedBy;
+              substituteSubjectCode = item.subjectCode;
             }
             if (rec) {
               const stuMap = rec?.students || {};
               const entries2 = Object.entries(stuMap);
-              const present = entries2.filter(([, h]) => h > 0);
-              const absent = entries2.filter(([, h]) => h === 0 || h === false);
-              const od = entries2.filter(([, h]) => h === -1 || h === 'OD');
+              const present = entries2.filter(([, h]) => getH(h) > 0);
+              const absent = entries2.filter(([, h]) => getH(h) === 0);
+              const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
               rows.push({
                 period, hasRecord: true,
                 subjectCode: item.subjectCode, subjectName: item.subjectName,
@@ -671,9 +666,9 @@ export default function HODDashboard() {
               const rec = item.attRecords[recordKey];
               const stuMap = rec?.students || {};
               const entries2 = Object.entries(stuMap);
-              const present = entries2.filter(([, h]) => h > 0);
-              const absent = entries2.filter(([, h]) => h === 0 || h === false);
-              const od = entries2.filter(([, h]) => h === -1 || h === 'OD');
+              const present = entries2.filter(([, h]) => getH(h) > 0);
+              const absent = entries2.filter(([, h]) => getH(h) === 0);
+              const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
               rows.push({
                 period: p, hasRecord: true,
                 subjectCode: item.subjectCode, subjectName: item.subjectName,
@@ -716,7 +711,7 @@ export default function HODDashboard() {
       return filtered;
     }
     return result;
-  }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters]);
+  }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters, usersMap]);
 
   const taskCount = useMemo(() => tasks.length, [tasks]);
 

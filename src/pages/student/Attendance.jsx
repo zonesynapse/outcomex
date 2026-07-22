@@ -69,11 +69,51 @@ export default function Attendance() {
         const progKey = sanitizeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
-        const snapshot = await getDocs(collection(db, "attendance"));
+
+        const [attSnapshot, batchRegSnap, assignSnap, usersSnap] = await Promise.all([
+          getDocs(collection(db, "attendance")),
+          getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
+          getDocs(collection(db, "subject_assignments")),
+          getDocs(collection(db, "users")),
+        ]);
+
+        let regulation = "";
+        if (batchRegSnap?.exists()) {
+          const regData = batchRegSnap.data();
+          regulation = regData[batch] || regData[Object.keys(regData)[0]] || "";
+        }
+
+        let subjectNames = {};
+        if (regulation) {
+          const syllabusSnap = await getDoc(doc(db, "syllabus_data", `${progKey}_${deptKey}_${sanitizeKey(regulation)}`)).catch(() => null);
+          if (syllabusSnap?.exists()) {
+            const syllabus = syllabusSnap.data();
+            Object.values(syllabus.semesters || {}).forEach(semList => {
+              if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) subjectNames[s.code] = s.name; });
+            });
+          }
+        }
+
+        const facultyUidMap = {};
+        assignSnap.forEach(d => {
+          if (!d.id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
+          const data = d.data();
+          Object.entries(data).forEach(([uid, codes]) => {
+            if (uid.startsWith('_') || !Array.isArray(codes)) return;
+            codes.forEach(code => { if (!facultyUidMap[code]) facultyUidMap[code] = uid; });
+          });
+        });
+
+        const facultyNames = {};
+        usersSnap.forEach(d => {
+          const u = d.data();
+          facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
+        });
+
         const subjects = [];
         const dateMap = {};
 
-        snapshot.forEach((docSnap) => {
+        attSnapshot.forEach((docSnap) => {
           const id = docSnap.id;
           if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
           const data = docSnap.data();
@@ -87,7 +127,8 @@ export default function Attendance() {
 
           recordKeys.forEach(key => {
             const rec = records[key];
-            const hours = rec?.students?.[regNo];
+            const rawH = rec?.students?.[regNo];
+            const hours = rawH !== undefined ? (typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH) : undefined;
             const present = hours !== undefined && hours > 0;
             if (present) attended++;
 
@@ -104,16 +145,26 @@ export default function Attendance() {
           });
 
           const pct = totalSubjClasses > 0 ? (attended / totalSubjClasses) * 100 : 0;
-          subjects.push({ docId: id, subjectCode, totalClasses: totalSubjClasses, attended, percentage: pct });
+          const facultyUid = facultyUidMap[subjectCode] || '';
+          subjects.push({
+            docId: id, subjectCode,
+            subjectName: subjectNames[subjectCode] || '',
+            facultyName: facultyUid ? (facultyNames[facultyUid] || '') : '',
+            totalClasses: totalSubjClasses, attended, percentage: pct,
+          });
         });
 
         subjects.sort((a, b) => a.docId.localeCompare(b.docId));
         setSubjectWise(subjects);
 
+        const codeNameMap = {};
+        const codeFacultyMap = {};
+        subjects.forEach(s => { codeNameMap[s.subjectCode] = s.subjectName; codeFacultyMap[s.subjectCode] = s.facultyName; });
+
         const allRows = [];
         Object.entries(dateMap).forEach(([date, entries]) => {
           entries.sort((a, b) => a.subject.localeCompare(b.subject) || a.period - b.period);
-          entries.forEach(e => allRows.push({ date, ...e }));
+          entries.forEach(e => allRows.push({ date, ...e, subjectName: codeNameMap[e.subject] || '', facultyName: codeFacultyMap[e.subject] || '' }));
         });
         allRows.sort((a, b) => b.date.localeCompare(a.date) || a.subject.localeCompare(b.subject) || a.period - b.period);
         setDateWiseRows(allRows);
@@ -194,6 +245,7 @@ export default function Attendance() {
               <thead>
                 <tr className="bg-slate-50/50">
                   <th className="px-4 md:px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Subject</th>
+                  <th className="px-4 md:px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Faculty</th>
                   <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Total Classes</th>
                   <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Attended</th>
                   <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
@@ -203,7 +255,13 @@ export default function Attendance() {
                 {subjectWise.map((rec, idx) => (
                   <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
                     <td className="px-4 md:px-8 py-4">
-                      <span className="text-sm font-bold text-slate-700 font-mono">{rec.subjectCode}</span>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-bold text-slate-700 font-mono">{rec.subjectCode}</span>
+                        {rec.subjectName && <span className="text-[11px] text-slate-400 font-medium mt-0.5 truncate max-w-[200px]" title={rec.subjectName}>{rec.subjectName}</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 md:px-8 py-4">
+                      <span className="text-xs font-semibold text-slate-500">{rec.facultyName || '—'}</span>
                     </td>
                     <td className="px-4 md:px-8 py-4 text-center">
                       <span className="text-sm font-bold text-slate-600">{rec.totalClasses}</span>
@@ -269,6 +327,7 @@ export default function Attendance() {
                         <thead>
                           <tr className="bg-slate-50/80">
                             <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</th>
+                            <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Faculty</th>
                             <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Period</th>
                             <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
                           </tr>
@@ -277,7 +336,13 @@ export default function Attendance() {
                           {dayRows.map((row, i) => (
                             <tr key={i} className="hover:bg-blue-50/30 transition-colors">
                               <td className="px-4 py-2">
-                                <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
+                                <div className="flex flex-col">
+                                  <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
+                                  {row.subjectName && <span className="text-[10px] text-slate-400 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2">
+                                <span className="text-xs font-semibold text-slate-500">{row.facultyName || '—'}</span>
                               </td>
                               <td className="px-4 py-2 text-center">
                                 <span className="text-sm font-bold text-slate-600">P{row.period}</span>

@@ -115,7 +115,10 @@ export default function AdminRoleConfig() {
     { id: "activity-list", label: "Activity — Dashboard", path: "/activities" },
     { id: "activity-approval", label: "Activity — Approval Queue", path: "/activities" },
     { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities" },
-    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities" }
+    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities" },
+    { id: "mentor-allocation", label: "Mentor — Allocation", path: "/mentor/allocation" },
+    { id: "mentor-meetings", label: "Mentor — Activities", path: "/mentor/meetings" },
+    { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports" }
   ];
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X, ChevronDown, ChevronRight, Save, Phone, MapPin, BookOpen, Users, Heart, Award, Globe, Hash } from "lucide-react";
 import { formatProgDisplay, sanitizeKey } from "../../lib/utils";
 import { getSeatConfigurationsRealtime } from "../../services/seatService";
@@ -92,9 +92,9 @@ const SECTIONS = [
   {
     key: 'qualifying', icon: Award, title: 'Qualifying Exam Marks',
     fields: [
-      { key: 'mathsMark', label: 'Mathematics Mark', type: 'text' },
-      { key: 'physicsMark', label: 'Physics Mark', type: 'text' },
-      { key: 'chemistryMark', label: 'Chemistry Mark', type: 'text' },
+      { key: 'mathsMark', label: 'Maths/P/C', type: 'text' },
+      { key: 'physicsMark', label: 'Physics/Theory', type: 'text' },
+      { key: 'chemistryMark', label: 'Chemistry/Lab', type: 'text' },
       { key: 'totalMarks', label: 'Total Marks', type: 'text' },
       { key: 'cutoff', label: 'Cutoff', type: 'text' },
       { key: 'qualifyingExam10thInstitute', label: '10th Institute', type: 'text' },
@@ -148,6 +148,21 @@ export default function StudentProfile() {
     }, () => {});
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const toNum = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const maths = toNum(formData.mathsMark);
+    const physics = toNum(formData.physicsMark);
+    const chemistry = toNum(formData.chemistryMark);
+    let val = '';
+    if (maths !== null && physics !== null && chemistry !== null) {
+      const cutoff = maths + physics / 2 + chemistry / 2;
+      val = Number.isInteger(cutoff) ? String(cutoff) : String(Number(cutoff.toFixed(2)));
+    }
+    if (formData.cutoff !== val) {
+      setFormData(prev => ({ ...prev, cutoff: val }));
+    }
+  }, [formData.mathsMark, formData.physicsMark, formData.chemistryMark]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -210,6 +225,23 @@ export default function StudentProfile() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!studentDocId || !regNo) return;
+    const unsub = onSnapshot(doc(db, 'students', studentDocId), (snap) => {
+      if (!snap.exists()) return;
+      const extra = snap.data()?._student_data?.[regNo] || {};
+      setFormData(prev => {
+        const updated = { ...prev };
+        Object.keys(extra).forEach(k => {
+          if (k in updated) updated[k] = extra[k];
+        });
+        return updated;
+      });
+      if (extra._sameAsPresent === 'true') setSameAsPresent(true);
+    });
+    return () => unsub();
+  }, [studentDocId, regNo]);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -349,6 +381,8 @@ export default function StudentProfile() {
     return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
   };
 
+  const canEdit = userData.profileEditAccess === true;
+
   const infoRows = [
     { label: "Register Number", value: userData.regNo, icon: GraduationCap },
     { label: "Student Name", value: userData.studentName, icon: User },
@@ -363,10 +397,20 @@ export default function StudentProfile() {
 
   const fieldInput = (f) => {
     const val = formData[f.key] || '';
+    if (!canEdit) {
+      return (
+        <div key={f.key} className={f.type === 'textarea' ? 'sm:col-span-2' : ''}>
+          <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">{f.label}</label>
+          <div className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm text-zinc-600 bg-zinc-50 min-h-[38px]">{val || <span className="text-zinc-300">—</span>}</div>
+        </div>
+      );
+    }
     return (
       <div key={f.key} className={f.type === 'textarea' ? 'sm:col-span-2' : ''}>
         <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">{f.label}</label>
-        {f.type === 'select' ? (
+        {f.key === 'cutoff' ? (
+          <input type="text" value={val} readOnly className={`${inputClass} bg-zinc-50 text-zinc-500 cursor-not-allowed`} placeholder="Auto-calculated" />
+        ) : f.type === 'select' ? (
           <select value={val} onChange={e => handleFieldChange(f.key, e.target.value)} className={selectClass}>
             {f.key === 'quotaAskedFor' ? null : <option value="">-- Select --</option>}
             {(f.key === 'quotaAskedFor' ? quotaOptions : f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
@@ -385,6 +429,20 @@ export default function StudentProfile() {
   const addressFields = (fields) => {
     const present = fields.filter(f => f.key.startsWith('present'));
     const transport = fields.filter(f => ['hostellerDayScholar','transportRequired','transportRoute','transportStage'].includes(f.key));
+    if (!canEdit) {
+      return (
+        <>
+          {present.map(f => fieldInput(f))}
+          <div className="sm:col-span-2 flex items-center gap-3 pt-2 pb-1 border-t border-zinc-100">
+            <div className="inline-flex h-6 w-11 items-center rounded-full bg-zinc-200"><span className="inline-block h-4 w-4 transform rounded-full bg-white translate-x-1" /></div>
+            <span className="text-xs font-semibold text-zinc-400">Permanent address is same as present address</span>
+          </div>
+          <div className="sm:col-span-2"><p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1">Permanent Address</p></div>
+          {fields.filter(f => f.key.startsWith('permanent')).map(f => fieldInput(f))}
+          {transport.map(f => fieldInput(f))}
+        </>
+      );
+    }
     return (
       <>
         {present.map(f => fieldInput(f))}
@@ -461,7 +519,7 @@ export default function StudentProfile() {
           <h2 className="text-base font-bold text-zinc-700 mb-4 flex items-center gap-2">
             <Edit3 size={18} className="text-[#120c7a]" /> Digital Signature
           </h2>
-          {editSig ? (
+          {editSig && canEdit ? (
             <div className="space-y-3">
               <input type="file" accept="image/*" className="hidden" ref={fileRef} onChange={handleSigUpload} />
               <div onClick={() => fileRef.current.click()} className="border-2 border-dashed border-zinc-200 rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[#120c7a]/40 hover:bg-[#120c7a]/5 transition-all">
@@ -493,9 +551,11 @@ export default function StudentProfile() {
                   <p className="text-xs text-zinc-400 italic">No signature uploaded</p>
                 )}
               </div>
-              <button onClick={() => { setEditSig(true); setSigUrl(userData.signatureUrl || ""); }} className="w-full py-2 bg-zinc-100 text-zinc-600 text-xs font-bold rounded-lg hover:bg-zinc-200 transition-colors flex items-center justify-center gap-1">
-                <Edit3 size={14} /> Update Signature
-              </button>
+              {canEdit && (
+                <button onClick={() => { setEditSig(true); setSigUrl(userData.signatureUrl || ""); }} className="w-full py-2 bg-zinc-100 text-zinc-600 text-xs font-bold rounded-lg hover:bg-zinc-200 transition-colors flex items-center justify-center gap-1">
+                  <Edit3 size={14} /> Update Signature
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -546,16 +606,18 @@ export default function StudentProfile() {
         })}
       </div>
 
-      <div className="mt-6 flex justify-end">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-8 py-3 bg-[#120c7a] text-white font-bold rounded-xl hover:bg-[#0e095e] focus:ring-4 focus:ring-[#120c7a]/30 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg"
-        >
-          {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-          {saving ? 'Saving...' : 'Save All Changes'}
-        </button>
-      </div>
+      {canEdit && (
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-8 py-3 bg-[#120c7a] text-white font-bold rounded-xl hover:bg-[#0e095e] focus:ring-4 focus:ring-[#120c7a]/30 transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg"
+          >
+            {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+            {saving ? 'Saving...' : 'Save All Changes'}
+          </button>
+        </div>
+      )}
 
       <p className="text-center text-[10px] text-zinc-400 mt-4">
         {studentDocId ? 'Data is stored securely in your student profile' : 'Data saved — will be synced to your permanent profile when section is allotted'}

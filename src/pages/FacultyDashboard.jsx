@@ -148,6 +148,8 @@ export default function FacultyDashboard() {
   const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
   const [allStudentNames, setAllStudentNames] = useState({});
+  const [codeOwners, setCodeOwners] = useState({});   // code → [uid, ...]
+  const [facultyNames, setFacultyNames] = useState({}); // uid → display name
 
   const sanitizeKey = (key) => {
     if (!key) return '';
@@ -320,21 +322,19 @@ export default function FacultyDashboard() {
     let cancelled = false;
     const fetchAttendance = async () => {
       const results = {};
-      const seen = new Set();
-      const prefixes = [];
+      // Use batch-level prefixes so we fetch ALL attendance docs for the batch,
+      // not just the faculty's own subject codes — needed for substitute detection
+      const batchPrefixes = [];
       for (const g of visibleGroups) {
-        for (const code of (g.codes || [])) {
-          const baseKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
-          if (!seen.has(baseKey)) {
-            seen.add(baseKey);
-            prefixes.push(baseKey);
-          }
+        const prefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+        if (!batchPrefixes.some(p => p === prefix)) {
+          batchPrefixes.push(prefix);
         }
       }
       try {
         const allSnap = await getDocs(collection(db, 'attendance'));
         allSnap.forEach(d => {
-          if (prefixes.some(p => d.id === p || d.id.startsWith(p + '_'))) {
+          if (batchPrefixes.some(p => d.id.startsWith(p))) {
             results[d.id] = d.data();
           }
         });
@@ -423,6 +423,8 @@ export default function FacultyDashboard() {
       (snapshot) => {
         const groups = {};
 
+        const tempCodeOwners = {};
+
         snapshot.forEach((doc) => {
           const idParts = doc.id.split('_');
           if (idParts.length < 5) return;
@@ -445,6 +447,16 @@ export default function FacultyDashboard() {
           if (deptKey.startsWith('_')) deptKey = deptKey.slice(1);
 
           const facultyData = doc.data();
+          // Build codeOwners from ALL UIDs, not just currentUid
+          Object.entries(facultyData || {}).forEach(([uid, codes]) => {
+            if (uid === '_meta' || uid.startsWith('_')) return;
+            const arr = Array.isArray(codes) ? codes : [];
+            arr.forEach(code => {
+              if (!tempCodeOwners[code]) tempCodeOwners[code] = [];
+              if (!tempCodeOwners[code].includes(uid)) tempCodeOwners[code].push(uid);
+            });
+          });
+
           const codes = facultyData?.[currentUid];
           if (!Array.isArray(codes) || codes.length === 0) return;
 
@@ -464,6 +476,8 @@ export default function FacultyDashboard() {
             if (!groups[groupKey].codes.includes(code)) groups[groupKey].codes.push(code);
           });
         });
+
+        setCodeOwners(tempCodeOwners);
 
         const grouped = Object.values(groups)
           .map((g) => ({
@@ -496,6 +510,28 @@ export default function FacultyDashboard() {
 
     return () => unsub();
   }, [currentUid]);
+
+  // Fetch faculty names for codeOwners UIDs
+  useEffect(() => {
+    const allUids = new Set(Object.values(codeOwners).flat());
+    const currentKeys = new Set(Object.keys(facultyNames));
+    const missingUids = [...allUids].filter(uid => !currentKeys.has(uid) && uid !== currentUid);
+    if (missingUids.length === 0) return;
+    const fetchNames = async () => {
+      const map = { ...facultyNames };
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        snap.forEach(d => {
+          if (missingUids.includes(d.id)) {
+            const data = d.data();
+            map[d.id] = data.facultyName || data.displayName || data.email || d.id;
+          }
+        });
+      } catch (e) { console.warn('Failed to fetch faculty names:', e); }
+      setFacultyNames(map);
+    };
+    fetchNames();
+  }, [codeOwners, currentUid]);
 
   useEffect(() => {
     if (!currentUid) {
@@ -672,6 +708,7 @@ export default function FacultyDashboard() {
   ];
 
   const facultyAttendanceRows = useMemo(() => {
+    const getH = (v) => (typeof v === 'object' && v !== null ? (v.hours ?? 0) : (v ?? 0));
     const rows = [];
     const dateObj = new Date(attendanceDate + 'T00:00:00');
     const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
@@ -687,27 +724,65 @@ export default function FacultyDashboard() {
           const baseAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
           const attData = facultyAttendanceData[baseAttDocId] || Object.entries(facultyAttendanceData).find(([k]) => k.startsWith(baseAttDocId + '_'))?.[1];
           const recordKey = `${attendanceDate}_P${period}`;
-          const rec = attData?.records?.[recordKey];
+          let rec = attData?.records?.[recordKey];
+          let subFound = false;
+          let subSubjectCode = '';
+          let subFacultyName = '';
+          if (!rec) {
+            for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
+              const r = aData?.records?.[recordKey];
+              if (r) {
+                rec = r;
+                subFound = true;
+                if (dId.startsWith(baseAttDocId + '_') || dId === baseAttDocId) {
+                  subFound = false;
+                } else {
+                  const subPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+                  if (dId.startsWith(subPrefix)) {
+                    let rest = dId.slice(subPrefix.length);
+                    const secIdx = rest.indexOf('_Sec-');
+                    if (secIdx !== -1) rest = rest.slice(0, secIdx);
+                    subSubjectCode = rest;
+                  }
+                }
+                break;
+              }
+            }
+          }
+          if (rec && rec.markedBy && rec.markedBy !== currentUid) {
+            subFound = true;
+            if (!subSubjectCode) subSubjectCode = code;
+            subFacultyName = facultyNames[rec.markedBy] || rec.markedBy;
+          }
+          if (subSubjectCode && subSubjectCode !== code && !subFacultyName) {
+            const uids = codeOwners[subSubjectCode] || [];
+            const otherUids = uids.filter(uid => uid !== currentUid);
+            if (otherUids.length > 0) {
+              subFacultyName = facultyNames[otherUids[0]] || otherUids[0];
+            }
+          }
           const batchLabel = `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}`;
           if (rec) {
             const stuMap = rec.students || {};
             const e2 = Object.entries(stuMap);
             rows.push({
-              period, hasRecord: true, code, batchLabel,
-              presentCount: e2.filter(([, h]) => h > 0).length,
-              absentCount: e2.filter(([, h]) => h === 0 || h === false).length,
-              odCount: e2.filter(([, h]) => h === -1 || h === 'OD').length,
-              presentStudents: e2.filter(([, h]) => h > 0).map(([r]) => r),
-              absentStudents: e2.filter(([, h]) => h === 0 || h === false).map(([r]) => r),
-              odStudents: e2.filter(([, h]) => h === -1 || h === 'OD').map(([r]) => r),
+              period, hasRecord: true, code, batchLabel, subFound,
+              presentCount: e2.filter(([, h]) => getH(h) > 0).length,
+              absentCount: e2.filter(([, h]) => getH(h) === 0).length,
+              odCount: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).length,
+              presentStudents: e2.filter(([, h]) => getH(h) > 0).map(([r]) => r),
+              absentStudents: e2.filter(([, h]) => getH(h) === 0).map(([r]) => r),
+              odStudents: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).map(([r]) => r),
               subjectName: courseNames[code] || '',
+              subSubjectCode, subFacultyName,
             });
           } else {
             rows.push({
-              period, hasRecord: false, code, batchLabel,
+              period, hasRecord: false, code, batchLabel, subFound,
               presentCount: 0, absentCount: 0, odCount: 0,
               presentStudents: [], absentStudents: [], odStudents: [],
               subjectName: courseNames[code] || '',
+              subSubjectCode, subFacultyName,
             });
           }
         });
@@ -715,7 +790,7 @@ export default function FacultyDashboard() {
     });
     rows.sort((a, b) => Number(a.period) - Number(b.period));
     return rows;
-  }, [visibleGroups, timetableData, facultyAttendanceData, attendanceDate, courseNames]);
+  }, [visibleGroups, timetableData, facultyAttendanceData, attendanceDate, courseNames, codeOwners, facultyNames, currentUid]);
 
   const todayKey = useMemo(() => formatDateKey(new Date()), []);
   const currentWeekDates = useMemo(() => {
@@ -984,6 +1059,13 @@ export default function FacultyDashboard() {
                         <div className="flex flex-col">
                           <span className="text-xs font-semibold text-zinc-800">{row.code}</span>
                           {row.subjectName && <span className="text-[10px] text-zinc-400 truncate max-w-[180px]">{row.subjectName}</span>}
+                          {row.subFound && (
+                            <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-amber-600 font-bold">
+                              <span className="inline-block px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200">Sub</span>
+                              {row.subFacultyName && <span>by {row.subFacultyName}</span>}
+                              {row.subSubjectCode && row.subSubjectCode !== row.code && <span>({row.subSubjectCode})</span>}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-zinc-600">{row.batchLabel}</td>
@@ -1004,7 +1086,15 @@ export default function FacultyDashboard() {
                         </>
                       ) : (
                         <td className="px-4 py-3 text-xs text-center" colSpan={3}>
-                          <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Not entered</span>
+                          {row.subFound ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="inline-block px-3 py-1 bg-indigo-50 text-indigo-600 text-[11px] font-bold rounded-full border border-indigo-200">Sub</span>
+                              <span className="text-[10px] text-indigo-500 font-semibold">{row.subSubjectCode}</span>
+                              {row.subFacultyName && <span className="text-[10px] text-indigo-400">by {row.subFacultyName}</span>}
+                            </div>
+                          ) : (
+                            <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Not entered</span>
+                          )}
                         </td>
                       )}
                     </tr>

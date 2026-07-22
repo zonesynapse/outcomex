@@ -83,6 +83,10 @@ import ActivityEntry from "./pages/ActivityEntry";
 import ActivityReports from "./pages/ActivityReports";
 import ActivityNbaExport from "./pages/ActivityNbaExport";
 import ActivityPicker from "./pages/ActivityPicker";
+import MentorAllocation from "./pages/MentorAllocation";
+import MentorMeetings from "./pages/MentorMeetings";
+import MentorReports from "./pages/MentorReports";
+import StudentMentorProfile from "./pages/student/MentorProfile";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -188,6 +192,11 @@ export default function App() {
         <Route path="/inventory/approvals" element={<ProtectedRoute><InventoryApprovals /></ProtectedRoute>} />
         <Route path="/inventory/fulfill" element={<ProtectedRoute><InventoryFulfill /></ProtectedRoute>} />
 
+        {/* Mentoring Module Routes */}
+        <Route path="/mentor/allocation" element={<ProtectedRoute><MentorAllocation /></ProtectedRoute>} />
+        <Route path="/mentor/meetings" element={<ProtectedRoute><MentorMeetings /></ProtectedRoute>} />
+        <Route path="/mentor/reports" element={<ProtectedRoute><MentorReports /></ProtectedRoute>} />
+
         {/* Activity Module Routes */}
         <Route path="/activities" element={<ProtectedRoute><ActivityList /></ProtectedRoute>} />
         <Route path="/activities/reports" element={<ProtectedRoute><ActivityReports /></ProtectedRoute>} />
@@ -220,6 +229,7 @@ export default function App() {
         <Route path="/student/step" element={<ProtectedRoute><StudentLayout title="STEP Activity Points"><StudentStepPoints /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout title="Downloads"><StudentDownloads /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/mentor" element={<ProtectedRoute><StudentLayout title="My Mentor"><StudentMentorProfile /></StudentLayout></ProtectedRoute>} />
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />

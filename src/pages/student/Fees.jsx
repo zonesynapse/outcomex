@@ -26,6 +26,8 @@ export default function Fees() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [seatCategory, setSeatCategory] = useState("");
+  const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
+  const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
 
   const verifyPaymentOnReturn = useCallback(async (orderId) => {
     try {
@@ -33,16 +35,38 @@ export default function Fees() {
       const result = await verifyFn({ orderId });
       const data = result.data;
       if (data.success) {
-        setToast({ type: "success", message: `Payment of ₹${data.amount?.toLocaleString('en-IN')} completed successfully!` });
+        setStatusModal({
+          open: true,
+          success: true,
+          orderId: data.orderId,
+          amount: data.amount,
+          feeHead: "",
+          tampered: data.tampered || false,
+          duplicate: data.duplicate || false
+        });
       } else {
-        setToast({ type: "error", message: `Payment ${data.status.toLowerCase()}. Please try again or contact accounts.` });
+        setStatusModal({
+          open: true,
+          success: false,
+          orderId: orderId,
+          amount: 0,
+          error: data.tampered ? "Amount verification failed (tampered check)." : data.duplicate ? "Duplicate transaction detected." : `Payment ${data.status?.toLowerCase() || 'failed'}.`,
+          tampered: data.tampered || false,
+          duplicate: data.duplicate || false
+        });
       }
     } catch (err) {
       console.error("Verify payment error:", err);
       const msg = err.code === "unavailable"
         ? "Payment verification service is temporarily down. Your payment may still have been processed — please check Payment History."
         : "Could not verify payment status. Check Payment History.";
-      setToast({ type: "warning", message: msg });
+      setStatusModal({
+        open: true,
+        success: false,
+        orderId: orderId,
+        amount: 0,
+        error: msg
+      });
     }
   }, []);
 
@@ -451,9 +475,20 @@ export default function Fees() {
                               </span>
                             </div>
                           ) : (
-                            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border`}>
-                              {st.label}
-                            </span>
+                            <div className="flex items-center justify-center gap-2">
+                              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border`}>
+                                {st.label}
+                              </span>
+                              {p.status === "SUCCESS" && (
+                                <button
+                                  onClick={() => setReceiptModal({ open: true, payment: p })}
+                                  className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-[#120c7a] transition-all"
+                                  title="Print Receipt"
+                                >
+                                  <Receipt size={14} />
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -545,6 +580,231 @@ export default function Fees() {
           </div>
         </div>
       )}
+
+      {/* Payment Status Modal */}
+      {statusModal.open && (() => {
+        const resolvedFeeHead = payments.find(p => p.orderId === statusModal.orderId)?.feeHead || statusModal.feeHead || "Fee Payment";
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden transform animate-in zoom-in-95 duration-200">
+              <div className={`p-8 text-center ${statusModal.success ? 'bg-gradient-to-b from-emerald-50 to-white' : 'bg-gradient-to-b from-red-50 to-white'}`}>
+                <div className="flex justify-center mb-4">
+                  {statusModal.success ? (
+                    <div className="p-3 bg-emerald-100 rounded-full animate-bounce">
+                      <CheckCircle2 size={48} className="text-emerald-600" />
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-red-100 rounded-full">
+                      <AlertCircle size={48} className="text-red-600" />
+                    </div>
+                  )}
+                </div>
+                <h3 className="text-xl font-black text-slate-800">
+                  {statusModal.success ? "Payment Successful!" : "Payment Failed"}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 font-medium animate-pulse">
+                  {statusModal.success ? "Thank you! Your payment has been received." : statusModal.error || "Something went wrong during transaction validation."}
+                </p>
+
+                <div className="mt-6 bg-slate-50 border border-slate-100 rounded-2xl p-4 text-left space-y-3">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-bold">Order ID</span>
+                    <span className="font-mono font-bold text-slate-700">{statusModal.orderId}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-bold">Fee Head</span>
+                    <span className="font-bold text-slate-700">{resolvedFeeHead}</span>
+                  </div>
+                  {statusModal.success && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-400 font-bold">Amount Paid</span>
+                      <span className="font-black text-slate-800">{formatCurrency(statusModal.amount)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="px-6 py-4 border-t border-slate-100 flex justify-center gap-3 bg-slate-50">
+                {statusModal.success && (
+                  <button
+                    onClick={() => {
+                      const pay = payments.find(p => p.orderId === statusModal.orderId) || {
+                        orderId: statusModal.orderId,
+                        feeHead: resolvedFeeHead,
+                        amount: statusModal.amount,
+                        chargedAmount: statusModal.amount,
+                        createdAt: { toDate: () => new Date() },
+                        status: "SUCCESS"
+                      };
+                      setReceiptModal({ open: true, payment: pay });
+                      setStatusModal({ ...statusModal, open: false });
+                    }}
+                    className="px-5 py-2.5 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20 transition-all"
+                  >
+                    <Receipt size={14} /> View Receipt
+                  </button>
+                )}
+                <button
+                  onClick={() => setStatusModal({ ...statusModal, open: false })}
+                  className="px-5 py-2.5 bg-slate-200 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-300 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Receipt Modal */}
+      {receiptModal.open && receiptModal.payment && (() => {
+        const p = receiptModal.payment;
+        const resolvedName = p.studentName || studentData?.name || auth.currentUser?.displayName || "Student";
+        const resolvedEmail = p.studentEmail || studentData?.email || auth.currentUser?.email || "";
+        const resolvedReg = studentData?.regNo || studentData?.admissionNo || "—";
+        const resolvedDept = studentData?.department ? `${formatProgrammeKey(studentData.programme)} - ${studentData.department}` : "—";
+        const txId = p.gatewayResponse?.txnId || p.gatewayResponse?.epgTxnId || "—";
+        const rrn = p.gatewayResponse?.rrn || "—";
+        const authCode = p.gatewayResponse?.authCode || "—";
+
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200" id="receipt-modal-backdrop" onClick={() => setReceiptModal({ open: false, payment: null })}>
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #printable-receipt, #printable-receipt * {
+                  visibility: visible !important;
+                }
+                #printable-receipt {
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  width: 100%;
+                  margin: 0;
+                  padding: 20px;
+                  box-shadow: none !important;
+                  border: none !important;
+                }
+                #receipt-modal-backdrop {
+                  background: none !important;
+                  backdrop-filter: none !important;
+                }
+                .no-print {
+                  display: none !important;
+                }
+              }
+            `}</style>
+            
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] transform animate-in zoom-in-95 duration-200 no-print" onClick={e => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="font-bold text-zinc-800 flex items-center gap-2">
+                  <Receipt className="text-[#120c7a]" size={20} />
+                  <span>Payment Receipt</span>
+                </h3>
+                <button
+                  onClick={() => setReceiptModal({ open: false, payment: null })}
+                  className="p-2 hover:bg-zinc-100 rounded-xl"
+                ><X size={18} /></button>
+              </div>
+
+              <div className="p-8 overflow-y-auto flex-1 space-y-8">
+                {/* Print Content Wrapper */}
+                <div id="printable-receipt" className="bg-white p-6 border border-slate-200 rounded-2xl shadow-sm space-y-6 relative overflow-hidden">
+                  
+                  {/* PAID Stamp watermark */}
+                  <div className="absolute right-8 top-8 border-4 border-emerald-500/20 text-emerald-500/20 rounded-xl px-4 py-2 font-black text-2xl uppercase tracking-widest rotate-12 select-none pointer-events-none">
+                    Paid Electronically
+                  </div>
+
+                  {/* Receipt Header */}
+                  <div className="flex items-start gap-4 border-b border-slate-100 pb-6">
+                    <div className="p-3 bg-blue-50 text-[#120c7a] rounded-2xl shrink-0">
+                      <Wallet size={32} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-800 text-lg uppercase tracking-wide">OutcomeX Academy</h4>
+                      <p className="text-xs text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
+                      <p className="text-[10px] text-slate-400 mt-1">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
+                    </div>
+                  </div>
+
+                  {/* Student & Transaction Info Grid */}
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-xs">
+                    <div>
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Student Details</p>
+                      <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
+                      <p className="text-slate-500 mt-0.5">{resolvedEmail}</p>
+                      <p className="text-slate-500 mt-0.5">Reg/Adm No: {resolvedReg}</p>
+                      <p className="text-slate-500 mt-0.5">Dept: {resolvedDept}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Receipt Information</p>
+                      <p className="font-bold text-slate-800 mt-1">Receipt No: <span className="font-mono">{p.orderId}</span></p>
+                      <p className="text-slate-500 mt-0.5">Gateway: HDFC SmartGateway</p>
+                      <p className="text-slate-500 mt-0.5">Txn ID: <span className="font-mono">{txId}</span></p>
+                      {rrn && rrn !== "—" && <p className="text-slate-500 mt-0.5">Bank RRN: <span className="font-mono">{rrn}</span></p>}
+                    </div>
+                  </div>
+
+                  {/* Fee Item Table */}
+                  <div className="mt-6 border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold">
+                          <th className="px-4 py-3 text-left">Fee Item Description</th>
+                          <th className="px-4 py-3 text-left">Payment Mode</th>
+                          <th className="px-4 py-3 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        <tr>
+                          <td className="px-4 py-4 font-bold">{p.feeHead || "Semester Fee"}</td>
+                          <td className="px-4 py-4 font-semibold text-slate-500">Online Payment (SmartGateway)</td>
+                          <td className="px-4 py-4 text-right font-black text-slate-800">
+                            {formatCurrency(p.chargedAmount || p.amount)}
+                          </td>
+                        </tr>
+                        <tr className="bg-slate-50/50 font-black text-slate-800 text-sm">
+                          <td colSpan={2} className="px-4 py-3 text-right">Total Amount Paid</td>
+                          <td className="px-4 py-3 text-right text-[#120c7a]">
+                            {formatCurrency(p.chargedAmount || p.amount)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Verification footer */}
+                  <div className="border-t border-slate-100 pt-6 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                      <CheckCircle2 size={12} className="text-emerald-500" />
+                      <span>This is a computer generated receipt. No signature is required.</span>
+                    </div>
+                    {authCode && authCode !== "—" && (
+                      <span className="text-[10px] font-mono text-slate-400 font-bold">AUTH CODE: {authCode}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50">
+                <button
+                  onClick={() => setReceiptModal({ open: false, payment: null })}
+                  className="px-5 py-2.5 text-xs font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl"
+                >Close</button>
+                <button
+                  onClick={() => window.print()}
+                  className="px-6 py-2.5 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20 transition-all"
+                >
+                  Print Receipt
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -99,27 +99,73 @@ export default function ActivityList() {
 
   // Sync query param tab from URL
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const tab = params.get("tab");
+    const tab = searchParams.get("tab");
     if (tab && ["student", "faculty", "department", "approvals", "reports", "nba-export"].includes(tab)) {
       setActiveTab(tab);
     }
-  }, [location.search]);
+  }, [searchParams]);
 
-  // Real-time activities listener
+  // Real-time activities listener (both activity_entries and step_activities)
   useEffect(() => {
-    const q = query(
+    let list1 = [];
+    let list2 = [];
+
+    const q1 = query(
       collection(db, "activity_entries"),
       orderBy("createdAt", "desc")
     );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = [];
+    const unsub1 = onSnapshot(q1, (snapshot) => {
+      list1 = [];
       snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() });
+        list1.push({ id: d.id, ...d.data() });
       });
-      setActivities(list);
-    }, (err) => console.error("Error loading activities:", err));
-    return () => unsub();
+      const combined = [...list1, ...list2].sort((a, b) => {
+        const dateA = a.createdAt || '';
+        const dateB = b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+      setActivities(combined);
+    }, (err) => console.error("Error loading activity_entries:", err));
+
+    const q2 = query(
+      collection(db, "step_activities"),
+      orderBy("createdAt", "desc")
+    );
+    const unsub2 = onSnapshot(q2, (snapshot) => {
+      list2 = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        let nba = "";
+        let naac = "";
+        if (data.category === "technical") { nba = "C2.2.3"; naac = "3.2.2"; }
+        else if (data.category === "research") { nba = "C3.4"; naac = "3.3.3"; }
+        else if (data.category === "industry") { nba = "C2.8"; naac = "3.2.1"; }
+        else if (data.category === "social") { nba = "C9.11"; naac = "7.1.1"; }
+        else if (data.category === "leadership") { nba = "C9.7"; naac = "5.3.1"; }
+        else { nba = "C9.2"; naac = "5.1.2"; }
+
+        list2.push({ 
+          id: d.id, 
+          isStep: true, 
+          activityCode: "STEP", 
+          activityName: data.activityName || data.activityType || "STEP Activity", 
+          nbaCriterion: nba,
+          naacCriterion: naac,
+          ...data 
+        });
+      });
+      const combined = [...list1, ...list2].sort((a, b) => {
+        const dateA = a.createdAt || '';
+        const dateB = b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+      setActivities(combined);
+    }, (err) => console.error("Error loading step_activities:", err));
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, []);
 
   // Load student index
@@ -308,7 +354,7 @@ export default function ActivityList() {
     if (!reviewActivity) return;
     setIsActioning(true);
     try {
-      const docRef = doc(db, "activity_entries", reviewActivity.id);
+      const docRef = doc(db, reviewActivity.isStep ? "step_activities" : "activity_entries", reviewActivity.id);
       await setDoc(docRef, {
         status: "Approved",
         comments: "Approved",
@@ -334,7 +380,7 @@ export default function ActivityList() {
     }
     setIsActioning(true);
     try {
-      const docRef = doc(db, "activity_entries", reviewActivity.id);
+      const docRef = doc(db, reviewActivity.isStep ? "step_activities" : "activity_entries", reviewActivity.id);
       await setDoc(docRef, {
         status: "Rejected",
         comments: returnComment,
@@ -362,7 +408,7 @@ export default function ActivityList() {
     }
     setIsActioning(true);
     try {
-      const docRef = doc(db, "activity_entries", reviewActivity.id);
+      const docRef = doc(db, reviewActivity.isStep ? "step_activities" : "activity_entries", reviewActivity.id);
       await setDoc(docRef, {
         status: "Returned",
         comments: returnComment,
@@ -882,7 +928,6 @@ export default function ActivityList() {
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Category</label>
                   <select value={nbaCategory} onChange={e => setNbaCategory(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
                     <option value="">All Categories</option>
-                    <option value="student">Student (Part A)</option>
                     <option value="faculty">Faculty (Part C)</option>
                     <option value="department">Department (Part B)</option>
                   </select>

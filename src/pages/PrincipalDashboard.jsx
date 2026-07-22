@@ -417,8 +417,9 @@ export default function PrincipalDashboard() {
           const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
           if (datePart !== date) return;
 
-          Object.entries(record.students || {}).forEach(([regNo, hours]) => {
-            if (Number(hours) === 0 || hours === false) {
+          Object.entries(record.students || {}).forEach(([regNo, hVal]) => {
+            const hrs = typeof hVal === 'object' && hVal !== null ? (hVal.hours ?? 0) : (hVal ?? 0);
+            if (Number(hrs) === 0 || hVal === false) {
               const deptLabel = parsed.progDisplay ? `${parsed.progDisplay} ${parsed.deptKey}` : parsed.deptKey;
               if (!absentees[deptLabel]) absentees[deptLabel] = {};
               absentees[deptLabel][regNo] = nameMap[regNo] || regNo;

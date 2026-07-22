@@ -7,7 +7,7 @@ import { formatProgDisplay } from "../../lib/utils";
 import { 
   LayoutDashboard, User, CheckCircle, BarChart3, Clock, IndianRupee,
   BookOpen, FileText, CalendarDays, ClipboardList, Library, Briefcase,
-  Download, Bell, Menu, X, Award
+  Download, Bell, Menu, X, Award, Users
 } from "lucide-react";
 
 const studentMenuItems = [
@@ -24,6 +24,7 @@ const studentMenuItems = [
   { id: "library", icon: Library, label: "Library", path: "/student/library" },
   { id: "placement", icon: Briefcase, label: "Placement", path: "/student/placement" },
   { id: "step", icon: Award, label: "STEP Activity Points", path: "/student/step" },
+  { id: "mentor", icon: Users, label: "My Mentor", path: "/student/mentor" },
   { id: "downloads", icon: Download, label: "Downloads", path: "/student/downloads" },
   { id: "notices", icon: Bell, label: "Notifications", path: "/student/notices" },
 ];

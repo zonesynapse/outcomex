@@ -114,10 +114,13 @@ const allPossibleItems = [
   { id: "inventory-approvals", icon: ClipboardCheck, label: "Request Approvals", path: "/inventory/approvals" },
   { id: "inventory-fulfill", icon: PackageCheck, label: "Issue Items", path: "/inventory/fulfill" },
 
+  // Mentoring Module
+  { id: "mentor-allocation", icon: Users, label: "Mentor Allocation", path: "/mentor/allocation" },
+  { id: "mentor-meetings", icon: Calendar, label: "Mentor Activities", path: "/mentor/meetings" },
+  { id: "mentor-reports", icon: BarChart3, label: "Mentor Reports & SGI", path: "/mentor/reports" },
+
   // Activity Module
-  { id: "activity-student", icon: GraduationCap, label: "Student Activities (Part A)", path: "/activities?tab=student" },
-  { id: "activity-faculty", icon: User, label: "Faculty Activities (Part C)", path: "/activities?tab=faculty" },
-  { id: "activity-department", icon: Building2, label: "Department Activities (Part B)", path: "/activities?tab=department" },
+  { id: "activity-list", icon: LayoutDashboard, label: "Activity Dashboard", path: "/activities" },
   { id: "activity-new", icon: Plus, label: "New Activity", path: "/activities/new" },
   { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities?tab=approvals" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
@@ -130,12 +133,6 @@ const modules = [
     label: "OBE",
     icon: Target,
     itemIds: ["co_configuration", "po_and_pso_configuration", "co-po", "po-attainment", "vision_and_mission", "blooms-taxonomy"]
-  },
-  {
-    id: "step",
-    label: "STEP",
-    icon: Award,
-    itemIds: ["step-points", "step-analytics"]
   },
   {
     id: "ia",
@@ -196,7 +193,13 @@ const modules = [
     id: "activity",
     label: "Activity",
     icon: Award,
-    itemIds: ["activity-list", "activity-new", "activity-approval", "activity-reports", "activity-nba-export"]
+    itemIds: ["step-points", "step-analytics", "activity-list", "activity-new", "activity-approval", "activity-reports", "activity-nba-export"]
+  },
+  {
+    id: "mentoring",
+    label: "Mentoring",
+    icon: Users,
+    itemIds: ["mentor-allocation", "mentor-meetings", "mentor-reports"]
   }
 ];
 
@@ -801,7 +804,7 @@ export default function Layout({ children, title }) {
       </aside>
 
       {/* Main Content */}
-      <main className="transition-all duration-300">
+      <main className="transition-all duration-300 pt-4 px-4 md:px-6">
         {children}
       </main>
     </div>

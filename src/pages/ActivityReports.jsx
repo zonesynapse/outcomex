@@ -30,13 +30,65 @@ export default function ActivityReports() {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, "activity_entries"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      const list = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-      setActivities(list);
-    });
-    return () => unsub();
+    let list1 = [];
+    let list2 = [];
+
+    const q1 = query(
+      collection(db, "activity_entries"),
+      orderBy("createdAt", "desc")
+    );
+    const unsub1 = onSnapshot(q1, (snapshot) => {
+      list1 = [];
+      snapshot.forEach((d) => {
+        list1.push({ id: d.id, ...d.data() });
+      });
+      const combined = [...list1, ...list2].sort((a, b) => {
+        const dateA = a.createdAt || '';
+        const dateB = b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+      setActivities(combined);
+    }, (err) => console.error("Error loading activity_entries:", err));
+
+    const q2 = query(
+      collection(db, "step_activities"),
+      orderBy("createdAt", "desc")
+    );
+    const unsub2 = onSnapshot(q2, (snapshot) => {
+      list2 = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        let nba = "";
+        let naac = "";
+        if (data.category === "technical") { nba = "C2.2.3"; naac = "3.2.2"; }
+        else if (data.category === "research") { nba = "C3.4"; naac = "3.3.3"; }
+        else if (data.category === "industry") { nba = "C2.8"; naac = "3.2.1"; }
+        else if (data.category === "social") { nba = "C9.11"; naac = "7.1.1"; }
+        else if (data.category === "leadership") { nba = "C9.7"; naac = "5.3.1"; }
+        else { nba = "C9.2"; naac = "5.1.2"; }
+
+        list2.push({ 
+          id: d.id, 
+          isStep: true, 
+          activityCode: "STEP", 
+          activityName: data.activityName || data.activityType || "STEP Activity", 
+          nbaCriterion: nba,
+          naacCriterion: naac,
+          ...data 
+        });
+      });
+      const combined = [...list1, ...list2].sort((a, b) => {
+        const dateA = a.createdAt || '';
+        const dateB = b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+      setActivities(combined);
+    }, (err) => console.error("Error loading step_activities:", err));
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, []);
 
   const months = [

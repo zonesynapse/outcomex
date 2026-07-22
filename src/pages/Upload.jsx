@@ -15,34 +15,34 @@ const sanitizeKey = (key) => {
   return String(key).replace(/[.#$[\]]/g, '_');
 };
 
+const REFERENCE_EXAM_NO = '__REFERENCE__';
+const HEADER_LABELS = {
+  mobile: 'Student Mobile', fatherMobile: 'Father Mobile', motherMobile: 'Mother Mobile',
+  studentWhatsAppNo: 'Student WhatsApp', fatherWhatsApp: 'Father WhatsApp', motherWhatsApp: 'Mother WhatsApp'
+};
+
 const ADMISSION_FIELDS = [
-  'title','firstName','lastName','studentName','fatherGuardianName','motherName',
-  'guardianName','gender','dateOfBirth','age','nationality','religion','community',
-  'caste','motherTongue','bloodGroup','maritalStatus','aadharNo',
-  'mobile','parentMobile','parentWhatsAppNo','studentWhatsAppNo','landline','emailId',
-  'address','presentHouseNo','presentStreet','presentLocality','presentCity',
-  'presentAddress','presentPincode','presentDistrict','presentState','presentCountry',
+  'title','firstName','lastName','gender','dateOfBirth','nationality','religion','community',
+  'caste','motherTongue','bloodGroup','maritalStatus','aadharNo','emailId',
+  'fatherGuardianName','motherName','guardianName',
+  'fatherOccupationSector','fatherOrganisation','fatherDesignation','fatherAnnualIncome',
+  'motherOccupationSector','motherOrganisation','motherDesignation','motherAnnualIncome',
+  'familyAnnualIncome',
+  'mobile','fatherMobile','motherMobile','studentWhatsAppNo','fatherWhatsApp','motherWhatsApp',
+  'presentHouseNo','presentStreet','presentLocality','presentCity',
+  'presentPincode','presentDistrict','presentState','presentCountry',
   'permanentAddress','permanentCity','permanentPincode','permanentDistrict',
   'permanentState','permanentCountry',
-  'parentOccupation','motherOccupation','fatherOccupationSector','motherOccupationSector',
-  'fatherOrganisation','motherOrganisation','fatherDesignation','motherDesignation',
-  'fatherAnnualIncome','motherAnnualIncome','familyAnnualIncome',
+  'hostellerDayScholar','transportRequired','transportRoute','transportStage',
   'schoolCollege','mediumOfInstruction','examinationPassedAppeared','studentCategory',
-  'seatCategory','scholarshipDetails','hostellerDayScholar','transportRequired',
-  'transportRoute','transportStage','emsUmsNo',
-  'qualifyingExamProgrammes','qualifyingExamInstitute','qualifyingExamBoardUniversity',
-  'qualifyingExamMonthYear','qualifyingExamAttempts','qualifyingExamMarks',
+  'quotaAskedFor','scholarshipDetails','emsUmsNo',
+  'mathsMark','physicsMark','chemistryMark','totalMarks','cutoff',
   'qualifyingExam10thInstitute','qualifyingExam10thBoard','qualifyingExam10thMonthYear',
   'qualifyingExam10thAttempts','qualifyingExam10thMarks',
-  'qualifyingExam11thInstitute','qualifyingExam11thBoard','qualifyingExam11thMonthYear',
-  'qualifyingExam11thAttempts','qualifyingExam11thMarks',
   'qualifyingExam12thInstitute','qualifyingExam12thBoard','qualifyingExam12thMonthYear',
   'qualifyingExam12thAttempts','qualifyingExam12thMarks',
   'qualifyingExamDipDegInstitute','qualifyingExamDipDegBoard','qualifyingExamDipDegMonthYear',
-  'qualifyingExamDipDegAttempts','qualifyingExamDipDegMarks',
-  'mathsMark','physicsMark','chemistryMark','totalMarks','cutoff','eligibility',
-  'department','department2','department3','quotaAskedFor','reference','enquiryFor',
-  'enquiryDate','enquiryAttendedBy','status','applicationNo'
+  'qualifyingExamDipDegAttempts','qualifyingExamDipDegMarks'
 ];
 
 export default function Upload() {
@@ -331,12 +331,35 @@ export default function Upload() {
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const allHeaders = ['Exam No', 'Name', ...ADMISSION_FIELDS];
+    const headerLabels = ADMISSION_FIELDS.map(f => HEADER_LABELS[f] || f);
+    const allHeaders = ['Exam No', 'Name', ...headerLabels];
     const headerRow = allHeaders.join(',');
 
+    const dummyReference = (() => {
+      const row = { examNo: REFERENCE_EXAM_NO, name: 'Reference - delete this row' };
+      ADMISSION_FIELDS.forEach(f => {
+        row[f] = '';
+      });
+      // Fill sample fields to show format
+      row.title = 'Mr.'; row.firstName = 'Sample'; row.lastName = 'Student';
+      row.gender = 'Male'; row.dateOfBirth = '2005-06-15';
+      row.nationality = 'Indian'; row.religion = 'Hindu'; row.community = 'OC';
+      row.mobile = '9876543210'; row.fatherMobile = '9988776655';
+      row.fatherGuardianName = 'Sample Father';
+      row.presentCity = 'Chennai'; row.presentState = 'Tamil Nadu';
+      row.schoolCollege = 'Sample School';
+      row.quotaAskedFor = 'General';
+      return row;
+    })();
+
+    const toRow = (examNo, name, extra) => {
+      const vals = ADMISSION_FIELDS.map(f => esc(extra[f] ?? ''));
+      return [esc(examNo), esc(name), ...vals].join(',');
+    };
+
     const dataRows = existingStudents.length > 0
-      ? existingStudents.map(s => [esc(s.examNo), esc(s.name), ...ADMISSION_FIELDS.map(() => '')].join(','))
-      : [['', '', ...ADMISSION_FIELDS.map(() => '')].join(',')];
+      ? [toRow(REFERENCE_EXAM_NO, 'Reference - delete this row', dummyReference), ...existingStudents.map(s => toRow(s.examNo, s.name, s.extra || {}))]
+      : [toRow(REFERENCE_EXAM_NO, 'Reference - delete this row', dummyReference), toRow('', '', {})];
 
     const csvContent = '\uFEFF' + [headerRow, ...dataRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -440,19 +463,35 @@ export default function Upload() {
               return;
             }
 
-            // Detect which admission fields are present as columns
-            const presentAdmissionFields = ADMISSION_FIELDS.filter(f => headers.includes(f));
+            // Detect which admission fields are present as columns (match raw key or display label)
+            const presentAdmissionFields = ADMISSION_FIELDS.filter(f => {
+              if (headers.includes(f)) return true;
+              const label = HEADER_LABELS[f];
+              return label && headers.includes(label);
+            });
+
+            // Map legacy column names to current profile field names
+            const LEGACY_FIELD_MAP = { 'seatCategory': 'quotaAskedFor' };
 
             rows.forEach(row => {
               const examNo = normalizeExamNo(row[examKey]);
+              // Skip reference/instruction rows
+              if (!examNo || examNo.startsWith('__')) return;
               const name = String(row[nameKey] || '').trim();
               if (examNo && name) {
                 studentsMap[examNo] = name;
                 const extra = {};
                 presentAdmissionFields.forEach(f => {
-                  const v = row[f];
+                  const header = HEADER_LABELS[f] || f;
+                  const v = row[header] !== undefined ? row[header] : row[f];
                   if (v !== undefined && v !== null && String(v).trim() !== '') {
                     extra[f] = String(v).trim();
+                  }
+                });
+                // Apply legacy field mappings (if not already set by presentAdmissionFields)
+                Object.entries(LEGACY_FIELD_MAP).forEach(([legacy, current]) => {
+                  if (!extra[current] && row[legacy] !== undefined && row[legacy] !== null && String(row[legacy]).trim() !== '') {
+                    extra[current] = String(row[legacy]).trim();
                   }
                 });
                 if (Object.keys(extra).length > 0) {
@@ -494,10 +533,13 @@ export default function Upload() {
               count: totalCount
             };
 
-            // Merge extra admission fields into _student_data
+            // Merge extra admission fields into _student_data (deep-merge per student)
             if (Object.keys(studentsData).length > 0) {
               const existingStudentData = existingData._student_data || {};
-              payload._student_data = { ...existingStudentData, ...studentsData };
+              payload._student_data = { ...existingStudentData };
+              Object.keys(studentsData).forEach(reg => {
+                payload._student_data[reg] = { ...(existingStudentData[reg] || {}), ...studentsData[reg] };
+              });
             }
 
             await setDoc(studentsRef, payload); // Use setDoc for Firestore

@@ -5,12 +5,11 @@ import Layout from "../components/Layout";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
 
 const CATEGORY_ICONS = {
-  student: GraduationCap,
   department: Building2,
   faculty: User,
 };
 
-const CATEGORY_ORDER = ["student", "department", "faculty"];
+const CATEGORY_ORDER = ["department", "faculty"];
 
 export default function ActivityPicker() {
   const navigate = useNavigate();

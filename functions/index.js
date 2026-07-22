@@ -65,6 +65,92 @@ exports.createPaymentSession = onCall(
       throw new HttpsError("invalid-argument", "Amount exceeds maximum limit of ₹5,00,000.");
     }
 
+    // Backend validation of the amount (Request Tampering prevention)
+    const userSnap = await db.collection("users").doc(uid).get();
+    if (!userSnap.exists) {
+      throw new HttpsError("not-found", "User profile not found.");
+    }
+    const userData = userSnap.data();
+    const { programme, department, batch, regNo } = userData;
+
+    if (!programme || !batch) {
+      throw new HttpsError("failed-precondition", "Student profile is incomplete (programme/batch missing).");
+    }
+
+    // Fetch seat category (quota)
+    let seatCategory = userData._profile_data?.quotaAskedFor || "";
+    if (regNo) {
+      try {
+        const sanitizedReg = regNo.replace(/[^a-zA-Z0-9]/g, "_");
+        const idxSnap = await db.collection("student_index").doc(sanitizedReg).get();
+        if (idxSnap.exists) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await db.collection("students").doc(sDocId).get();
+            if (sSnap.exists) {
+              const extra = sSnap.data()._student_data?.[regNo] || {};
+              if (extra.quotaAskedFor) {
+                seatCategory = extra.quotaAskedFor;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching seat category on backend:", err);
+      }
+    }
+
+    // Fetch matching fee configurations for this feeHead
+    const feeConfigsSnap = await db.collection("fee_configurations")
+      .where("head", "==", feeHead)
+      .get();
+
+    let matchingConfig = null;
+    const normStudentProg = (programme || "").replace(/[_.\s]/g, '').toLowerCase();
+    const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
+    const normStudentBatch = (batch || "").trim().toLowerCase();
+
+    feeConfigsSnap.forEach((doc) => {
+      const data = doc.data();
+      const normDataProg = (data.programme || "").replace(/[_.\s]/g, '').toLowerCase();
+      const normDataDept = (data.department || "").replace(/[_.\s]/g, '').toLowerCase();
+      const normDataBatch = (data.batch || "").trim().toLowerCase();
+
+      const isProgMatch = normDataProg && normDataProg === normStudentProg;
+      const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
+      const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
+      const isQuotaMatch = !seatCategory || !data.quota || data.quota === seatCategory;
+
+      if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch) {
+        matchingConfig = data;
+      }
+    });
+
+    if (!matchingConfig) {
+      throw new HttpsError("invalid-argument", `No fee configuration found for ${feeHead}.`);
+    }
+
+    const configAmount = Number(matchingConfig.amount) || 0;
+
+    // Fetch previous successful payments for this feeHead
+    const previousPaymentsSnap = await db.collection("fee_payments")
+      .where("uid", "==", uid)
+      .where("feeHead", "==", feeHead)
+      .get();
+
+    let totalPaid = 0;
+    previousPaymentsSnap.forEach((doc) => {
+      const data = doc.data();
+      if (data.status === "SUCCESS") {
+        totalPaid += Number(data.chargedAmount || data.amount || 0);
+      }
+    });
+
+    const maxAllowedPay = Math.max(0, configAmount - totalPaid);
+    if (amount > maxAllowedPay + 1) { // 1 rupee buffer for rounding
+      throw new HttpsError("invalid-argument", `Requested amount ₹${amount} exceeds the outstanding balance of ₹${maxAllowedPay} for ${feeHead}.`);
+    }
+
     const { baseUrl, merchantId, basicAuth, isSandbox } = getConfig();
     const orderId = generateOrderId();
 
@@ -166,6 +252,25 @@ exports.verifyPayment = onCall(
       throw new HttpsError("invalid-argument", "Order ID is required.");
     }
 
+    // Fetch the original payment record from Firestore first
+    const paymentRef = db.collection("fee_payments").doc(orderId);
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) {
+      throw new HttpsError("not-found", "Payment record not found.");
+    }
+    const paymentRecord = paymentSnap.data();
+
+    // Prevent double processing if the transaction was already successful
+    if (paymentRecord.status === "SUCCESS") {
+      return {
+        success: true,
+        status: "SUCCESS",
+        hdfcStatus: paymentRecord.hdfcStatus,
+        amount: paymentRecord.chargedAmount || paymentRecord.amount,
+        orderId,
+      };
+    }
+
     const { baseUrl, merchantId, basicAuth } = getConfig();
 
     let response;
@@ -195,8 +300,22 @@ exports.verifyPayment = onCall(
 
     const hdfcStatus = responseData.status;
     let localStatus = "PENDING";
-    if (hdfcStatus === "CHARGED") localStatus = "SUCCESS";
-    else if (["FAILED", "EXPIRED", "VOID"].includes(hdfcStatus)) localStatus = "FAILED";
+    let isTampered = false;
+
+    if (hdfcStatus === "CHARGED") {
+      // Validate that the charged amount matches the requested amount (Request Tampering validation)
+      const responseAmount = parseFloat(responseData.amount || 0);
+      const originalAmount = parseFloat(paymentRecord.amount || 0);
+      if (Math.abs(responseAmount - originalAmount) > 0.01) {
+        console.error(`Request Tampering detected for order ${orderId}: Expected ₹${originalAmount}, but got ₹${responseAmount}`);
+        localStatus = "FAILED";
+        isTampered = true;
+      } else {
+        localStatus = "SUCCESS";
+      }
+    } else if (["FAILED", "EXPIRED", "VOID"].includes(hdfcStatus)) {
+      localStatus = "FAILED";
+    }
 
     const updateData = {
       hdfcStatus,
@@ -205,20 +324,52 @@ exports.verifyPayment = onCall(
       verifiedAt: Timestamp.now(),
     };
 
-    if (localStatus === "SUCCESS" && responseData.amount) {
-      updateData.chargedAmount = parseFloat(responseData.amount);
+    if (isTampered) {
+      updateData.tampered = true;
     }
 
+    let txnId = "";
     if (responseData.payment_gateway_response) {
       const pg = responseData.payment_gateway_response;
+      txnId = pg.txn_id || pg.epg_txn_id || "";
       updateData.gatewayResponse = {
         rrn: pg.rrn || "",
-        txnId: pg.txn_id || "",
+        txnId: txnId,
         epgTxnId: pg.epg_txn_id || "",
         authCode: pg.auth_id_code || "",
         respCode: pg.resp_code || "",
         respMessage: pg.resp_message || "",
       };
+    }
+
+    // Duplicate transaction validation (replay prevention)
+    let isDuplicate = false;
+    if (localStatus === "SUCCESS" && txnId) {
+      try {
+        const duplicateSnap = await db.collection("fee_payments")
+          .where("gatewayResponse.txnId", "==", txnId)
+          .where("status", "==", "SUCCESS")
+          .get();
+
+        duplicateSnap.forEach((doc) => {
+          if (doc.id !== orderId) {
+            isDuplicate = true;
+          }
+        });
+      } catch (err) {
+        console.error("Duplicate transaction query failed:", err);
+      }
+
+      if (isDuplicate) {
+        console.error(`Duplicate entry check failed for order ${orderId}: txnId ${txnId} already processed.`);
+        localStatus = "FAILED";
+        updateData.status = "FAILED";
+        updateData.duplicateDetected = true;
+      }
+    }
+
+    if (localStatus === "SUCCESS" && responseData.amount) {
+      updateData.chargedAmount = parseFloat(responseData.amount);
     }
 
     try {
@@ -233,6 +384,8 @@ exports.verifyPayment = onCall(
       hdfcStatus,
       amount: parseFloat(responseData.amount || 0),
       orderId,
+      tampered: isTampered,
+      duplicate: isDuplicate,
     };
   }
 );

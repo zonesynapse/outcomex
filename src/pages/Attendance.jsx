@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
-import { doc, getDoc, setDoc, onSnapshot, collection, deleteField } from "firebase/firestore";
+import { doc, getDoc, getDocs, setDoc, onSnapshot, collection, deleteField } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   CalendarCheck2,
@@ -133,6 +133,7 @@ export default function Attendance() {
   const [masterList, setMasterList] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveConfirmation, setSaveConfirmation] = useState(null); // { absent: [], od: [], notMarked: [] }
   const [searchTerm, setSearchTerm] = useState("");
 
   // Per-date record states
@@ -142,9 +143,13 @@ export default function Attendance() {
   const [teachingAid, setTeachingAid] = useState("");
   const [teachingMethodology, setTeachingMethodology] = useState("");
 
+  // Cross-subject period conflict detection
+  const [periodConflict, setPeriodConflict] = useState(null); // { subjectCode, markedBy }
+
   // Report states
   const [showReport, setShowReport] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showReportDataModal, setShowReportDataModal] = useState(false);
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
   const [reportData, setReportData] = useState(null);
@@ -459,6 +464,7 @@ export default function Attendance() {
       setCurrentRecordData(null);
       setReportData(null);
       setShowReport(false);
+      setShowReportDataModal(false);
       setTopicTaught("");
       setTeachingAid("");
       setTeachingMethodology("");
@@ -525,6 +531,9 @@ export default function Attendance() {
   }, [programme, department, batch, academicYear, semester, subject, section]);
 
   const handleStatusChange = (reg, status) => {
+    // Don't allow changing read-only entries
+    if (readOnlyRegs.has(reg)) return;
+
     const total = parseInt(totalConducted, 10) || 0;
     let val = 0;
     if (status === 'P' || status === 'OD') {
@@ -537,7 +546,10 @@ export default function Attendance() {
           ...s,
           status: status,
           hours: val,
-          percentage: total > 0 ? ((val / total) * 100).toFixed(2) : "0.00"
+          percentage: total > 0 ? ((val / total) * 100).toFixed(2) : "0.00",
+          topicTaught: topicTaught.trim(),
+          teachingAid,
+          teachingMethodology
         };
       }
       return s;
@@ -575,22 +587,87 @@ export default function Attendance() {
     const order = masterList._order;
 
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-      const studentExists = dateRecord?.students?.[reg] !== undefined;
-      const hours = studentExists ? dateRecord.students[reg] : 0;
+      const val = dateRecord?.students?.[reg];
+      const studentExists = val !== undefined;
+      let hours = 0, stuTopic = '', stuAid = '', stuMethod = '';
+      if (studentExists) {
+        if (typeof val === 'number') {
+          hours = val; // backward compat: old format { reg: hours }
+        } else {
+          hours = val.hours || 0;
+          stuTopic = val.topicTaught || '';
+          stuAid = val.teachingAid || '';
+          stuMethod = val.teachingMethodology || '';
+        }
+      }
       return {
-        reg,
-        name,
-        hours,
+        reg, name, hours,
         status: studentExists ? (hours > 0 ? 'P' : 'A') : '',
-        percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00"
+        percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00",
+        topicTaught: stuTopic,
+        teachingAid: stuAid,
+        teachingMethodology: stuMethod
       };
     });
+
+    // Overlay conflicting subject's attendance entries as read-only
+    if (periodConflict?.record) {
+      Object.entries(periodConflict.record).forEach(([reg, val]) => {
+        const conflictHours = typeof val === 'number' ? val : (val.hours || 0);
+        const idx = studentArray.findIndex(s => s.reg === reg);
+        if (idx !== -1) {
+          studentArray[idx] = {
+            ...studentArray[idx],
+            hours: conflictHours,
+            status: conflictHours > 0 ? 'P' : 'A',
+            percentage: "0.00"
+          };
+        }
+      });
+    }
 
     if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
     else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
 
     setStudents(studentArray);
-  }, [attendanceDate, period, attendanceData, masterList]);
+  }, [attendanceDate, period, attendanceData, masterList, periodConflict]);
+
+  // Check if period is already marked by another subject in the same batch
+  useEffect(() => {
+    if (!period || !attendanceDate || !batch || !academicYear || !semester || !programme || !department) {
+      setPeriodConflict(null);
+      return;
+    }
+    const progKey = formatProgrammeKey(programme);
+    const semNum = String(semester).match(/\d+/)?.[0];
+    const batchPrefix = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_`;
+    const recordKey = `${attendanceDate}_P${period}`;
+    let currentSubjectCode = '';
+    try { currentSubjectCode = JSON.parse(subject || '{}').code || ''; } catch {}
+
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'attendance'));
+        for (const d of snap.docs) {
+          if (!d.id.startsWith(batchPrefix)) continue;
+          const rec = d.data()?.records?.[recordKey];
+          if (!rec) continue;
+          // Extract subject code from doc ID
+          let rest = d.id.slice(batchPrefix.length);
+          const secIdx = rest.indexOf('_Sec-');
+          if (secIdx !== -1) rest = rest.slice(0, secIdx);
+          // Skip current subject's own doc
+          if (rest === currentSubjectCode) continue;
+          if (!cancelled) setPeriodConflict({ subjectCode: rest, markedBy: rec.markedBy || '', record: rec.students || {} });
+          return;
+        }
+        if (!cancelled) setPeriodConflict(null);
+      } catch (e) { console.warn('[Attendance] Period conflict check error:', e); if (!cancelled) setPeriodConflict(null); }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [period, attendanceDate, batch, academicYear, semester, programme, department, subject]);
 
   const handleGenerateReport = () => {
     if (!reportFromDate || !reportToDate || !attendanceData?.records) {
@@ -640,22 +717,24 @@ export default function Attendance() {
         });
 
       const studentStats = Object.keys(studentMap).map(reg => {
-        let attended = 0;
+        let attended = 0, markedClasses = 0;
         const dailyRecords = {};
         allKeys.forEach(key => {
           const rec = attendanceData.records[key];
-          const hours = rec?.students?.[reg];
-          const totalH = parseInt(rec?.totalHours || totalConducted, 10) || 1;
-          const isPresent = hours !== undefined ? hours > 0 : false;
+          const rawHours = rec?.students?.[reg];
+          const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
+          const isPresent = hours !== undefined && hours > 0;
+          const isAbsent = hours !== undefined && hours <= 0;
+          if (hours !== undefined) markedClasses++;
           if (isPresent) attended++;
-          dailyRecords[key] = isPresent ? 'P' : 'A';
+          dailyRecords[key] = isPresent ? 'P' : (isAbsent ? 'A' : '—');
         });
         return {
           reg,
           name: studentMap[reg],
           attended,
-          totalClasses,
-          percentage: totalClasses > 0 ? ((attended / totalClasses) * 100).toFixed(2) : "0.00",
+          totalClasses: markedClasses,
+          percentage: markedClasses > 0 ? ((attended / markedClasses) * 100).toFixed(2) : "0.00",
           dailyRecords
         };
       });
@@ -802,28 +881,70 @@ export default function Attendance() {
       alert("Please select the Teaching Methodology used today.");
       return;
     }
+
+    // Collect attendance summary for confirmation
+    const absentList = students.filter(s => s.status === 'A');
+    const odList = students.filter(s => s.status === 'OD');
+    const notMarkedList = students.filter(s => s.status === '');
+    if (absentList.length > 0 || odList.length > 0 || notMarkedList.length > 0) {
+      setSaveConfirmation({ absent: absentList, od: odList, notMarked: notMarkedList });
+      return; // wait for confirm
+    }
+
+    // No absent students — save directly
+    await confirmSaveAttendance();
+  };
+
+  const confirmSaveAttendance = async () => {
     setSaving(true);
+    setSaveConfirmation(null);
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
 
-    const studentsMap = {};
-    students.forEach(s => { studentsMap[s.reg] = s.hours; });
+    // If another faculty's record, merge new entries without overwriting existing
+    const isAnotherFacultyRecord = currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid;
+    const existingStudents = isAnotherFacultyRecord ? (currentRecordData.students || {}) : {};
+    const newStudentsMap = {};
+
+    const makeStudentEntry = (s) => ({
+      hours: s.hours,
+      topicTaught: s.topicTaught || topicTaught.trim(),
+      teachingAid: s.teachingAid || teachingAid,
+      teachingMethodology: s.teachingMethodology || teachingMethodology
+    });
+
+    students.forEach(s => {
+      if (s.status === '') return; // skip unmarked
+      if (isAnotherFacultyRecord && s.reg in existingStudents) return; // skip existing in merge mode
+      newStudentsMap[s.reg] = makeStudentEntry(s);
+    });
+    let mergedStudentsMap = { ...existingStudents, ...newStudentsMap };
+    const hasNewEntries = Object.keys(newStudentsMap).length > 0;
+
+    if (!hasNewEntries && !isAnotherFacultyRecord) {
+      // No new entries and not a merge — regular flow, build map from all marked students
+      const freshMap = {};
+      students.forEach(s => {
+        if (s.status !== '') freshMap[s.reg] = makeStudentEntry(s);
+      });
+      mergedStudentsMap = freshMap;
+    }
 
     const dateRecord = {
       period,
       totalHours: parseInt(totalConducted, 10) || 1,
-      students: studentsMap,
+      students: mergedStudentsMap,
       topicTaught: topicTaught.trim(),
       teachingAid,
       teachingMethodology,
+      markedBy: isAnotherFacultyRecord ? currentRecordData.markedBy : currentUid,
       updatedAt: new Date().toISOString()
     };
 
     try {
-      // Merge with existing records (don't overwrite other dates/periods)
       const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
       const existingRecords = attendanceData?.records || {};
       const updatedRecords = { ...existingRecords, [recordKey]: dateRecord };
@@ -835,12 +956,9 @@ export default function Attendance() {
       });
       alert(`Attendance for ${attendanceDate} (Period ${period}) saved successfully!`);
 
-      // Update local state
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
       setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
-
-      // Keep same date/period selected after save
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
   };
@@ -885,12 +1003,17 @@ export default function Attendance() {
 
   const handleMarkAllPresent = () => {
     const total = parseInt(totalConducted, 10) || 0;
-    setStudents(prev => prev.map(s => ({
-      ...s,
-      status: 'P',
-      hours: total,
-      percentage: total > 0 ? "100.00" : "0.00"
-    })));
+    setStudents(prev => prev.map(s => {
+      // Don't overwrite read-only entries
+      if (readOnlyRegs.has(s.reg)) return s;
+      return {
+        ...s, status: 'P', hours: total,
+        percentage: total > 0 ? "100.00" : "0.00",
+        topicTaught: topicTaught.trim(),
+        teachingAid,
+        teachingMethodology
+      };
+    }));
   };
 
   // ─── cumulative attendance from all records ───
@@ -898,7 +1021,8 @@ export default function Attendance() {
     if (!attendanceData?.records) return {};
     const counts = {};
     Object.values(attendanceData.records).forEach(record => {
-      Object.entries(record.students || {}).forEach(([reg, hours]) => {
+      Object.entries(record.students || {}).forEach(([reg, val]) => {
+        const hours = typeof val === 'number' ? val : (val?.hours || 0);
         if (Number(hours) > 0) counts[reg] = (counts[reg] || 0) + 1;
       });
     });
@@ -909,6 +1033,18 @@ export default function Attendance() {
   const pctPresent = students.length
     ? ((students.filter(s => s.status === 'P' || s.status === 'OD').length / students.length) * 100).toFixed(1)
     : '—';
+
+  // Read-only student regs (existing entries from another faculty or another subject)
+  const readOnlyRegs = useMemo(() => {
+    const regs = new Set();
+    if (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) {
+      Object.keys(currentRecordData.students || {}).forEach(r => regs.add(r));
+    }
+    if (periodConflict?.record) {
+      Object.keys(periodConflict.record).forEach(r => regs.add(r));
+    }
+    return regs;
+  }, [currentRecordData, currentUid, periodConflict]);
 
   return (
     <Layout title="Attendance Records">
@@ -1001,11 +1137,15 @@ export default function Attendance() {
                   </select>
                   <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
                 </div>
-                {currentRecordData && period && (
-                  <span className="shrink-0 px-2.5 py-1.5 bg-amber-100 border border-amber-300 rounded-lg text-[10px] font-black text-amber-700 uppercase tracking-wider">
-                    Already marked
+                {(currentRecordData && period) || (periodConflict && period) ? (
+                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                    (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
+                      ? 'bg-red-100 border-red-300 text-red-700'
+                      : 'bg-amber-100 border-amber-300 text-amber-700'
+                  }`}>
+                    {periodConflict ? `Already marked (${periodConflict.subjectCode})` : 'Already marked'}
                   </span>
-                )}
+                ) : null}
               </div>
             </div>
             <div className="space-y-1">
@@ -1097,9 +1237,9 @@ export default function Attendance() {
 
             <div className="flex items-center gap-2.5 flex-wrap">
               <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 peer-focus:text-slate-400 pointer-events-none" />
                 <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                  className="bg-white/10 border border-white/20 rounded-xl pl-9 pr-3.5 py-2 text-xs text-white placeholder:text-white/40 outline-none focus:bg-white focus:text-indigo-800 focus:placeholder:text-slate-400 transition-all w-36 md:w-44"
+                  className="peer bg-white/10 border border-white/20 rounded-xl pl-9 pr-3.5 py-2 text-xs text-white placeholder:text-white/40 outline-none focus:bg-white focus:text-slate-800 focus:placeholder:text-slate-400 focus:[-webkit-text-fill-color:#1e293b] focus:caret-slate-800 transition-all w-36 md:w-44"
                 />
               </div>
               <button onClick={handleMarkAllPresent}
@@ -1113,7 +1253,7 @@ export default function Attendance() {
                 {saving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={15} />}
                 Save
               </button>
-              {currentRecordData && period && (
+              {currentRecordData && period && readOnlyRegs.size === 0 && (
                 <button onClick={handleClearAttendance} disabled={saving}
                   className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
                 >
@@ -1180,17 +1320,21 @@ export default function Attendance() {
                             { label: 'P', value: 'P', activeClass: 'bg-emerald-500 text-white shadow-emerald-200', hoverClass: 'hover:bg-emerald-50 hover:text-emerald-600' },
                             { label: 'A', value: 'A', activeClass: 'bg-rose-500 text-white shadow-rose-200', hoverClass: 'hover:bg-rose-50 hover:text-rose-600' },
                             { label: 'OD', value: 'OD', activeClass: 'bg-blue-500 text-white shadow-blue-200', hoverClass: 'hover:bg-blue-50 hover:text-blue-600' },
-                          ].map(({ label, value, activeClass, hoverClass }) => (
-                            <button key={value}
-                              onClick={() => handleStatusChange(s.reg, value)}
-                              className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${s.status === value
-                                  ? activeClass + ' border-transparent'
-                                  : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
-                                }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                          ].map(({ label, value, activeClass, hoverClass }) => {
+                            const isExistingEntry = readOnlyRegs.has(s.reg);
+                            return (
+                              <button key={value}
+                                onClick={() => handleStatusChange(s.reg, value)}
+                                disabled={isExistingEntry}
+                                className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${s.status === value
+                                    ? activeClass + ' border-transparent'
+                                    : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
+                                  } ${isExistingEntry ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                         </div>
                       </td>
                       <td className="px-5 py-3.5">
@@ -1234,83 +1378,165 @@ export default function Attendance() {
           )}
         </div>
 
-        {/* ═══ Report Table ═══ */}
-        {showReport && reportData && (
-          <div className="bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200/60 overflow-hidden transition-all">
-            <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 px-5 md:px-7 py-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
-                  <CalendarCheck2 size={20} className="text-white" />
+        {/* ═══ Save Confirmation Popup ═══ */}
+        {saveConfirmation && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+              onClick={() => setSaveConfirmation(null)}
+            />
+            <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden transform transition-all duration-300 scale-100 animate-scaleUp">
+              <div className="bg-gradient-to-r from-rose-600 via-rose-700 to-pink-800 px-6 py-5 flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-white">
+                  <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                    <AlertCircle size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm md:text-base">Confirm Attendance</h3>
+                    <p className="text-rose-200 text-[10px] uppercase font-bold tracking-wider">
+                      {[
+                        saveConfirmation.absent.length > 0 && `${saveConfirmation.absent.length} Absent`,
+                        saveConfirmation.od.length > 0 && `${saveConfirmation.od.length} OD`,
+                        saveConfirmation.notMarked.length > 0 && `${saveConfirmation.notMarked.length} Not Marked`,
+                      ].filter(Boolean).join(', ') || 'All Present'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Report</h2>
-                  <p className="text-amber-200 text-[10px] font-bold uppercase tracking-widest">
-                    {reportFromDate} → {reportToDate} · {reportData.totalClasses} class(es)
-                  </p>
+                <button
+                  onClick={() => setSaveConfirmation(null)}
+                  className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-6 max-h-80 overflow-y-auto space-y-4">
+                {[
+                  { label: 'Absent', list: saveConfirmation.absent, bg: 'bg-rose-50/60', border: 'border-rose-100', avatarBg: 'bg-rose-100', avatarText: 'text-rose-700' },
+                  { label: 'OD', list: saveConfirmation.od, bg: 'bg-blue-50/60', border: 'border-blue-100', avatarBg: 'bg-blue-100', avatarText: 'text-blue-700' },
+                  { label: 'Not Marked', list: saveConfirmation.notMarked, bg: 'bg-amber-50/60', border: 'border-amber-100', avatarBg: 'bg-amber-100', avatarText: 'text-amber-700' },
+                ].map(({ label, list, bg, border, avatarBg, avatarText }) => list.length > 0 && (
+                  <div key={label}>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">{label} ({list.length})</p>
+                    <div className="space-y-1.5">
+                      {list.map(s => (
+                        <div key={s.reg} className={`flex items-center gap-3 px-3.5 py-2 ${bg} rounded-xl border ${border}`}>
+                          <div className={`w-7 h-7 rounded-full ${avatarBg} flex items-center justify-center text-[10px] font-black ${avatarText} shrink-0`}>
+                            {s.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-bold text-slate-700 truncate">{s.name}</p>
+                            <p className="text-[10px] font-mono font-semibold text-slate-400">{s.reg}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setSaveConfirmation(null)}
+                  className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmSaveAttendance}
+                  className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-500/20"
+                >
+                  <Save size={14} />
+                  Confirm & Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ Report Data Modal ═══ */}
+        {showReportDataModal && reportData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowReportDataModal(false)} />
+            <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-5xl w-full max-h-[90vh] overflow-hidden transform transition-all duration-300 scale-100 animate-scaleUp">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 px-5 md:px-7 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
+                    <CalendarCheck2 size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Report</h2>
+                    <p className="text-amber-200 text-[10px] font-bold uppercase tracking-widest">
+                      {reportFromDate} → {reportToDate} · {reportData.totalClasses} class(es)
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleExportReport}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-sm"
+                  >
+                    <Download size={15} /> Export PDF
+                  </button>
+                  <button onClick={() => setShowReportDataModal(false)}
+                    className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
               </div>
-              <button onClick={handleExportReport}
-                className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-sm"
-              >
-                <Download size={15} /> Export PDF
-              </button>
-            </div>
-
-            <div className="overflow-x-auto">
-              {reportData.students.length === 0 ? (
-                <div className="py-16 flex flex-col items-center gap-4">
-                  <div className="p-4 rounded-2xl bg-amber-50"><FileX size={40} className="text-amber-300" /></div>
-                  <p className="text-sm text-slate-400 font-medium">No data for the selected range.</p>
-                </div>
-              ) : (
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-amber-50/50">
-                      <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
-                      <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
-                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
-                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
-                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
-                      <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
-                      {reportData.dates.map(d => (
-                        <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
-                          {reportData.keyLabels?.[d] || d}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {reportData.students.map(s => {
-                      const absent = s.totalClasses - s.attended;
-                      return (
-                        <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
-                          <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
-                          <td className="px-5 py-3.5"><span className="text-sm font-semibold text-slate-800">{s.name}</span></td>
-                          <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
-                          <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
-                          <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
-                          <td className="px-4 py-3.5">
-                            <div className="flex items-center justify-center gap-2">
-                              <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                                <div className={`h-full rounded-full transition-all duration-700 ${parseFloat(s.percentage) < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                                  }`} style={{ width: `${Math.min(parseFloat(s.percentage), 100)}%` }} />
+              {/* Body */}
+              <div className="overflow-x-auto max-h-[calc(90vh-80px)] p-4 md:p-6">
+                {reportData.students.length === 0 ? (
+                  <div className="py-16 flex flex-col items-center gap-4">
+                    <div className="p-4 rounded-2xl bg-amber-50"><FileX size={40} className="text-amber-300" /></div>
+                    <p className="text-sm text-slate-400 font-medium">No data for the selected range.</p>
+                  </div>
+                ) : (
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-amber-50/50">
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
+                        {reportData.dates.map(d => (
+                          <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
+                            {reportData.keyLabels?.[d] || d}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {reportData.students.map(s => {
+                        const absent = s.totalClasses - s.attended;
+                        return (
+                          <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
+                            <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
+                            <td className="px-5 py-3.5"><span className="text-sm font-semibold text-slate-800">{s.name}</span></td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center justify-center gap-2">
+                                <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                  <div className={`h-full rounded-full transition-all duration-700 ${parseFloat(s.percentage) < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'}`} style={{ width: `${Math.min(parseFloat(s.percentage), 100)}%` }} />
+                                </div>
+                                <span className={`text-xs font-black min-w-[44px] text-right ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>{s.percentage}%</span>
                               </div>
-                              <span className={`text-xs font-black min-w-[44px] text-right ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'
-                                }`}>{s.percentage}%</span>
-                            </div>
-                          </td>
-                          {reportData.dates.map(d => (
-                            <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'
-                              }`}>
-                              {s.dailyRecords[d] || '—'}
                             </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
+                            {reportData.dates.map(d => (
+                              <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'}`}>
+                                {s.dailyRecords[d] || '—'}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1387,7 +1613,7 @@ export default function Attendance() {
                 <button
                   onClick={() => {
                     handleGenerateReport();
-                    setShowReport(true);
+                    setShowReportDataModal(true);
                     setShowReportModal(false);
                   }}
                   className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-500/20"
