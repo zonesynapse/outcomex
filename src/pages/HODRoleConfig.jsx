@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, updateDoc, getDoc, setDoc, deleteDoc, writeBatch, getDocs } from "firebase/firestore";
-import { 
-  Users, 
-  BookOpen, 
-  Save, 
-  CheckCircle2, 
-  AlertCircle, 
-  ChevronDown, 
-  Plus, 
+import {
+  Users,
+  BookOpen,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  Plus,
   Trash2,
   Search,
   Check,
@@ -20,6 +20,7 @@ import {
   User
 } from "lucide-react";
 import Layout from "../components/Layout";
+import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
@@ -50,7 +51,7 @@ export default function HODRoleConfig() {
   const [requestModal, setRequestModal] = useState({ open: false, subject: null });
   const [targetDept, setTargetDept] = useState("");
   const [targetProgramme, setTargetProgramme] = useState("");
-  
+
   // Filter States
   const [programme, setProgramme] = useState("");
   const [syllabusDept, setSyllabusDept] = useState("");
@@ -59,7 +60,7 @@ export default function HODRoleConfig() {
   const [semester, setSemester] = useState("");
   const [section, setSection] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
-  
+
   // UI States
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -103,8 +104,8 @@ export default function HODRoleConfig() {
       const usersRef = collection(db, "users");
       const unsubscribe = onSnapshot(usersRef, (snapshot) => {
         const data = {};
-        snapshot.forEach(doc => { 
-          data[doc.id] = doc.data(); 
+        snapshot.forEach(doc => {
+          data[doc.id] = doc.data();
         });
         setUsersMap(data);
         const filtered = Object.values(data).filter(
@@ -134,8 +135,8 @@ export default function HODRoleConfig() {
       const incomingRef = collection(db, 'inter_dept_requests', 'incoming', deptKey);
       const unsubIncoming = onSnapshot(incomingRef, (snapshot) => {
         const requests = [];
-        snapshot.forEach(doc => { 
-          requests.push(doc.data()); 
+        snapshot.forEach(doc => {
+          requests.push(doc.data());
         });
         setIncomingRequests(requests.filter(r => r.status === 'pending'));
       });
@@ -144,18 +145,18 @@ export default function HODRoleConfig() {
       const outgoingRef = collection(db, 'inter_dept_requests', 'outgoing', deptKey);
       const unsubOutgoing = onSnapshot(outgoingRef, (snapshot) => {
         const requests = [];
-        snapshot.forEach(doc => { 
-          requests.push(doc.data()); 
+        snapshot.forEach(doc => {
+          requests.push(doc.data());
         });
         setSentRequests(requests);
       });
-      
+
       // Fetch Fulfilled (Requests I handled)
       const fulfilledRef = collection(db, 'inter_dept_requests', 'fulfilled', deptKey);
       const unsubFulfilled = onSnapshot(fulfilledRef, (snapshot) => {
         const requests = [];
-        snapshot.forEach(doc => { 
-          requests.push(doc.data()); 
+        snapshot.forEach(doc => {
+          requests.push(doc.data());
         });
         setFulfilledRequests(requests);
       });
@@ -192,12 +193,12 @@ export default function HODRoleConfig() {
     const [batchStart] = batch.split("-").map(Number);
     const [yearStart] = academicYear.split("-").map(Number);
     const yearIndex = yearStart - batchStart;
-    
+
     if (yearIndex < 0) return [];
-    
+
     const sem1 = (yearIndex * 2) + 1;
     const sem2 = (yearIndex * 2) + 2;
-    
+
     return [String(sem1), String(sem2)];
   }, [batch, academicYear]);
 
@@ -207,7 +208,7 @@ export default function HODRoleConfig() {
       const progKey = formatProgrammeKey(programme);
       const syllabusDocId = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}`;
       const syllabusRef = doc(db, 'syllabus_data', syllabusDocId);
-      
+
       const unsubscribe = onSnapshot(syllabusRef, (snapshot) => {
         if (snapshot.exists()) {
           setSyllabusData(snapshot.data());
@@ -221,36 +222,12 @@ export default function HODRoleConfig() {
     }
   }, [programme, syllabusDept, regulation]);
 
-  // 4b. Fetch Course Names from courses collection globally
+  // 4b. Fetch Course Names globally and per-department
   useEffect(() => {
     const fetchNames = async () => {
       try {
-        const snap = await getDocs(collection(db, 'courses'));
-        const names = {};
-        snap.forEach(d => {
-          const docData = d.data();
-          if (docData.code && docData.name) {
-            names[docData.code] = docData.name;
-          } else if (docData.name && d.id.includes('_')) {
-             const code = d.id.split('_').pop();
-             names[code] = docData.name;
-          } else {
-             Object.values(docData).forEach(deptCourses => {
-               if (deptCourses && typeof deptCourses === 'object') {
-                 Object.values(deptCourses).forEach(regCourses => {
-                   if (regCourses && typeof regCourses === 'object') {
-                     Object.entries(regCourses).forEach(([courseCode, courseData]) => {
-                       if (courseData && courseData.name) {
-                         names[courseCode] = courseData.name;
-                       }
-                     });
-                   }
-                 });
-               }
-             });
-          }
-        });
-        setCourseNames(names);
+        const namesMap = await fetchAllCourseNamesMap();
+        setCourseNames(namesMap);
       } catch (err) {
         console.error("Failed to fetch course names:", err);
       }
@@ -265,7 +242,7 @@ export default function HODRoleConfig() {
       const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       const compositeKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}${sectionSuffix}`;
       const assignmentRef = doc(db, 'subject_assignments', compositeKey);
-      
+
       const unsubscribe = onSnapshot(assignmentRef, (snapshot) => {
         if (snapshot.exists()) {
           setAssignments(snapshot.data());
@@ -278,7 +255,7 @@ export default function HODRoleConfig() {
       setAssignments({});
     }
   }, [programme, syllabusDept, batch, academicYear, semester, section]);
-  
+
   // 5.1 Fetch All Assignments Globally (All Departments)
   useEffect(() => {
     const assignmentsRef = collection(db, "subject_assignments");
@@ -334,7 +311,7 @@ export default function HODRoleConfig() {
           });
         }
       });
-      
+
       setAllAssignments(globalAssignments);
     });
     return () => unsubscribe();
@@ -374,10 +351,10 @@ export default function HODRoleConfig() {
 
   const handleAssignSubject = (facultyUid, subjectCode) => {
     if (!subjectCode) return;
-    
+
     // Check if subject is already assigned to ANYONE
     const assignedTo = Object.entries(assignments).find(([, subs]) => subs?.includes(subjectCode));
-    
+
     if (assignedTo) {
       const [uid] = assignedTo;
       if (uid === facultyUid) {
@@ -408,7 +385,7 @@ export default function HODRoleConfig() {
 
   const handleSendRequest = async () => {
     if (!targetDept || !requestModal.subject) return;
-    
+
     setSaving(true);
     try {
       const requestId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -430,7 +407,7 @@ export default function HODRoleConfig() {
 
       await setDoc(doc(db, 'inter_dept_requests', 'incoming', sanitizeKey(targetDept), requestId), payload);
       await setDoc(doc(db, 'inter_dept_requests', 'outgoing', sanitizeKey(currentUserData.department), requestId), payload);
-      
+
       showToast("Request sent to other HOD successfully!");
       setRequestModal({ open: false, subject: null });
       setTargetDept("");
@@ -470,11 +447,11 @@ export default function HODRoleConfig() {
         await saveToDept(fromKey);
       }
 
-      const statusUpdate = { 
-        ...request, 
-        status, 
+      const statusUpdate = {
+        ...request,
+        status,
         allocatedFacultyUid: facultyUid || null,
-        processedAt: Date.now() 
+        processedAt: Date.now()
       };
 
       batch.delete(doc(db, 'inter_dept_requests', 'incoming', toKey, request.id));
@@ -619,7 +596,7 @@ export default function HODRoleConfig() {
       const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       const compositeKey = `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}${sectionSuffix}`;
       const assignmentRef = doc(db, 'subject_assignments', compositeKey);
-      
+
       const updates = {};
       const allAssignedSubjects = new Set();
 
@@ -631,7 +608,7 @@ export default function HODRoleConfig() {
       });
 
       await setDoc(assignmentRef, updates, { merge: true });
-      
+
       // Process newly assigned subjects' COs
       for (const subjectCode of allAssignedSubjects) {
         let courseRef = doc(db, 'courses', `${progKey}_${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}`);
@@ -673,7 +650,7 @@ export default function HODRoleConfig() {
             if (needsOutcomeCopy) {
               const coDocId = `${sanitizeKey(syllabusDept)}_${sanitizeKey(regulation)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
               const coOutcomesRef = doc(db, 'course_outcomes', coDocId);
-              
+
               await setDoc(coOutcomesRef, coDict);
 
               if (!isOverall && hasExtraFieldsInCourseNode) {
@@ -683,7 +660,7 @@ export default function HODRoleConfig() {
           }
         }
       }
-      
+
       showToast("Assignments saved successfully!");
     } catch (error) {
       console.error("Save Error:", error);
@@ -695,7 +672,7 @@ export default function HODRoleConfig() {
 
   const isFiltersSelected = programme && batch && academicYear && semester;
 
-  const filteredFaculty = facultyList.filter(f => 
+  const filteredFaculty = facultyList.filter(f =>
     f.facultyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     f.facultyId?.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -737,17 +714,17 @@ export default function HODRoleConfig() {
             </div>
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200 self-center">
-                <button 
+                <button
                   onClick={() => setActiveTab("allocation")}
                   className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${activeTab === "allocation" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
                 >
                   <Users size={14} /> Allocation
                 </button>
-                <button 
+                <button
                   onClick={() => setActiveTab("requests")}
                   className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 ${activeTab === "requests" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
                 >
-                  <Inbox size={14} /> Requests 
+                  <Inbox size={14} /> Requests
                   {incomingRequests.length > 0 && <span className="bg-red-500 text-white text-[8px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">{incomingRequests.length}</span>}
                 </button>
               </div>
@@ -770,61 +747,61 @@ export default function HODRoleConfig() {
             {/* Incoming Section */}
             <div className="space-y-6">
               <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Inbox className="text-[#120c7a]" size={18} />
-                <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">Incoming Requests</h5>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[200px]">
-                {incomingRequests.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-[200px] text-slate-400">
-                    <CheckCircle2 size={40} className="mb-2 opacity-20" />
-                    <p className="text-xs font-bold uppercase tracking-tighter opacity-40">No pending requests</p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-zinc-100">
-                    {incomingRequests.map(req => (
-                      <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-4">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="text-[9px] font-black text-blue-600 uppercase tracking-[0.1em] mb-1">{req.fromDept}</p>
-                            <h3 className="font-bold text-slate-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
-                            <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.programme} • {req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
+                <div className="flex items-center gap-2">
+                  <Inbox className="text-[#120c7a]" size={18} />
+                  <h5 className="text-sm font-black text-slate-700 uppercase tracking-wider">Incoming Requests</h5>
+                </div>
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-h-[200px]">
+                  {incomingRequests.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-[200px] text-slate-400">
+                      <CheckCircle2 size={40} className="mb-2 opacity-20" />
+                      <p className="text-xs font-bold uppercase tracking-tighter opacity-40">No pending requests</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-zinc-100">
+                      {incomingRequests.map(req => (
+                        <div key={req.id} className="p-5 hover:bg-zinc-50/50 transition-colors space-y-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-[9px] font-black text-blue-600 uppercase tracking-[0.1em] mb-1">{req.fromDept}</p>
+                              <h3 className="font-bold text-slate-800 text-sm">{req.subjectCode} - {req.subjectName}</h3>
+                              <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-tight">{req.programme} • {req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
+                            </div>
+                            <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase">Pending</span>
                           </div>
-                          <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase">Pending</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50">
-                          <div className="flex w-full gap-2 items-center">
-                            <select 
-                              className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
-                              id={`fulfill-${req.id}`}
-                            >
-                              <option value="">Select Faculty to Fulfill...</option>
-                              {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
-                            </select>
-                            <button 
-                              onClick={() => {
-                                const selectElement = document.getElementById(`fulfill-${req.id}`);
-                                const uid = selectElement?.value;
-                                if (uid) handleProcessRequest(req, uid, 'accept');
-                                else showToast("Please select a faculty member", "error");
-                              }}
-                              className="px-3 py-1.5 bg-[#120c7a] text-white rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-blue-800 transition-all"
-                            >
-                              Assign
-                            </button>
-                            <button 
-                              onClick={() => handleProcessRequest(req, null, 'reject')}
-                              className="px-3 py-1.5 bg-slate-50 text-slate-400 rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-red-50 hover:text-red-500 transition-all"
-                            >
-                              Reject
-                            </button>
+                          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50">
+                            <div className="flex w-full gap-2 items-center">
+                              <select
+                                className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+                                id={`fulfill-${req.id}`}
+                              >
+                                <option value="">Select Faculty to Fulfill...</option>
+                                {facultyList.map(f => <option key={f.uid} value={f.uid}>{f.facultyName} ({f.facultyId})</option>)}
+                              </select>
+                              <button
+                                onClick={() => {
+                                  const selectElement = document.getElementById(`fulfill-${req.id}`);
+                                  const uid = selectElement?.value;
+                                  if (uid) handleProcessRequest(req, uid, 'accept');
+                                  else showToast("Please select a faculty member", "error");
+                                }}
+                                className="px-3 py-1.5 bg-[#120c7a] text-white rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-blue-800 transition-all"
+                              >
+                                Assign
+                              </button>
+                              <button
+                                onClick={() => handleProcessRequest(req, null, 'reject')}
+                                className="px-3 py-1.5 bg-slate-50 text-slate-400 rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-red-50 hover:text-red-500 transition-all"
+                              >
+                                Reject
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Fulfilled Section (History & Management) */}
@@ -850,7 +827,7 @@ export default function HODRoleConfig() {
                             </div>
                             <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{req.status}</span>
                           </div>
-                          
+
                           {req.status === 'accepted' && (
                             <div className="flex items-center gap-2 pt-2 border-t border-slate-100 flex-wrap">
                               <div className="flex-1 min-w-[200px]">
@@ -907,10 +884,9 @@ export default function HODRoleConfig() {
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{req.batch} • Sem {req.semester}{req.section ? ` • ${req.section}` : ''}</p>
                         </div>
                         <div className="flex flex-col items-end">
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
-                            req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' :
-                            req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
-                          }`}>
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${req.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' :
+                              req.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                            }`}>
                             {req.status}
                           </span>
                           {req.status === 'accepted' && <p className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">Assigned: <span className="text-emerald-600 font-black">{usersMap[req.allocatedFacultyUid]?.facultyName || 'Done'}</span></p>}
@@ -924,330 +900,329 @@ export default function HODRoleConfig() {
           </div>
         ) : (
           <>
-        {/* Filters Section */}
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-zinc-600">Batch</label>
-              <div className="relative">
-                <select 
-                  disabled={!programme}
-                  value={batch} 
-                  onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); setSection(""); }}
-                  className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
-                >
-                  <option value="">Select Batch</option>
-                  {batches.map(b => (
-                    <option key={b} value={b}>{formatBatchDisplay(b)}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-zinc-600">Academic Year</label>
-              <div className="relative">
-                <select 
-                  disabled={!batch}
-                  value={academicYear} 
-                  onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); setSection(""); }}
-                  className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
-                >
-                  <option value="">Select Year</option>
-                  {academicYears.map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-zinc-600">Semester</label>
-              <div className="relative">
-                <select 
-                  disabled={!academicYear}
-                  value={semester} 
-                  onChange={(e) => setSemester(e.target.value)}
-                  className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
-                >
-                  <option value="">Select Semester</option>
-                  {semesters.map(s => (
-                    <option key={s} value={s}>{s}{s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Sem</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-zinc-600">Section</label>
-              <div className="relative">
-                <select 
-                  disabled={!syllabusDept || !batch || availableSections.length === 0}
-                  value={section} 
-                  onChange={(e) => setSection(e.target.value)}
-                  className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
-                >
-                  <option value="">{availableSections.length === 0 && syllabusDept && batch ? "No sections configured" : "Select Section"}</option>
-                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
-              </div>
-            </div>
-          </div>
-          
-          {regulation && (
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-2 text-blue-700 text-sm font-medium">
-              <BookOpen size={16} />
-              Mapped Regulation: {regulation}
-            </div>
-          )}
-        </div>
-
-        {/* Faculty Assignment Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Faculty List */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-                <Users size={20} className="text-[#120c7a]" />
-                Faculty Members
-              </h3>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
-                <input 
-                  type="text" 
-                  placeholder="Search faculty..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-64"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredFaculty.map(faculty => (
-                <div key={faculty.uid} className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5 space-y-4 hover:border-[#120c7a]/30 transition-all">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h5 className="font-bold text-zinc-800">{faculty.displayName || faculty.facultyName}</h5>
-                      <p className="text-xs text-zinc-500 font-medium">{faculty.facultyId} • {faculty.designation}</p>
-                    </div>
-                    {faculty.uid === auth.currentUser?.uid && (
-                      <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full uppercase">You</span>
-                    )}
-                  </div>
-
-                  <div className="space-y-3">
-                    {/* Editable Current Selection */}
-                    {isFiltersSelected && (
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-[#120c7a] uppercase tracking-wider bg-blue-50 px-1.5 py-0.5 rounded">Current Selection{section ? ` [${section}]` : ''}</label>
-                        <div className="flex flex-wrap gap-2">
-                          {(assignments[faculty.uid] || []).map(code => {
-                            const sub = availableSubjects.find(s => s.code === code);
-                            return (
-                              <div key={code} className="group flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-xs font-medium text-blue-900">
-                                <span className="font-bold">{code}</span>
-                                <span className="truncate max-w-[100px] text-blue-700">{sub?.name || courseNames[code] || 'Unknown'}</span>
-                                <button 
-                                  onClick={() => handleRemoveSubject(faculty.uid, code)}
-                                  className="text-blue-300 hover:text-red-500 transition-colors"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-                            );
-                          })}
-                          {(assignments[faculty.uid] || []).length === 0 && (
-                            <p className="text-[10px] text-zinc-400 italic pl-1">No subjects assigned for this semester</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Other Global Assignments */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-1.5 py-0.5">
-                        {isFiltersSelected ? 'Other Assignments' : 'Total Assignments'}
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {(allAssignments[faculty.uid] || []).filter(a => {
-                          if (!isFiltersSelected) return true;
-                          const progKey = formatProgrammeKey(programme);
-                          const isCurrentContext = 
-                            a.progKey === progKey && 
-                            a.dept === sanitizeKey(syllabusDept) && 
-                            a.batch === batch && 
-                            a.academicYear === academicYear && 
-                            String(a.semester) === String(semester) &&
-                            (a.section || '') === (section || '');
-                          return !isCurrentContext;
-                        }).map((assignment) => (
-                          <div key={assignment.key} className="flex flex-col p-2 bg-zinc-50 border border-zinc-100 rounded-lg text-[9px] space-y-1 min-w-[100px]">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold text-zinc-700">{assignment.code}</span>
-                              <span className="text-[8px] font-bold px-1.5 bg-zinc-200 text-zinc-600 rounded">
-                                {formatProgDisplay(assignment.progKey)} {assignment.dept.replace(/^(B_E__|B_Tech__|M_E__|M_Tech__|B_E_|M_E_|B_Tech_|M_Tech_)/, '').replace(/_/g, ' ')}
-                              </span>
-                            </div>
-                            <div className="text-zinc-500 font-medium">
-                              {courseNames[assignment.code] || ''}
-                            </div>
-                            <div className="text-zinc-400 font-medium">
-                              {assignment.batch} • S{assignment.semester}{assignment.section ? ` • ${assignment.section}` : ''}
-                            </div>
-                          </div>
-                        ))}
-                        {(allAssignments[faculty.uid] || []).length === 0 && (
-                          <p className="text-[10px] text-zinc-400 italic pl-1">No other assignments found</p>
-                        )}
-                        {isFiltersSelected && (allAssignments[faculty.uid] || []).filter(a => {
-                          const progKey = formatProgrammeKey(programme);
-                          return !(a.progKey === progKey && a.dept === sanitizeKey(syllabusDept) && a.batch === batch && a.academicYear === academicYear && String(a.semester) === String(semester) && (a.section || '') === (section || ''));
-                        }).length === 0 && (allAssignments[faculty.uid] || []).length > 0 && (
-                          <p className="text-[10px] text-zinc-400 italic pl-1">No assignments in other contexts</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-zinc-50">
-                    <div className="relative">
-                      <select 
-                        disabled={!semester || availableSubjects.length === 0}
-                        onChange={(e) => {
-                          handleAssignSubject(faculty.uid, e.target.value);
-                          e.target.value = "";
-                        }}
-                        className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 pr-8 outline-none focus:ring-2 focus:ring-blue-100 transition-all text-xs font-bold text-zinc-600 disabled:opacity-50"
-                      >
-                        <option value="">+ Assign Subject</option>
-                        {availableSubjects.map(sub => {
-                          const isAssigned = Object.values(assignments).some(subs => subs?.includes(sub.code));
-                          return (
-                            <option key={sub.code} value={sub.code} disabled={isAssigned}>
-                              {sub.code} - {sub.name} {isAssigned ? '(Assigned)' : ''}
-                            </option>
-                          );
-                        })}
-                      </select>
-                      <Plus className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={14} />
-                    </div>
+            {/* Filters Section */}
+            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Batch</label>
+                  <div className="relative">
+                    <select
+                      disabled={!programme}
+                      value={batch}
+                      onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); setSection(""); }}
+                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                    >
+                      <option value="">Select Batch</option>
+                      {batches.map(b => (
+                        <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Syllabus Info */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
-              <BookOpen size={20} className="text-[#120c7a]" />
-              Syllabus Overview
-            </h3>
-            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-6">
-              {!semester ? (
-                <div className="text-center py-10 space-y-3">
-                  <div className="w-12 h-12 bg-zinc-50 rounded-full flex items-center justify-center mx-auto text-zinc-300">
-                    <Search size={24} />
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Academic Year</label>
+                  <div className="relative">
+                    <select
+                      disabled={!batch}
+                      value={academicYear}
+                      onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); setSection(""); }}
+                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                    >
+                      <option value="">Select Year</option>
+                      {academicYears.map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>
-                  <p className="text-sm text-zinc-500">Select filters to view available subjects</p>
                 </div>
-              ) : !syllabusData ? (
-                <div className="text-center py-10 space-y-3">
-                  <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-300">
-                    <AlertCircle size={24} />
+
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Semester</label>
+                  <div className="relative">
+                    <select
+                      disabled={!academicYear}
+                      value={semester}
+                      onChange={(e) => setSemester(e.target.value)}
+                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                    >
+                      <option value="">Select Semester</option>
+                      {semesters.map(s => (
+                        <option key={s} value={s}>{s}{s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Sem</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>
-                  <p className="text-sm text-amber-600 font-medium">No syllabus found for this regulation</p>
-                  <p className="text-xs text-zinc-400">Please upload syllabus in the Upload page first.</p>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
-                    <span className="text-sm font-bold text-zinc-700">Semester {semester}</span>
-                    <span className="px-2 py-1 bg-zinc-100 rounded text-[10px] font-bold text-zinc-500 uppercase">
-                      {availableSubjects.length} Subjects
-                    </span>
-                  </div>
-                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                    {availableSubjects.map(sub => {
-                      const isAllocated = allocatedSubjectCodes.has(sub.code);
-                      const allocatedFacultyUid = Object.keys(assignments).find(uid => assignments[uid]?.includes(sub.code));
-                      const allocatedFaculty = allocatedFacultyUid ? usersMap[allocatedFacultyUid] : null;
 
-                      const pendingSentRequest = sentRequests.find(req => 
-                        req.subjectCode === sub.code && 
-                        req.programme === programme &&
-                        req.batch === batch &&
-                        req.academicYear === academicYear &&
-                        req.semester === semester &&
-                        (req.section || '') === (section || '') &&
-                        req.status === 'pending'
-                      );
-                      const hasPendingSentRequest = !!pendingSentRequest;
-
-                      return (
-                        <div 
-                          key={sub.code} 
-                          className={`p-3 border rounded-xl space-y-1 transition-all ${
-                            isAllocated 
-                              ? "bg-emerald-50 border-emerald-200 shadow-sm" 
-                              : (hasPendingSentRequest ? "bg-amber-50 border-amber-100 shadow-sm" : "bg-zinc-50 border-zinc-100")
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className={`text-xs font-bold ${isAllocated ? "text-emerald-700" : "text-[#120c7a]"}`}>
-                                {sub.code}
-                              </span>
-                              {isAllocated ? (
-                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[8px] font-bold uppercase tracking-tight">
-                                  <Check size={8} /> Allocated
-                                </span>
-                              ) : hasPendingSentRequest ? (
-                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-bold uppercase tracking-tight">
-                                  <Send size={8} /> Request Sent
-                                </span>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <span className="px-1.5 py-0.5 bg-zinc-200 text-zinc-500 rounded text-[8px] font-bold uppercase tracking-tight">
-                                    Pending
-                                  </span>
-                                  <button 
-                                    onClick={() => setRequestModal({ open: true, subject: sub })}
-                                    className="px-1.5 py-0.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[8px] font-black uppercase tracking-tight transition-colors border border-blue-100"
-                                  >
-                                    Request External
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                            <span className="text-[10px] font-bold text-zinc-400">{sub.credits} Credits</span>
-                          </div>
-                          <p className={`text-xs font-medium leading-relaxed ${isAllocated ? "text-emerald-900" : (hasPendingSentRequest ? "text-amber-900" : "text-zinc-700")}`}>
-                            {sub.name}
-                          </p>
-                          {isAllocated && (
-                            <div className="pt-1.5 flex items-center gap-1.5 border-t border-emerald-100/50 mt-1.5">
-                              <User size={10} className="text-emerald-500" />
-                              <span className="text-[10px] font-bold text-emerald-600 truncate">
-                                {allocatedFaculty?.facultyName || allocatedFaculty?.displayName || 'Assigned'}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-zinc-600">Section</label>
+                  <div className="relative">
+                    <select
+                      disabled={!syllabusDept || !batch || availableSections.length === 0}
+                      value={section}
+                      onChange={(e) => setSection(e.target.value)}
+                      className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 pr-10 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium disabled:opacity-50"
+                    >
+                      <option value="">{availableSections.length === 0 && syllabusDept && batch ? "No sections configured" : "Select Section"}</option>
+                      {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>
+                </div>
+              </div>
+
+              {regulation && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-2 text-blue-700 text-sm font-medium">
+                  <BookOpen size={16} />
+                  Mapped Regulation: {regulation}
                 </div>
               )}
             </div>
-          </div>
-        </div>
-        </>
+
+            {/* Faculty Assignment Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Faculty List */}
+              <div className="lg:col-span-2 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+                    <Users size={20} className="text-[#120c7a]" />
+                    Faculty Members
+                  </h3>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+                    <input
+                      type="text"
+                      placeholder="Search faculty..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-64"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredFaculty.map(faculty => (
+                    <div key={faculty.uid} className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5 space-y-4 hover:border-[#120c7a]/30 transition-all">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h5 className="font-bold text-zinc-800">{faculty.displayName || faculty.facultyName}</h5>
+                          <p className="text-xs text-zinc-500 font-medium">{faculty.facultyId} • {faculty.designation}</p>
+                        </div>
+                        {faculty.uid === auth.currentUser?.uid && (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full uppercase">You</span>
+                        )}
+                      </div>
+
+                      <div className="space-y-3">
+                        {/* Editable Current Selection */}
+                        {isFiltersSelected && (
+                          <div className="space-y-1.5">
+                            <label className="text-[9px] font-bold text-[#120c7a] uppercase tracking-wider bg-blue-50 px-1.5 py-0.5 rounded">Current Selection{section ? ` [${section}]` : ''}</label>
+                            <div className="flex flex-wrap gap-2">
+                              {(assignments[faculty.uid] || []).map(code => {
+                                const sub = availableSubjects.find(s => s.code === code);
+                                return (
+                                  <div key={code} className="group flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-xs font-medium text-blue-900">
+                                    <span className="font-bold">{code}</span>
+                                    <span className="truncate max-w-[100px] text-blue-700">{sub?.name || getCourseName(courseNames, code, syllabusDept, programme) || 'Unknown'}</span>
+                                    <button
+                                      onClick={() => handleRemoveSubject(faculty.uid, code)}
+                                      className="text-blue-300 hover:text-red-500 transition-colors"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {(assignments[faculty.uid] || []).length === 0 && (
+                                <p className="text-[10px] text-zinc-400 italic pl-1">No subjects assigned for this semester</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Other Global Assignments */}
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider px-1.5 py-0.5">
+                            {isFiltersSelected ? 'Other Assignments' : 'Total Assignments'}
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            {(allAssignments[faculty.uid] || []).filter(a => {
+                              if (!isFiltersSelected) return true;
+                              const progKey = formatProgrammeKey(programme);
+                              const isCurrentContext =
+                                a.progKey === progKey &&
+                                a.dept === sanitizeKey(syllabusDept) &&
+                                a.batch === batch &&
+                                a.academicYear === academicYear &&
+                                String(a.semester) === String(semester) &&
+                                (a.section || '') === (section || '');
+                              return !isCurrentContext;
+                            }).map((assignment) => (
+                              <div key={assignment.key} className="flex flex-col p-2 bg-zinc-50 border border-zinc-100 rounded-lg text-[9px] space-y-1 min-w-[100px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-bold text-zinc-700">{assignment.code}</span>
+                                  <span className="text-[8px] font-bold px-1.5 bg-zinc-200 text-zinc-600 rounded">
+                                    {formatProgDisplay(assignment.progKey)} {assignment.dept.replace(/^(B_E__|B_Tech__|M_E__|M_Tech__|B_E_|M_E_|B_Tech_|M_Tech_)/, '').replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                                <div className="text-zinc-500 font-medium">
+                                  {getCourseName(courseNames, assignment.code, assignment.dept, assignment.progKey) || ''}
+                                </div>
+                                <div className="text-zinc-400 font-medium">
+                                  {assignment.batch} • S{assignment.semester}{assignment.section ? ` • ${assignment.section}` : ''}
+                                </div>
+                              </div>
+                            ))}
+                            {(allAssignments[faculty.uid] || []).length === 0 && (
+                              <p className="text-[10px] text-zinc-400 italic pl-1">No other assignments found</p>
+                            )}
+                            {isFiltersSelected && (allAssignments[faculty.uid] || []).filter(a => {
+                              const progKey = formatProgrammeKey(programme);
+                              return !(a.progKey === progKey && a.dept === sanitizeKey(syllabusDept) && a.batch === batch && a.academicYear === academicYear && String(a.semester) === String(semester) && (a.section || '') === (section || ''));
+                            }).length === 0 && (allAssignments[faculty.uid] || []).length > 0 && (
+                                <p className="text-[10px] text-zinc-400 italic pl-1">No assignments in other contexts</p>
+                              )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-zinc-50">
+                        <div className="relative">
+                          <select
+                            disabled={!semester || availableSubjects.length === 0}
+                            onChange={(e) => {
+                              handleAssignSubject(faculty.uid, e.target.value);
+                              e.target.value = "";
+                            }}
+                            className="w-full appearance-none bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 pr-8 outline-none focus:ring-2 focus:ring-blue-100 transition-all text-xs font-bold text-zinc-600 disabled:opacity-50"
+                          >
+                            <option value="">+ Assign Subject</option>
+                            {availableSubjects.map(sub => {
+                              const isAssigned = Object.values(assignments).some(subs => subs?.includes(sub.code));
+                              return (
+                                <option key={sub.code} value={sub.code} disabled={isAssigned}>
+                                  {sub.code} - {sub.name} {isAssigned ? '(Assigned)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <Plus className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={14} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Syllabus Info */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-bold text-zinc-800 flex items-center gap-2">
+                  <BookOpen size={20} className="text-[#120c7a]" />
+                  Syllabus Overview
+                </h3>
+                <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-6">
+                  {!semester ? (
+                    <div className="text-center py-10 space-y-3">
+                      <div className="w-12 h-12 bg-zinc-50 rounded-full flex items-center justify-center mx-auto text-zinc-300">
+                        <Search size={24} />
+                      </div>
+                      <p className="text-sm text-zinc-500">Select filters to view available subjects</p>
+                    </div>
+                  ) : !syllabusData ? (
+                    <div className="text-center py-10 space-y-3">
+                      <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-300">
+                        <AlertCircle size={24} />
+                      </div>
+                      <p className="text-sm text-amber-600 font-medium">No syllabus found for this regulation</p>
+                      <p className="text-xs text-zinc-400">Please upload syllabus in the Upload page first.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
+                        <span className="text-sm font-bold text-zinc-700">Semester {semester}</span>
+                        <span className="px-2 py-1 bg-zinc-100 rounded text-[10px] font-bold text-zinc-500 uppercase">
+                          {availableSubjects.length} Subjects
+                        </span>
+                      </div>
+                      <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                        {availableSubjects.map(sub => {
+                          const isAllocated = allocatedSubjectCodes.has(sub.code);
+                          const allocatedFacultyUid = Object.keys(assignments).find(uid => assignments[uid]?.includes(sub.code));
+                          const allocatedFaculty = allocatedFacultyUid ? usersMap[allocatedFacultyUid] : null;
+
+                          const pendingSentRequest = sentRequests.find(req =>
+                            req.subjectCode === sub.code &&
+                            req.programme === programme &&
+                            req.batch === batch &&
+                            req.academicYear === academicYear &&
+                            req.semester === semester &&
+                            (req.section || '') === (section || '') &&
+                            req.status === 'pending'
+                          );
+                          const hasPendingSentRequest = !!pendingSentRequest;
+
+                          return (
+                            <div
+                              key={sub.code}
+                              className={`p-3 border rounded-xl space-y-1 transition-all ${isAllocated
+                                  ? "bg-emerald-50 border-emerald-200 shadow-sm"
+                                  : (hasPendingSentRequest ? "bg-amber-50 border-amber-100 shadow-sm" : "bg-zinc-50 border-zinc-100")
+                                }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-xs font-bold ${isAllocated ? "text-emerald-700" : "text-[#120c7a]"}`}>
+                                    {sub.code}
+                                  </span>
+                                  {isAllocated ? (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[8px] font-bold uppercase tracking-tight">
+                                      <Check size={8} /> Allocated
+                                    </span>
+                                  ) : hasPendingSentRequest ? (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[8px] font-bold uppercase tracking-tight">
+                                      <Send size={8} /> Request Sent
+                                    </span>
+                                  ) : (
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-1.5 py-0.5 bg-zinc-200 text-zinc-500 rounded text-[8px] font-bold uppercase tracking-tight">
+                                        Pending
+                                      </span>
+                                      <button
+                                        onClick={() => setRequestModal({ open: true, subject: sub })}
+                                        className="px-1.5 py-0.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[8px] font-black uppercase tracking-tight transition-colors border border-blue-100"
+                                      >
+                                        Request External
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-bold text-zinc-400">{sub.credits} Credits</span>
+                              </div>
+                              <p className={`text-xs font-medium leading-relaxed ${isAllocated ? "text-emerald-900" : (hasPendingSentRequest ? "text-amber-900" : "text-zinc-700")}`}>
+                                {sub.name}
+                              </p>
+                              {isAllocated && (
+                                <div className="pt-1.5 flex items-center gap-1.5 border-t border-emerald-100/50 mt-1.5">
+                                  <User size={10} className="text-emerald-500" />
+                                  <span className="text-[10px] font-bold text-emerald-600 truncate">
+                                    {allocatedFaculty?.facultyName || allocatedFaculty?.displayName || 'Assigned'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         {/* Request Modal */}
@@ -1265,16 +1240,16 @@ export default function HODRoleConfig() {
               </div>
               <div className="p-5 space-y-4">
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subject to Allocate</p>
-                   <h5 className="font-bold text-zinc-800 text-sm">{requestModal.subject?.name}</h5>
-                   <p className="text-[9px] text-zinc-500 font-bold mt-1 uppercase tracking-tight">{batch} • Sem {semester}{section ? ` • ${section}` : ''}</p>
-                 </div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Subject to Allocate</p>
+                  <h5 className="font-bold text-zinc-800 text-sm">{requestModal.subject?.name}</h5>
+                  <p className="text-[9px] text-zinc-500 font-bold mt-1 uppercase tracking-tight">{batch} • Sem {semester}{section ? ` • ${section}` : ''}</p>
+                </div>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Programme</label>
                     <div className="relative">
-                      <select 
+                      <select
                         value={targetProgramme}
                         onChange={(e) => { setTargetProgramme(e.target.value); setTargetDept(""); }}
                         className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-zinc-700 text-sm"
@@ -1289,7 +1264,7 @@ export default function HODRoleConfig() {
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Target Department HOD</label>
                     <div className="relative">
-                      <select 
+                      <select
                         value={targetDept}
                         onChange={(e) => setTargetDept(e.target.value)}
                         disabled={!targetProgramme}
@@ -1304,7 +1279,7 @@ export default function HODRoleConfig() {
                   </div>
                 </div>
 
-                <button 
+                <button
                   onClick={handleSendRequest}
                   disabled={!targetDept || saving}
                   className="w-full py-2.5 bg-[#120c7a] hover:bg-[#0e0960] text-white rounded-xl font-black uppercase tracking-widest text-sm shadow-lg shadow-blue-900/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2"

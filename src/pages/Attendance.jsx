@@ -19,6 +19,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import Layout from "../components/Layout";
+import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
@@ -288,22 +289,7 @@ export default function Attendance() {
         });
       });
 
-      const namesMap = {};
-      for (const b of Array.from(batchesToFetchSyllabus)) {
-        const reg = getRegulationForBatch(progKey, b);
-        if (reg) {
-          const syllabusKey = `${progKey}_${deptKey}_${sanitizeKey(reg)}`;
-          const syllabusSnap = await getDoc(doc(db, "syllabus_data", syllabusKey));
-          if (syllabusSnap.exists()) {
-            const syllabus = syllabusSnap.data();
-            Object.values(syllabus.semesters || {}).forEach(semList => {
-              if (Array.isArray(semList)) {
-                semList.forEach(s => { if (s && s.code) namesMap[s.code] = s.name; });
-              }
-            });
-          }
-        }
-      }
+      const namesMap = await fetchAllCourseNamesMap();
 
       setSubjectContexts(contexts);
 
@@ -315,7 +301,7 @@ export default function Attendance() {
         if (!seenAssignments.has(assignmentIdentifier)) {
           uniqueSubjectAssignments.push({
             value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section }),
-            text: `${ctx.code} - ${namesMap[ctx.code] || ""}${ctx.section ? ` (${ctx.section})` : ''}`
+            text: `${ctx.code} - ${getCourseName(namesMap, ctx.code, ctx.dept, ctx.progKey) || ""}${ctx.section ? ` (${ctx.section})` : ''}`
           });
           seenAssignments.add(assignmentIdentifier);
         }
@@ -610,29 +596,13 @@ export default function Attendance() {
       };
     });
 
-    // Overlay conflicting subject's attendance entries as read-only
-    if (periodConflict?.record) {
-      Object.entries(periodConflict.record).forEach(([reg, val]) => {
-        const conflictHours = typeof val === 'number' ? val : (val.hours || 0);
-        const idx = studentArray.findIndex(s => s.reg === reg);
-        if (idx !== -1) {
-          studentArray[idx] = {
-            ...studentArray[idx],
-            hours: conflictHours,
-            status: conflictHours > 0 ? 'P' : 'A',
-            percentage: "0.00"
-          };
-        }
-      });
-    }
-
     if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
     else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
 
     setStudents(studentArray);
-  }, [attendanceDate, period, attendanceData, masterList, periodConflict]);
+  }, [attendanceDate, period, attendanceData, masterList]);
 
-  // Check if period is already marked by another subject in the same batch
+  // Check if period is already marked by another subject in the same batch for overlapping students
   useEffect(() => {
     if (!period || !attendanceDate || !batch || !academicYear || !semester || !programme || !department) {
       setPeriodConflict(null);
@@ -643,12 +613,14 @@ export default function Attendance() {
     const batchPrefix = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_`;
     const recordKey = `${attendanceDate}_P${period}`;
     let currentSubjectCode = '';
-    try { currentSubjectCode = JSON.parse(subject || '{}').code || ''; } catch {}
+    try { currentSubjectCode = JSON.parse(subject || '{}').code || ''; } catch { }
 
     let cancelled = false;
     const check = async () => {
       try {
         const snap = await getDocs(collection(db, 'attendance'));
+        const currentEnrolledRegs = Object.keys(masterList || {}).filter(k => !k.startsWith('_'));
+
         for (const d of snap.docs) {
           if (!d.id.startsWith(batchPrefix)) continue;
           const rec = d.data()?.records?.[recordKey];
@@ -659,6 +631,17 @@ export default function Attendance() {
           if (secIdx !== -1) rest = rest.slice(0, secIdx);
           // Skip current subject's own doc
           if (rest === currentSubjectCode) continue;
+
+          // Check if marked students in the other subject overlap with enrolled students of the current subject
+          if (currentEnrolledRegs.length > 0) {
+            const markedStudents = rec.students || {};
+            const hasOverlap = currentEnrolledRegs.some(reg => markedStudents[reg] !== undefined);
+            if (!hasOverlap) {
+              // No overlap: this marked record belongs to a parallel elective / course with different students
+              continue;
+            }
+          }
+
           if (!cancelled) setPeriodConflict({ subjectCode: rest, markedBy: rec.markedBy || '', record: rec.students || {} });
           return;
         }
@@ -667,7 +650,7 @@ export default function Attendance() {
     };
     check();
     return () => { cancelled = true; };
-  }, [period, attendanceDate, batch, academicYear, semester, programme, department, subject]);
+  }, [period, attendanceDate, batch, academicYear, semester, programme, department, subject, masterList]);
 
   const handleGenerateReport = () => {
     if (!reportFromDate || !reportToDate || !attendanceData?.records) {
@@ -1034,17 +1017,14 @@ export default function Attendance() {
     ? ((students.filter(s => s.status === 'P' || s.status === 'OD').length / students.length) * 100).toFixed(1)
     : '—';
 
-  // Read-only student regs (existing entries from another faculty or another subject)
+  // Read-only student regs (existing entries from another faculty for current subject record)
   const readOnlyRegs = useMemo(() => {
     const regs = new Set();
     if (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) {
       Object.keys(currentRecordData.students || {}).forEach(r => regs.add(r));
     }
-    if (periodConflict?.record) {
-      Object.keys(periodConflict.record).forEach(r => regs.add(r));
-    }
     return regs;
-  }, [currentRecordData, currentUid, periodConflict]);
+  }, [currentRecordData, currentUid]);
 
   return (
     <Layout title="Attendance Records">
@@ -1138,11 +1118,10 @@ export default function Attendance() {
                   <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
                 </div>
                 {(currentRecordData && period) || (periodConflict && period) ? (
-                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                    (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
+                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${(currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
                       ? 'bg-red-100 border-red-300 text-red-700'
                       : 'bg-amber-100 border-amber-300 text-amber-700'
-                  }`}>
+                    }`}>
                     {periodConflict ? `Already marked (${periodConflict.subjectCode})` : 'Already marked'}
                   </span>
                 ) : null}
@@ -1327,8 +1306,8 @@ export default function Attendance() {
                                 onClick={() => handleStatusChange(s.reg, value)}
                                 disabled={isExistingEntry}
                                 className={`min-w-[30px] px-2 py-1.5 rounded-lg text-xs font-black transition-all border ${s.status === value
-                                    ? activeClass + ' border-transparent'
-                                    : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
+                                  ? activeClass + ' border-transparent'
+                                  : `bg-white text-slate-400 border-slate-200 ${hoverClass} group-hover:border-slate-300`
                                   } ${isExistingEntry ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >
                                 {label}

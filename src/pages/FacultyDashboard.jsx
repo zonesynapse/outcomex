@@ -10,6 +10,7 @@ import {
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
+import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 
 const progPrefixMap = [
   { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
@@ -282,30 +283,8 @@ export default function FacultyDashboard() {
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const snap = await getDocs(collection(db, 'courses'));
-        const names = {};
-        snap.forEach(d => {
-          const data = d.data();
-          if (data.code && data.name) {
-            names[data.code] = data.name;
-          } else if (data.name && d.id.includes('_')) {
-            const code = d.id.split('_').pop();
-            names[code] = data.name;
-          } else {
-            Object.values(data).forEach(deptCourses => {
-              if (deptCourses && typeof deptCourses === 'object') {
-                Object.values(deptCourses).forEach(regCourses => {
-                  if (regCourses && typeof regCourses === 'object') {
-                    Object.entries(regCourses).forEach(([courseCode, courseData]) => {
-                      if (courseData && courseData.name) names[courseCode] = courseData.name;
-                    });
-                  }
-                });
-              }
-            });
-          }
-        });
-        setCourseNames(names);
+        const namesMap = await fetchAllCourseNamesMap();
+        setCourseNames(namesMap);
       } catch (e) {
         console.error("Failed to fetch course names:", e);
       }
@@ -460,7 +439,8 @@ export default function FacultyDashboard() {
           const codes = facultyData?.[currentUid];
           if (!Array.isArray(codes) || codes.length === 0) return;
 
-          const groupKey = `${progKeyExtracted}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}`;
+          const secPart = sectionExtracted ? `|||${sectionExtracted}` : '';
+          const groupKey = `${progKeyExtracted}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}${secPart}`;
           if (!groups[groupKey]) {
             groups[groupKey] = {
               progKey: progKeyExtracted,
@@ -468,6 +448,7 @@ export default function FacultyDashboard() {
               batch: batchKey,
               academicYear: ayKey,
               semester: semKey,
+              section: sectionExtracted || '',
               codes: []
             };
           }
@@ -511,27 +492,21 @@ export default function FacultyDashboard() {
     return () => unsub();
   }, [currentUid]);
 
-  // Fetch faculty names for codeOwners UIDs
+  // Fetch faculty names for UIDs
   useEffect(() => {
-    const allUids = new Set(Object.values(codeOwners).flat());
-    const currentKeys = new Set(Object.keys(facultyNames));
-    const missingUids = [...allUids].filter(uid => !currentKeys.has(uid) && uid !== currentUid);
-    if (missingUids.length === 0) return;
     const fetchNames = async () => {
-      const map = { ...facultyNames };
       try {
         const snap = await getDocs(collection(db, 'users'));
+        const map = {};
         snap.forEach(d => {
-          if (missingUids.includes(d.id)) {
-            const data = d.data();
-            map[d.id] = data.facultyName || data.displayName || data.email || d.id;
-          }
+          const data = d.data();
+          map[d.id] = data.facultyName || data.displayName || data.email || d.id;
         });
+        setFacultyNames(map);
       } catch (e) { console.warn('Failed to fetch faculty names:', e); }
-      setFacultyNames(map);
     };
     fetchNames();
-  }, [codeOwners, currentUid]);
+  }, []);
 
   useEffect(() => {
     if (!currentUid) {
@@ -547,25 +522,58 @@ export default function FacultyDashboard() {
       (snapshot) => {
         const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         const all = [];
-        Object.entries(data).forEach(([compositeKey, versions]) => {
-          Object.entries(versions || {}).forEach(([id, qp]) => {
-            all.push({ ...(qp || {}), id, compositeKey });
-          });
+        Object.entries(data).forEach(([compositeKey, docData]) => {
+          if (!docData || typeof docData !== 'object') return;
+
+          // Check if docData itself is a single flat QP object
+          const isFlatDoc = docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name;
+
+          if (isFlatDoc) {
+            all.push({
+              ...docData,
+              id: docData.id || docData.qpId || 'Exam',
+              compositeKey
+            });
+          } else {
+            // Otherwise, iterate through field keys where value is a nested QP object
+            Object.entries(docData).forEach(([vId, qp]) => {
+              if (qp && typeof qp === 'object' && !Array.isArray(qp)) {
+                // Must be a valid QP object (has subject/parts/assignment_config/status/created_by/etc)
+                if (qp.subject || qp.subject_code || qp.parts || qp.assignment_config || qp.status || qp.created_by) {
+                  all.push({ ...qp, id: vId, compositeKey });
+                }
+              }
+            });
+          }
         });
+
+        const myAssignedCodes = new Set((visibleGroups || []).flatMap(g => (g.codes || []).map(c => String(c).trim().toLowerCase())));
 
         const pending = all
           .filter((qp) => {
-            const status = String(qp?.status || "draft").toLowerCase();
-            const isOwnedByMe = qp?.created_by === currentUid;
+            if (!qp || typeof qp !== 'object') return false;
+            const status = String(qp.status || "draft").toLowerCase();
+            const createdBy = qp.created_by;
+            const forwardedBy = qp.forwarded_by;
+            const forwardedTo = qp.forwarded_to;
 
-            const isMyDraft = status === "draft" && isOwnedByMe;
-            const isMyDraftLegacy = status === "draft" && !qp?.created_by;
+            const isOwnedByMe = createdBy === currentUid;
+            const qpSubject = String(qp.subject || qp.subject_code || '').trim().toLowerCase();
+            const isAssignedToMe = myAssignedCodes.size > 0 && qpSubject && myAssignedCodes.has(qpSubject);
 
-            const isAwaitingHODReview = status === "forwarded" && qp?.forwarded_by === currentUid;
-            const isSentBackForRecorrection = status === "recorrected" && qp?.forwarded_to === currentUid;
+            // Drafts: owned by me OR (no created_by AND subject is assigned to me)
+            const isMyDraft = status === "draft" && (isOwnedByMe || (!createdBy && isAssignedToMe));
+
+            // Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me)
+            const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy));
+
+            // Sent back for recorrection: status recorrected AND (forwarded to me OR created by me OR forwarded by me)
+            const isSentBackForRecorrection = status === "recorrected" && (forwardedTo === currentUid || isOwnedByMe || forwardedBy === currentUid);
+
+            // Approved by HOD: status approved_by_hod AND owned by me
             const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe;
 
-            return isMyDraft || isMyDraftLegacy || isAwaitingHODReview || isSentBackForRecorrection || isApprovedByHOD;
+            return isMyDraft || isAwaitingHODReview || isSentBackForRecorrection || isApprovedByHOD;
           })
           .sort((a, b) => {
             const at = new Date(a.updated_at || a.forwarded_at || a.saved_at || 0).getTime();
@@ -583,7 +591,7 @@ export default function FacultyDashboard() {
     );
 
     return () => unsub();
-  }, [currentUid]);
+  }, [currentUid, visibleGroups]);
 
   const assignedCount = useMemo(() => {
     return (visibleGroups || []).reduce((sum, g) => sum + (g.codes?.length || 0), 0);
@@ -721,39 +729,70 @@ export default function FacultyDashboard() {
         entries.forEach(entry => {
           const parts = String(entry).split('|');
           const code = parts[0] || '';
+          const sectionSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+          const exactAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
           const baseAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
-          const attData = facultyAttendanceData[baseAttDocId] || Object.entries(facultyAttendanceData).find(([k]) => k.startsWith(baseAttDocId + '_'))?.[1];
+
+          const attData = facultyAttendanceData[exactAttDocId] || facultyAttendanceData[baseAttDocId];
           const recordKey = `${attendanceDate}_P${period}`;
           let rec = attData?.records?.[recordKey];
           let subFound = false;
           let subSubjectCode = '';
           let subFacultyName = '';
-          if (!rec) {
+
+          // 1. Direct record exists for this scheduled subject & section
+          if (rec) {
+            subSubjectCode = code;
+            if (rec.markedBy && rec.markedBy !== currentUid) {
+              subFound = true;
+              subFacultyName = facultyNames[rec.markedBy] || rec.markedBy;
+            }
+          } else {
+            // 2. Scheduled subject has no record. Check if another subject was taught
+            // to THIS EXACT group (programme, department, batch, academicYear, semester, section)
+            const groupPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+            const secSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+
             for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
-              const r = aData?.records?.[recordKey];
-              if (r) {
-                rec = r;
+              if (!aData?.records?.[recordKey]) continue;
+
+              // Must belong to the exact same programme, department, batch, academicYear, semester
+              if (!dId.startsWith(groupPrefix)) continue;
+
+              // Must match the exact section
+              if (g.section) {
+                if (!dId.endsWith(secSuffix)) continue;
+              } else {
+                if (dId.includes('_Sec-')) continue;
+              }
+
+              // Extract substitute subject code
+              let rest = dId.slice(groupPrefix.length);
+              if (secSuffix && rest.endsWith(secSuffix)) {
+                rest = rest.slice(0, rest.length - secSuffix.length);
+              }
+              const subCode = rest;
+
+              if (subCode && subCode !== code) {
+                rec = aData.records[recordKey];
                 subFound = true;
-                if (dId.startsWith(baseAttDocId + '_') || dId === baseAttDocId) {
-                  subFound = false;
-                } else {
-                  const subPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-                  if (dId.startsWith(subPrefix)) {
-                    let rest = dId.slice(subPrefix.length);
-                    const secIdx = rest.indexOf('_Sec-');
-                    if (secIdx !== -1) rest = rest.slice(0, secIdx);
-                    subSubjectCode = rest;
+                subSubjectCode = subCode;
+                const markerUid = rec.markedBy;
+                if (markerUid) {
+                  subFacultyName = facultyNames[markerUid] || markerUid;
+                }
+                if (!subFacultyName) {
+                  const uids = codeOwners[subSubjectCode] || [];
+                  const otherUids = uids.filter(u => u !== currentUid);
+                  if (otherUids.length > 0) {
+                    subFacultyName = facultyNames[otherUids[0]] || otherUids[0];
                   }
                 }
                 break;
               }
             }
           }
-          if (rec && rec.markedBy && rec.markedBy !== currentUid) {
-            subFound = true;
-            if (!subSubjectCode) subSubjectCode = code;
-            subFacultyName = facultyNames[rec.markedBy] || rec.markedBy;
-          }
+
           if (subSubjectCode && subSubjectCode !== code && !subFacultyName) {
             const uids = codeOwners[subSubjectCode] || [];
             const otherUids = uids.filter(uid => uid !== currentUid);
@@ -761,7 +800,9 @@ export default function FacultyDashboard() {
               subFacultyName = facultyNames[otherUids[0]] || otherUids[0];
             }
           }
-          const batchLabel = `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}`;
+
+          const batchLabel = `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`;
+
           if (rec) {
             const stuMap = rec.students || {};
             const e2 = Object.entries(stuMap);
@@ -773,7 +814,7 @@ export default function FacultyDashboard() {
               presentStudents: e2.filter(([, h]) => getH(h) > 0).map(([r]) => r),
               absentStudents: e2.filter(([, h]) => getH(h) === 0).map(([r]) => r),
               odStudents: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).map(([r]) => r),
-              subjectName: courseNames[code] || '',
+              subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
               subSubjectCode, subFacultyName,
             });
           } else {
@@ -781,7 +822,7 @@ export default function FacultyDashboard() {
               period, hasRecord: false, code, batchLabel, subFound,
               presentCount: 0, absentCount: 0, odCount: 0,
               presentStudents: [], absentStudents: [], odStudents: [],
-              subjectName: courseNames[code] || '',
+              subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
               subSubjectCode, subFacultyName,
             });
           }
@@ -908,13 +949,16 @@ export default function FacultyDashboard() {
                           <span className="inline-flex items-center gap-1 rounded-md bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
                             {g.academicYear}
                           </span>
-                          {(g.codes || []).map((code) => (
-                            <span key={code}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
-                              <span>{code}</span>
-                              {courseNames[code] && <span className="text-indigo-400 font-medium">— {courseNames[code]}</span>}
-                            </span>
-                          ))}
+                          {(g.codes || []).map((code) => {
+                            const cName = getCourseName(courseNames, code, g.department, g.progKey);
+                            return (
+                              <span key={code}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
+                                <span>{code}</span>
+                                {cName && <span className="text-indigo-400 font-medium">— {cName}</span>}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                       <button
@@ -1341,8 +1385,8 @@ export default function FacultyDashboard() {
               ].map(sf => (
                 <button key={sf.key} onClick={() => setSemesterTab(sf.key)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap ${semesterTab === sf.key
-                      ? "bg-indigo-100 text-indigo-700 shadow-sm"
-                      : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+                    ? "bg-indigo-100 text-indigo-700 shadow-sm"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
                     }`}>
                   {sf.label}
                   {sf.badge > 0 && (
@@ -1359,8 +1403,8 @@ export default function FacultyDashboard() {
               {tabs.map(tab => (
                 <button key={tab.key} onClick={() => setStatusTab(tab.key)}
                   className={`relative px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${statusTab === tab.key
-                      ? "bg-[#120c7a] text-white shadow-sm"
-                      : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+                    ? "bg-[#120c7a] text-white shadow-sm"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
                     }`}>
                   {tab.label}
                   {tab.count > 0 && (

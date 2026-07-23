@@ -11,6 +11,7 @@ import {
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
+import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
 import { sanitizeKey, formatProgrammeKey } from "../lib/utils";
@@ -367,8 +368,8 @@ export default function HODDashboard() {
       Object.values(deptMetadata).forEach(depts => {
         Object.entries(depts).forEach(([name, code]) => {
           if (name === hodDepartment || name === hodNorm || code === hodDepartment || code === hodNorm ||
-              sanitizeKey(name).toLowerCase() === sanitizeKey(hodNorm).toLowerCase() ||
-              code.toLowerCase() === hodNorm.toLowerCase()) {
+            sanitizeKey(name).toLowerCase() === sanitizeKey(hodNorm).toLowerCase() ||
+            code.toLowerCase() === hodNorm.toLowerCase()) {
             validDeptKeys.add(sanitizeKey(name).toLowerCase());
             validDeptKeys.add(sanitizeKey(code).toLowerCase());
           }
@@ -480,17 +481,12 @@ export default function HODDashboard() {
       });
 
       const syllabusPromise = (async () => {
-        const nameMap = {};
         try {
-          const syllabusSnap = await getDocs(collection(db, "syllabus_data"));
-          syllabusSnap.forEach(snap => {
-            const data = snap.data();
-            Object.values(data?.semesters || {}).forEach(semList => {
-              if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) nameMap[s.code] = s.name; });
-            });
-          });
-        } catch (e) { console.warn('[AttendanceOverview] syllabus fetch error:', e); }
-        return nameMap;
+          return await fetchAllCourseNamesMap();
+        } catch (e) {
+          console.warn('[AttendanceOverview] course names fetch error:', e);
+          return {};
+        }
       })();
 
       const [results, nameMap] = await Promise.all([Promise.all(attDocPromises), syllabusPromise]);
@@ -545,11 +541,11 @@ export default function HODDashboard() {
         facultyName: item.facultyUid
           ? (usersMap[item.facultyUid]?.facultyName || usersMap[item.facultyUid]?.displayName || usersMap[item.facultyUid]?.email || item.facultyUid)
           : item.facultyUid,
-        subjectName: subjectNamesMap[item.subjectCode] || ""
+        subjectName: getCourseName(subjectNamesMap, item.subjectCode, hodDepartment, hodProgramme) || ""
       }));
     });
     return resolved;
-  }, [attendanceOverview, usersMap, subjectNamesMap]);
+  }, [attendanceOverview, usersMap, subjectNamesMap, hodDepartment, hodProgramme]);
 
   const activeSemesters = useMemo(() => {
     const selected = new Date(attendanceDate + 'T00:00:00');
@@ -613,31 +609,124 @@ export default function HODDashboard() {
       const rows = [];
       const daySchedule = (timetableAllocation[batch] || {})[dayName];
       if (daySchedule) {
+        const processedPeriods = new Set();
         Object.entries(daySchedule).forEach(([period, rawEntries]) => {
+          processedPeriods.add(period);
           const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
-          entries.forEach(entry => {
+
+          // Collect record information for each entry in this period
+          const entryRecords = entries.map(entry => {
             const code = String(entry || '').split('|')[0].trim();
-            if (!code) return;
+            if (!code) return null;
             const item = items.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
-            if (!item) return;
             const recordKey = `${attendanceDate}_P${period}`;
-            const rec = item.attRecords?.[recordKey];
+
+            let rec = item?.attRecords?.[recordKey];
+            let actualItem = item;
             let substituteFaculty = '';
             let substituteSubjectCode = '';
-            if (rec && rec.markedBy && item.facultyUid && rec.markedBy !== item.facultyUid) {
-              substituteFaculty = usersMap[rec.markedBy]?.facultyName || usersMap[rec.markedBy]?.displayName || rec.markedBy;
-              substituteSubjectCode = item.subjectCode;
-            }
+
             if (rec) {
-              const stuMap = rec?.students || {};
-              const entries2 = Object.entries(stuMap);
-              const present = entries2.filter(([, h]) => getH(h) > 0);
-              const absent = entries2.filter(([, h]) => getH(h) === 0);
-              const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
+              if (rec.markedBy && item?.facultyUid && rec.markedBy !== item.facultyUid) {
+                substituteFaculty = usersMap[rec.markedBy]?.facultyName || usersMap[rec.markedBy]?.displayName || rec.markedBy;
+              }
+            } else {
+              // Scheduled subject has no record for this period.
+              // Check if ANY OTHER subject in items has an attendance record for this period,
+              // excluding subjects that are explicitly scheduled as their own entry in this period
+              const scheduledCodesInPeriod = new Set(entries.map(e => String(e || '').split('|')[0].trim().toLowerCase()));
+              const currentSubjectCodeLower = (item?.subjectCode || code).toLowerCase();
+              const subMatch = items.find(i => {
+                if (!i.attRecords?.[recordKey]) return false;
+                const sCode = (i.subjectCode || '').toLowerCase();
+                if (scheduledCodesInPeriod.has(sCode) && sCode !== currentSubjectCodeLower) return false;
+                return true;
+              });
+              if (subMatch) {
+                rec = subMatch.attRecords[recordKey];
+                actualItem = subMatch;
+                if (subMatch.subjectCode !== (item?.subjectCode || code)) {
+                  substituteSubjectCode = subMatch.subjectCode;
+                }
+                const markerUid = rec.markedBy || subMatch.facultyUid;
+                if (markerUid && item?.facultyUid && markerUid !== item.facultyUid) {
+                  substituteFaculty = usersMap[markerUid]?.facultyName || usersMap[markerUid]?.displayName || subMatch.facultyName || markerUid;
+                } else if (subMatch.facultyName && item?.facultyName && subMatch.facultyName !== item.facultyName) {
+                  substituteFaculty = subMatch.facultyName;
+                } else if (markerUid) {
+                  substituteFaculty = usersMap[markerUid]?.facultyName || usersMap[markerUid]?.displayName || markerUid;
+                }
+              }
+            }
+
+            const stuMap = rec?.students || {};
+            const entries2 = Object.entries(stuMap);
+            const present = entries2.filter(([, h]) => getH(h) > 0);
+            const absent = entries2.filter(([, h]) => getH(h) === 0);
+            const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
+
+            return {
+              entry, code, item, rec, actualItem,
+              substituteFaculty, substituteSubjectCode,
+              present, absent, od
+            };
+          }).filter(Boolean);
+
+          // Deduplicate present students among multiple scheduled subjects in the same period (e.g. historical merged data)
+          const activeRecords = entryRecords.filter(er => er.rec && er.present.length > 0);
+          if (activeRecords.length > 1) {
+            for (let i = 0; i < activeRecords.length; i++) {
+              for (let j = i + 1; j < activeRecords.length; j++) {
+                const a = activeRecords[i];
+                const b = activeRecords[j];
+
+                const setA = new Set(a.present.map(([reg]) => reg));
+                const setB = new Set(b.present.map(([reg]) => reg));
+                const overlap = [...setA].filter(reg => setB.has(reg));
+
+                if (overlap.length > 0) {
+                  if (a.present.length < b.present.length) {
+                    // 'a' has fewer marked students, meaning 'a''s students were merged into 'b'.
+                    // Remove overlapping students from 'b'
+                    const overlapSet = new Set(overlap);
+                    b.present = b.present.filter(([reg]) => !overlapSet.has(reg));
+                  } else if (b.present.length < a.present.length) {
+                    // 'b' has fewer marked students, meaning 'b''s students were merged into 'a'.
+                    // Remove overlapping students from 'a'
+                    const overlapSet = new Set(overlap);
+                    a.present = a.present.filter(([reg]) => !overlapSet.has(reg));
+                  } else {
+                    // Equal lengths (e.g. both 60 because both saved merged data):
+                    // Split overlap between 'a' (first scheduled) and 'b' (second scheduled)
+                    const half = Math.floor(overlap.length / 2);
+                    const removeForA = new Set(overlap.slice(half));
+                    const removeForB = new Set(overlap.slice(0, half));
+                    a.present = a.present.filter(([reg]) => !removeForA.has(reg));
+                    b.present = b.present.filter(([reg]) => !removeForB.has(reg));
+                  }
+                }
+              }
+            }
+          }
+
+          // Build row output
+          entryRecords.forEach(er => {
+            const {
+              entry, code, item, rec, actualItem,
+              substituteFaculty, substituteSubjectCode,
+              present, absent, od
+            } = er;
+
+            const subjectCode = item?.subjectCode || code;
+            const subjectName = item?.subjectName || actualItem?.subjectName || "";
+            const facultyName = item?.facultyName || "—";
+            const section = item?.section || actualItem?.section || "";
+
+            if (rec) {
               rows.push({
                 period, hasRecord: true,
-                subjectCode: item.subjectCode, subjectName: item.subjectName,
-                section: item.section, facultyName: item.facultyName,
+                subjectCode, subjectName,
+                section, facultyName,
                 presentCount: present.length, absentCount: absent.length, odCount: od.length,
                 presentStudents: present, absentStudents: absent, odStudents: od,
                 substituteFaculty, substituteSubjectCode,
@@ -645,12 +734,44 @@ export default function HODDashboard() {
             } else {
               rows.push({
                 period, hasRecord: false,
-                subjectCode: item.subjectCode, subjectName: item.subjectName,
-                section: item.section, facultyName: item.facultyName,
+                subjectCode, subjectName,
+                section, facultyName,
                 presentCount: 0, absentCount: 0, odCount: 0,
                 presentStudents: [], absentStudents: [], odStudents: [],
                 substituteFaculty: '', substituteSubjectCode: '',
               });
+            }
+          });
+        });
+
+        // Include any extra periods recorded on this date that were NOT in daySchedule
+        items.forEach(item => {
+          const recordKeys = Object.keys(item.attRecords || {});
+          recordKeys.forEach(rk => {
+            const m = rk.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
+            if (m && m[1] === attendanceDate) {
+              const p = m[2];
+              if (!processedPeriods.has(p)) {
+                processedPeriods.add(p);
+                const rec = item.attRecords[rk];
+                const stuMap = rec?.students || {};
+                const entries2 = Object.entries(stuMap);
+                const present = entries2.filter(([, h]) => getH(h) > 0);
+                const absent = entries2.filter(([, h]) => getH(h) === 0);
+                const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
+                let substituteFaculty = '';
+                if (rec.markedBy && item.facultyUid && rec.markedBy !== item.facultyUid) {
+                  substituteFaculty = usersMap[rec.markedBy]?.facultyName || usersMap[rec.markedBy]?.displayName || rec.markedBy;
+                }
+                rows.push({
+                  period: p, hasRecord: true,
+                  subjectCode: item.subjectCode, subjectName: item.subjectName,
+                  section: item.section, facultyName: item.facultyName,
+                  presentCount: present.length, absentCount: absent.length, odCount: od.length,
+                  presentStudents: present, absentStudents: absent, odStudents: od,
+                  substituteFaculty, substituteSubjectCode: '',
+                });
+              }
             }
           });
         });
@@ -669,12 +790,17 @@ export default function HODDashboard() {
               const present = entries2.filter(([, h]) => getH(h) > 0);
               const absent = entries2.filter(([, h]) => getH(h) === 0);
               const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
+              let substituteFaculty = '';
+              if (rec && rec.markedBy && item.facultyUid && rec.markedBy !== item.facultyUid) {
+                substituteFaculty = usersMap[rec.markedBy]?.facultyName || usersMap[rec.markedBy]?.displayName || rec.markedBy;
+              }
               rows.push({
                 period: p, hasRecord: true,
                 subjectCode: item.subjectCode, subjectName: item.subjectName,
                 section: item.section, facultyName: item.facultyName,
                 presentCount: present.length, absentCount: absent.length, odCount: od.length,
                 presentStudents: present, absentStudents: absent, odStudents: od,
+                substituteFaculty, substituteSubjectCode: '',
               });
             });
           } else {
@@ -684,6 +810,7 @@ export default function HODDashboard() {
               section: item.section, facultyName: item.facultyName,
               presentCount: 0, absentCount: 0, odCount: 0,
               presentStudents: [], absentStudents: [], odStudents: [],
+              substituteFaculty: '', substituteSubjectCode: '',
             });
           }
         });
@@ -816,14 +943,16 @@ export default function HODDashboard() {
     try {
       const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, { [selectedQP.id]: {
-        status: 'recorrected',
-        forwarded_to: selectedQP.forwarded_by,
-        forwarded_by: null,
-        hod_comments: recorrectComments.trim(),
-        hod_signature_url: null,
-        updated_at: now
-      }}, { merge: true });
+      await setDoc(qpRef, {
+        [selectedQP.id]: {
+          status: 'recorrected',
+          forwarded_to: selectedQP.forwarded_by,
+          forwarded_by: null,
+          hod_comments: recorrectComments.trim(),
+          hod_signature_url: null,
+          updated_at: now
+        }
+      }, { merge: true });
       showToast("Question paper sent back for recorrection.", "success");
       setShowRecorrectModal(false);
       setShowQPModal(false);
@@ -843,14 +972,16 @@ export default function HODDashboard() {
     try {
       const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, { [selectedQP.id]: {
-        status: 'approved_by_hod',
-        hod_signature_url: currentHodSignature,
-        approved_at: now,
-        forwarded_to: null,
-        hod_comments: null,
-        updated_at: now
-      }}, { merge: true });
+      await setDoc(qpRef, {
+        [selectedQP.id]: {
+          status: 'approved_by_hod',
+          hod_signature_url: currentHodSignature,
+          approved_at: now,
+          forwarded_to: null,
+          hod_comments: null,
+          updated_at: now
+        }
+      }, { merge: true });
       showToast("Question paper approved and forwarded to COE.", "success");
       setShowQPModal(false);
     } catch (error) {
@@ -883,11 +1014,10 @@ export default function HODDashboard() {
     <Layout title="HOD Dashboard">
       {toast.show && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] animate-in slide-in-from-top-3 fade-in duration-300">
-          <div className={`flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border ${
-            toast.type === "success"
+          <div className={`flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border ${toast.type === "success"
               ? "bg-emerald-50 border-emerald-200 text-emerald-800"
               : "bg-red-50 border-red-200 text-red-800"
-          }`}>
+            }`}>
             {toast.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
             <span className="font-semibold text-sm">{toast.message}</span>
           </div>
@@ -971,9 +1101,8 @@ export default function HODDashboard() {
               )}
             </h2>
             <button onClick={() => setShowFilters(!showFilters)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                showFilters ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
-              }`}>
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${showFilters ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
+                }`}>
               <Filter size={14} /> Filters
             </button>
           </div>
@@ -1172,97 +1301,97 @@ export default function HODDashboard() {
           ) : (
             <div>
               <div className="divide-y divide-zinc-100">
-              {Object.entries(attendanceWithPeriods).sort().map(([batch, batchData]) => {
-                const { items: rows, section: sec, sem, hasTimetable } = batchData;
-                const totalSubjects = [...new Set(rows.map(r => r.subjectCode))].length;
-                const markedCount = rows.filter(r => r.hasRecord).length;
-                const totalCount = rows.length;
-                const pendingCount = totalCount - markedCount;
-                return (
-                  <div key={batch} className="p-5 md:p-6">
-                    <div className="flex items-center gap-2 mb-4 flex-wrap">
-                      <h3 className="text-sm font-black text-zinc-800">{batch}</h3>
-                      {sem && <span className="px-2 py-0.5 bg-violet-50 text-violet-700 text-[10px] font-bold rounded-full border border-violet-100">Sem {sem}</span>}
-                      {sec && <span className="px-2 py-0.5 bg-sky-50 text-sky-700 text-[10px] font-bold rounded-full border border-sky-100">{sec}</span>}
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full border border-blue-100">{totalSubjects} subjects</span>
-                      {markedCount > 0 && <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full border border-emerald-200">{markedCount} entered</span>}
-                      {pendingCount > 0 && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200">{pendingCount} pending</span>}
-                      {!hasTimetable && <span className="px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-bold rounded-full border border-red-200">No timetable</span>}
+                {Object.entries(attendanceWithPeriods).sort().map(([batch, batchData]) => {
+                  const { items: rows, section: sec, sem, hasTimetable } = batchData;
+                  const totalSubjects = [...new Set(rows.map(r => r.subjectCode))].length;
+                  const markedCount = rows.filter(r => r.hasRecord).length;
+                  const totalCount = rows.length;
+                  const pendingCount = totalCount - markedCount;
+                  return (
+                    <div key={batch} className="p-5 md:p-6">
+                      <div className="flex items-center gap-2 mb-4 flex-wrap">
+                        <h3 className="text-sm font-black text-zinc-800">{batch}</h3>
+                        {sem && <span className="px-2 py-0.5 bg-violet-50 text-violet-700 text-[10px] font-bold rounded-full border border-violet-100">Sem {sem}</span>}
+                        {sec && <span className="px-2 py-0.5 bg-sky-50 text-sky-700 text-[10px] font-bold rounded-full border border-sky-100">{sec}</span>}
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded-full border border-blue-100">{totalSubjects} subjects</span>
+                        {markedCount > 0 && <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded-full border border-emerald-200">{markedCount} entered</span>}
+                        {pendingCount > 0 && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200">{pendingCount} pending</span>}
+                        {!hasTimetable && <span className="px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-bold rounded-full border border-red-200">No timetable</span>}
+                      </div>
+                      {rows.length === 0 ? (
+                        <p className="text-xs text-zinc-400 italic">No attendance recorded for {attendanceDate}.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead>
+                              <tr className="border-b border-zinc-100">
+                                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400 w-12">Period</th>
+                                <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Code</th>
+                                <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Name</th>
+                                <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Faculty</th>
+                                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Present</th>
+                                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Absent</th>
+                                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">OD</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-50">
+                              {(() => {
+                                const periodGroups = {};
+                                rows.forEach((row, idx) => {
+                                  if (!periodGroups[row.period]) periodGroups[row.period] = [];
+                                  periodGroups[row.period].push({ ...row, _idx: idx });
+                                });
+                                return Object.entries(periodGroups).sort(([a], [b]) => {
+                                  if (a === '?') return 1;
+                                  if (b === '?') return -1;
+                                  return Number(a) - Number(b);
+                                }).map(([, group]) => (
+                                  group.map((row, gIdx) => (
+                                    <tr key={row._idx} className="hover:bg-zinc-50/50 transition-colors">
+                                      {gIdx === 0 ? (
+                                        <td className={`px-3 py-2.5 text-xs text-center font-black border-b border-zinc-100 ${row.period === '?' ? 'text-amber-500' : 'text-indigo-700'}`} rowSpan={group.length}>{row.period === '?' ? '—' : `P${row.period}`}</td>
+                                      ) : null}
+                                      <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">{row.subjectCode}</td>
+                                      <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.substituteSubjectCode ? `${row.subjectName} (entered under ${row.substituteSubjectCode})` : row.subjectName || ""}>
+                                        {row.subjectName || "—"}
+                                        {row.substituteSubjectCode && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteSubjectCode})</span>}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[160px] truncate" title={row.substituteFaculty ? `${row.facultyName} (sub: ${row.substituteFaculty})` : row.facultyName}>
+                                        <span>{row.facultyName}</span>
+                                        {row.substituteFaculty && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteFaculty})</span>}
+                                      </td>
+                                      {row.hasRecord ? (
+                                        <>
+                                          <td className="px-3 py-2.5 text-xs text-center">
+                                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Present`, students: row.presentStudents.map(([r]) => r) })}
+                                              className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer">{row.presentCount}</button>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-xs text-center">
+                                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Absent`, students: row.absentStudents.map(([r]) => r) })}
+                                              className="inline-block px-2 py-0.5 bg-rose-50 text-rose-700 text-[11px] font-bold rounded-full border border-rose-200 hover:bg-rose-100 transition cursor-pointer">{row.absentCount}</button>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-xs text-center">
+                                            <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — OD`, students: row.odStudents.map(([r]) => r) })}
+                                              className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-full border border-blue-200 hover:bg-blue-100 transition cursor-pointer">{row.odCount}</button>
+                                          </td>
+                                        </>
+                                      ) : (
+                                        <td className="px-3 py-2.5 text-xs text-center" colSpan={3}>
+                                          <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Pending</span>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  ))
+                                ));
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
-                    {rows.length === 0 ? (
-                      <p className="text-xs text-zinc-400 italic">No attendance recorded for {attendanceDate}.</p>
-                    ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b border-zinc-100">
-                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400 w-12">Period</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Code</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Subject Name</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-400">Faculty</th>
-                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Present</th>
-                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">Absent</th>
-                            <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-400">OD</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-50">
-                          {(() => {
-                            const periodGroups = {};
-                            rows.forEach((row, idx) => {
-                              if (!periodGroups[row.period]) periodGroups[row.period] = [];
-                              periodGroups[row.period].push({ ...row, _idx: idx });
-                            });
-                            return Object.entries(periodGroups).sort(([a], [b]) => {
-                              if (a === '?') return 1;
-                              if (b === '?') return -1;
-                              return Number(a) - Number(b);
-                            }).map(([, group]) => (
-                              group.map((row, gIdx) => (
-                                <tr key={row._idx} className="hover:bg-zinc-50/50 transition-colors">
-                                  {gIdx === 0 ? (
-                                    <td className={`px-3 py-2.5 text-xs text-center font-black border-b border-zinc-100 ${row.period === '?' ? 'text-amber-500' : 'text-indigo-700'}`} rowSpan={group.length}>{row.period === '?' ? '—' : `P${row.period}`}</td>
-                                  ) : null}
-                                  <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">{row.subjectCode}</td>
-                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.substituteSubjectCode ? `${row.subjectName} (entered under ${row.substituteSubjectCode})` : row.subjectName || ""}>
-                                    {row.subjectName || "—"}
-                                    {row.substituteSubjectCode && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteSubjectCode})</span>}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[160px] truncate" title={row.substituteFaculty ? `${row.facultyName} (sub: ${row.substituteFaculty})` : row.facultyName}>
-                                    <span>{row.facultyName}</span>
-                                    {row.substituteFaculty && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteFaculty})</span>}
-                                  </td>
-                                  {row.hasRecord ? (
-                                    <>
-                                      <td className="px-3 py-2.5 text-xs text-center">
-                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Present`, students: row.presentStudents.map(([r]) => r) })}
-                                          className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer">{row.presentCount}</button>
-                                      </td>
-                                      <td className="px-3 py-2.5 text-xs text-center">
-                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — Absent`, students: row.absentStudents.map(([r]) => r) })}
-                                          className="inline-block px-2 py-0.5 bg-rose-50 text-rose-700 text-[11px] font-bold rounded-full border border-rose-200 hover:bg-rose-100 transition cursor-pointer">{row.absentCount}</button>
-                                      </td>
-                                      <td className="px-3 py-2.5 text-xs text-center">
-                                        <button onClick={() => setDetailModal({ open: true, title: `P${row.period} — ${row.subjectCode} — OD`, students: row.odStudents.map(([r]) => r) })}
-                                          className="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 text-[11px] font-bold rounded-full border border-blue-200 hover:bg-blue-100 transition cursor-pointer">{row.odCount}</button>
-                                      </td>
-                                    </>
-                                  ) : (
-                                    <td className="px-3 py-2.5 text-xs text-center" colSpan={3}>
-                                      <span className="inline-block px-3 py-1 bg-amber-50 text-amber-600 text-[11px] font-bold rounded-full border border-amber-200">Pending</span>
-                                    </td>
-                                  )}
-                                </tr>
-                              ))
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -1366,7 +1495,7 @@ export default function HODDashboard() {
             <div className="flex-1 overflow-y-auto p-6">
               {studentsLoading ? (
                 <div className="space-y-3">
-                  {[1,2,3].map(i => (
+                  {[1, 2, 3].map(i => (
                     <div key={i} className="h-14 bg-zinc-100 rounded-xl animate-pulse" />
                   ))}
                 </div>

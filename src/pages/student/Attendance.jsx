@@ -110,8 +110,9 @@ export default function Attendance() {
           facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
         });
 
-        const subjects = [];
-        const dateMap = {};
+        // Collect raw entries where this student was explicitly included in rec.students
+        const rawEntries = [];
+        const subjectDocMap = {};
 
         attSnapshot.forEach((docSnap) => {
           const id = docSnap.id;
@@ -121,40 +122,106 @@ export default function Attendance() {
           if (!records) return;
 
           const subjectCode = extractSubjectCode(id);
-          const recordKeys = Object.keys(records);
-          const totalSubjClasses = recordKeys.length;
-          let attended = 0;
+          subjectDocMap[id] = subjectCode;
 
-          recordKeys.forEach(key => {
-            const rec = records[key];
-            const rawH = rec?.students?.[regNo];
-            const hours = rawH !== undefined ? (typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH) : undefined;
-            const present = hours !== undefined && hours > 0;
-            if (present) attended++;
-
+          Object.entries(records).forEach(([key, rec]) => {
             const dateMatch = key.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
-            if (dateMatch) {
-              const [, dateStr, period] = dateMatch;
-              if (!dateMap[dateStr]) dateMap[dateStr] = [];
-              dateMap[dateStr].push({
-                subject: subjectCode,
-                period: parseInt(period),
-                present,
-              });
-            }
-          });
+            if (!dateMatch) return;
 
-          const pct = totalSubjClasses > 0 ? (attended / totalSubjClasses) * 100 : 0;
-          const facultyUid = facultyUidMap[subjectCode] || '';
-          subjects.push({
-            docId: id, subjectCode,
-            subjectName: subjectNames[subjectCode] || '',
-            facultyName: facultyUid ? (facultyNames[facultyUid] || '') : '',
-            totalClasses: totalSubjClasses, attended, percentage: pct,
+            const rawH = rec?.students?.[regNo];
+            if (rawH === undefined) return; // Student was not in this record
+
+            const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
+            let status = 'A';
+            if (hours > 0) status = 'P';
+            else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+
+            const [, dateStr, periodStr] = dateMatch;
+            rawEntries.push({
+              docId: id,
+              subjectCode,
+              dateStr,
+              period: parseInt(periodStr),
+              recordKey: key,
+              status,
+              markedBy: rec?.markedBy || ''
+            });
           });
         });
 
-        subjects.sort((a, b) => a.docId.localeCompare(b.docId));
+        // Group raw entries by recordKey (date_Pperiod)
+        const entriesByRecordKey = {};
+        const subjectPresenceCount = {};
+
+        rawEntries.forEach(entry => {
+          if (!entriesByRecordKey[entry.recordKey]) entriesByRecordKey[entry.recordKey] = [];
+          entriesByRecordKey[entry.recordKey].push(entry);
+
+          if (entry.status === 'P' || entry.status === 'OD') {
+            subjectPresenceCount[entry.subjectCode] = (subjectPresenceCount[entry.subjectCode] || 0) + 1;
+          }
+        });
+
+        // For each recordKey, resolve multi-course period conflict
+        const resolvedEntries = [];
+
+        Object.values(entriesByRecordKey).forEach(group => {
+          if (group.length === 1) {
+            resolvedEntries.push(group[0]);
+          } else if (group.length > 1) {
+            const presentEntries = group.filter(e => e.status === 'P' || e.status === 'OD');
+            if (presentEntries.length > 0) {
+              presentEntries.sort((a, b) => (subjectPresenceCount[b.subjectCode] || 0) - (subjectPresenceCount[a.subjectCode] || 0));
+              resolvedEntries.push(presentEntries[0]);
+            } else {
+              group.sort((a, b) => (subjectPresenceCount[b.subjectCode] || 0) - (subjectPresenceCount[a.subjectCode] || 0));
+              resolvedEntries.push(group[0]);
+            }
+          }
+        });
+
+        // Aggregate resolved entries into subject-wise summary and date-wise rows
+        const subjectStats = {};
+        const dateMap = {};
+
+        resolvedEntries.forEach(entry => {
+          const isAttended = (entry.status === 'P' || entry.status === 'OD');
+
+          if (!subjectStats[entry.subjectCode]) {
+            subjectStats[entry.subjectCode] = {
+              docId: entry.docId,
+              subjectCode: entry.subjectCode,
+              totalClasses: 0,
+              attended: 0
+            };
+          }
+          subjectStats[entry.subjectCode].totalClasses += 1;
+          if (isAttended) subjectStats[entry.subjectCode].attended += 1;
+
+          if (!dateMap[entry.dateStr]) dateMap[entry.dateStr] = [];
+          dateMap[entry.dateStr].push({
+            subject: entry.subjectCode,
+            period: entry.period,
+            present: isAttended
+          });
+        });
+
+        const subjects = [];
+        Object.values(subjectStats).forEach(s => {
+          const pct = s.totalClasses > 0 ? (s.attended / s.totalClasses) * 100 : 0;
+          const facultyUid = facultyUidMap[s.subjectCode] || '';
+          subjects.push({
+            docId: s.docId,
+            subjectCode: s.subjectCode,
+            subjectName: subjectNames[s.subjectCode] || '',
+            facultyName: facultyUid ? (facultyNames[facultyUid] || '') : '',
+            totalClasses: s.totalClasses,
+            attended: s.attended,
+            percentage: pct,
+          });
+        });
+
+        subjects.sort((a, b) => a.subjectCode.localeCompare(b.subjectCode));
         setSubjectWise(subjects);
 
         const codeNameMap = {};
@@ -163,17 +230,21 @@ export default function Attendance() {
 
         const allRows = [];
         Object.entries(dateMap).forEach(([date, entries]) => {
-          entries.sort((a, b) => a.subject.localeCompare(b.subject) || a.period - b.period);
-          entries.forEach(e => allRows.push({ date, ...e, subjectName: codeNameMap[e.subject] || '', facultyName: codeFacultyMap[e.subject] || '' }));
+          entries.sort((a, b) => a.period - b.period || a.subject.localeCompare(b.subject));
+          entries.forEach(e => allRows.push({
+            date, ...e,
+            subjectName: codeNameMap[e.subject] || subjectNames[e.subject] || '',
+            facultyName: codeFacultyMap[e.subject] || ''
+          }));
         });
-        allRows.sort((a, b) => b.date.localeCompare(a.date) || a.subject.localeCompare(b.subject) || a.period - b.period);
+        allRows.sort((a, b) => b.date.localeCompare(a.date) || a.period - b.period);
         setDateWiseRows(allRows);
 
         const total = subjects.reduce((s, r) => s + r.totalClasses, 0);
         const present = subjects.reduce((s, r) => s + r.attended, 0);
         setTotalClasses(total);
         setTotalPresent(present);
-        setOverallPercentage(subjects.length > 0 ? subjects.reduce((s, r) => s + r.percentage, 0) / subjects.length : 0);
+        setOverallPercentage(total > 0 ? (present / total) * 100 : 0);
       } catch (err) { console.error(err); }
       setLoading(false);
     };
@@ -323,45 +394,45 @@ export default function Attendance() {
                   {isExpanded && (
                     <div className="px-4 md:px-8 pb-4">
                       <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50/80">
-                            <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</th>
-                            <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Faculty</th>
-                            <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Period</th>
-                            <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {dayRows.map((row, i) => (
-                            <tr key={i} className="hover:bg-blue-50/30 transition-colors">
-                              <td className="px-4 py-2">
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
-                                  {row.subjectName && <span className="text-[10px] text-slate-400 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
-                                </div>
-                              </td>
-                              <td className="px-4 py-2">
-                                <span className="text-xs font-semibold text-slate-500">{row.facultyName || '—'}</span>
-                              </td>
-                              <td className="px-4 py-2 text-center">
-                                <span className="text-sm font-bold text-slate-600">P{row.period}</span>
-                              </td>
-                              <td className="px-4 py-2 text-center">
-                                {row.present ? (
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
-                                    <Check size={12} /> Present
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-full px-3 py-1">
-                                    <X size={12} /> Absent
-                                  </span>
-                                )}
-                              </td>
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50/80">
+                              <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</th>
+                              <th className="px-4 py-2 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Faculty</th>
+                              <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Period</th>
+                              <th className="px-4 py-2 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {dayRows.map((row, i) => (
+                              <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                                <td className="px-4 py-2">
+                                  <div className="flex flex-col">
+                                    <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
+                                    {row.subjectName && <span className="text-[10px] text-slate-400 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2">
+                                  <span className="text-xs font-semibold text-slate-500">{row.facultyName || '—'}</span>
+                                </td>
+                                <td className="px-4 py-2 text-center">
+                                  <span className="text-sm font-bold text-slate-600">P{row.period}</span>
+                                </td>
+                                <td className="px-4 py-2 text-center">
+                                  {row.present ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
+                                      <Check size={12} /> Present
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-full px-3 py-1">
+                                      <X size={12} /> Absent
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   )}

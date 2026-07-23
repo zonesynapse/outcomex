@@ -4,8 +4,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { formatProgDisplay } from "../../lib/utils";
-import { 
-  GraduationCap, CheckCircle, BarChart3, Clock, Bell, 
+import {
+  GraduationCap, CheckCircle, BarChart3, Clock, Bell,
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
   Briefcase, IndianRupee, Loader2, User, ClipboardList, Download
 } from "lucide-react";
@@ -48,8 +48,8 @@ export default function StudentDashboard() {
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
         const snapshot = await getDocs(collection(db, "attendance"));
-        let totalPresent = 0, totalClasses = 0;
 
+        const rawEntries = [];
         snapshot.forEach((docSnap) => {
           const id = docSnap.id;
           if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
@@ -57,11 +57,36 @@ export default function StudentDashboard() {
           const records = data?.records;
           if (!records) return;
 
-          Object.values(records).forEach(rec => {
-            totalClasses++;
-            const hours = rec?.students?.[regNo];
-            if (hours !== undefined && hours > 0) totalPresent++;
+          Object.entries(records).forEach(([key, rec]) => {
+            const rawH = rec?.students?.[regNo];
+            if (rawH === undefined) return;
+
+            const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
+            let status = 'A';
+            if (hours > 0) status = 'P';
+            else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+
+            rawEntries.push({ recordKey: key, status, subjectCode: id });
           });
+        });
+
+        const entriesByRecordKey = {};
+        const subjectPresenceCount = {};
+        rawEntries.forEach(entry => {
+          if (!entriesByRecordKey[entry.recordKey]) entriesByRecordKey[entry.recordKey] = [];
+          entriesByRecordKey[entry.recordKey].push(entry);
+          if (entry.status === 'P' || entry.status === 'OD') {
+            subjectPresenceCount[entry.subjectCode] = (subjectPresenceCount[entry.subjectCode] || 0) + 1;
+          }
+        });
+
+        let totalPresent = 0, totalClasses = 0;
+        Object.values(entriesByRecordKey).forEach(group => {
+          totalClasses++;
+          const presentEntries = group.filter(e => e.status === 'P' || e.status === 'OD');
+          if (presentEntries.length > 0) {
+            totalPresent++;
+          }
         });
 
         setAttendancePct(totalClasses > 0 ? (totalPresent / totalClasses) * 100 : null);

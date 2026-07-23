@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import Layout from "../components/Layout";
+import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { db, auth } from "../firebase";
 import { doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -130,31 +131,8 @@ export default function TimetableCreation() {
   useEffect(() => {
     const fetchCourseNames = async () => {
       try {
-        const snap = await getDocs(collection(db, 'courses'));
-        const names = {};
-        snap.forEach(d => {
-          const docData = d.data();
-          if (docData.code && docData.name) {
-            names[docData.code] = docData.name;
-          } else if (docData.name && d.id.includes('_')) {
-            names[d.id.split('_').pop()] = docData.name;
-          } else {
-            Object.values(docData).forEach(deptCourses => {
-              if (deptCourses && typeof deptCourses === 'object') {
-                Object.values(deptCourses).forEach(regCourses => {
-                  if (regCourses && typeof regCourses === 'object') {
-                    Object.entries(regCourses).forEach(([courseCode, courseData]) => {
-                      if (courseData && courseData.name) {
-                        names[courseCode] = courseData.name;
-                      }
-                    });
-                  }
-                });
-              }
-            });
-          }
-        });
-        setCourseNames(names);
+        const namesMap = await fetchAllCourseNamesMap();
+        setCourseNames(namesMap);
       } catch (err) {
         console.error("Failed to fetch course names:", err);
       }
@@ -254,7 +232,7 @@ export default function TimetableCreation() {
             if (!code) return;
             subjects.push({
               code,
-              name: courseNames[code] || code,
+              name: getCourseName(courseNames, code, department, programme) || code,
               facultyUid: uid,
               facultyName: fMap[uid]?.facultyName || uid,
               facultyId: fMap[uid]?.facultyId || ''
@@ -561,11 +539,11 @@ export default function TimetableCreation() {
                           const dropdownSubjects = allocatedSubjects.length > 0
                             ? allocatedSubjects
                             : (allocatedTemplate.subjects || []).map(s => ({
-                                code: s.code || s.acronym || '',
-                                name: s.name || s.code || '',
-                                facultyName: s.faculty || '—',
-                                facultyId: s.faculty_acronym || ''
-                              }));
+                              code: s.code || s.acronym || '',
+                              name: s.name || s.code || '',
+                              facultyName: s.faculty || '—',
+                              facultyId: s.faculty_acronym || ''
+                            }));
                           const seenCodes = new Set();
                           const uniqueSubjects = dropdownSubjects.filter(s => {
                             if (seenCodes.has(s.code)) return false;
@@ -574,7 +552,7 @@ export default function TimetableCreation() {
                           });
 
                           return (
-                              <td key={periodIdx} className="px-2 py-1.5 text-center border-r border-slate-50">
+                            <td key={periodIdx} className="px-2 py-1.5 text-center border-r border-slate-50">
                               {covered ? (
                                 <div className="h-full min-h-[50px] bg-blue-50 rounded-lg border border-blue-200 p-1.5 flex flex-col gap-0.5 items-center justify-center">
                                   {getSpanningEntries(DAYS[dayIdx], pNum).map((s, si) => (
@@ -595,16 +573,16 @@ export default function TimetableCreation() {
                                             className="w-full text-[11px] font-bold bg-white border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                                           >
                                             <option value="">— Free —</option>
-                                    {uniqueSubjects.map((s, si) => (
-                                      <option key={si} value={s.code}>
-                                        {s.code} - {s.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <button onClick={() => handleAddSubject(DAYS[dayIdx], pNum)}
-                                    className="text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors">
-                                    + Add
-                                  </button>
+                                            {uniqueSubjects.map((s, si) => (
+                                              <option key={si} value={s.code}>
+                                                {s.code} - {s.name}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <button onClick={() => handleAddSubject(DAYS[dayIdx], pNum)}
+                                            className="text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded px-1.5 py-0.5 transition-colors">
+                                            + Add
+                                          </button>
                                         </>
                                       )
                                     }
@@ -620,27 +598,27 @@ export default function TimetableCreation() {
                                                 className="flex-1 text-[10px] font-bold bg-white border border-slate-200 rounded-lg px-1.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-0"
                                               >
                                                 <option value="">— Free —</option>
-                                              {uniqueSubjects.map((s, si) => (
-                                                <option key={si} value={s.code}>
-                                                  {s.code}
-                                                </option>
-                                              ))}
-                                            </select>
-                                            {entryCode && (
-                                              <>
-                                                <select value={entrySpan} onChange={e => handleSpanChange(DAYS[dayIdx], pNum, si, parseInt(e.target.value, 10))}
-                                                  className="w-14 text-[10px] font-bold bg-blue-50 border border-blue-200 rounded-lg px-1.5 py-2 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                                                >
-                                                  {[1, 2, 3].map(sp => (
-                                                    <option key={sp} value={sp} disabled={pNum + sp - 1 > periodsPerDay}>
-                                                      {sp}
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                                <button onClick={() => handleRemoveSubject(DAYS[dayIdx], pNum, si)}
-                                                  className="shrink-0 w-5 h-5 flex items-center justify-center text-xs font-bold text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                                >
-                                                  ×
+                                                {uniqueSubjects.map((s, si) => (
+                                                  <option key={si} value={s.code}>
+                                                    {s.code}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                              {entryCode && (
+                                                <>
+                                                  <select value={entrySpan} onChange={e => handleSpanChange(DAYS[dayIdx], pNum, si, parseInt(e.target.value, 10))}
+                                                    className="w-14 text-[10px] font-bold bg-blue-50 border border-blue-200 rounded-lg px-1.5 py-2 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                                                  >
+                                                    {[1, 2, 3].map(sp => (
+                                                      <option key={sp} value={sp} disabled={pNum + sp - 1 > periodsPerDay}>
+                                                        {sp}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                  <button onClick={() => handleRemoveSubject(DAYS[dayIdx], pNum, si)}
+                                                    className="shrink-0 w-5 h-5 flex items-center justify-center text-xs font-bold text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                  >
+                                                    ×
                                                   </button>
                                                 </>
                                               )}
