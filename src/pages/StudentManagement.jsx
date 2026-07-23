@@ -129,6 +129,7 @@ export default function StudentManagement() {
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [batchFilter, setBatchFilter] = useState("");
 
   useEffect(() => {
     let unsubscribeUserData = () => {};
@@ -171,25 +172,34 @@ export default function StudentManagement() {
 
   const canView = userData?.role === 'Admin' || userData?.role === 'HOD' || user?.email === import.meta.env.VITE_DEFAULT_ADMIN_EMAIL || user?.email === import.meta.env.VITE_MASTER_ADMIN_EMAIL;
 
-  const filteredStudents = useMemo(() => {
-    let list = students;
+  const hodScopedStudents = useMemo(() => {
+    if (userData?.role !== 'HOD') return students;
+    const hodProgKey = formatProgrammeKey(userData.programme || '');
+    const hodDept = userData.department || '';
+    return students.filter(s => {
+      const sProgKey = formatProgrammeKey(s.programme || '');
+      if (sProgKey !== hodProgKey) return false;
+      if (!hodDept) return true;
+      const raw = s.department || '';
+      const progPrefixPattern = /^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A)[_ ]*/i;
+      const cleanedSDept = raw.replace(progPrefixPattern, '');
+      const sDept = sanitizeKey(cleanedSDept).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+      const hDept = sanitizeKey(hodDept).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+      return sDept === hDept || sDept.includes(hDept) || hDept.includes(sDept);
+    });
+  }, [students, userData]);
 
-    // HOD: only see students in their own programme & department
-    if (userData?.role === 'HOD') {
-      const hodProgKey = formatProgrammeKey(userData.programme || '');
-      const hodDept = userData.department || '';
-      list = list.filter(s => {
-        const sProgKey = formatProgrammeKey(s.programme || '');
-        if (sProgKey !== hodProgKey) return false;
-        if (!hodDept) return true;
-        // Strip programme prefix from student's department for comparison
-        const raw = s.department || '';
-        const progPrefixPattern = /^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A)[_ ]*/i;
-        const cleanedSDept = raw.replace(progPrefixPattern, '');
-        const sDept = sanitizeKey(cleanedSDept).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-        const hDept = sanitizeKey(hodDept).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-        return sDept === hDept || sDept.includes(hDept) || hDept.includes(sDept);
-      });
+  const availableBatches = useMemo(() => {
+    const set = new Set();
+    hodScopedStudents.forEach(s => { if (s.batch) set.add(s.batch); });
+    return Array.from(set).sort();
+  }, [hodScopedStudents]);
+
+  const filteredStudents = useMemo(() => {
+    let list = hodScopedStudents;
+
+    if (batchFilter) {
+      list = list.filter(s => s.batch === batchFilter);
     }
 
     if (!searchTerm.trim()) return list;
@@ -199,7 +209,7 @@ export default function StudentManagement() {
       (s.email || "").toLowerCase().includes(term) ||
       (s.regNo || "").toLowerCase().includes(term)
     );
-  }, [students, searchTerm, userData]);
+  }, [hodScopedStudents, searchTerm, batchFilter]);
 
   const [profileStudent, setProfileStudent] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -425,6 +435,16 @@ export default function StudentManagement() {
                 </button>
               )}
             </div>
+            <select
+              value={batchFilter}
+              onChange={(e) => setBatchFilter(e.target.value)}
+              className="py-2.5 px-3 bg-white border border-zinc-200 rounded-xl focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a] outline-none transition-all text-sm shadow-sm min-w-[130px]"
+            >
+              <option value="">All Batches</option>
+              {availableBatches.map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
           </div>
         </div>
 

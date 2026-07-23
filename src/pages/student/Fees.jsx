@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth, functions } from "../../firebase";
-import { doc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -104,6 +104,21 @@ export default function Fees() {
     };
   }, []);
 
+  // Prevent accidental page refresh/close during payment processing
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (processing) {
+        e.preventDefault();
+        e.returnValue = "Payment is processing. Please do not close or refresh this page.";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [processing]);
+
   // Load seatCategory from _student_data or _profile_data (reactive)
   useEffect(() => {
     if (!studentData) return;
@@ -142,13 +157,10 @@ export default function Fees() {
       return;
     }
 
-    const fetchData = async () => {
+    // 1. Fetch configs (one-off)
+    const fetchConfigs = async () => {
       try {
-        const [feeSnap, paySnap] = await Promise.all([
-          getDocs(collection(db, "fee_configurations")),
-          getDocs(collection(db, "fee_payments")),
-        ]);
-
+        const feeSnap = await getDocs(collection(db, "fee_configurations"));
         const configs = [];
         const normStudentProg = formatProgrammeKey(programme);
         const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
@@ -170,26 +182,43 @@ export default function Fees() {
           }
         });
         setFeeConfigs(configs);
-
-        const currentUid = auth.currentUser?.uid;
-        const payList = [];
-        paySnap.forEach((d) => {
-          const data = d.data();
-          if (data.uid === currentUid) {
-            payList.push({ id: d.id, ...data, _docId: d.id });
-          }
-        });
-        payList.sort((a, b) => {
-          const da = a.createdAt?.toDate?.() || new Date(0);
-          const db2 = b.createdAt?.toDate?.() || new Date(0);
-          return db2 - da;
-        });
-        setPayments(payList);
-      } catch (err) { console.error(err); }
-      setLoading(false);
+      } catch (err) { console.error("Error fetching fee configs:", err); }
     };
 
-    fetchData();
+    fetchConfigs();
+
+    // 2. Real-time listen to payments for this student
+    const currentUid = auth.currentUser?.uid;
+    if (!currentUid) {
+      setLoading(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, "fee_payments"),
+      where("uid", "==", currentUid)
+    );
+
+    const unsubPayments = onSnapshot(q, (snapshot) => {
+      const payList = [];
+      snapshot.forEach((d) => {
+        payList.push({ id: d.id, ...d.data(), _docId: d.id });
+      });
+      payList.sort((a, b) => {
+        const da = a.createdAt?.toDate?.() || new Date(0);
+        const db2 = b.createdAt?.toDate?.() || new Date(0);
+        return db2 - da;
+      });
+      setPayments(payList);
+      setLoading(false);
+    }, (err) => {
+      console.error("Payments listener error:", err);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubPayments();
+    };
   }, [studentData, seatCategory]);
 
   useEffect(() => {
@@ -263,7 +292,7 @@ export default function Fees() {
     setProcessing(true);
     try {
       const createSession = httpsCallable(functions, "createPaymentSession");
-      const returnUrl = `${window.location.origin}/student/fees`;
+      const returnUrl = window.location.origin + window.location.pathname;
       const result = await createSession({
         amount,
         feeHead: payModal.feeHead,
@@ -306,6 +335,7 @@ export default function Fees() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
+      <div className="space-y-8 no-print">
       {toast && (
         <div className={`fixed top-6 right-6 z-[200] max-w-md animate-in slide-in-from-right-2 fade-in duration-300 ${
           toast.type === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
@@ -376,8 +406,27 @@ export default function Fees() {
                     let yearRowIdx = 0;
                     return yearGroup.semGroups.flatMap((semGroup) => {
                       const isFirstYearRow = yearRowIdx === 0;
-                      const semTotal = semGroup.rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+                      
+                      // Calculate semester totals & payments
+                      let semTotal = 0;
+                      let semPaid = 0;
+                      semGroup.rows.forEach(r => {
+                        semTotal += (Number(r.amount) || 0);
+                        const paidForThisHead = payments
+                          .filter((p) => p.status === "SUCCESS" && p.feeHead === r.head)
+                          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+                        semPaid += paidForThisHead;
+                      });
+                      const semRemaining = Math.max(0, semTotal - semPaid);
+
                       const rows = semGroup.rows.map((cfg, idx) => {
+                        const paidForThisHead = payments
+                          .filter((p) => p.status === "SUCCESS" && p.feeHead === cfg.head)
+                          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+                        const remainingForThisHead = Math.max(0, Number(cfg.amount) - paidForThisHead);
+                        const isFullyPaid = remainingForThisHead === 0;
+                        const isPartiallyPaid = paidForThisHead > 0 && remainingForThisHead > 0;
+
                         const tr = (
                           <tr key={cfg.id || idx} className="hover:bg-slate-50 transition-colors">
                             {isFirstYearRow && idx === 0 ? (
@@ -387,23 +436,63 @@ export default function Fees() {
                               <td className="px-4 py-3 text-xs font-bold text-slate-600 align-top border border-slate-200" rowSpan={semGroup.rows.length}>{semGroup.semester}</td>
                             ) : null}
                             <td
-                              className="px-4 py-3 text-sm font-bold text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30 transition-all"
-                              onClick={() => setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(cfg.amount), maxAmount: Number(cfg.amount) })}
+                              className={`px-4 py-3 text-sm font-bold border border-slate-200 transition-all ${
+                                isFullyPaid
+                                  ? "text-slate-400 cursor-default"
+                                  : "text-slate-700 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30"
+                              }`}
+                              onClick={() => {
+                                if (!isFullyPaid) {
+                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
+                                }
+                              }}
                             >{cfg.head || 'Fee'}</td>
                             <td
-                              className="px-4 py-3 text-right text-sm font-black text-slate-700 border border-slate-200 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30 transition-all"
-                              onClick={() => setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(cfg.amount), maxAmount: Number(cfg.amount) })}
-                            >{formatCurrency(cfg.amount)}</td>
+                              className={`px-4 py-3 text-right text-sm font-black border border-slate-200 transition-all ${
+                                isFullyPaid
+                                  ? "text-emerald-600 cursor-default font-bold"
+                                  : "text-slate-700 cursor-pointer hover:text-[#120c7a] hover:bg-blue-50/30"
+                              }`}
+                              onClick={() => {
+                                if (!isFullyPaid) {
+                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
+                                }
+                              }}
+                            >
+                              {isFullyPaid ? (
+                                <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                              ) : isPartiallyPaid ? (
+                                <div className="flex flex-col items-end">
+                                  <span>{formatCurrency(remainingForThisHead)}</span>
+                                  <span className="text-[9px] text-slate-400 font-semibold">Total: {formatCurrency(cfg.amount)}</span>
+                                </div>
+                              ) : (
+                                formatCurrency(remainingForThisHead)
+                              )}
+                            </td>
                           </tr>
                         );
                         return tr;
                       });
                       if (semGroup.rows.length > 1) {
+                        const isSemFullyPaid = semRemaining === 0;
+                        const isSemPartiallyPaid = semPaid > 0 && semRemaining > 0;
                         rows.push(
                           <tr key={`sem-total-${yearGroup.key}-${semGroup.key}`} className="bg-blue-50/50">
                             <td className="px-4 py-3 text-[10px] font-bold text-blue-600 text-right border border-slate-200">Sem Total</td>
                             <td className="px-4 py-3 border border-slate-200" />
-                            <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-slate-200">{formatCurrency(semTotal)}</td>
+                            <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-slate-200">
+                              {isSemFullyPaid ? (
+                                <span className="text-emerald-600">Paid</span>
+                              ) : isSemPartiallyPaid ? (
+                                <div className="flex flex-col items-end">
+                                  <span>{formatCurrency(semRemaining)}</span>
+                                  <span className="text-[9px] text-blue-400 font-semibold">Total: {formatCurrency(semTotal)}</span>
+                                </div>
+                              ) : (
+                                formatCurrency(semRemaining)
+                              )}
+                            </td>
                           </tr>
                         );
                       }
@@ -412,8 +501,19 @@ export default function Fees() {
                     });
                   })}
                   <tr className="bg-slate-50">
-                    <td colSpan={3} className="px-4 py-3 text-sm font-black text-slate-800 border border-slate-200">Total</td>
-                    <td className="px-4 py-3 text-right text-sm font-black text-[#120c7a] border border-slate-200">{formatCurrency(totalFee)}</td>
+                    <td colSpan={3} className="px-4 py-3 text-sm font-black text-slate-800 border border-slate-200">Outstanding Total</td>
+                    <td className="px-4 py-3 text-right text-sm font-black text-[#120c7a] border border-slate-200">
+                      {pending === 0 ? (
+                        <span className="text-emerald-600">All Fees Paid</span>
+                      ) : totalPaid > 0 ? (
+                        <div className="flex flex-col items-end">
+                          <span>{formatCurrency(pending)}</span>
+                          <span className="text-[9px] text-slate-400 font-semibold">Total Config: {formatCurrency(totalFee)}</span>
+                        </div>
+                      ) : (
+                        formatCurrency(pending)
+                      )}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -468,11 +568,18 @@ export default function Fees() {
                         </td>
                         <td className="px-3 py-3 text-center">
                           {p.status === "PENDING" ? (
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-center justify-center gap-2">
                               <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border inline-flex items-center gap-1`}>
                                 <Clock size={10} />
                                 {st.label}
                               </span>
+                              <button
+                                onClick={() => verifyPaymentOnReturn(p.orderId)}
+                                className="p-1 hover:bg-amber-100 rounded text-slate-500 hover:text-amber-700 transition-all flex items-center justify-center hover:rotate-180 duration-300"
+                                title="Verify Status"
+                              >
+                                <RefreshCw size={14} />
+                              </button>
                             </div>
                           ) : (
                             <div className="flex items-center justify-center gap-2">
@@ -500,6 +607,7 @@ export default function Fees() {
             </div>
           )}
         </div>
+      </div>
       </div>
 
       {payModal.open && (
@@ -558,6 +666,18 @@ export default function Fees() {
                   <p className="text-xs font-semibold text-red-700">{error}</p>
                 </div>
               )}
+
+              {processing && (
+                <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 flex items-start gap-2 animate-pulse">
+                  <Loader2 size={14} className="text-[#120c7a] mt-0.5 shrink-0 animate-spin" />
+                  <div>
+                    <p className="text-xs font-bold text-[#120c7a]">Contacting HDFC Bank...</p>
+                    <p className="text-[10px] text-blue-600 mt-0.5">
+                      Please do not close or refresh this page. We are securely preparing your checkout session.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3">
               <button
@@ -587,11 +707,21 @@ export default function Fees() {
         return (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden transform animate-in zoom-in-95 duration-200">
-              <div className={`p-8 text-center ${statusModal.success ? 'bg-gradient-to-b from-emerald-50 to-white' : 'bg-gradient-to-b from-red-50 to-white'}`}>
+              <div className={`p-8 text-center ${
+                statusModal.success
+                  ? 'bg-gradient-to-b from-emerald-50 to-white'
+                  : statusModal.error?.toLowerCase().includes("pending")
+                    ? 'bg-gradient-to-b from-amber-50 to-white'
+                    : 'bg-gradient-to-b from-red-50 to-white'
+              }`}>
                 <div className="flex justify-center mb-4">
                   {statusModal.success ? (
                     <div className="p-3 bg-emerald-100 rounded-full animate-bounce">
                       <CheckCircle2 size={48} className="text-emerald-600" />
+                    </div>
+                  ) : statusModal.error?.toLowerCase().includes("pending") ? (
+                    <div className="p-3 bg-amber-100 rounded-full animate-pulse">
+                      <Clock size={48} className="text-amber-600" />
                     </div>
                   ) : (
                     <div className="p-3 bg-red-100 rounded-full">
@@ -600,9 +730,9 @@ export default function Fees() {
                   )}
                 </div>
                 <h3 className="text-xl font-black text-slate-800">
-                  {statusModal.success ? "Payment Successful!" : "Payment Failed"}
+                  {statusModal.success ? "Payment Successful!" : statusModal.error?.toLowerCase().includes("pending") ? "Payment Pending" : "Payment Failed"}
                 </h3>
-                <p className="text-xs text-slate-400 mt-1 font-medium animate-pulse">
+                <p className="text-xs text-slate-400 mt-1 font-medium">
                   {statusModal.success ? "Thank you! Your payment has been received." : statusModal.error || "Something went wrong during transaction validation."}
                 </p>
 
@@ -697,8 +827,8 @@ export default function Fees() {
               }
             `}</style>
             
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] transform animate-in zoom-in-95 duration-200 no-print" onClick={e => e.stopPropagation()}>
-              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] transform animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between no-print">
                 <h3 className="font-bold text-zinc-800 flex items-center gap-2">
                   <Receipt className="text-[#120c7a]" size={20} />
                   <span>Payment Receipt</span>
@@ -712,35 +842,34 @@ export default function Fees() {
               <div className="p-8 overflow-y-auto flex-1 space-y-8">
                 {/* Print Content Wrapper */}
                 <div id="printable-receipt" className="bg-white p-6 border border-slate-200 rounded-2xl shadow-sm space-y-6 relative overflow-hidden">
-                  
-                  {/* PAID Stamp watermark */}
-                  <div className="absolute right-8 top-8 border-4 border-emerald-500/20 text-emerald-500/20 rounded-xl px-4 py-2 font-black text-2xl uppercase tracking-widest rotate-12 select-none pointer-events-none">
-                    Paid Electronically
+                  {/* Centered Watermark Stamp */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+                    <span className="text-emerald-500/[0.04] font-black text-8xl uppercase tracking-[0.25em] -rotate-12 border-8 border-emerald-500/[0.04] rounded-3xl px-8 py-4">
+                      PAID
+                    </span>
                   </div>
 
                   {/* Receipt Header */}
-                  <div className="flex items-start gap-4 border-b border-slate-100 pb-6">
-                    <div className="p-3 bg-blue-50 text-[#120c7a] rounded-2xl shrink-0">
-                      <Wallet size={32} />
-                    </div>
+                  <div className="flex flex-col items-center text-center border-b border-slate-100 pb-6 relative z-10">
+                    <img src="/logo.png" className="h-16 w-auto object-contain mb-3" alt="Logo" />
                     <div>
-                      <h4 className="font-black text-slate-800 text-lg uppercase tracking-wide">OutcomeX Academy</h4>
-                      <p className="text-xs text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
-                      <p className="text-[10px] text-slate-400 mt-1">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
+                      <h4 className="font-black text-slate-800 text-lg uppercase tracking-wide">Fee Receipt</h4>
+                      <p className="text-sm text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
+                      <p className="text-xs text-slate-400 mt-1 font-semibold">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
                     </div>
                   </div>
 
                   {/* Student & Transaction Info Grid */}
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-xs">
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm relative z-10">
                     <div>
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Student Details</p>
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-xs">Student Details</p>
                       <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
                       <p className="text-slate-500 mt-0.5">{resolvedEmail}</p>
                       <p className="text-slate-500 mt-0.5">Reg/Adm No: {resolvedReg}</p>
                       <p className="text-slate-500 mt-0.5">Dept: {resolvedDept}</p>
                     </div>
                     <div>
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Receipt Information</p>
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-xs">Receipt Information</p>
                       <p className="font-bold text-slate-800 mt-1">Receipt No: <span className="font-mono">{p.orderId}</span></p>
                       <p className="text-slate-500 mt-0.5">Gateway: HDFC SmartGateway</p>
                       <p className="text-slate-500 mt-0.5">Txn ID: <span className="font-mono">{txId}</span></p>
@@ -749,8 +878,8 @@ export default function Fees() {
                   </div>
 
                   {/* Fee Item Table */}
-                  <div className="mt-6 border border-slate-200 rounded-xl overflow-hidden">
-                    <table className="w-full text-xs">
+                  <div className="mt-6 border border-slate-200 rounded-xl overflow-hidden relative z-10">
+                    <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold">
                           <th className="px-4 py-3 text-left">Fee Item Description</th>
@@ -766,7 +895,7 @@ export default function Fees() {
                             {formatCurrency(p.chargedAmount || p.amount)}
                           </td>
                         </tr>
-                        <tr className="bg-slate-50/50 font-black text-slate-800 text-sm">
+                        <tr className="bg-slate-50/50 font-black text-slate-800 text-base">
                           <td colSpan={2} className="px-4 py-3 text-right">Total Amount Paid</td>
                           <td className="px-4 py-3 text-right text-[#120c7a]">
                             {formatCurrency(p.chargedAmount || p.amount)}
@@ -777,19 +906,19 @@ export default function Fees() {
                   </div>
 
                   {/* Verification footer */}
-                  <div className="border-t border-slate-100 pt-6 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                  <div className="border-t border-slate-100 pt-6 flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
                       <CheckCircle2 size={12} className="text-emerald-500" />
                       <span>This is a computer generated receipt. No signature is required.</span>
                     </div>
                     {authCode && authCode !== "—" && (
-                      <span className="text-[10px] font-mono text-slate-400 font-bold">AUTH CODE: {authCode}</span>
+                      <span className="text-xs font-mono text-slate-400 font-bold">AUTH CODE: {authCode}</span>
                     )}
                   </div>
                 </div>
               </div>
 
-              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50">
+              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50 no-print">
                 <button
                   onClick={() => setReceiptModal({ open: false, payment: null })}
                   className="px-5 py-2.5 text-xs font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl"
@@ -805,6 +934,40 @@ export default function Fees() {
           </div>
         );
       })()}
+
+      {/* Fullscreen Secure Payment Processing Overlay */}
+      {processing && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[999] flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-300">
+          <div className="max-w-md space-y-6">
+            {/* Animated Secure Gear / Payment Loop Graphic */}
+            <div className="relative flex items-center justify-center h-28 w-28 mx-auto">
+              <div className="absolute inset-0 rounded-full border-4 border-t-[#120c7a] border-r-blue-500 border-b-emerald-500 border-l-slate-800 animate-spin duration-[1500ms]" />
+              <div className="absolute inset-2 rounded-full border-4 border-t-emerald-500 border-r-slate-800 border-b-[#120c7a] border-l-blue-500 animate-spin duration-1000 rotate-180" />
+              <div className="p-4 bg-white rounded-full shadow-lg relative z-10 flex items-center justify-center text-[#120c7a] animate-pulse">
+                <ShieldAlert size={36} className="text-[#120c7a]" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-xl font-black text-white tracking-wide">Processing Secure Payment...</h3>
+              <p className="text-sm text-slate-300 font-semibold max-w-sm mx-auto">
+                Please wait while we establish a secure connection with HDFC SmartGateway.
+              </p>
+            </div>
+
+            <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5">
+              <Loader2 size={14} className="text-yellow-400 animate-spin" />
+              <span className="text-xs text-yellow-400 font-bold uppercase tracking-wider animate-pulse">
+                Do not refresh, go back, or close this window
+              </span>
+            </div>
+
+            <p className="text-[10px] text-slate-500 font-medium">
+              Secured by 256-bit SSL encryption & HDFC Bank SmartGateway.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
@@ -77,33 +77,37 @@ exports.createPaymentSession = onCall(
       throw new HttpsError("failed-precondition", "Student profile is incomplete (programme/batch missing).");
     }
 
-    // Fetch seat category (quota)
-    let seatCategory = userData._profile_data?.quotaAskedFor || "";
+    // Fetch configurations, previous payments, and student index in parallel
+    const promises = [
+      db.collection("fee_configurations").where("head", "==", feeHead).get(),
+      db.collection("fee_payments").where("uid", "==", uid).where("feeHead", "==", feeHead).get()
+    ];
+
     if (regNo) {
-      try {
-        const sanitizedReg = regNo.replace(/[^a-zA-Z0-9]/g, "_");
-        const idxSnap = await db.collection("student_index").doc(sanitizedReg).get();
-        if (idxSnap.exists) {
-          const sDocId = idxSnap.data().studentDocId;
-          if (sDocId) {
-            const sSnap = await db.collection("students").doc(sDocId).get();
-            if (sSnap.exists) {
-              const extra = sSnap.data()._student_data?.[regNo] || {};
-              if (extra.quotaAskedFor) {
-                seatCategory = extra.quotaAskedFor;
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Error fetching seat category on backend:", err);
-      }
+      const sanitizedReg = regNo.replace(/[^a-zA-Z0-9]/g, "_");
+      promises.push(db.collection("student_index").doc(sanitizedReg).get());
     }
 
-    // Fetch matching fee configurations for this feeHead
-    const feeConfigsSnap = await db.collection("fee_configurations")
-      .where("head", "==", feeHead)
-      .get();
+    const [feeConfigsSnap, previousPaymentsSnap, idxSnap] = await Promise.all(promises);
+
+    // Fetch seat category (quota)
+    let seatCategory = userData._profile_data?.quotaAskedFor || "";
+    if (idxSnap && idxSnap.exists) {
+      const sDocId = idxSnap.data().studentDocId;
+      if (sDocId) {
+        try {
+          const sSnap = await db.collection("students").doc(sDocId).get();
+          if (sSnap.exists) {
+            const extra = sSnap.data()._student_data?.[regNo] || {};
+            if (extra.quotaAskedFor) {
+              seatCategory = extra.quotaAskedFor;
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching seat category on backend:", err);
+        }
+      }
+    }
 
     let matchingConfig = null;
     const normStudentProg = (programme || "").replace(/[_.\s]/g, '').toLowerCase();
@@ -132,12 +136,6 @@ exports.createPaymentSession = onCall(
 
     const configAmount = Number(matchingConfig.amount) || 0;
 
-    // Fetch previous successful payments for this feeHead
-    const previousPaymentsSnap = await db.collection("fee_payments")
-      .where("uid", "==", uid)
-      .where("feeHead", "==", feeHead)
-      .get();
-
     let totalPaid = 0;
     previousPaymentsSnap.forEach((doc) => {
       const data = doc.data();
@@ -154,6 +152,16 @@ exports.createPaymentSession = onCall(
     const { baseUrl, merchantId, basicAuth, isSandbox } = getConfig();
     const orderId = generateOrderId();
 
+    // Determine callback function URL dynamically to handle gateway POST redirects
+    const projectId = process.env.GCLOUD_PROJECT || "outcomex";
+    const region = "us-central1";
+    let callbackUrl;
+    if (process.env.FUNCTIONS_EMULATOR === "true") {
+      callbackUrl = `http://127.0.0.1:5001/${projectId}/${region}/paymentCallback`;
+    } else {
+      callbackUrl = `https://${region}-${projectId}.cloudfunctions.net/paymentCallback`;
+    }
+
     const payload = {
       order_id: orderId,
       amount: amount.toFixed(2),
@@ -163,7 +171,7 @@ exports.createPaymentSession = onCall(
       customer_phone: data.phone || "",
       payment_page_client_id: merchantId,
       action: "paymentPage",
-      return_url: returnUrl,
+      return_url: callbackUrl,
       description: `Fee payment: ${feeHead}`,
       first_name: userName.split(" ")[0] || "Student",
       last_name: userName.split(" ").slice(1).join(" ") || "",
@@ -187,7 +195,21 @@ exports.createPaymentSession = onCall(
       throw new HttpsError("unavailable", "Payment gateway is temporarily unreachable. Please try again.");
     }
 
-    const responseData = await response.json();
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch (readError) {
+      console.error("HDFC response read error:", readError);
+      throw new HttpsError("internal", "Could not read response from payment gateway.");
+    }
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(`HDFC non-JSON response (status ${response.status}):`, responseText);
+      throw new HttpsError("internal", `Payment gateway returned an invalid response format (HTTP ${response.status}).`);
+    }
 
     if (!response.ok) {
       const errMsg = responseData?.error_info?.developer_message
@@ -217,6 +239,7 @@ exports.createPaymentSession = onCall(
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       environment: isSandbox ? "sandbox" : "production",
+      returnUrl,
     };
 
     try {
@@ -290,7 +313,21 @@ exports.verifyPayment = onCall(
       throw new HttpsError("unavailable", "Payment gateway is temporarily unreachable.");
     }
 
-    const responseData = await response.json();
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch (readError) {
+      console.error("HDFC response read error:", readError);
+      throw new HttpsError("internal", "Could not read response from payment gateway.");
+    }
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error(`HDFC non-JSON response (status ${response.status}):`, responseText);
+      throw new HttpsError("internal", `Payment gateway returned an invalid response format (HTTP ${response.status}).`);
+    }
 
     if (!response.ok) {
       const errMsg = responseData?.error_info?.developer_message || "Payment verification failed";
@@ -313,8 +350,16 @@ exports.verifyPayment = onCall(
       } else {
         localStatus = "SUCCESS";
       }
-    } else if (["FAILED", "EXPIRED", "VOID"].includes(hdfcStatus)) {
+    } else if (["FAILED", "EXPIRED", "VOID", "JUSPAY_DECLINED", "AUTHENTICATION_FAILED", "AUTHORIZATION_FAILED", "CANCELLED", "DECLINED"].includes(hdfcStatus)) {
       localStatus = "FAILED";
+    } else if (["PENDING", "STARTED", "NEW", "AUTHORIZING"].includes(hdfcStatus)) {
+      const createdAtMs = paymentRecord.createdAt?.toMillis ? paymentRecord.createdAt.toMillis() : new Date(paymentRecord.createdAt).getTime();
+      const elapsedMinutes = (Date.now() - createdAtMs) / (1000 * 60);
+      if (elapsedMinutes > 5) {
+        localStatus = "FAILED";
+      } else {
+        localStatus = "PENDING";
+      }
     }
 
     const updateData = {
@@ -387,5 +432,40 @@ exports.verifyPayment = onCall(
       tampered: isTampered,
       duplicate: isDuplicate,
     };
+  }
+);
+
+exports.paymentCallback = onRequest(
+  {
+    cors: true,
+  },
+  async (req, res) => {
+    const orderId = req.body?.order_id || req.query?.order_id || req.body?.orderId || req.query?.orderId || "";
+
+    console.log(`paymentCallback: Received redirect for order ${orderId}`);
+
+    let redirectUrl = "https://outcomex.web.app/student/fees"; // Default fallback
+
+    if (orderId) {
+      try {
+        const docSnap = await db.collection("fee_payments").doc(orderId).get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data.returnUrl) {
+            redirectUrl = data.returnUrl;
+          }
+        }
+      } catch (err) {
+        console.error("Error retrieving returnUrl from Firestore:", err);
+      }
+    }
+
+    console.log(`paymentCallback: Redirecting client to: ${redirectUrl}`);
+
+    if (orderId) {
+      const connector = redirectUrl.includes("?") ? "&" : "?";
+      redirectUrl = `${redirectUrl}${connector}order_id=${orderId}`;
+    }
+    res.redirect(302, redirectUrl);
   }
 );

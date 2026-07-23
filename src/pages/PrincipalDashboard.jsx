@@ -97,7 +97,12 @@ export default function PrincipalDashboard() {
 
         const feeSnap = await getDocs(collection(db, "fee_payments"));
         let total = 0;
-        feeSnap.forEach((d) => { total += Number(d.data().amount) || 0; });
+        feeSnap.forEach((d) => {
+          const data = d.data();
+          if (data.status === "SUCCESS") {
+            total += Number(data.chargedAmount || data.amount) || 0;
+          }
+        });
         setFeeTotal(total);
       } catch (err) {
         console.error("Stats load error:", err);

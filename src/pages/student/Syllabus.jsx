@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { BookOpen, AlertCircle, Loader2, ChevronDown, GraduationCap, Layers } from "lucide-react";
+import { BookOpen, AlertCircle, Loader2, ChevronDown, GraduationCap, Layers, X, Target, Clock, BookText } from "lucide-react";
 import { formatBatchDisplay, formatProgDisplay } from "../../lib/utils";
 
 const sanitizeKey = (key) => {
@@ -82,6 +82,45 @@ export default function Syllabus() {
     return syllabus.semesters[selectedSem] || [];
   }, [selectedSem, syllabus]);
 
+  const [selectedCourse, setSelectedCourse] = useState(null);
+  const [courseLoading, setCourseLoading] = useState(false);
+
+  const fetchCourseContent = useCallback(async (subject) => {
+    if (!studentData || !syllabus) return;
+    setCourseLoading(true);
+    setSelectedCourse(subject);
+    try {
+      const progKey = sanitizeKey(studentData.programme);
+      const deptKey = sanitizeKey(studentData.department);
+      const regKey = sanitizeKey(syllabus.regulation);
+      const code = sanitizeKey(subject.code);
+      const keys = [
+        `${progKey}_${deptKey}_${regKey}_${code}`,
+        `${progKey}_${deptKey}_${code}`,
+        `${progKey}_Overall_${code}`
+      ];
+      let courseData = null;
+      for (const key of keys) {
+        const snap = await getDoc(doc(db, "courses", key));
+        if (snap.exists()) { courseData = snap.data(); courseData._id = key; break; }
+      }
+      setSelectedCourse(courseData ? { ...subject, courseData } : subject);
+    } catch (err) { console.error(err); }
+    setCourseLoading(false);
+  }, [studentData, syllabus]);
+
+  const closeCourseModal = () => setSelectedCourse(null);
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (selectedCourse) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [selectedCourse]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -100,6 +139,7 @@ export default function Syllabus() {
   }
 
   return (
+    <>
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
       {!syllabus ? (
         <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-20 text-center border border-slate-100">
@@ -167,7 +207,7 @@ export default function Syllabus() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {currentSubjects.map((sub, idx) => (
-                        <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                        <tr key={idx} onClick={() => fetchCourseContent(sub)} className="hover:bg-blue-50/30 transition-colors cursor-pointer">
                           <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-300">{idx + 1}</td>
                           <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700 font-mono">{sub.code || '-'}</td>
                           <td className="px-3 md:px-6 py-4 text-sm font-bold text-slate-700">{sub.name || '-'}</td>
@@ -218,5 +258,101 @@ export default function Syllabus() {
         </>
       )}
     </div>
+
+      {/* Course Details Modal */}
+      {selectedCourse && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={closeCourseModal}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            {/* Fixed Header */}
+            <div className="shrink-0 bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 rounded-t-3xl px-6 py-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-blue-200 text-xs font-bold uppercase tracking-widest">{selectedCourse.code || selectedCourse.courseData?.code}</p>
+                <h3 className="text-white font-bold text-xl mt-0.5">{selectedCourse.name || selectedCourse.courseData?.name}</h3>
+              </div>
+              <button onClick={closeCourseModal} className="shrink-0 p-1.5 bg-white/10 hover:bg-white/20 rounded-xl transition-colors">
+                <X size={18} className="text-white" />
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="overflow-y-auto p-6 space-y-6">
+              {courseLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="animate-spin text-[#120c7a]" size={32} />
+                </div>
+              ) : selectedCourse.courseData ? (
+                <>
+                  {/* Meta Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-slate-50 rounded-xl p-3.5 text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Credits</p>
+                      <p className="text-lg font-black text-[#120c7a] mt-0.5">{selectedCourse.courseData.credits ?? selectedCourse.credits ?? '-'}</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3.5 text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Type</p>
+                      <p className="text-lg font-black text-[#120c7a] mt-0.5">{selectedCourse.type || selectedCourse.courseData.type || 'Theory'}</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3.5 text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">L – T – P</p>
+                      <p className="text-lg font-black text-[#120c7a] mt-0.5">
+                        {selectedCourse.courseData.periods
+                          ? `${selectedCourse.courseData.periods.l || 0} – ${selectedCourse.courseData.periods.t || 0} – ${selectedCourse.courseData.periods.p || 0}`
+                          : '–'}
+                      </p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3.5 text-center">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Regulation</p>
+                      <p className="text-lg font-black text-[#120c7a] mt-0.5">{selectedCourse.courseData.regulation || syllabus.regulation}</p>
+                    </div>
+                  </div>
+
+                  {/* Course Outcomes */}
+                  {selectedCourse.courseData.co && selectedCourse.courseData.co.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Target size={16} className="text-[#120c7a]" />
+                        <h4 className="font-bold text-sm text-slate-700">Course Outcomes</h4>
+                      </div>
+                      <div className="space-y-2">
+                        {selectedCourse.courseData.co.map((co, i) => (
+                          <div key={i} className="bg-blue-50/50 border border-blue-100 rounded-xl p-4">
+                            <div className="flex items-start gap-3">
+                              <span className="shrink-0 w-8 h-8 rounded-lg bg-[#120c7a] text-white text-xs font-bold flex items-center justify-center">{co.id}</span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-700">{co.description || '—'}</p>
+                                {co.content && <p className="text-xs text-slate-500 mt-1">{co.content}</p>}
+                                {(co.domain || co.level) && (
+                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1.5">
+                                    {co.domain && `${co.domain}`}{co.domain && co.level && ' | '}{co.level && `Level: ${co.level}`}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Raw data fallback */}
+                  {(!selectedCourse.courseData.co || selectedCourse.courseData.co.length === 0) && (
+                    <div className="text-center py-6">
+                      <BookText size={32} className="mx-auto text-slate-200 mb-2" />
+                      <p className="text-sm font-medium text-slate-400">No course outcomes configured yet.</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-12">
+                  <AlertCircle size={40} className="mx-auto text-amber-300 mb-3" />
+                  <p className="text-sm font-bold text-slate-500">Course details not available</p>
+                  <p className="text-xs text-slate-400 mt-1">The detailed syllabus for this subject has not been uploaded yet.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -26,41 +26,70 @@ export default function FeeDashboard() {
   }, []);
 
   const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
-  const monthStr = todayStr.substring(0, 7);
-  const yearStr = todayStr.substring(0, 4);
+  const formatAmt = (val) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(val);
 
-  const todayPayments = payments.filter(p => p.createdAt?.toDate?.()?.toISOString().split("T")[0] === todayStr);
-  const monthPayments = payments.filter(p => p.createdAt?.toDate?.()?.toISOString().substring(0, 7) === monthStr);
-  const yearPayments = payments.filter(p => p.createdAt?.toDate?.()?.toISOString().substring(0, 4) === yearStr);
+  const successPayments = payments.filter(p => p.status === "SUCCESS");
 
-  const todayCollection = todayPayments.reduce((s, p) => s + (p.amount || 0), 0);
-  const monthCollection = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
-  const yearCollection = yearPayments.reduce((s, p) => s + (p.amount || 0), 0);
+  const todayPayments = successPayments.filter(p => {
+    if (!p.createdAt) return false;
+    const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+    return pDate.getFullYear() === now.getFullYear() &&
+           pDate.getMonth() === now.getMonth() &&
+           pDate.getDate() === now.getDate();
+  });
+
+  const monthPayments = successPayments.filter(p => {
+    if (!p.createdAt) return false;
+    const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+    return pDate.getFullYear() === now.getFullYear() &&
+           pDate.getMonth() === now.getMonth();
+  });
+
+  const yearPayments = successPayments.filter(p => {
+    if (!p.createdAt) return false;
+    const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+    return pDate.getFullYear() === now.getFullYear();
+  });
+
+  const todayCollection = todayPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+  const monthCollection = monthPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+  const yearCollection = yearPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
 
   const totalDue = students.filter(s => s.isRegistered).length * 50000; // estimated
   const pendingDues = Math.max(0, totalDue - yearCollection);
   const collectionEff = totalDue > 0 ? ((yearCollection / totalDue) * 100).toFixed(1) : "0.0";
-  const activeDefaulters = payments.length > 0 ? Math.floor(students.filter(s => s.isRegistered).length * 0.15) : 0;
+  const activeDefaulters = successPayments.length > 0 ? Math.floor(students.filter(s => s.isRegistered).length * 0.15) : 0;
   const totalConcessions = concessions.filter(c => c.status === "approved").reduce((s, c) => s + (c.amount || 0), 0);
-  const receiptsToday = receipts.filter(r => r.createdAt?.toDate?.()?.toISOString().split("T")[0] === todayStr).length;
+  
+  const receiptsToday = receipts.filter(r => {
+    if (!r.createdAt) return false;
+    const rDate = r.createdAt.toDate ? r.createdAt.toDate() : new Date(r.createdAt);
+    return rDate.getFullYear() === now.getFullYear() &&
+           rDate.getMonth() === now.getMonth() &&
+           rDate.getDate() === now.getDate();
+  }).length;
 
-  const recentPayments = [...payments].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 20);
+  const recentPayments = [...successPayments].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).slice(0, 20);
 
   // Monthly data for chart (last 6 months)
   const monthlyData = Array.from({ length: 6 }, (_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-    const key = d.toISOString().substring(0, 7);
-    const total = payments.filter(p => p.createdAt?.toDate?.()?.toISOString().substring(0, 7) === key).reduce((s, p) => s + (p.amount || 0), 0);
+    const targetYear = d.getFullYear();
+    const targetMonth = d.getMonth();
+    const total = successPayments.filter(p => {
+      if (!p.createdAt) return false;
+      const pDate = p.createdAt.toDate ? p.createdAt.toDate() : new Date(p.createdAt);
+      return pDate.getFullYear() === targetYear && pDate.getMonth() === targetMonth;
+    }).reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
     return { month: d.toLocaleDateString('en-IN', { month: 'short' }), total };
   });
-  const maxMonthly = Math.max(1, ...monthlyData.map(d => d.total));
+  const maxMonthly = Math.max(10000, ...monthlyData.map(d => d.total));
 
   // Head-wise data
   const headWise = {};
-  payments.forEach(p => {
+  successPayments.forEach(p => {
     const head = p.feeHead || "Other";
-    headWise[head] = (headWise[head] || 0) + (p.amount || 0);
+    headWise[head] = (headWise[head] || 0) + (p.chargedAmount || p.amount || 0);
   });
   const headColors = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-purple-500", "bg-cyan-500", "bg-rose-500", "bg-zinc-400"];
   const headEntries = Object.entries(headWise).sort((a, b) => b[1] - a[1]);
@@ -142,16 +171,22 @@ export default function FeeDashboard() {
               <h3 className="font-bold text-xs text-zinc-700">Monthly Collection Trend</h3>
               <BarChart3 size={16} className="text-zinc-300" />
             </div>
-            <div className="flex items-end gap-2 h-32">
+            <div className="flex items-end justify-between gap-2 h-32 px-2">
               {monthlyData.map((d, i) => {
                 const pct = (d.total / maxMonthly) * 100;
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                    <span className="text-[8px] font-bold text-zinc-500">₹{(d.total / 1000).toFixed(0)}K</span>
-                    <div className="w-full bg-zinc-100 rounded-full h-24 relative overflow-hidden">
-                      <div className="absolute bottom-0 w-full bg-gradient-to-t from-[#120c7a] to-blue-500 rounded-full transition-all duration-500" style={{ height: `${Math.max(pct, 3)}%` }} />
+                  <div key={i} className="flex-1 flex flex-col items-center gap-2">
+                    <span className="text-[9px] font-black text-zinc-600">
+                      {d.total > 0 && d.total < 1000 ? `₹${d.total}` : `₹${(d.total / 1000).toFixed(0)}K`}
+                    </span>
+                    <div className="w-6 bg-slate-50 rounded-md h-24 relative flex items-end justify-center overflow-hidden">
+                      <div 
+                        className="w-full bg-gradient-to-t from-[#120c7a] via-[#1a10a0] to-blue-500 rounded-b-md transition-all duration-500 hover:from-blue-600 hover:to-indigo-500 cursor-pointer shadow-inner" 
+                        style={{ height: `${Math.max(pct * 0.85, 4)}%` }}
+                        title={`${d.month}: ₹${d.total.toLocaleString()}`}
+                      />
                     </div>
-                    <span className="text-[9px] font-bold text-zinc-500">{d.month}</span>
+                    <span className="text-[10px] font-bold text-zinc-400">{d.month}</span>
                   </div>
                 );
               })}
@@ -171,7 +206,7 @@ export default function FeeDashboard() {
                   <div key={head}>
                     <div className="flex items-center justify-between text-[11px] mb-0.5">
                       <span className="font-medium text-zinc-600 truncate">{head}</span>
-                      <span className="font-bold text-zinc-700">₹{(amount / 1000).toFixed(0)}K</span>
+                      <span className="font-bold text-zinc-700">{formatAmt(amount)}</span>
                     </div>
                     <div className="w-full bg-zinc-100 rounded-full h-2">
                       <div className={`${headColors[i % headColors.length]} h-full rounded-full transition-all`} style={{ width: `${pct}%` }} />
@@ -190,8 +225,8 @@ export default function FeeDashboard() {
               <Wallet size={16} className="text-zinc-300" />
             </div>
             {["cash", "online", "cheque", "upi"].map(mode => {
-              const total = payments.filter(p => p.mode === mode).reduce((s, p) => s + (p.amount || 0), 0);
-              const count = payments.filter(p => p.mode === mode).length;
+              const total = successPayments.filter(p => p.mode === mode).reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+              const count = successPayments.filter(p => p.mode === mode).length;
               const pct = totalHeadWise > 0 ? (total / totalHeadWise) * 100 : 0;
               const modeIcons = { cash: "💵", online: "💳", cheque: "📝", upi: "📱" };
               return (
@@ -200,7 +235,7 @@ export default function FeeDashboard() {
                   <div className="flex-1">
                     <div className="flex justify-between text-[11px]">
                       <span className="font-bold text-zinc-700 capitalize">{mode}</span>
-                      <span className="text-zinc-500">₹{(total / 1000).toFixed(0)}K ({count})</span>
+                      <span className="text-zinc-500">{formatAmt(total)} ({count})</span>
                     </div>
                     <div className="w-full bg-zinc-100 rounded-full h-1.5 mt-1">
                       <div className="bg-gradient-to-r from-[#120c7a] to-blue-500 h-full rounded-full" style={{ width: `${pct}%` }} />

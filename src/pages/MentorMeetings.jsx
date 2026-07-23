@@ -1,26 +1,28 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { db, auth } from "../firebase";
-import { doc, getDoc, onSnapshot, collection } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, collection, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatBatchDisplay, getAcademicYears, sanitizeKey } from "../lib/utils";
+import { getSeatConfigurationsRealtime } from "../services/seatService";
 import {
   listenMentorMeetings, addMentorMeeting, updateMentorMeeting, deleteMentorMeeting,
   listenMentorObservations, addMentorObservation, updateMentorObservation, deleteMentorObservation,
-  listenParentInteractions, addParentInteraction, updateParentInteraction, deleteParentInteraction,
-  listenMentorAllocation
+  listenParentInteractions, addParentInteraction, updateParentInteraction, deleteParentInteraction
 } from "../services/mentorService";
 import {
   Calendar, UserCheck, Phone, Plus, Trash2, Edit, Search, X,
-  Users, AlertTriangle, CheckCircle2, Clock, ChevronDown, MessageSquare
+  Users, AlertTriangle, CheckCircle2, Clock, ChevronDown, MessageSquare,
+  Pencil, Save, ToggleLeft, ToggleRight, Loader2, User, MapPin, BookOpen, Award, Heart, ChevronRight
 } from "lucide-react";
 
 const TABS = [
   { id: "meetings", label: "Meetings", icon: Calendar },
   { id: "observations", label: "Observations", icon: AlertTriangle },
   { id: "parent", label: "Parent Interactions", icon: Phone },
+  { id: "students", label: "My Students", icon: Users },
 ];
 
 const MEETING_TYPES = [
@@ -53,6 +55,122 @@ const INTERACTION_TYPES = [
   { value: "whatsapp", label: "WhatsApp" },
 ];
 
+const displayDept = (v) => {
+  if (typeof v !== 'string') return v || '--';
+  const progPrefixMap = [
+    { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
+    { key: 'M_E', display: 'M.E.' }, { key: 'M_Tech', display: 'M.Tech.' },
+    { key: 'B_Sc', display: 'B.Sc.' }, { key: 'M_Sc', display: 'M.Sc.' },
+    { key: 'B_C_A', display: 'B.C.A.' }, { key: 'M_C_A', display: 'M.C.A.' },
+    { key: 'B_B_A', display: 'B.B.A.' }, { key: 'M_B_A', display: 'M.B.A.' },
+    { key: 'B_Com', display: 'B.Com.' }, { key: 'M_Com', display: 'M.Com.' },
+    { key: 'B_A', display: 'B.A.' }, { key: 'M_A', display: 'M.A.' },
+  ];
+  let result = v;
+  for (const { key, display } of progPrefixMap) {
+    const regex = new RegExp(`^${key.replace(/_/g, '[_ ]')}[_ ]*`, 'i');
+    if (regex.test(result)) {
+      result = result.replace(regex, display + ' ');
+      break;
+    }
+  }
+  return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+};
+
+const PROFILE_SECTIONS = [
+  {
+    key: 'personal', icon: User, title: 'Personal Information',
+    fields: [
+      { key: 'title', label: 'Title', type: 'select', options: ['Mr.', 'Ms.', 'Mrs.', 'Dr.', 'Prof.'] },
+      { key: 'firstName', label: 'First Name', type: 'text' },
+      { key: 'lastName', label: 'Last Name', type: 'text' },
+      { key: 'gender', label: 'Gender', type: 'select', options: ['Male', 'Female', 'Others'] },
+      { key: 'dateOfBirth', label: 'Date of Birth', type: 'date' },
+      { key: 'nationality', label: 'Nationality', type: 'text' },
+      { key: 'religion', label: 'Religion', type: 'select', options: ['Hindu', 'Muslim', 'Christian', 'Others'] },
+      { key: 'community', label: 'Community', type: 'select', options: ['OC', 'BC', 'MBC', 'SC', 'ST', 'SCA', 'Others'] },
+      { key: 'caste', label: 'Caste', type: 'text' },
+      { key: 'motherTongue', label: 'Mother Tongue', type: 'text' },
+      { key: 'bloodGroup', label: 'Blood Group', type: 'text' },
+      { key: 'maritalStatus', label: 'Marital Status', type: 'select', options: ['Married', 'Unmarried'] },
+      { key: 'aadharNo', label: 'Aadhaar Number', type: 'text' },
+      { key: 'emailId', label: 'Email ID', type: 'text' },
+    ]
+  },
+  {
+    key: 'family', icon: Heart, title: 'Family Details',
+    fields: [
+      { key: 'fatherGuardianName', label: 'Father / Guardian Name', type: 'text' },
+      { key: 'motherName', label: 'Mother Name', type: 'text' },
+      { key: 'guardianName', label: 'Guardian Name', type: 'text' },
+      { key: 'fatherOccupationSector', label: 'Father Occupation Sector', type: 'select', options: ['Govt.', 'Pvt.', 'Self employed'] },
+      { key: 'fatherOrganisation', label: 'Father Organisation', type: 'text' },
+      { key: 'fatherDesignation', label: 'Father Designation', type: 'text' },
+      { key: 'fatherAnnualIncome', label: 'Father Annual Income', type: 'text' },
+      { key: 'motherOccupationSector', label: 'Mother Occupation Sector', type: 'select', options: ['Govt.', 'Pvt.', 'Self employed', 'Home Maker'] },
+      { key: 'motherOrganisation', label: 'Mother Organisation', type: 'text' },
+      { key: 'motherDesignation', label: 'Mother Designation', type: 'text' },
+      { key: 'motherAnnualIncome', label: 'Mother Annual Income', type: 'text' },
+      { key: 'familyAnnualIncome', label: 'Family Annual Income', type: 'text' },
+    ]
+  },
+  {
+    key: 'contact', icon: Phone, title: 'Contact Details',
+    fields: [
+      { key: 'mobile', label: 'Student Mobile', type: 'text' },
+      { key: 'fatherMobile', label: 'Father Mobile', type: 'text' },
+      { key: 'motherMobile', label: 'Mother Mobile', type: 'text' },
+      { key: 'studentWhatsAppNo', label: 'Student WhatsApp', type: 'text' },
+      { key: 'fatherWhatsApp', label: 'Father WhatsApp', type: 'text' },
+      { key: 'motherWhatsApp', label: 'Mother WhatsApp', type: 'text' },
+    ]
+  },
+  {
+    key: 'address', icon: MapPin, title: 'Address Details',
+    fields: [
+      { key: 'presentHouseNo', label: 'House No', type: 'text' }, { key: 'presentStreet', label: 'Street', type: 'text' },
+      { key: 'presentLocality', label: 'Locality', type: 'text' }, { key: 'presentCity', label: 'City', type: 'text' },
+      { key: 'presentPincode', label: 'Pincode', type: 'text' }, { key: 'presentDistrict', label: 'District', type: 'text' },
+      { key: 'presentState', label: 'State', type: 'text' }, { key: 'presentCountry', label: 'Country', type: 'text' },
+      { key: 'permanentAddress', label: 'Permanent Address', type: 'textarea' }, { key: 'permanentCity', label: 'Permanent City', type: 'text' },
+      { key: 'permanentPincode', label: 'Permanent Pincode', type: 'text' }, { key: 'permanentDistrict', label: 'Permanent District', type: 'text' },
+      { key: 'permanentState', label: 'Permanent State', type: 'text' }, { key: 'permanentCountry', label: 'Permanent Country', type: 'text' },
+      { key: 'hostellerDayScholar', label: 'Hosteller / Day Scholar', type: 'select', options: ['Hosteller', 'Day scholar'] },
+      { key: 'transportRequired', label: 'Transport Required', type: 'select', options: ['YES', 'NO'] },
+      { key: 'transportRoute', label: 'Transport Route', type: 'text' }, { key: 'transportStage', label: 'Transport Stage', type: 'text' },
+    ]
+  },
+  {
+    key: 'academic', icon: BookOpen, title: 'Academic Details',
+    fields: [
+      { key: 'schoolCollege', label: 'Previous School / College', type: 'text' },
+      { key: 'mediumOfInstruction', label: 'Medium of Instruction', type: 'select', options: ['English', 'Tamil', 'English & Tamil'] },
+      { key: 'examinationPassedAppeared', label: 'Examination Passed / Appeared', type: 'select', options: ['+2', 'Diploma', 'UG'] },
+      { key: 'studentCategory', label: 'Student Category', type: 'select', options: ['Regular', 'Lateral Entry', 'Transfer', 'Readmission'] },
+      { key: 'quotaAskedFor', label: 'Seat Category', type: 'select' },
+      { key: 'scholarshipDetails', label: 'Scholarship Details', type: 'text' },
+      { key: 'emsUmsNo', label: 'EMIS / UMIS Number', type: 'text' },
+    ]
+  },
+  {
+    key: 'qualifying', icon: Award, title: 'Qualifying Exam Marks',
+    fields: [
+      { key: 'mathsMark', label: 'Maths/P/C', type: 'text' }, { key: 'physicsMark', label: 'Physics/Theory', type: 'text' },
+      { key: 'chemistryMark', label: 'Chemistry/Lab', type: 'text' }, { key: 'totalMarks', label: 'Total Marks', type: 'text' },
+      { key: 'cutoff', label: 'Cutoff', type: 'text' },
+      { key: 'qualifyingExam10thInstitute', label: '10th Institute', type: 'text' }, { key: 'qualifyingExam10thBoard', label: '10th Board', type: 'text' },
+      { key: 'qualifyingExam10thMonthYear', label: '10th Month / Year', type: 'date' }, { key: 'qualifyingExam10thAttempts', label: '10th Attempts', type: 'text' },
+      { key: 'qualifyingExam10thMarks', label: '10th Marks', type: 'text' },
+      { key: 'qualifyingExam12thInstitute', label: '12th Institute', type: 'text' }, { key: 'qualifyingExam12thBoard', label: '12th Board', type: 'text' },
+      { key: 'qualifyingExam12thMonthYear', label: '12th Month / Year', type: 'date' }, { key: 'qualifyingExam12thAttempts', label: '12th Attempts', type: 'text' },
+      { key: 'qualifyingExam12thMarks', label: '12th Marks', type: 'text' },
+      { key: 'qualifyingExamDipDegInstitute', label: 'Diploma / Degree Institute', type: 'text' }, { key: 'qualifyingExamDipDegBoard', label: 'Diploma / Degree Board', type: 'text' },
+      { key: 'qualifyingExamDipDegMonthYear', label: 'Diploma / Degree Month / Year', type: 'text' }, { key: 'qualifyingExamDipDegAttempts', label: 'Diploma / Degree Attempts', type: 'text' },
+      { key: 'qualifyingExamDipDegMarks', label: 'Diploma / Degree Marks', type: 'text' },
+    ]
+  },
+];
+
 export default function MentorMeetings() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches } = useBatches(durations);
@@ -63,16 +181,24 @@ export default function MentorMeetings() {
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
 
   const [activeTab, setActiveTab] = useState("meetings");
-  const [programme, setProgramme] = useState("");
-  const [department, setDepartment] = useState("");
-  const [batch, setBatch] = useState("");
-  const [academicYear, setAcademicYear] = useState("");
-  const [semester, setSemester] = useState("");
-  const [section, setSection] = useState("");
-  const [sectionConfigs, setSectionConfigs] = useState({});
- 
-  const [students, setStudents] = useState([]);
-  const [allocation, setAllocation] = useState({ mentors: {}, students: {} });
+  const [allocatedStudents, setAllocatedStudents] = useState([]);
+  const [allocationLoading, setAllocationLoading] = useState(true);
+
+  // States for student profile view/edit
+  const [profileStudent, setProfileStudent] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [editData, setEditData] = useState({});
+  const [togglingUid, setTogglingUid] = useState(null);
+  const [studentProfileData, setStudentProfileData] = useState({});
+  const [editingProfileData, setEditingProfileData] = useState({});
+  const [profileStudentDocId, setProfileStudentDocId] = useState('');
+  const [expandedSections, setExpandedSections] = useState({});
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [sameAsPresent, setSameAsPresent] = useState(false);
+  const [quotaOptions, setQuotaOptions] = useState([]);
+  const profileUnsubRef = useRef(null);
+  const editingRef = useRef(false);
+
   const [meetings, setMeetings] = useState([]);
   const [observations, setObservations] = useState([]);
   const [parentInteractions, setParentInteractions] = useState([]);
@@ -104,134 +230,255 @@ export default function MentorMeetings() {
     return () => unsub();
   }, []);
  
-  const filteredProgrammes = useMemo(() => {
-    if (!PROGRAMME_DEPARTMENTS) return [];
-    if (userData?.role === "Faculty") return PROGRAMME_DEPARTMENTS[userData.programme] ? [userData.programme] : [];
-    return Object.keys(PROGRAMME_DEPARTMENTS);
-  }, [PROGRAMME_DEPARTMENTS, userData]);
- 
-  const filteredDepartments = useMemo(() => {
-    if (!programme || !PROGRAMME_DEPARTMENTS) return [];
-    if (userData?.role === "Faculty") return [userData.department];
-    return PROGRAMME_DEPARTMENTS[programme] || [];
-  }, [programme, PROGRAMME_DEPARTMENTS, userData]);
- 
-  const activeBatches = useMemo(() => {
-    if (!programme) return [];
-    return getActiveBatches(programme);
-  }, [programme, getActiveBatches]);
- 
-  const academicYears = useMemo(() => {
-    if (!batch) return [];
-    return getAcademicYears(batch);
-  }, [batch]);
- 
-  const semesters = useMemo(() => {
-    if (!batch || !academicYear) return [];
-    const batchStart = parseInt(batch.split('-')[0], 10);
-    const ayStart = parseInt(academicYear.split('-')[0], 10);
-    const yearOffset = ayStart - batchStart;
-    const dur = durations?.[programme] || 4;
-    if (yearOffset < 0 || yearOffset >= dur) return [];
-    return [String(yearOffset * 2 + 1), String(yearOffset * 2 + 2)];
-  }, [batch, academicYear, durations, programme]);
- 
-  // Section Configs Listener
+  // 1. Listen to mentor allocations to find student regs for this mentor
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
-      const data = {};
-      snap.forEach(d => { data[d.id] = d.data(); });
-      setSectionConfigs(data);
-    }, (err) => console.error("Section configs fetch error:", err));
+    if (!user) return;
+    setAllocationLoading(true);
+
+    const unsubAlloc = onSnapshot(collection(db, "mentor_allocations"), (allocSnap) => {
+      const activeRegs = new Set();
+      allocSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        const studs = data.students || {};
+        Object.entries(studs).forEach(([reg, info]) => {
+          if (info.mentorUid === user.uid) {
+            activeRegs.add(reg);
+          }
+        });
+      });
+
+      if (activeRegs.size === 0) {
+        setAllocatedStudents([]);
+        setAllocationLoading(false);
+        return;
+      }
+
+      const unsubStudents = onSnapshot(collection(db, "students"), (studentsSnap) => {
+        const list = [];
+        const seen = new Set();
+        studentsSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          // Parse doc ID for fallback context
+          const docIdParts = docSnap.id.match(/^(.+)_(\d{4}-\d{4})_(\d{4}-\d{4})_(\d+)(?:_(.+))?$/);
+          Object.entries(data).forEach(([key, val]) => {
+            if (key.startsWith('_')) return;
+            if (!activeRegs.has(key)) return;
+            if (seen.has(key)) return;
+            seen.add(key);
+            const name = typeof val === 'object' && val !== null ? (val.name || '') : String(val || '');
+            const meta = data._meta || {};
+            list.push({
+              regNo: key, displayName: name, studentName: name, uid: key,
+              programme: meta.programme || (docIdParts ? docIdParts[1] : ''),
+              department: meta.department || '',
+              batch: meta.batch || (docIdParts ? docIdParts[2] : ''),
+              academicYear: meta.academicYear || (docIdParts ? docIdParts[3] : ''),
+              semester: meta.semester || (docIdParts ? docIdParts[4] : ''),
+              section: meta.section || (docIdParts ? docIdParts[5] || '' : ''),
+            });
+          });
+        });
+        list.sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
+        setAllocatedStudents(list);
+        setAllocationLoading(false);
+      }, (err) => {
+        console.error("Error listening to students:", err);
+        setAllocationLoading(false);
+      });
+
+      return () => unsubStudents();
+    }, (err) => {
+      console.error("Error listening to allocations:", err);
+      setAllocationLoading(false);
+    });
+
+    return () => unsubAlloc();
+  }, [user]);
+
+  // 2. Quota config loader
+  useEffect(() => {
+    const unsub = getSeatConfigurationsRealtime((data) => {
+      const quotasSet = new Set();
+      Object.values(data || {}).forEach((config) => {
+        if (config && config.quotas) {
+          Object.keys(config.quotas).forEach((qName) => quotasSet.add(qName));
+        }
+      });
+      setQuotaOptions(Array.from(quotasSet));
+    }, () => {});
     return () => unsub();
   }, []);
 
-  const availableSections = useMemo(() => {
-    if (!batch || !department || !programme) return [];
-    const deptLower = department.toLowerCase();
-    const batchSanitized = sanitizeKey(batch);
-    const cfg = Object.values(sectionConfigs).find(c => {
-      if (!c.batch || sanitizeKey(c.batch) !== batchSanitized) return false;
-      const docDept = (c.department || '').toLowerCase();
-      return deptLower.includes(docDept) || docDept.includes(deptLower);
-    });
-    if (!cfg || !cfg.numSections) return [];
-    const count = cfg.numSections;
-    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
-  }, [batch, department, programme, sectionConfigs]);
-
-  // Student list
+  // 3. Cutoff calculator
   useEffect(() => {
-    if (!programme || !department || !batch || !academicYear || !semester) { setStudents([]); return; }
-    const progKey = programme.replace(/\./g, '_');
-    const deptKey = department.replace(/\./g, '_');
-    const secSuffix = section ? `_${section}` : '';
-    const docId = `${batch}_${progKey}_${deptKey}_${academicYear}_${semester}${secSuffix}`;
+    if (!editing) return;
+    const toNum = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+    const maths = toNum(editingProfileData.mathsMark);
+    const physics = toNum(editingProfileData.physicsMark);
+    const chemistry = toNum(editingProfileData.chemistryMark);
+    let val = '';
+    if (maths !== null && physics !== null && chemistry !== null) {
+      const cutoff = maths + physics / 2 + chemistry / 2;
+      val = Number.isInteger(cutoff) ? String(cutoff) : String(Number(cutoff.toFixed(2)));
+    }
+    if (editingProfileData.cutoff !== val) {
+      setEditingProfileData(prev => ({ ...prev, cutoff: val }));
+    }
+  }, [editing, editingProfileData.mathsMark, editingProfileData.physicsMark, editingProfileData.chemistryMark]);
 
-    const unsub = onSnapshot(doc(db, "students", docId), (snap) => {
-      if (!snap.exists()) { setStudents([]); return; }
-      const data = snap.data();
-      const order = data._order || [];
-      const list = Object.entries(data)
-        .filter(([k]) => !k.startsWith('_'))
-        .map(([reg, val]) => ({ reg, name: typeof val === 'object' ? (val.name || '') : String(val || '') }))
-        .sort((a, b) => {
-          const ai = order.indexOf(a.reg);
-          const bi = order.indexOf(b.reg);
-          return (ai !== -1 ? ai : 9999) - (bi !== -1 ? bi : 9999);
+  // Helper functions for student profile view/edit
+  const openProfile = async (student) => {
+    setProfileStudent(student);
+    setEditing(false);
+    setEditData({});
+    setEditingProfileData({});
+    setStudentProfileData({});
+    setProfileStudentDocId('');
+    setExpandedSections({});
+    setSameAsPresent(false);
+    setLoadingProfile(true);
+    if (profileUnsubRef.current) { profileUnsubRef.current(); profileUnsubRef.current = null; }
+    try {
+      const reg = student.regNo || '';
+      let loaded = false;
+      if (reg) {
+        const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+        if (idxSnap.exists()) {
+          const sDocId = idxSnap.data().studentDocId || '';
+          if (sDocId) {
+            setProfileStudentDocId(sDocId);
+            const sSnap = await getDoc(doc(db, 'students', sDocId));
+            if (sSnap.exists()) {
+              const extra = sSnap.data()?._student_data?.[reg] || {};
+              if (Object.keys(extra).length > 0) {
+                setStudentProfileData(extra);
+                setEditingProfileData({ ...extra });
+                if (extra._sameAsPresent === 'true') setSameAsPresent(true);
+                loaded = true;
+              }
+            }
+            profileUnsubRef.current = onSnapshot(doc(db, 'students', sDocId), (snap) => {
+              if (!snap.exists()) return;
+              const extra = snap.data()?._student_data?.[reg] || {};
+              setStudentProfileData(extra);
+              if (!editingRef.current) {
+                setEditingProfileData({ ...extra });
+              }
+              if (extra._sameAsPresent === 'true') setSameAsPresent(true);
+            });
+          }
+        }
+      }
+      if (!loaded && student._profile_data) {
+        const pd = student._profile_data;
+        const initial = {};
+        PROFILE_SECTIONS.forEach(sec => sec.fields.forEach(f => { initial[f.key] = ''; }));
+        Object.keys(pd).forEach(k => { if (k in initial) initial[k] = pd[k]; });
+        setStudentProfileData(initial);
+        setEditingProfileData({ ...initial });
+        if (pd._sameAsPresent === 'true') setSameAsPresent(true);
+      }
+    } catch (err) { console.error('Error loading student data:', err); }
+    setLoadingProfile(false);
+  };
+
+  const closeProfile = () => {
+    if (profileUnsubRef.current) { profileUnsubRef.current(); profileUnsubRef.current = null; }
+    editingRef.current = false;
+    setProfileStudent(null);
+    setEditing(false);
+    setEditData({});
+    setEditingProfileData({});
+    setProfileStudentDocId('');
+    setSameAsPresent(false);
+  };
+
+  const startEditing = () => {
+    if (!profileStudent) return;
+    editingRef.current = true;
+    setEditData({
+      displayName: profileStudent.displayName || profileStudent.studentName || '',
+      email: profileStudent.email || '',
+      regNo: profileStudent.regNo || '',
+      programme: profileStudent.programme || '',
+      department: displayDept(profileStudent.department || ''),
+      batch: profileStudent.batch || '',
+      mobile: profileStudent.mobile || '',
+      address: profileStudent.address || '',
+    });
+    setEditingProfileData({ ...studentProfileData });
+    setEditing(true);
+  };
+
+  const toggleSection = (key) => {
+    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const saveEdit = async () => {
+    if (!profileStudent) return;
+    try {
+      await updateDoc(doc(db, "users", profileStudent.uid), editData);
+      if (profileStudentDocId && profileStudent.regNo) {
+        const extra = {};
+        PROFILE_SECTIONS.forEach(sec => sec.fields.forEach(f => {
+          const v = editingProfileData[f.key];
+          if (v !== undefined && v !== '') extra[f.key] = v;
+        }));
+        if (sameAsPresent) {
+          const copyMap = {
+            presentCity: 'permanentCity', presentPincode: 'permanentPincode',
+            presentDistrict: 'permanentDistrict', presentState: 'permanentState',
+            presentCountry: 'permanentCountry'
+          };
+          Object.entries(copyMap).forEach(([src, dest]) => {
+            if (editingProfileData[src]) extra[dest] = editingProfileData[src];
+          });
+          extra._sameAsPresent = 'true';
+        }
+        const studentRef = doc(db, 'students', profileStudentDocId);
+        const sSnap = await getDoc(studentRef);
+        const existing = sSnap.exists() ? sSnap.data() : {};
+        await updateDoc(studentRef, {
+          _student_data: {
+            ...(existing._student_data || {}),
+            [profileStudent.regNo]: { ...(existing._student_data?.[profileStudent.regNo] || {}), ...extra }
+          }
         });
-      setStudents(list);
-    });
-    return () => unsub();
-  }, [programme, department, batch, academicYear, semester, section]);
-
-  // Allocation listener
-  useEffect(() => {
-    if (!programme || !department || !batch || !academicYear || !semester) { setAllocation({ mentors: {}, students: {} }); return; }
-    const unsub = listenMentorAllocation(programme, department, batch, academicYear, semester, section, setAllocation);
-    return () => unsub();
-  }, [programme, department, batch, academicYear, semester, section]);
+        setStudentProfileData({ ...editingProfileData });
+      }
+      setAllocatedStudents(prev => prev.map(s => s.uid === profileStudent.uid ? { ...s, ...editData } : s));
+      setProfileStudent(prev => ({ ...prev, ...editData }));
+      setEditing(false);
+      editingRef.current = false;
+      showToast("Profile updated successfully");
+    } catch (err) { console.error("Save error:", err); showToast("Failed to save profile: " + err.message, "error"); }
+  };
 
   // Meetings listener
   useEffect(() => {
-    if (!programme || !batch) { setMeetings([]); return; }
-    const filters = { programme, batch };
-    if (department) filters.department = department;
-    if (userData?.role === "Faculty") filters.mentorUid = user?.uid;
+    if (!user) { setMeetings([]); return; }
+    const filters = { mentorUid: user.uid };
     if (filterType) filters.type = filterType;
     const unsub = listenMentorMeetings(filters, setMeetings);
     return () => unsub();
-  }, [programme, department, batch, userData, user, filterType]);
+  }, [user, filterType]);
 
   // Observations listener
   useEffect(() => {
-    if (!programme || !batch) { setObservations([]); return; }
-    const filters = { programme, batch };
-    if (department) filters.department = department;
-    if (userData?.role === "Faculty") filters.mentorUid = user?.uid;
+    if (!user) { setObservations([]); return; }
+    const filters = { mentorUid: user.uid };
     if (filterSeverity) filters.severity = filterSeverity;
     const unsub = listenMentorObservations(filters, setObservations);
     return () => unsub();
-  }, [programme, department, batch, userData, user, filterSeverity]);
+  }, [user, filterSeverity]);
 
   // Parent interactions listener
   useEffect(() => {
-    if (!programme || !batch) { setParentInteractions([]); return; }
-    const filters = { programme, batch };
-    if (department) filters.department = department;
-    if (userData?.role === "Faculty") filters.mentorUid = user?.uid;
+    if (!user) { setParentInteractions([]); return; }
+    const filters = { mentorUid: user.uid };
     const unsub = listenParentInteractions(filters, setParentInteractions);
     return () => unsub();
-  }, [programme, department, batch, userData, user]);
-
-  // Auto-select for Faculty
-  useEffect(() => {
-    if (userData?.role === "Faculty" && userData?.programme && !programme) {
-      setProgramme(userData.programme);
-      setDepartment(userData.department);
-    }
-  }, [userData, programme]);
+  }, [user]);
 
   const getEmptyForm = () => {
     if (activeTab === "meetings") return { type: "individual", studentReg: "", date: new Date().toISOString().split('T')[0], topic: "", notes: "", actionItems: "", status: "planned" };
@@ -259,13 +506,18 @@ export default function MentorMeetings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const student = students.find(s => s.reg === formData.studentReg);
+      const student = allocatedStudents.find(s => s.regNo === formData.studentReg);
       const baseData = {
         mentorUid: user.uid,
         mentorName: userData.facultyName || userData.name || '',
-        programme, department, batch, academicYear, semester, section,
+        programme: student?.programme || '',
+        department: student?.department || '',
+        batch: student?.batch || '',
+        academicYear: student?.academicYear || '',
+        semester: student?.semester || '',
+        section: student?.section || '',
         studentReg: formData.studentReg,
-        studentName: student?.name || '',
+        studentName: student?.displayName || student?.studentName || '',
       };
 
       if (activeTab === "meetings") {
@@ -327,15 +579,15 @@ export default function MentorMeetings() {
       )}
       {/* Tabs & Actions */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
-        <div className="flex gap-1 bg-white rounded-2xl border border-zinc-200 shadow-sm p-1.5 w-fit">
+        <div className="flex gap-1 bg-white rounded-2xl border border-zinc-200 shadow-sm p-1.5 w-fit min-w-0 overflow-x-auto">
           {TABS.map(tab => (
             <button key={tab.id} onClick={() => { setActiveTab(tab.id); setShowForm(false); setSearchTerm(""); }}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${activeTab === tab.id ? 'bg-[#120c7a] text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-[#120c7a] text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
               <tab.icon className="h-4 w-4" /> {tab.label}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
           <div className="relative flex-1 md:w-64">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
@@ -346,82 +598,12 @@ export default function MentorMeetings() {
               className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all text-sm font-medium shadow-sm"
             />
           </div>
-          <button onClick={() => handleOpenForm()}
-            className="flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#0e0960] shadow-lg shadow-[#120c7a]/25 whitespace-nowrap">
-            <Plus className="h-4 w-4" /> New Entry
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-3xl shadow-xl p-6 mb-8 border border-slate-100">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Programme</label>
-            <div className="relative mt-1">
-              <select value={programme} onChange={e => { setProgramme(e.target.value); setDepartment(""); setBatch(""); setAcademicYear(""); setSemester(""); setSection(""); }}
-                className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">Select Programme</option>
-                {filteredProgrammes.map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
-            <div className="relative mt-1">
-              <select value={department} onChange={e => { setDepartment(e.target.value); setBatch(""); setAcademicYear(""); setSemester(""); setSection(""); }}
-                disabled={!programme} className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">Select Department</option>
-                {filteredDepartments.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Batch</label>
-            <div className="relative mt-1">
-              <select value={batch} onChange={e => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); setSection(""); }}
-                disabled={!department} className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">Select Batch</option>
-                {activeBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Academic Year</label>
-            <div className="relative mt-1">
-              <select value={academicYear} onChange={e => { setAcademicYear(e.target.value); setSemester(""); setSection(""); }}
-                disabled={!batch} className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">Select AY</option>
-                {academicYears.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
-            <div className="relative mt-1">
-              <select value={semester} onChange={e => { setSemester(e.target.value); setSection(""); }}
-                disabled={!academicYear} className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">Select Sem</option>
-                {semesters.map(s => <option key={s} value={s}>Sem {s}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
-            <div className="relative mt-1">
-              <select value={section} onChange={e => setSection(e.target.value)}
-                disabled={!semester || availableSections.length === 0} className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                <option value="">All Sections</option>
-                {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-            </div>
-          </div>
+          {activeTab !== "students" && (
+            <button onClick={() => handleOpenForm()}
+              className="flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#0e0960] shadow-lg shadow-[#120c7a]/25 whitespace-nowrap shrink-0">
+              <Plus className="h-4 w-4" /> New Entry
+            </button>
+          )}
         </div>
       </div>
         {activeTab === "meetings" && (
@@ -449,85 +631,151 @@ export default function MentorMeetings() {
 
       {/* Data List */}
       <div className="bg-white rounded-3xl shadow-xl border border-zinc-100 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
-                <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Student</th>
-                {activeTab === "meetings" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Type</th>}
-                {activeTab === "meetings" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Topic</th>}
-                {activeTab === "observations" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Category</th>}
-                {activeTab === "observations" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Severity</th>}
-                {activeTab === "parent" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Parent</th>}
-                {activeTab === "parent" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Mode</th>}
-                <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Notes</th>
-                <th className="text-center px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.map(item => (
-                <tr key={item.id} className="border-t border-slate-100 hover:bg-blue-50/30 transition-colors">
-                  <td className="px-4 py-2.5 text-xs whitespace-nowrap">{item.date}</td>
-                  <td className="px-4 py-2.5">
-                    <span className="font-mono text-xs font-semibold">{item.studentReg}</span>
-                    <span className="text-zinc-500 ml-1 text-xs">— {item.studentName}</span>
-                  </td>
-                  {activeTab === "meetings" && (
-                    <td className="px-4 py-2.5">
-                      <span className="text-xs px-2.5 py-1 rounded-lg bg-blue-100 text-blue-700 font-semibold">
-                        {MEETING_TYPES.find(t => t.value === item.type)?.label || item.type}
-                      </span>
-                    </td>
+        {activeTab === "students" ? (
+          <div className="overflow-x-auto">
+            {allocationLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="animate-spin text-[#120c7a]" size={28} />
+                <span className="text-sm font-semibold text-zinc-400">Loading allocated students...</span>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Register Number</th>
+                    <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Name</th>
+                    <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Programme & Department</th>
+                    <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Batch & Section</th>
+                    <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Mobile / Email</th>
+                    <th className="text-center px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allocatedStudents.filter(s => {
+                    if (!searchTerm.trim()) return true;
+                    const term = searchTerm.toLowerCase();
+                    return (s.regNo || "").toLowerCase().includes(term) || 
+                           (s.displayName || s.studentName || "").toLowerCase().includes(term) ||
+                           (s.email || "").toLowerCase().includes(term);
+                  }).map(student => (
+                    <tr key={student.uid} className="border-t border-slate-100 hover:bg-blue-50/30 transition-colors">
+                      <td className="px-4 py-3 font-mono text-xs font-bold text-[#120c7a]">{student.regNo || "—"}</td>
+                      <td className="px-4 py-3 font-semibold text-zinc-800">{student.displayName || student.studentName || "—"}</td>
+                      <td className="px-4 py-3 text-xs text-zinc-600">
+                        <div>{formatProgDisplay(student.programme)}</div>
+                        <div className="text-[10px] text-zinc-400">{displayDept(student.department)}</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-600">
+                        <div>{formatBatchDisplay(student.batch)}</div>
+                        {student.section && <div className="text-[10px] font-bold text-zinc-500">{student.section}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-500">
+                        <div>{student.mobile || "—"}</div>
+                        <div className="text-[10px] font-mono">{student.email || "—"}</div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button 
+                          onClick={() => openProfile(student)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a]/10 text-[#120c7a] text-xs font-bold rounded-lg hover:bg-[#120c7a]/20 transition-all font-sans"
+                        >
+                          <Pencil size={12} />
+                          <span>Update Profile</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {allocatedStudents.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-16 text-center text-zinc-400 font-medium">
+                        No students allocated to you.
+                      </td>
+                    </tr>
                   )}
-                  {activeTab === "meetings" && <td className="px-4 py-2.5 text-xs">{item.topic}</td>}
-                  {activeTab === "observations" && (
-                    <td className="px-4 py-2.5">
-                        <span className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 text-zinc-700 font-semibold">
-                          {OBS_CATEGORIES.find(c => c.value === item.category)?.label || item.category}
-                      </span>
-                    </td>
-                  )}
-                  {activeTab === "observations" && (
-                    <td className="px-4 py-2.5">
-                      <span className={`text-xs px-2.5 py-1 rounded-lg font-semibold border ${SEVERITY_OPTIONS.find(s => s.value === item.severity)?.color || ''}`}>
-                        {item.severity?.toUpperCase()}
-                      </span>
-                    </td>
-                  )}
-                  {activeTab === "parent" && <td className="px-4 py-2.5 text-xs">{item.parentName}</td>}
-                  {activeTab === "parent" && (
-                    <td className="px-4 py-2.5">
-                        <span className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 text-zinc-700 font-semibold">
-                          {INTERACTION_TYPES.find(t => t.value === item.interactionType)?.label || item.interactionType}
-                      </span>
-                    </td>
-                  )}
-                  <td className="px-4 py-2.5 text-xs max-w-[200px] truncate">{item.notes}</td>
-                  <td className="px-4 py-2.5 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => handleOpenForm(item)} className="p-1 text-blue-500 hover:text-blue-700">
-                        <Edit className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => handleDelete(item.id)} className="p-1 text-red-500 hover:text-red-700">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
+                </tbody>
+              </table>
+            )}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                  <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Student</th>
+                  {activeTab === "meetings" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Type</th>}
+                  {activeTab === "meetings" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Topic</th>}
+                  {activeTab === "observations" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Category</th>}
+                  {activeTab === "observations" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Severity</th>}
+                  {activeTab === "parent" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Parent</th>}
+                  {activeTab === "parent" && <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Mode</th>}
+                  <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Notes</th>
+                  <th className="text-center px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
                 </tr>
-              ))}
-              {filteredData.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-16 text-center">
-                  <div className="inline-flex p-3 rounded-2xl bg-slate-50 mb-4">
-                    <Calendar className="h-8 w-8 text-slate-300" />
-                  </div>
-                  <p className="text-sm font-medium text-slate-500">No entries found</p>
-                  <p className="text-xs text-slate-400 mt-1">Try adjusting your filters or create a new entry.</p>
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filteredData.map(item => (
+                  <tr key={item.id} className="border-t border-slate-100 hover:bg-blue-50/30 transition-colors">
+                    <td className="px-4 py-2.5 text-xs whitespace-nowrap">{item.date}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="font-mono text-xs font-semibold">{item.studentReg}</span>
+                      <span className="text-zinc-500 ml-1 text-xs">— {item.studentName}</span>
+                    </td>
+                    {activeTab === "meetings" && (
+                      <td className="px-4 py-2.5">
+                        <span className="text-xs px-2.5 py-1 rounded-lg bg-blue-100 text-blue-700 font-semibold">
+                          {MEETING_TYPES.find(t => t.value === item.type)?.label || item.type}
+                        </span>
+                      </td>
+                    )}
+                    {activeTab === "meetings" && <td className="px-4 py-2.5 text-xs">{item.topic}</td>}
+                    {activeTab === "observations" && (
+                      <td className="px-4 py-2.5">
+                          <span className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 text-zinc-700 font-semibold">
+                            {OBS_CATEGORIES.find(c => c.value === item.category)?.label || item.category}
+                        </span>
+                      </td>
+                    )}
+                    {activeTab === "observations" && (
+                      <td className="px-4 py-2.5">
+                        <span className={`text-xs px-2.5 py-1 rounded-lg font-semibold border ${SEVERITY_OPTIONS.find(s => s.value === item.severity)?.color || ''}`}>
+                          {item.severity?.toUpperCase()}
+                        </span>
+                      </td>
+                    )}
+                    {activeTab === "parent" && <td className="px-4 py-2.5 text-xs">{item.parentName}</td>}
+                    {activeTab === "parent" && (
+                      <td className="px-4 py-2.5">
+                          <span className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 text-zinc-700 font-semibold">
+                            {INTERACTION_TYPES.find(t => t.value === item.interactionType)?.label || item.interactionType}
+                        </span>
+                      </td>
+                    )}
+                    <td className="px-4 py-2.5 text-xs max-w-[200px] truncate">{item.notes}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => handleOpenForm(item)} className="p-1 text-blue-500 hover:text-blue-700">
+                          <Edit className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => handleDelete(item.id)} className="p-1 text-red-500 hover:text-red-700">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredData.length === 0 && (
+                  <tr><td colSpan={10} className="px-4 py-16 text-center">
+                    <div className="inline-flex p-3 rounded-2xl bg-slate-50 mb-4">
+                      <Calendar className="h-8 w-8 text-slate-300" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-500">No entries found</p>
+                    <p className="text-xs text-slate-400 mt-1">Create a new entry to get started.</p>
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Form Modal */}
@@ -545,7 +793,7 @@ export default function MentorMeetings() {
                 <select value={formData.studentReg || ''} onChange={e => setFormData(p => ({ ...p, studentReg: e.target.value }))}
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm">
                   <option value="">Select Student</option>
-                  {students.map(s => <option key={s.reg} value={s.reg}>{s.reg} — {s.name}</option>)}
+                  {allocatedStudents.map(s => <option key={s.regNo} value={s.regNo}>{s.regNo} — {s.displayName || s.studentName}</option>)}
                 </select>
               </div>
 
@@ -677,6 +925,181 @@ export default function MentorMeetings() {
                 className="px-4 py-2 text-sm font-bold bg-[#120c7a] text-white rounded-lg hover:bg-[#0e0960] disabled:opacity-50">
                 {saving ? 'Saving...' : editItem ? 'Update' : 'Save'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ═══ Profile Modal ═══ */}
+      {profileStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeProfile} />
+          <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden transform transition-all duration-300">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-indigo-800 via-indigo-900 to-violet-950 px-6 py-5 flex items-center justify-between">
+              <div className="flex items-center gap-3 text-white">
+                <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                  <Users size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm md:text-base">{profileStudent.displayName || profileStudent.studentName}</h3>
+                  <p className="text-indigo-200 text-[10px] uppercase font-bold tracking-wider">
+                    {editing ? 'Editing Mode' : 'View Only'} — {profileStudent.regNo || '—'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {!editing ? (
+                  <button onClick={startEditing} className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all" title="Edit">
+                    <Pencil size={15} />
+                  </button>
+                ) : (
+                  <button onClick={saveEdit} className="p-1.5 bg-emerald-500/80 hover:bg-emerald-500 text-white rounded-lg transition-all" title="Save">
+                    <Save size={15} />
+                  </button>
+                )}
+                <button onClick={closeProfile} className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            {/* Body */}
+            <div className="p-6 space-y-3 overflow-y-auto flex-1 bg-white">
+              {loadingProfile ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={24} className="animate-spin text-indigo-600" />
+                  <span className="ml-3 text-sm text-slate-500">Loading profile data...</span>
+                </div>
+              ) : (
+                <>
+                  {/* Account Info */}
+                  <div className="bg-slate-50 rounded-xl p-4 space-y-3 border border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Account Information</p>
+                    {[
+                      { label: 'Name', key: 'displayName', placeholder: 'Student Name' },
+                      { label: 'Email', key: 'email', placeholder: 'Email Address' },
+                      { label: 'Reg No.', key: 'regNo', placeholder: 'Registration Number' },
+                      { label: 'Programme', key: 'programme', placeholder: 'Programme' },
+                      { label: 'Department', key: 'department', placeholder: 'Department' },
+                      { label: 'Batch', key: 'batch', placeholder: 'Batch' },
+                      { label: 'Mobile', key: 'mobile', placeholder: 'Mobile Number' },
+                      { label: 'Address', key: 'address', placeholder: 'Address' },
+                    ].map(field => (
+                      <div key={field.key} className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest px-0.5">{field.label}</label>
+                        {editing ? (
+                          <input
+                            type="text"
+                            value={editData[field.key] || ''}
+                            onChange={e => setEditData(prev => ({ ...prev, [field.key]: e.target.value }))}
+                            placeholder={field.placeholder}
+                            className="w-full bg-white border border-indigo-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all font-sans"
+                          />
+                        ) : (
+                          <div className="w-full bg-white border border-slate-100 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-700">
+                            {field.key === 'programme' ? (formatProgDisplay(profileStudent[field.key]) || profileStudent[field.key] || '—')
+                              : field.key === 'department' ? displayDept(profileStudent[field.key])
+                              : (profileStudent[field.key] || '—')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Admission Profile Sections */}
+                  {PROFILE_SECTIONS.map((section) => {
+                    const data = editing ? editingProfileData : studentProfileData;
+                    const filledCount = section.fields.filter(f => data[f.key]?.trim()).length;
+                    const isExpanded = expandedSections[section.key];
+                    const Icon = section.icon;
+
+                    const renderFieldEditInput = (f) => {
+                      const val = editingProfileData[f.key] || '';
+                      const onChange = (v) => setEditingProfileData(prev => ({ ...prev, [f.key]: v }));
+                      const baseCls = "w-full bg-white border border-indigo-200 rounded-lg px-3 py-2 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all font-sans";
+                      if (f.key === 'cutoff') {
+                        return <input type="text" value={val} readOnly className={`${baseCls} bg-slate-50 text-slate-500 cursor-not-allowed`} placeholder="Auto-calculated" />;
+                      }
+                      if (f.type === 'select') {
+                        const opts = f.key === 'quotaAskedFor' ? quotaOptions : (f.options || []);
+                        return (
+                          <select value={val} onChange={e => onChange(e.target.value)} className={baseCls}>
+                            <option value="">-- Select --</option>
+                            {opts.map(o => <option key={o} value={o}>{o}</option>)}
+                          </select>
+                        );
+                      }
+                      if (f.type === 'date') return <input type="date" value={val} onChange={e => onChange(e.target.value)} className={baseCls} />;
+                      if (f.type === 'textarea') return <textarea value={val} onChange={e => onChange(e.target.value)} className={`${baseCls} min-h-[80px] resize-y`} rows={3} />;
+                      return <input type="text" value={val} onChange={e => onChange(e.target.value)} className={baseCls} />;
+                    };
+
+                    const renderFieldView = (f) => (
+                      <div className="bg-white border border-slate-100 rounded-lg px-3 py-2 text-sm text-slate-700 min-h-[34px]">
+                        {data[f.key] || <span className="text-slate-300">—</span>}
+                      </div>
+                    );
+
+                    const renderField = (f) => (
+                      <div key={f.key}>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{f.label}</label>
+                        {editing ? renderFieldEditInput(f) : renderFieldView(f)}
+                      </div>
+                    );
+
+                    return (
+                      <div key={section.key} className="border border-slate-100 rounded-xl overflow-hidden">
+                        <button
+                          onClick={() => toggleSection(section.key)}
+                          className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600"><Icon size={14} /></div>
+                            <span className="text-sm font-semibold text-slate-700">{section.title}</span>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{filledCount}/{section.fields.length}</span>
+                          </div>
+                          {isExpanded ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                        </button>
+                        {isExpanded && (
+                          <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50">
+                            {section.key === 'address' ? (
+                              <>
+                                {section.fields.filter(f => f.key.startsWith('present')).map(f => renderField(f))}
+                                <div className="sm:col-span-2 flex items-center gap-3 pt-2 pb-1 border-t border-slate-100">
+                                  {editing ? (
+                                    <>
+                                      <button type="button" onClick={() => setSameAsPresent(!sameAsPresent)}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sameAsPresent ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sameAsPresent ? 'translate-x-6' : 'translate-x-1'}`} />
+                                      </button>
+                                      <span className="text-xs font-semibold text-slate-600">Permanent address is same as present address</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className={`inline-flex h-6 w-11 items-center rounded-full ${data._sameAsPresent === 'true' ? 'bg-indigo-600' : 'bg-slate-200'}`}>
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white ${data._sameAsPresent === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+                                      </div>
+                                      <span className="text-xs font-semibold text-slate-400">Permanent address is same as present address</span>
+                                    </>
+                                  )}
+                                </div>
+                                {(!editing || !sameAsPresent) && (
+                                  <>
+                                    <div className="sm:col-span-2">
+                                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Permanent Address</p>
+                                    </div>
+                                    {section.fields.filter(f => f.key.startsWith('permanent')).map(f => renderField(f))}
+                                  </>
+                                )}
+                                {section.fields.filter(f => ['hostellerDayScholar','transportRequired','transportRoute','transportStage'].includes(f.key)).map(f => renderField(f))}
+                              </>
+                            ) : section.fields.map(f => renderField(f))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </div>
         </div>

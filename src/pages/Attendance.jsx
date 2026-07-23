@@ -586,13 +586,24 @@ export default function Attendance() {
           stuMethod = val.teachingMethodology || '';
         }
       }
+      // Check period conflict (another subject's attendance for same period)
+      let status = studentExists ? (hours > 0 ? 'P' : 'A') : '';
+      let isConflict = false;
+      if (!status && periodConflict?.record?.[reg]) {
+        const conflictVal = periodConflict.record[reg];
+        const conflictHours = typeof conflictVal === 'number' ? conflictVal : (conflictVal.hours || 0);
+        hours = conflictHours;
+        status = conflictHours > 0 ? 'P' : 'A';
+        isConflict = true;
+      }
       return {
         reg, name, hours,
-        status: studentExists ? (hours > 0 ? 'P' : 'A') : '',
+        status,
         percentage: totalH > 0 ? ((hours / totalH) * 100).toFixed(2) : "0.00",
         topicTaught: stuTopic,
         teachingAid: stuAid,
-        teachingMethodology: stuMethod
+        teachingMethodology: stuMethod,
+        _conflict: isConflict
       };
     });
 
@@ -600,7 +611,7 @@ export default function Attendance() {
     else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
 
     setStudents(studentArray);
-  }, [attendanceDate, period, attendanceData, masterList]);
+  }, [attendanceDate, period, attendanceData, masterList, periodConflict]);
 
   // Check if period is already marked by another subject in the same batch for overlapping students
   useEffect(() => {
@@ -1017,14 +1028,17 @@ export default function Attendance() {
     ? ((students.filter(s => s.status === 'P' || s.status === 'OD').length / students.length) * 100).toFixed(1)
     : '—';
 
-  // Read-only student regs (existing entries from another faculty for current subject record)
+  // Read-only student regs (existing entries from another faculty for current subject or period conflict)
   const readOnlyRegs = useMemo(() => {
     const regs = new Set();
     if (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) {
       Object.keys(currentRecordData.students || {}).forEach(r => regs.add(r));
     }
+    if (periodConflict?.record) {
+      Object.keys(periodConflict.record).forEach(r => regs.add(r));
+    }
     return regs;
-  }, [currentRecordData, currentUid]);
+  }, [currentRecordData, currentUid, periodConflict]);
 
   return (
     <Layout title="Attendance Records">
@@ -1286,12 +1300,17 @@ export default function Attendance() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredStudents.map(s => (
-                    <tr key={s.reg} className="group hover:bg-indigo-50/40 transition-all duration-150">
+                    <tr key={s.reg} className={`group transition-all duration-150 ${s._conflict && readOnlyRegs.has(s.reg) ? 'bg-amber-50/40' : 'hover:bg-indigo-50/40'}`}>
                       <td className="px-5 py-3.5">
                         <span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span>
                       </td>
                       <td className="px-5 py-3.5">
                         <span className="text-sm font-semibold text-slate-800">{s.name}</span>
+                        {s._conflict && readOnlyRegs.has(s.reg) && (
+                          <span className="ml-2 text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                            {periodConflict?.subjectCode || 'conflict'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-3.5">
                         <div className="flex items-center justify-center gap-1.5">
