@@ -329,6 +329,8 @@ exports.verifyPayment = onCall(
       throw new HttpsError("internal", `Payment gateway returned an invalid response format (HTTP ${response.status}).`);
     }
 
+    console.log(`HDFC status response for order ${orderId}:`, JSON.stringify(responseData));
+
     if (!response.ok) {
       const errMsg = responseData?.error_info?.developer_message || "Payment verification failed";
       console.error("HDFC verify error:", response.status, JSON.stringify(responseData));

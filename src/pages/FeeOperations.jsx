@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { db } from "../firebase";
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp, query, where } from "firebase/firestore";
 import {
   IndianRupee, Plus, Search, Edit3, Trash2, X, CheckCircle2, AlertCircle,
-  CreditCard, Building2, Users, GraduationCap, Download, Printer,
+  CreditCard, Building2, Users, Download, Printer,
   ChevronDown, ChevronRight, FileText, Wallet, Percent, BadgeCheck,
   CalendarDays, Banknote, QrCode, ShieldCheck, Filter, Copy,
   Tags, Pencil, Layers, Save
@@ -12,8 +12,9 @@ import { useLocation } from "react-router-dom";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
-import { formatProgrammeKey } from "../lib/utils";
+import { formatProgrammeKey, sanitizeKey } from "../lib/utils";
 import Layout from "../components/Layout";
+import * as XLSX from "xlsx";
 
 const DEFAULT_FEE_HEADS = [
   { name: "Tuition Fee", splitType: "academic-year" },
@@ -46,6 +47,28 @@ const PAYMENT_MODES = [
 
 // QUOTA_OPTIONS now derived dynamically from seat configurations
 const BRANCHES = ["CSE", "ECE", "EEE", "ME", "CE", "CSBS", "AIML", "DS", "IT", "AIDS"];
+
+const displayDept = (v) => {
+  if (typeof v !== 'string') return v || '--';
+  const progPrefixMap = [
+    { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
+    { key: 'M_E', display: 'M.E.' }, { key: 'M_Tech', display: 'M.Tech.' },
+    { key: 'B_Sc', display: 'B.Sc.' }, { key: 'M_Sc', display: 'M.Sc.' },
+    { key: 'B_C_A', display: 'B.C.A.' }, { key: 'M_C_A', display: 'M.C.A.' },
+    { key: 'B_B_A', display: 'B.B.A.' }, { key: 'M_B_A', display: 'M.B.A.' },
+    { key: 'B_Com', display: 'B.Com.' }, { key: 'M_Com', display: 'M.Com.' },
+    { key: 'B_A', display: 'B.A.' }, { key: 'M_A', display: 'M.A.' },
+  ];
+  let result = v;
+  for (const { key, display } of progPrefixMap) {
+    const regex = new RegExp(`^${key.replace(/_/g, '[_ ]')}[_ ]*`, 'i');
+    if (regex.test(result)) {
+      result = result.replace(regex, display + ' ');
+      break;
+    }
+  }
+  return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim();
+};
 
 export default function FeeOperations() {
   const location = useLocation();
@@ -164,12 +187,14 @@ export default function FeeOperations() {
   // Payment state
   const [studentSearch, setStudentSearch] = useState("");
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "Tuition Fee", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
+  const [selectedStudentQuota, setSelectedStudentQuota] = useState("");
+  const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
 
   // Receipt state
   const [receiptSearch, setReceiptSearch] = useState("");
-  const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [receiptDateFrom, setReceiptDateFrom] = useState("");
+  const [receiptDateTo, setReceiptDateTo] = useState("");
+  const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
 
   // Concession state
   const [showConcessionModal, setShowConcessionModal] = useState(false);
@@ -180,7 +205,9 @@ export default function FeeOperations() {
     const u1 = onSnapshot(collection(db, "fee_payments"), snap => setPayments(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     const u2 = onSnapshot(collection(db, "fee_receipts"), snap => setReceipts(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     const u3 = onSnapshot(collection(db, "fee_concessions"), snap => setConcessions(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
-    const u4 = onSnapshot(collection(db, "placement_students"), snap => setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
+    const u4 = onSnapshot(query(collection(db, "users"), where("role", "==", "Student")), snap => {
+      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => {});
     const u5 = onSnapshot(collection(db, "fee_configurations"), snap => setFeeConfigs(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     const u6 = getSeatConfigurationsRealtime(data => setSeatConfigs(data || {}), () => {});
     getDoc(doc(db, "fee_categories", "global")).then(snap => {
@@ -196,6 +223,36 @@ export default function FeeOperations() {
     }).catch(() => {});
     return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
   }, []);
+
+  useEffect(() => {
+    if (!selectedStudent) {
+      setSelectedStudentQuota("");
+      return;
+    }
+    const reg = selectedStudent.regNo;
+    if (!reg) {
+      setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
+      return;
+    }
+
+    (async () => {
+      try {
+        const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+        if (idxSnap.exists()) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await getDoc(doc(db, 'students', sDocId));
+            if (sSnap.exists()) {
+              const extra = sSnap.data()._student_data?.[reg] || {};
+              setSelectedStudentQuota(extra.quotaAskedFor || "");
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+      setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
+    })();
+  }, [selectedStudent]);
 
   const showToast = (msg, type = "success") => {
     setToast({ show: true, message: msg, type });
@@ -244,17 +301,33 @@ export default function FeeOperations() {
   };
 
   const handleRecordPayment = async () => {
-    if (!selectedStudent || !paymentForm.amount) return;
+    if (!selectedStudent || !paymentForm.amount || !paymentForm.feeHead) return;
     setSaving(true);
     try {
       const receiptNo = `FEE${new Date().getFullYear()}-${String(receipts.length + 1).padStart(5, "0")}`;
-      const payData = { studentId: selectedStudent.id, examNumber: selectedStudent.examNumber, studentName: selectedStudent.studentName, department: selectedStudent.department, batch: selectedStudent.batch, amount: Number(paymentForm.amount), mode: paymentForm.mode, feeHead: paymentForm.feeHead, semester: paymentForm.semester, remarks: paymentForm.remarks, refNo: paymentForm.refNo, receiptNo, paymentDate: Timestamp.fromDate(new Date(paymentForm.paymentDate)), createdAt: Timestamp.now() };
+      const examNo = selectedStudent.regNo || selectedStudent.examNumber || selectedStudent.id;
+      const payData = {
+        studentId: selectedStudent.id,
+        examNumber: examNo,
+        studentName: selectedStudent.displayName || selectedStudent.studentName,
+        programme: selectedStudent.programme || "",
+        department: selectedStudent.department || "",
+        batch: selectedStudent.batch || "",
+        amount: Number(paymentForm.amount),
+        mode: paymentForm.mode,
+        feeHead: paymentForm.feeHead,
+        semester: paymentForm.semester,
+        remarks: paymentForm.remarks,
+        refNo: paymentForm.refNo,
+        receiptNo,
+        paymentDate: Timestamp.fromDate(new Date(paymentForm.paymentDate)),
+        createdAt: Timestamp.now()
+      };
       await addDoc(collection(db, "fee_payments"), payData);
       await addDoc(collection(db, "fee_receipts"), { ...payData, status: "active", cancelledAt: null, reason: null, reprintCount: 0 });
       showToast(`Payment recorded — Receipt #${receiptNo}`);
-      setShowPaymentModal(false);
-      setPaymentForm({ amount: "", mode: "cash", feeHead: "Tuition Fee", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
-    } catch (err) { showToast("Error recording payment", "error"); }
+      setPaymentForm({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
+    } catch (err) { showToast("Error recording payment: " + err.message, "error"); }
     finally { setSaving(false); }
   };
 
@@ -282,10 +355,188 @@ export default function FeeOperations() {
   const filteredStudents = students.filter(s => {
     if (!studentSearch) return false;
     const q = studentSearch.toLowerCase();
-    return s.studentName?.toLowerCase().includes(q) || s.examNumber?.toLowerCase().includes(q);
+    return (s.displayName || s.studentName || "").toLowerCase().includes(q) ||
+           (s.regNo || "").toLowerCase().includes(q) ||
+           (s.email || "").toLowerCase().includes(q) ||
+           (s.examNumber || "").toLowerCase().includes(q);
   }).slice(0, 10);
 
-  const totalStudentDue = selectedStudent ? selectedStudent.cgpa * 10000 + 25000 : 0;
+  const studentFeeDetails = useMemo(() => {
+    if (!selectedStudent) return null;
+    const prog = selectedStudent.programme || '';
+    const dept = selectedStudent.department || '';
+    const batch = selectedStudent.batch || '';
+
+    const normStudentProg = formatProgrammeKey(prog);
+    const normStudentDept = (dept || "").replace(/[_.\s]/g, '').toLowerCase();
+    const normStudentBatch = (batch || "").trim().toLowerCase();
+
+    // 1. Filter configs based on programme, department, batch AND quota/seatCategory
+    const fees = feeConfigs.filter(f => {
+      const normDataProg = formatProgrammeKey(f.programme);
+      const normDataDept = (f.department || "").replace(/[_.\s]/g, '').toLowerCase();
+      const normDataBatch = (f.batch || "").trim().toLowerCase();
+
+      const isProgMatch = normDataProg && normDataProg === normStudentProg;
+      const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
+      const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
+      const isQuotaMatch = !selectedStudentQuota || !f.quota || f.quota === selectedStudentQuota;
+
+      return isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch;
+    });
+
+    // 2. Filter payments matching the selected student & valid payment statuses only (filter out pending/failed online payments!)
+    const studentPayments = payments.filter(p => {
+      const matchesStudent = 
+        (selectedStudent.id && (p.studentId === selectedStudent.id || p.uid === selectedStudent.id)) ||
+        (selectedStudent.regNo && p.examNumber === selectedStudent.regNo) ||
+        (selectedStudent.examNumber && p.examNumber === selectedStudent.examNumber);
+      if (!matchesStudent) return false;
+
+      // Online payment check: must be SUCCESS
+      if (p.status !== undefined) {
+        return p.status === "SUCCESS";
+      }
+      return true; // Manual payment (has no status field), count it
+    });
+
+    const totalFees = fees.reduce((s, f) => s + (f.amount || 0), 0);
+    const totalPaid = studentPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+    const outstanding = Math.max(0, totalFees - totalPaid);
+
+    // Calculate individual paid amount head-wise
+    const headBreakdown = fees.map(f => {
+      const paidForHead = studentPayments
+        .filter(p => p.feeHead === f.head)
+        .reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+      return { 
+        id: f.id,
+        head: f.head, 
+        academicYear: f.academicYear || '—',
+        semester: f.semester || 'All',
+        amount: f.amount || 0, 
+        paid: paidForHead, 
+        due: Math.max(0, (f.amount || 0) - paidForHead) 
+      };
+    });
+
+    const sortedBreakdown = [...headBreakdown].sort((a, b) => {
+      const yr = (a.academicYear || '').localeCompare(b.academicYear || '');
+      if (yr) return yr;
+      const semA = a.semester || 'All';
+      const semB = b.semester || 'All';
+      return semA.localeCompare(semB);
+    });
+
+    return { 
+      fees, 
+      studentPayments, 
+      totalFees, 
+      totalPaid, 
+      outstanding, 
+      headBreakdown: sortedBreakdown
+    };
+  }, [selectedStudent, selectedStudentQuota, feeConfigs, payments]);
+
+  const groupedStudentFees = useMemo(() => {
+    if (!studentFeeDetails || !studentFeeDetails.fees) return [];
+    const sorted = [...studentFeeDetails.fees].sort((a, b) => {
+      const yr = (a.academicYear || '').localeCompare(b.academicYear || '');
+      if (yr) return yr;
+      const semA = a.semester || 'All';
+      const semB = b.semester || 'All';
+      return semA.localeCompare(semB);
+    });
+    const groups = [];
+    let currentYear = null;
+    let currentSem = null;
+    sorted.forEach((cfg) => {
+      const year = cfg.academicYear || '—';
+      const sem = cfg.semester || 'All';
+      if (!currentYear || currentYear.key !== year) {
+        currentSem = null;
+        currentYear = { key: year, academicYear: year, semGroups: [] };
+        groups.push(currentYear);
+      }
+      if (!currentSem || currentSem.key !== sem) {
+        currentSem = { key: sem, semester: sem, rows: [] };
+        currentYear.semGroups.push(currentSem);
+      }
+      currentSem.rows.push(cfg);
+    });
+    return groups;
+  }, [studentFeeDetails]);
+
+  const combinedReceiptList = useMemo(() => {
+    // 1. Manual receipts
+    const manual = receipts.map(r => ({
+      id: r.id,
+      receiptNo: r.receiptNo,
+      studentId: r.studentId,
+      studentName: r.studentName,
+      examNumber: r.examNumber || "—",
+      feeHead: r.feeHead,
+      mode: r.mode,
+      amount: r.amount || 0,
+      status: r.status || "active",
+      paymentDate: r.paymentDate,
+      isOnline: false,
+      rawRecord: r
+    }));
+
+    // 2. Online successful payments
+    const online = payments.filter(p => p.status === "SUCCESS").map(p => ({
+      id: p.id,
+      receiptNo: p.orderId,
+      studentId: p.uid || p.studentId,
+      studentName: p.studentName || "Student",
+      examNumber: p.examNumber || p.studentId || "—",
+      feeHead: p.feeHead,
+      mode: "Online",
+      amount: p.chargedAmount || p.amount || 0,
+      status: "active", // Treat successful online payment as active receipt
+      paymentDate: p.verifiedAt || p.createdAt,
+      isOnline: true,
+      rawRecord: p
+    }));
+
+    // Combine and sort by date descending
+    return [...manual, ...online].sort((a, b) => {
+      const getTS = (x) => x.paymentDate || 0;
+      const da = getTS(a).toDate ? getTS(a).toDate() : new Date(getTS(a));
+      const db = getTS(b).toDate ? getTS(b).toDate() : new Date(getTS(b));
+      return db - da;
+    });
+  }, [receipts, payments]);
+
+  const filteredReceipts = useMemo(() => {
+    return combinedReceiptList.filter(r => {
+      if (receiptSearch) {
+        const q = receiptSearch.toLowerCase();
+        const matchesSearch = (r.receiptNo || "").toLowerCase().includes(q) ||
+               (r.studentName || "").toLowerCase().includes(q) ||
+               (r.examNumber || "").toLowerCase().includes(q) ||
+               String(r.amount).includes(q) ||
+               (r.feeHead || "").toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+      }
+      if (receiptDateFrom || receiptDateTo) {
+        const rDate = r.paymentDate?.toDate?.() || new Date(r.paymentDate || 0);
+        if (isNaN(rDate.getTime())) return false;
+        if (receiptDateFrom) {
+          const from = new Date(receiptDateFrom);
+          from.setHours(0, 0, 0, 0);
+          if (rDate < from) return false;
+        }
+        if (receiptDateTo) {
+          const to = new Date(receiptDateTo);
+          to.setHours(23, 59, 59, 999);
+          if (rDate > to) return false;
+        }
+      }
+      return true;
+    });
+  }, [combinedReceiptList, receiptSearch, receiptDateFrom, receiptDateTo]);
 
   const tabs = [
     { id: "structure", label: "Fee Structure", icon: Building2 },
@@ -303,7 +554,7 @@ export default function FeeOperations() {
         </div>
       )}
 
-      <div className="p-6 max-w-7xl mx-auto space-y-5">
+      <div className="no-print p-6 max-w-7xl mx-auto space-y-5">
         <div className="flex gap-2 bg-zinc-100 p-1 rounded-xl border border-zinc-200 w-fit">
           {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
@@ -424,91 +675,358 @@ export default function FeeOperations() {
 
         {/* TAB 2: Collect Payment */}
         {tab === "collect" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Student Search */}
-            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
+            <div className="lg:col-span-4 bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
               <h3 className="font-bold text-sm text-zinc-700 mb-4 flex items-center gap-2"><Search size={16} /> Search Student</h3>
               <div className="relative mb-4">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search by name or exam number..."
+                <input value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search by reg no, name, or email..."
                   className="w-full pl-9 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+                {studentSearch && (
+                  <button onClick={() => { setStudentSearch(""); setSelectedStudent(null); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
+                    <X size={14} />
+                  </button>
+                )}
               </div>
-              <div className="space-y-1 max-h-80 overflow-y-auto">
+              <div className="space-y-1 max-h-[500px] overflow-y-auto">
                 {filteredStudents.map(s => (
-                  <button key={s.id} onClick={() => { setSelectedStudent(s); setStudentSearch(s.studentName); }}
+                  <button key={s.id} onClick={() => { setSelectedStudent(s); setStudentSearch(s.displayName || s.studentName || s.regNo || ""); }}
                     className={`w-full text-left p-3 rounded-xl transition-all text-sm flex items-center gap-3 ${selectedStudent?.id === s.id ? 'bg-[#120c7a]/5 border border-[#120c7a]/20' : 'hover:bg-zinc-50 border border-transparent'}`}>
-                    <div className="w-8 h-8 bg-[#120c7a]/5 rounded-lg flex items-center justify-center"><GraduationCap size={16} className="text-[#120c7a]" /></div>
+                    <div className="w-9 h-9 bg-[#120c7a]/10 rounded-xl flex items-center justify-center text-[#120c7a] font-bold text-xs shrink-0">
+                      {(s.displayName || s.studentName || "S").charAt(0).toUpperCase()}
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-zinc-700 truncate">{s.studentName}</p>
-                      <p className="text-[10px] text-zinc-400">{s.examNumber} • {s.department}</p>
+                      <p className="font-bold text-zinc-700 truncate text-sm">{s.displayName || s.studentName || "—"}</p>
+                      <p className="text-[10px] text-zinc-400 font-mono">{s.regNo || s.examNumber || "—"}</p>
+                      <p className="text-[9px] text-zinc-300 truncate">{s.programme || ""} {s.department ? `• ${displayDept(s.department)}` : ""}</p>
                     </div>
                   </button>
                 ))}
-                {studentSearch && filteredStudents.length === 0 && <p className="text-xs text-zinc-400 text-center py-4">No students found</p>}
-                {!studentSearch && <p className="text-xs text-zinc-400 text-center py-4">Type to search for a student</p>}
+                {studentSearch && filteredStudents.length === 0 && <p className="text-xs text-zinc-400 text-center py-6">No students found</p>}
+                {!studentSearch && <p className="text-xs text-zinc-400 text-center py-6">Type to search for a student</p>}
               </div>
             </div>
 
-            {/* Payment Form */}
-            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
-              <h3 className="font-bold text-sm text-zinc-700 mb-4 flex items-center gap-2"><IndianRupee size={16} /> Record Payment</h3>
+            {/* Right panel */}
+            <div className="lg:col-span-8 space-y-5">
               {!selectedStudent ? (
-                <div className="p-8 text-center text-zinc-400">
-                  <Users size={40} className="mx-auto mb-3 text-zinc-200" />
-                  <p className="text-sm font-medium">Select a student first</p>
+                <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-12 text-center">
+                  <Users size={48} className="mx-auto mb-4 text-zinc-200" />
+                  <p className="text-sm font-bold text-zinc-400">Select a student to view fee details</p>
+                  <p className="text-xs text-zinc-300 mt-1">Search by register number, name, or email</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <div className="p-3 bg-zinc-50 rounded-xl flex items-center gap-3">
-                    <GraduationCap size={18} className="text-[#120c7a]" />
-                    <div>
-                      <p className="text-sm font-bold text-zinc-700">{selectedStudent.studentName}</p>
-                      <p className="text-[10px] text-zinc-400">{selectedStudent.examNumber} • {selectedStudent.department}</p>
-                    </div>
-                    <div className="ml-auto text-right">
-                      <p className="text-[10px] text-zinc-400">Estimated Due</p>
-                      <p className="text-sm font-black text-amber-700">₹{(totalStudentDue).toLocaleString()}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount *</label>
-                      <div className="relative"><IndianRupee size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-                        <input value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})} type="number"
-                          className="w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+                <>
+                  {/* Student Info Card */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-[#120c7a]/10 rounded-2xl flex items-center justify-center text-[#120c7a] font-bold text-lg">
+                        {(selectedStudent.displayName || selectedStudent.studentName || "S").charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-bold text-zinc-800">{selectedStudent.displayName || selectedStudent.studentName || "—"}</h3>
+                        <p className="text-xs text-zinc-400">Reg: <span className="font-mono font-bold text-[#120c7a]">{selectedStudent.regNo || selectedStudent.examNumber || "—"}</span></p>
+                      </div>
+                      <div className="flex gap-4 text-right items-center">
+                        <div>
+                          <p className="text-[9px] text-zinc-400 uppercase">Programme</p>
+                          <p className="text-xs font-bold text-zinc-600">{selectedStudent.programme || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-zinc-400 uppercase">Dept</p>
+                          <p className="text-xs font-bold text-zinc-600">{displayDept(selectedStudent.department) || "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-zinc-400 uppercase">Batch</p>
+                          <p className="text-xs font-bold text-zinc-600">{selectedStudent.batch || "—"}</p>
+                        </div>
+                        {selectedStudentQuota && (
+                          <div>
+                            <p className="text-[9px] text-zinc-400 uppercase">Quota</p>
+                            <span className="inline-flex items-center px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-lg border border-indigo-150 mt-0.5">
+                              {selectedStudentQuota}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fee Head</label>
-                      <select value={paymentForm.feeHead} onChange={e => setPaymentForm({...paymentForm, feeHead: e.target.value})}
-                        className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
-                        {(feeHeads.length ? feeHeads : DEFAULT_FEE_HEADS).map(h => <option key={h.name || h} value={h.name || h}>{h.name || h}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Mode *</label>
-                      <select value={paymentForm.mode} onChange={e => setPaymentForm({...paymentForm, mode: e.target.value})}
-                        className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
-                        {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.icon} {m.label}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Semester</label>
-                      <input value={paymentForm.semester} onChange={e => setPaymentForm({...paymentForm, semester: e.target.value})}
-                        className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="e.g. Sem 1" />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Ref No / Remarks</label>
-                      <input value={paymentForm.remarks} onChange={e => setPaymentForm({...paymentForm, remarks: e.target.value})}
-                        className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="Cheque no, UPI ref, or notes" />
-                    </div>
                   </div>
-                  <button onClick={handleRecordPayment} disabled={saving || !paymentForm.amount}
-                    className="w-full py-3 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#120c7a]/20">
-                    {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <CheckCircle2 size={18} />}
-                    Record Payment & Print Receipt
-                  </button>
-                </div>
+
+                  {studentFeeDetails ? (
+                    <>
+                      {/* Fee Summary Cards */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-4 text-center">
+                          <p className="text-[9px] text-zinc-400 uppercase font-bold">Total Fees</p>
+                          <p className="text-xl font-black text-zinc-800 mt-1">₹{studentFeeDetails.totalFees.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white rounded-2xl shadow-sm border border-emerald-200 p-4 text-center">
+                          <p className="text-[9px] text-emerald-500 uppercase font-bold">Paid</p>
+                          <p className="text-xl font-black text-emerald-600 mt-1">₹{studentFeeDetails.totalPaid.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white rounded-2xl shadow-sm border border-amber-200 p-4 text-center">
+                          <p className="text-[9px] text-amber-500 uppercase font-bold">Outstanding</p>
+                          <p className="text-xl font-black text-amber-600 mt-1">₹{studentFeeDetails.outstanding.toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      {/* Fee Head Breakdown */}
+                      {groupedStudentFees.length > 0 && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
+                          <div className="px-5 py-3 bg-zinc-50 border-b border-zinc-200">
+                            <h4 className="font-bold text-xs text-zinc-600 uppercase tracking-wider">Fee Head Breakdown</h4>
+                          </div>
+                          <table className="w-full text-sm border-collapse">
+                            <thead>
+                              <tr className="border-b border-zinc-200 bg-zinc-55/60 text-slate-400">
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-zinc-200">Academic Year</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-zinc-200">Sem</th>
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-zinc-200">Fee Head</th>
+                                <th className="px-4 py-3 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest border border-zinc-200">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {groupedStudentFees.flatMap((yearGroup) => {
+                                const totalYearRows = yearGroup.semGroups.reduce((s, sg) => s + sg.rows.length + (sg.rows.length > 1 ? 1 : 0), 0);
+                                let yearRowIdx = 0;
+                                return yearGroup.semGroups.flatMap((semGroup) => {
+                                  const isFirstYearRow = yearRowIdx === 0;
+                                  
+                                  // Calculate semester totals & payments
+                                  let semTotal = 0;
+                                  let semPaid = 0;
+                                  semGroup.rows.forEach(r => {
+                                    semTotal += (Number(r.amount) || 0);
+                                    const paidForThisHead = studentFeeDetails.studentPayments
+                                      .filter((p) => p.feeHead === r.head)
+                                      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+                                    semPaid += paidForThisHead;
+                                  });
+                                  const semRemaining = Math.max(0, semTotal - semPaid);
+
+                                  const rows = semGroup.rows.map((cfg, idx) => {
+                                    const paidForThisHead = studentFeeDetails.studentPayments
+                                      .filter((p) => p.feeHead === cfg.head)
+                                      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+                                    const remainingForThisHead = Math.max(0, Number(cfg.amount) - paidForThisHead);
+                                    const isFullyPaid = remainingForThisHead === 0;
+                                    const isPartiallyPaid = paidForThisHead > 0 && remainingForThisHead > 0;
+                                    
+                                    const showYear = isFirstYearRow && idx === 0;
+                                    const showSem = idx === 0;
+
+                                    const tr = (
+                                      <tr key={cfg.id || idx} className="hover:bg-slate-50 transition-colors">
+                                        {showYear ? (
+                                          <td className="px-4 py-3 text-xs font-bold text-zinc-600 align-top border border-zinc-200" rowSpan={totalYearRows}>{yearGroup.academicYear}</td>
+                                        ) : null}
+                                        {showSem ? (
+                                          <td className="px-4 py-3 text-xs font-bold text-zinc-600 align-top border border-zinc-200" rowSpan={semGroup.rows.length}>{semGroup.semester}</td>
+                                        ) : null}
+                                        <td className="px-4 py-3 text-sm font-bold border border-zinc-200 text-zinc-700">{cfg.head || 'Fee'}</td>
+                                        <td className="px-4 py-3 text-right text-sm font-black border border-zinc-200 text-zinc-700">
+                                          {isFullyPaid ? (
+                                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                                          ) : isPartiallyPaid ? (
+                                            <div className="flex flex-col items-end">
+                                              <span className="text-[#120c7a]">₹{remainingForThisHead.toLocaleString()}</span>
+                                              <span className="text-[9px] text-zinc-400 font-semibold">Total: ₹{cfg.amount.toLocaleString()}</span>
+                                            </div>
+                                          ) : (
+                                            <span>₹{remainingForThisHead.toLocaleString()}</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                    return tr;
+                                  });
+
+                                  yearRowIdx += semGroup.rows.length;
+
+                                  if (semGroup.rows.length > 1) {
+                                    yearRowIdx += 1;
+                                    const isSemFullyPaid = semRemaining === 0;
+                                    const isSemPartiallyPaid = semPaid > 0 && semRemaining > 0;
+                                    rows.push(
+                                      <tr key={`sem-total-${yearGroup.key}-${semGroup.key}`} className="bg-blue-50/20">
+                                        <td className="px-4 py-3 text-[10px] font-bold text-blue-600 text-right border border-zinc-200">Sem Total</td>
+                                        <td className="px-4 py-3 border border-zinc-200" />
+                                        <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-zinc-200">
+                                          {isSemFullyPaid ? (
+                                            <span className="text-emerald-600">Paid</span>
+                                          ) : isSemPartiallyPaid ? (
+                                            <div className="flex flex-col items-end">
+                                              <span>₹{semRemaining.toLocaleString()}</span>
+                                              <span className="text-[9px] text-blue-400 font-semibold">Total: ₹{semTotal.toLocaleString()}</span>
+                                            </div>
+                                          ) : (
+                                            <span>₹{semRemaining.toLocaleString()}</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  return rows;
+                                });
+                              })}
+
+                              {/* Outstanding Total Row */}
+                              <tr className="bg-zinc-50 font-bold border-t border-zinc-200">
+                                <td colSpan={3} className="px-4 py-3 text-left text-sm font-extrabold text-zinc-800 border border-zinc-200">Outstanding Total</td>
+                                <td className="px-4 py-3 text-right text-sm font-black text-[#120c7a] border border-zinc-200">
+                                  {studentFeeDetails.outstanding === 0 ? (
+                                    <span className="text-emerald-600">Paid</span>
+                                  ) : studentFeeDetails.totalPaid > 0 ? (
+                                    <div className="flex flex-col items-end">
+                                      <span>₹{studentFeeDetails.outstanding.toLocaleString()}</span>
+                                      <span className="text-[9px] text-zinc-400 font-semibold">Total Config: ₹{studentFeeDetails.totalFees.toLocaleString()}</span>
+                                    </div>
+                                  ) : (
+                                    <span>₹{studentFeeDetails.outstanding.toLocaleString()}</span>
+                                  )}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Record Payment */}
+                      {studentFeeDetails.outstanding > 0 && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-5">
+                          <h4 className="font-bold text-sm text-zinc-700 mb-4 flex items-center gap-2"><IndianRupee size={16} /> Record Payment</h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fee Head *</label>
+                              <select value={paymentForm.feeHead} onChange={e => {
+                                const head = e.target.value;
+                                const headItem = studentFeeDetails.headBreakdown.find(h => h.head === head);
+                                const autoAmount = headItem ? headItem.due : "";
+                                setPaymentForm({...paymentForm, feeHead: head, amount: autoAmount ? String(autoAmount) : paymentForm.amount});
+                              }}
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
+                                <option value="">Select Fee Head</option>
+                                {studentFeeDetails.headBreakdown.filter(h => h.due > 0).map(h => (
+                                  <option key={h.head} value={h.head}>{h.head} — ₹{h.due.toLocaleString()} due</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount *</label>
+                              <div className="relative"><IndianRupee size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                                <input value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})} type="number"
+                                  className="w-full pl-8 pr-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="0" />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Mode *</label>
+                              <select value={paymentForm.mode} onChange={e => setPaymentForm({...paymentForm, mode: e.target.value})}
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
+                                {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.icon} {m.label}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Date</label>
+                              <input value={paymentForm.paymentDate} onChange={e => setPaymentForm({...paymentForm, paymentDate: e.target.value})} type="date"
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Semester</label>
+                              <input value={paymentForm.semester} onChange={e => setPaymentForm({...paymentForm, semester: e.target.value})}
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="e.g. Sem 3" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Ref No / Remarks</label>
+                              <input value={paymentForm.remarks} onChange={e => setPaymentForm({...paymentForm, remarks: e.target.value})}
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="Cheque no, UPI ref, or notes" />
+                            </div>
+                          </div>
+                          <button onClick={handleRecordPayment} disabled={saving || !paymentForm.amount || !paymentForm.feeHead}
+                            className="w-full mt-4 py-3 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#120c7a]/20">
+                            {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <CheckCircle2 size={18} />}
+                            Record Payment & Generate Receipt
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Payment History */}
+                      {studentFeeDetails.studentPayments.length > 0 && (
+                        <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
+                          <div className="px-5 py-3 bg-zinc-50 border-b border-zinc-200">
+                            <h4 className="font-bold text-xs text-zinc-600 uppercase tracking-wider">Payment History ({studentFeeDetails.studentPayments.length})</h4>
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-zinc-100">
+                                <th className="px-5 py-2.5 text-left text-[10px] font-bold text-zinc-400 uppercase">Date</th>
+                                <th className="px-5 py-2.5 text-left text-[10px] font-bold text-zinc-400 uppercase">Receipt</th>
+                                <th className="px-5 py-2.5 text-left text-[10px] font-bold text-zinc-400 uppercase">Fee Head</th>
+                                <th className="px-5 py-2.5 text-center text-[10px] font-bold text-zinc-400 uppercase">Mode</th>
+                                <th className="px-5 py-2.5 text-right text-[10px] font-bold text-zinc-400 uppercase">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {studentFeeDetails.studentPayments.sort((a, b) => {
+                                const getTS = (p) => p.paymentDate || p.createdAt || p.verifiedAt || 0;
+                                const da = getTS(a).toDate ? getTS(a).toDate() : new Date(getTS(a));
+                                const db = getTS(b).toDate ? getTS(b).toDate() : new Date(getTS(b));
+                                return db - da;
+                              }).slice(0, 10).map((p, i) => (
+                                <tr key={p.id || i} className="border-b border-zinc-50 hover:bg-zinc-50/50">
+                                  <td className="px-5 py-2.5 text-xs text-zinc-500 font-medium">
+                                    <span className="block">{
+                                      (() => {
+                                        const ts = p.paymentDate || p.createdAt || p.verifiedAt;
+                                        if (!ts) return "—";
+                                        const d = ts.toDate ? ts.toDate() : new Date(ts);
+                                        return isNaN(d.getTime()) ? "—" : d.toLocaleDateString('en-IN');
+                                      })()
+                                    }</span>
+                                    {(() => {
+                                      const ts = p.createdAt || p.paymentDate || p.verifiedAt;
+                                      if (!ts) return null;
+                                      const d = ts.toDate ? ts.toDate() : new Date(ts);
+                                      if (isNaN(d.getTime())) return null;
+                                      return (
+                                        <span className="text-[10px] text-zinc-400 font-normal">
+                                          {d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                      );
+                                    })()}
+                                  </td>
+                                  <td className="px-5 py-2.5 text-xs">
+                                    <span className="font-mono font-bold text-[#120c7a] block">{p.receiptNo || p.orderId || "—"}</span>
+                                    {p.gatewayResponse?.rrn && (
+                                      <span className="text-[10px] text-zinc-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-5 py-2.5"><span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-bold">{p.feeHead}</span></td>
+                                  <td className="px-5 py-2.5 text-center text-xs capitalize text-zinc-500">
+                                    {p.mode ? p.mode : (p.status ? "Online" : "—")}
+                                  </td>
+                                  <td className="px-5 py-2.5 text-right font-bold text-xs text-emerald-600">₹{(p.chargedAmount || p.amount || 0).toLocaleString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {studentFeeDetails.outstanding === 0 && studentFeeDetails.totalFees > 0 && (
+                        <div className="bg-emerald-50 rounded-2xl border border-emerald-200 p-6 text-center">
+                          <CheckCircle2 size={32} className="mx-auto text-emerald-500 mb-2" />
+                          <p className="text-sm font-bold text-emerald-700">All fees paid for this student</p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 text-center">
+                      <p className="text-sm text-zinc-400">No fee structure configured for this student's programme/batch.</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -517,11 +1035,66 @@ export default function FeeOperations() {
         {/* TAB 3: Receipts */}
         {tab === "receipts" && (
           <div className="space-y-4">
-            <div className="relative max-w-md">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-              <input value={receiptSearch} onChange={e => setReceiptSearch(e.target.value)}
-                placeholder="Search by receipt#, student, or amount..."
-                className="w-full pl-9 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input value={receiptSearch} onChange={e => setReceiptSearch(e.target.value)}
+                  placeholder="Search by receipt#, student, or amount..."
+                  className="w-full pl-9 pr-4 py-2.5 bg-white border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase">From</label>
+                <input type="date" value={receiptDateFrom} onChange={e => setReceiptDateFrom(e.target.value)}
+                  className="px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-100" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] font-bold text-zinc-400 uppercase">To</label>
+                <input type="date" value={receiptDateTo} onChange={e => setReceiptDateTo(e.target.value)}
+                  className="px-3 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-100" />
+              </div>
+              {(receiptDateFrom || receiptDateTo || receiptSearch) && (
+                <button onClick={() => { setReceiptSearch(""); setReceiptDateFrom(""); setReceiptDateTo(""); }}
+                  className="text-[10px] font-bold text-zinc-400 hover:text-zinc-600 px-2 py-1">
+                  ✕ Clear
+                </button>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[10px] font-bold text-zinc-400">{filteredReceipts.length} receipt{filteredReceipts.length !== 1 ? 's' : ''}</span>
+                <button onClick={() => {
+                  const rows = filteredReceipts.map(r => ({
+                    'Receipt No': r.receiptNo || '',
+                    'Student Name': r.studentName || '',
+                    'Exam Number': r.examNumber || '',
+                    'Fee Head': r.feeHead || '',
+                    'Amount': r.amount || 0,
+                    'Mode': r.mode || '',
+                    'Date': r.paymentDate?.toDate?.()?.toLocaleDateString('en-IN') || '',
+                    'Status': r.status || 'active',
+                    'Semester': r.semester || '',
+                    'Remarks': r.remarks || '',
+                  }));
+                  const ws = XLSX.utils.json_to_sheet(rows);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, "Receipts");
+                  ws['!cols'] = [
+                    { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 },
+                    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 },
+                    { wch: 10 }, { wch: 25 }
+                  ];
+                  const dateLabel = receiptDateFrom && receiptDateTo
+                    ? `${receiptDateFrom}_to_${receiptDateTo}`
+                    : receiptDateFrom
+                    ? `from_${receiptDateFrom}`
+                    : receiptDateTo
+                    ? `to_${receiptDateTo}`
+                    : 'all';
+                  XLSX.writeFile(wb, `Fee_Receipts_${dateLabel}.xlsx`);
+                  showToast(`Exported ${filteredReceipts.length} receipts`);
+                }}
+                  className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 flex items-center gap-1.5 shadow-sm">
+                  <Download size={14} /> Export Excel
+                </button>
+              </div>
             </div>
             <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
               <div className="overflow-x-auto">
@@ -538,22 +1111,41 @@ export default function FeeOperations() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {receipts.filter(r => !receiptSearch || r.receiptNo?.toLowerCase().includes(receiptSearch.toLowerCase()) || r.studentName?.toLowerCase().includes(receiptSearch.toLowerCase())).length === 0 ? (
+                    {filteredReceipts.length === 0 ? (
                       <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 text-sm">No receipts found</td></tr>
-                    ) : receipts.filter(r => !receiptSearch || r.receiptNo?.toLowerCase().includes(receiptSearch.toLowerCase()) || r.studentName?.toLowerCase().includes(receiptSearch.toLowerCase())).map((r, i) => (
+                    ) : filteredReceipts.map((r, i) => (
                       <tr key={r.id || i} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="px-4 py-3"><span className="text-xs font-mono font-bold text-[#120c7a]">{r.receiptNo || "—"}</span></td>
-                        <td className="px-4 py-3"><p className="text-sm font-medium text-zinc-700">{r.studentName}</p><p className="text-[9px] text-zinc-400">{r.examNumber}</p></td>
+                        <td className="px-4 py-3">
+                          <p className="text-sm font-bold text-zinc-700">{r.studentName}</p>
+                          <p className="text-[9px] text-zinc-400 font-mono">{r.examNumber}</p>
+                        </td>
                         <td className="px-4 py-3"><span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-bold">{r.feeHead}</span></td>
-                        <td className="px-4 py-3 text-center text-xs capitalize">{r.mode}</td>
-                        <td className="px-4 py-3 text-right font-black text-sm text-zinc-800">₹{(r.amount || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-center text-xs capitalize text-zinc-500">{r.mode}</td>
+                        <td className="px-4 py-3 text-right font-black text-sm text-zinc-800">₹{r.amount.toLocaleString()}</td>
                         <td className="px-4 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${r.status === 'cancelled' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.status || 'active'}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${r.status === 'cancelled' ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'}`}>
+                            {r.status || 'active'}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-center">
                           <div className="flex gap-1 justify-center">
-                            <button className="p-1.5 hover:bg-blue-50 rounded-lg text-zinc-400 hover:text-blue-600"><Printer size={14} /></button>
-                            {r.status !== 'cancelled' && <button onClick={() => { const reason = prompt("Reason for cancellation:"); if (reason) cancelReceipt(r.id, reason); }} className="p-1.5 hover:bg-red-50 rounded-lg text-zinc-400 hover:text-red-600"><X size={14} /></button>}
+                            <button 
+                              onClick={() => setReceiptModal({ open: true, payment: r })} 
+                              className="p-1.5 hover:bg-blue-50 rounded-lg text-zinc-400 hover:text-[#120c7a]"
+                              title="Print Receipt"
+                            >
+                              <Printer size={14} />
+                            </button>
+                            {!r.isOnline && r.status !== 'cancelled' && (
+                              <button 
+                                onClick={() => { const reason = prompt("Reason for cancellation:"); if (reason) cancelReceipt(r.id, reason); }} 
+                                className="p-1.5 hover:bg-red-50 rounded-lg text-zinc-400 hover:text-red-600"
+                                title="Cancel Receipt"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -933,6 +1525,177 @@ export default function FeeOperations() {
           </div>
         </div>
       )}
+
+      {/* Receipt Modal */}
+      {receiptModal.open && receiptModal.payment && (() => {
+        const p = receiptModal.payment;
+        // Resolve student metadata by searching the users/students list
+        const sData = students.find(s => s.id === p.studentId || s.regNo === p.examNumber);
+        
+        const resolvedName = p.studentName || sData?.displayName || sData?.studentName || "Student";
+        const resolvedEmail = sData?.email || "";
+        const resolvedReg = p.examNumber || sData?.regNo || sData?.admissionNo || "—";
+        const resolvedDept = sData?.department ? `${formatProgrammeKey(sData.programme)} - ${sData.department}` : "—";
+        
+        // HDFC fields
+        const txId = p.rawRecord?.gatewayResponse?.txnId || p.rawRecord?.gatewayResponse?.epgTxnId || p.rawRecord?.refNo || "—";
+        const rrn = p.rawRecord?.gatewayResponse?.rrn || "—";
+        const authCode = p.rawRecord?.gatewayResponse?.authCode || "—";
+        
+        // Formatter helpers
+        const formatDate = (ts) => {
+          if (!ts) return "-";
+          const d = ts.toDate ? ts.toDate() : new Date(ts);
+          return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+        };
+        const formatTime = (ts) => {
+          if (!ts) return "";
+          const d = ts.toDate ? ts.toDate() : new Date(ts);
+          return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+        };
+        
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200" id="receipt-modal-backdrop" onClick={() => setReceiptModal({ open: false, payment: null })}>
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #printable-receipt, #printable-receipt * {
+                  visibility: visible !important;
+                }
+                #printable-receipt {
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  width: 100%;
+                  margin: 0;
+                  padding: 20px;
+                  box-shadow: none !important;
+                  border: none !important;
+                }
+                #receipt-modal-backdrop {
+                  background: none !important;
+                  backdrop-filter: none !important;
+                }
+                .no-print {
+                  display: none !important;
+                }
+              }
+            `}</style>
+            
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] transform animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between no-print">
+                <h3 className="font-bold text-zinc-800 flex items-center gap-2">
+                  <FileText className="text-[#120c7a]" size={20} />
+                  <span>Payment Receipt</span>
+                </h3>
+                <button
+                  onClick={() => setReceiptModal({ open: false, payment: null })}
+                  className="p-2 hover:bg-zinc-100 rounded-xl"
+                ><X size={18} /></button>
+              </div>
+
+              <div className="p-8 overflow-y-auto flex-1 space-y-8">
+                <div id="printable-receipt" className="bg-white p-4 md:p-6 border border-slate-200 rounded-2xl shadow-sm space-y-5 md:space-y-6 relative overflow-hidden">
+                  {/* Centered Watermark Stamp */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+                    <span className="text-emerald-500/[0.04] font-black text-6xl md:text-8xl uppercase tracking-[0.25em] -rotate-12 border-8 border-emerald-500/[0.04] rounded-3xl px-8 py-4">
+                      PAID
+                    </span>
+                  </div>
+
+                  {/* Receipt Header */}
+                  <div className="flex flex-col items-center text-center border-b border-slate-100 pb-5 md:pb-6 relative z-10">
+                    <img src="/logo.png" className="h-14 md:h-16 w-auto object-contain mb-2 md:mb-3" alt="Logo" />
+                    <div>
+                      <h4 className="font-black text-slate-800 text-base md:text-lg uppercase tracking-wide">Fee Receipt</h4>
+                      <p className="text-xs md:text-sm text-slate-400">
+                        {p.isOnline ? "Official Fee Receipt | HDFC SmartGateway secure payment" : "Official Fee Receipt | Campus Cashier Payment Office"}
+                      </p>
+                      <p className="text-[10px] md:text-xs text-slate-400 mt-1 font-semibold">
+                        Receipt Date: {formatDate(p.paymentDate)} {formatTime(p.paymentDate)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Student & Transaction Info Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 md:gap-y-0 md:gap-x-8 text-xs md:text-sm relative z-10">
+                    <div className="space-y-0.5">
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Student Details</p>
+                      <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
+                      <p className="text-slate-500 break-all">{resolvedEmail || "—"}</p>
+                      <p className="text-slate-500">Reg/Adm No: {resolvedReg}</p>
+                      <p className="text-slate-500 leading-tight">Dept: {resolvedDept}</p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Receipt Information</p>
+                      <p className="font-bold text-slate-800 mt-1 break-all">Receipt No: <span className="font-mono">{p.receiptNo || "—"}</span></p>
+                      <p className="text-slate-500">Gateway/Method: {p.isOnline ? "HDFC SmartGateway" : `Manual (${p.mode})`}</p>
+                      <p className="text-slate-500 break-all">Txn ID / Ref: <span className="font-mono">{txId}</span></p>
+                      {rrn && rrn !== "—" && <p className="text-slate-500 break-all">Bank RRN: <span className="font-mono">{rrn}</span></p>}
+                    </div>
+                  </div>
+
+                  {/* Fee Item Table */}
+                  <div className="mt-4 md:mt-6 border border-slate-200 rounded-xl overflow-hidden relative z-10">
+                    <table className="w-full text-xs md:text-sm table-fixed">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold text-[10px] md:text-xs">
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/2">Fee Item</th>
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/3">Mode</th>
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700 text-[11px] md:text-sm">
+                        <tr>
+                          <td className="px-3 py-3 md:px-4 md:py-4 font-bold break-words">{p.feeHead || "Semester Fee"}</td>
+                          <td className="px-3 py-3 md:px-4 md:py-4 font-semibold text-slate-400 break-words">
+                            {p.isOnline ? "Online (SmartGateway)" : `Offline (${p.mode})`}
+                          </td>
+                          <td className="px-3 py-3 md:px-4 md:py-4 text-right font-black text-slate-800">
+                            ₹{p.amount.toLocaleString()}
+                          </td>
+                        </tr>
+                        <tr className="bg-slate-50/50 font-black text-slate-800 text-xs md:text-base">
+                          <td colSpan={2} className="px-3 py-2.5 md:px-4 md:py-3 text-right">Total Paid</td>
+                          <td className="px-3 py-2.5 md:px-4 md:py-3 text-right text-[#120c7a] font-black">
+                            ₹{p.amount.toLocaleString()}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Verification footer */}
+                  <div className="border-t border-slate-100 pt-5 flex flex-col md:flex-row md:items-center justify-between gap-2 relative z-10">
+                    <div className="flex items-center gap-1.5 text-[10px] md:text-xs text-slate-400">
+                      <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
+                      <span>Computer generated receipt. No signature required.</span>
+                    </div>
+                    {authCode && authCode !== "—" && (
+                      <span className="text-[10px] md:text-xs font-mono text-slate-400 font-bold break-all">AUTH CODE: {authCode}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50 no-print">
+                <button
+                  onClick={() => setReceiptModal({ open: false, payment: null })}
+                  className="px-5 py-2.5 text-xs font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl"
+                >Close</button>
+                <button
+                  onClick={() => window.print()}
+                  className="px-6 py-2.5 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20 transition-all"
+                >
+                  Print Receipt
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </Layout>
   );
 }

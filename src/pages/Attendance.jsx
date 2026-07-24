@@ -282,7 +282,7 @@ export default function Attendance() {
           if ((userRole === 'Faculty' || userRole === 'HOD') && uid !== currentUid) return;
           if (Array.isArray(codes)) {
             codes.forEach(code => {
-              contexts.push({ code, batch, ay, sem, section: secSuffix, uid });
+              contexts.push({ code, batch, ay, sem, section: secSuffix, uid, dept: deptKey, progKey });
               batchesToFetchSyllabus.add(batch);
             });
           }
@@ -300,7 +300,7 @@ export default function Attendance() {
         const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}-${ctx.section}`;
         if (!seenAssignments.has(assignmentIdentifier)) {
           uniqueSubjectAssignments.push({
-            value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section }),
+            value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section, dept: ctx.dept, progKey: ctx.progKey }),
             text: `${ctx.code} - ${getCourseName(namesMap, ctx.code, ctx.dept, ctx.progKey) || ""}${ctx.section ? ` (${ctx.section})` : ''}`
           });
           seenAssignments.add(assignmentIdentifier);
@@ -1133,8 +1133,8 @@ export default function Attendance() {
                 </div>
                 {(currentRecordData && period) || (periodConflict && period) ? (
                   <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${(currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
-                      ? 'bg-red-100 border-red-300 text-red-700'
-                      : 'bg-amber-100 border-amber-300 text-amber-700'
+                    ? 'bg-red-100 border-red-300 text-red-700'
+                    : 'bg-amber-100 border-amber-300 text-amber-700'
                     }`}>
                     {periodConflict ? `Already marked (${periodConflict.subjectCode})` : 'Already marked'}
                   </span>

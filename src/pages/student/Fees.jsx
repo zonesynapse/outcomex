@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { db, auth, functions } from "../../firebase";
 import { doc, getDoc, collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2,
   ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
-  Ban,
+  Ban, ShieldAlert,
 } from "lucide-react";
 import { formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
 
@@ -23,11 +23,13 @@ export default function Fees() {
   const [payments, setPayments] = useState([]);
   const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0 });
   const [processing, setProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState(0);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [seatCategory, setSeatCategory] = useState("");
   const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
   const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
+  const ignoreBeforeUnloadRef = useRef(false);
 
   const verifyPaymentOnReturn = useCallback(async (orderId) => {
     try {
@@ -107,7 +109,7 @@ export default function Fees() {
   // Prevent accidental page refresh/close during payment processing
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (processing) {
+      if (processing && !ignoreBeforeUnloadRef.current) {
         e.preventDefault();
         e.returnValue = "Payment is processing. Please do not close or refresh this page.";
         return e.returnValue;
@@ -117,6 +119,17 @@ export default function Fees() {
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
+  }, [processing]);
+
+  useEffect(() => {
+    let interval;
+    if (processing) {
+      setProcessingStep(0);
+      interval = setInterval(() => {
+        setProcessingStep((prev) => (prev < 4 ? prev + 1 : prev));
+      }, 850);
+    }
+    return () => clearInterval(interval);
   }, [processing]);
 
   // Load seatCategory from _student_data or _profile_data (reactive)
@@ -302,6 +315,7 @@ export default function Fees() {
 
       const { paymentUrl, orderId } = result.data;
       setPayModal({ ...payModal, open: false });
+      ignoreBeforeUnloadRef.current = true;
       window.location.href = paymentUrl;
     } catch (err) {
       console.error("Payment session error:", err);
@@ -841,63 +855,63 @@ export default function Fees() {
 
               <div className="p-8 overflow-y-auto flex-1 space-y-8">
                 {/* Print Content Wrapper */}
-                <div id="printable-receipt" className="bg-white p-6 border border-slate-200 rounded-2xl shadow-sm space-y-6 relative overflow-hidden">
+                <div id="printable-receipt" className="bg-white p-4 md:p-6 border border-slate-200 rounded-2xl shadow-sm space-y-5 md:space-y-6 relative overflow-hidden">
                   {/* Centered Watermark Stamp */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
-                    <span className="text-emerald-500/[0.04] font-black text-8xl uppercase tracking-[0.25em] -rotate-12 border-8 border-emerald-500/[0.04] rounded-3xl px-8 py-4">
+                    <span className="text-emerald-500/[0.04] font-black text-6xl md:text-8xl uppercase tracking-[0.25em] -rotate-12 border-8 border-emerald-500/[0.04] rounded-3xl px-8 py-4">
                       PAID
                     </span>
                   </div>
 
                   {/* Receipt Header */}
-                  <div className="flex flex-col items-center text-center border-b border-slate-100 pb-6 relative z-10">
-                    <img src="/logo.png" className="h-16 w-auto object-contain mb-3" alt="Logo" />
+                  <div className="flex flex-col items-center text-center border-b border-slate-100 pb-5 md:pb-6 relative z-10">
+                    <img src="/logo.png" className="h-14 md:h-16 w-auto object-contain mb-2 md:mb-3" alt="Logo" />
                     <div>
-                      <h4 className="font-black text-slate-800 text-lg uppercase tracking-wide">Fee Receipt</h4>
-                      <p className="text-sm text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
-                      <p className="text-xs text-slate-400 mt-1 font-semibold">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
+                      <h4 className="font-black text-slate-800 text-base md:text-lg uppercase tracking-wide">Fee Receipt</h4>
+                      <p className="text-xs md:text-sm text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
+                      <p className="text-[10px] md:text-xs text-slate-400 mt-1 font-semibold">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
                     </div>
                   </div>
 
                   {/* Student & Transaction Info Grid */}
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm relative z-10">
-                    <div>
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-xs">Student Details</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 md:gap-y-0 md:gap-x-8 text-xs md:text-sm relative z-10">
+                    <div className="space-y-0.5">
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Student Details</p>
                       <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
-                      <p className="text-slate-500 mt-0.5">{resolvedEmail}</p>
-                      <p className="text-slate-500 mt-0.5">Reg/Adm No: {resolvedReg}</p>
-                      <p className="text-slate-500 mt-0.5">Dept: {resolvedDept}</p>
+                      <p className="text-slate-500 break-all">{resolvedEmail}</p>
+                      <p className="text-slate-500">Reg/Adm No: {resolvedReg}</p>
+                      <p className="text-slate-500 leading-tight">Dept: {resolvedDept}</p>
                     </div>
-                    <div>
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-xs">Receipt Information</p>
-                      <p className="font-bold text-slate-800 mt-1">Receipt No: <span className="font-mono">{p.orderId}</span></p>
-                      <p className="text-slate-500 mt-0.5">Gateway: HDFC SmartGateway</p>
-                      <p className="text-slate-500 mt-0.5">Txn ID: <span className="font-mono">{txId}</span></p>
-                      {rrn && rrn !== "—" && <p className="text-slate-500 mt-0.5">Bank RRN: <span className="font-mono">{rrn}</span></p>}
+                    <div className="space-y-0.5">
+                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Receipt Information</p>
+                      <p className="font-bold text-slate-800 mt-1 break-all">Receipt No: <span className="font-mono">{p.orderId}</span></p>
+                      <p className="text-slate-500">Gateway: HDFC SmartGateway</p>
+                      <p className="text-slate-500 break-all">Txn ID: <span className="font-mono">{txId}</span></p>
+                      {rrn && rrn !== "—" && <p className="text-slate-500 break-all">Bank RRN: <span className="font-mono">{rrn}</span></p>}
                     </div>
                   </div>
 
                   {/* Fee Item Table */}
-                  <div className="mt-6 border border-slate-200 rounded-xl overflow-hidden relative z-10">
-                    <table className="w-full text-sm">
+                  <div className="mt-4 md:mt-6 border border-slate-200 rounded-xl overflow-hidden relative z-10">
+                    <table className="w-full text-xs md:text-sm table-fixed">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold">
-                          <th className="px-4 py-3 text-left">Fee Item Description</th>
-                          <th className="px-4 py-3 text-left">Payment Mode</th>
-                          <th className="px-4 py-3 text-right">Amount</th>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold text-[10px] md:text-xs">
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/2">Fee Item</th>
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/3">Mode</th>
+                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-right">Amount</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                      <tbody className="divide-y divide-slate-100 text-slate-700 text-[11px] md:text-sm">
                         <tr>
-                          <td className="px-4 py-4 font-bold">{p.feeHead || "Semester Fee"}</td>
-                          <td className="px-4 py-4 font-semibold text-slate-500">Online Payment (SmartGateway)</td>
-                          <td className="px-4 py-4 text-right font-black text-slate-800">
+                          <td className="px-3 py-3 md:px-4 md:py-4 font-bold break-words">{p.feeHead || "Semester Fee"}</td>
+                          <td className="px-3 py-3 md:px-4 md:py-4 font-semibold text-slate-400 break-words">Online (SmartGateway)</td>
+                          <td className="px-3 py-3 md:px-4 md:py-4 text-right font-black text-slate-800">
                             {formatCurrency(p.chargedAmount || p.amount)}
                           </td>
                         </tr>
-                        <tr className="bg-slate-50/50 font-black text-slate-800 text-base">
-                          <td colSpan={2} className="px-4 py-3 text-right">Total Amount Paid</td>
-                          <td className="px-4 py-3 text-right text-[#120c7a]">
+                        <tr className="bg-slate-50/50 font-black text-slate-800 text-xs md:text-base">
+                          <td colSpan={2} className="px-3 py-2.5 md:px-4 md:py-3 text-right">Total Paid</td>
+                          <td className="px-3 py-2.5 md:px-4 md:py-3 text-right text-[#120c7a] font-black">
                             {formatCurrency(p.chargedAmount || p.amount)}
                           </td>
                         </tr>
@@ -906,13 +920,13 @@ export default function Fees() {
                   </div>
 
                   {/* Verification footer */}
-                  <div className="border-t border-slate-100 pt-6 flex items-center justify-between relative z-10">
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
-                      <CheckCircle2 size={12} className="text-emerald-500" />
-                      <span>This is a computer generated receipt. No signature is required.</span>
+                  <div className="border-t border-slate-100 pt-5 flex flex-col md:flex-row md:items-center justify-between gap-2 relative z-10">
+                    <div className="flex items-center gap-1.5 text-[10px] md:text-xs text-slate-400">
+                      <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
+                      <span>Computer generated receipt. No signature required.</span>
                     </div>
                     {authCode && authCode !== "—" && (
-                      <span className="text-xs font-mono text-slate-400 font-bold">AUTH CODE: {authCode}</span>
+                      <span className="text-[10px] md:text-xs font-mono text-slate-400 font-bold break-all">AUTH CODE: {authCode}</span>
                     )}
                   </div>
                 </div>
@@ -937,34 +951,56 @@ export default function Fees() {
 
       {/* Fullscreen Secure Payment Processing Overlay */}
       {processing && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[999] flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-300">
-          <div className="max-w-md space-y-6">
-            {/* Animated Secure Gear / Payment Loop Graphic */}
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xl z-[999] flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-300">
+          <div className="max-w-md w-full space-y-8">
+            {/* Animated Secure Brand Glow & Rings */}
             <div className="relative flex items-center justify-center h-28 w-28 mx-auto">
-              <div className="absolute inset-0 rounded-full border-4 border-t-[#120c7a] border-r-blue-500 border-b-emerald-500 border-l-slate-800 animate-spin duration-[1500ms]" />
-              <div className="absolute inset-2 rounded-full border-4 border-t-emerald-500 border-r-slate-800 border-b-[#120c7a] border-l-blue-500 animate-spin duration-1000 rotate-180" />
-              <div className="p-4 bg-white rounded-full shadow-lg relative z-10 flex items-center justify-center text-[#120c7a] animate-pulse">
-                <ShieldAlert size={36} className="text-[#120c7a]" />
+              <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#120c7a]/30 to-violet-500/30 blur-xl animate-pulse" />
+              {/* Outer brand ring */}
+              <div className="absolute inset-0 rounded-full border-4 border-slate-900 border-t-[#120c7a] border-r-violet-600 animate-spin duration-[1200ms]" />
+              {/* Inner counter-rotating ring */}
+              <div className="absolute inset-2 rounded-full border-2 border-slate-900 border-t-violet-400 border-l-[#120c7a] animate-spin duration-[800ms]" style={{ animationDirection: "reverse" }} />
+              {/* Glowing center chip */}
+              <div className="h-16 w-16 bg-white/95 rounded-full shadow-2xl relative z-10 flex items-center justify-center border border-[#120c7a]/15">
+                <IndianRupee className="h-7 w-7 text-[#120c7a] animate-pulse" />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-xl font-black text-white tracking-wide">Processing Secure Payment...</h3>
-              <p className="text-sm text-slate-300 font-semibold max-w-sm mx-auto">
-                Please wait while we establish a secure connection with HDFC SmartGateway.
-              </p>
+            {/* Glassmorphic progress box */}
+            <div className="bg-slate-900/40 border border-white/5 rounded-3xl p-6 backdrop-blur-md space-y-5 shadow-2xl relative overflow-hidden">
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-black text-white tracking-wide">Connecting HDFC Gateway</h3>
+                <p className="text-xs text-indigo-300 font-bold uppercase tracking-wider animate-pulse min-h-[16px]">
+                  {([
+                    "Initiating secure connection...",
+                    "Creating transaction session...",
+                    "Verifying gateway handshake...",
+                    "Acquiring checkout token...",
+                    "Redirecting to HDFC Bank..."
+                  ])[processingStep] || "Processing redirect..."}
+                </p>
+              </div>
+
+              {/* Glowing progress line */}
+              <div className="w-full bg-slate-900/60 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-[#120c7a] via-violet-500 to-indigo-400 h-1.5 rounded-full transition-all duration-500 shadow-[0_0_8px_rgba(139,92,246,0.5)]" 
+                  style={{ width: `${(processingStep + 1) * 20}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-ping" />
+                <span>Secured 256-bit Connection</span>
+              </div>
             </div>
 
             <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5">
-              <Loader2 size={14} className="text-yellow-400 animate-spin" />
-              <span className="text-xs text-yellow-400 font-bold uppercase tracking-wider animate-pulse">
+              <Loader2 size={12} className="text-yellow-400 animate-spin" />
+              <span className="text-[10px] text-yellow-400 font-bold uppercase tracking-wider animate-pulse">
                 Do not refresh, go back, or close this window
               </span>
             </div>
-
-            <p className="text-[10px] text-slate-500 font-medium">
-              Secured by 256-bit SSL encryption & HDFC Bank SmartGateway.
-            </p>
           </div>
         </div>
       )}
