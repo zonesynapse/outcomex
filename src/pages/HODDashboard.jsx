@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, onSnapshot, getDocs, setDoc } from "firebase/firestore";
+import { doc, collection, getDoc, onSnapshot, getDocs, setDoc, query, where } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
-  Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw
+  Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check
 } from "lucide-react";
 
 import Layout from "../components/Layout";
@@ -101,6 +101,121 @@ export default function HODDashboard() {
   const [showFilters, setShowFilters] = useState(false);
   const [batchStrengthModal, setBatchStrengthModal] = useState({ open: false });
   const [sectionStudents, setSectionStudents] = useState([]);
+
+  const [pendingActivities, setPendingActivities] = useState([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(true);
+  const [reviewActivity, setReviewActivity] = useState(null);
+  const [showActivityModal, setShowActivityModal] = useState(false);
+  const [returnComment, setReturnComment] = useState("");
+  const [showReturnInput, setShowReturnInput] = useState(false);
+  const [isActioning, setIsActioning] = useState(false);
+
+  useEffect(() => {
+    if (!hodDepartment) {
+      setActivitiesLoading(false);
+      return;
+    }
+    setActivitiesLoading(true);
+    let list1 = [];
+    let list2 = [];
+
+    const q1 = query(
+      collection(db, "activity_entries"),
+      where("status", "==", "HOD_Pending")
+    );
+    const unsub1 = onSnapshot(q1, (snapshot) => {
+      list1 = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        if (data.department === hodDepartment) {
+          list1.push({ id: d.id, ...data });
+        }
+      });
+      combineAndSet();
+    }, (err) => console.error("Error loading activity_entries:", err));
+
+    const q2 = query(
+      collection(db, "step_activities"),
+      where("status", "==", "HOD_Pending")
+    );
+    const unsub2 = onSnapshot(q2, (snapshot) => {
+      list2 = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        if (data.department === hodDepartment) {
+          list2.push({ id: d.id, isStep: true, ...data });
+        }
+      });
+      combineAndSet();
+    }, (err) => console.error("Error loading step_activities:", err));
+
+    const combineAndSet = () => {
+      const combined = [...list1, ...list2].sort((a, b) => {
+        const dateA = a.createdAt || '';
+        const dateB = b.createdAt || '';
+        return dateB.localeCompare(dateA);
+      });
+      setPendingActivities(combined);
+      setActivitiesLoading(false);
+    };
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, [hodDepartment]);
+
+  const handleApproveActivity = async (act) => {
+    if (!act) return;
+    setIsActioning(true);
+    try {
+      const docRef = doc(db, act.isStep ? "step_activities" : "activity_entries", act.id);
+      await setDoc(docRef, {
+        status: "Approved",
+        comments: "Approved by HOD",
+        reviewedBy: currentUid || "",
+        reviewedByName: hodName || "HOD",
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      alert("Activity approved successfully!");
+      setReviewActivity(null);
+      setShowActivityModal(false);
+    } catch (err) {
+      console.error("Error approving activity:", err);
+      alert("Failed to approve activity.");
+    } finally {
+      setIsActioning(false);
+    }
+  };
+
+  const handleReturnActivity = async (act) => {
+    if (!act) return;
+    if (!returnComment.trim()) {
+      alert("Please enter comments explaining the corrections needed.");
+      return;
+    }
+    setIsActioning(true);
+    try {
+      const docRef = doc(db, act.isStep ? "step_activities" : "activity_entries", act.id);
+      await setDoc(docRef, {
+        status: "Returned",
+        comments: returnComment,
+        reviewedBy: currentUid || "",
+        reviewedByName: hodName || "HOD",
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      alert("Activity returned for correction.");
+      setReviewActivity(null);
+      setShowActivityModal(false);
+      setReturnComment("");
+      setShowReturnInput(false);
+    } catch (err) {
+      console.error("Error returning activity:", err);
+      alert("Failed to return activity.");
+    } finally {
+      setIsActioning(false);
+    }
+  };
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -1366,6 +1481,272 @@ export default function HODDashboard() {
           <ClipboardList size={14} />
           Papers forwarded to you by faculty appear here as tasks.
         </div>
+
+        {/* ═══ Pending Activity Approvals ═══ */}
+        <div className="mt-8 bg-white rounded-2xl border border-zinc-200 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4">
+            <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+              <Award size={20} className="text-[#120c7a]" />
+              Pending Activity Approvals
+              <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-0.5 rounded-full font-bold">
+                {pendingActivities.length}
+              </span>
+            </h2>
+          </div>
+
+          {activitiesLoading ? (
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5 shadow-sm animate-pulse flex items-center justify-center py-8">
+              <Loader2 className="animate-spin text-zinc-400 mr-2" size={18} />
+              <span className="text-xs text-zinc-400 font-medium">Checking pending activities...</span>
+            </div>
+          ) : pendingActivities.length === 0 ? (
+            <div className="text-center py-8">
+              <CheckCircle2 className="mx-auto text-emerald-500 mb-2" size={28} />
+              <h3 className="text-sm font-bold text-zinc-700">All caught up!</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">No activities currently waiting for HOD verification.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto pr-1">
+              {pendingActivities.map((act) => {
+                const dateParts = (act.date || act.fromDate || "").split('-');
+                const displayDate = dateParts.length === 3 ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}` : (act.date || act.fromDate || "-");
+                return (
+                  <div key={act.id} className="bg-zinc-50/50 rounded-2xl border border-zinc-100 p-4 flex flex-col justify-between hover:shadow-md hover:bg-white transition-all duration-200">
+                    <div>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <p className="text-sm font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+                          <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{act.regNo || act.facultyId || ""}</p>
+                        </div>
+                        <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded font-black uppercase">
+                          {act.activityCode || "STEP"}
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-zinc-700 mb-1">{act.activityName || act.title || "Unnamed Activity"}</p>
+                      <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3">
+                      <span className="text-[10px] text-zinc-500 font-semibold flex items-center gap-1">
+                        <Calendar size={11} /> {displayDate}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setReviewActivity(act);
+                          setReturnComment("");
+                          setShowReturnInput(false);
+                          setShowActivityModal(true);
+                        }}
+                        className="px-3.5 py-1.5 bg-[#120c7a]/10 hover:bg-[#120c7a]/20 text-[#120c7a] rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      >
+                        <Eye size={12} /> Verify Submission
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ═══ Activity Review Modal ═══ */}
+        {showActivityModal && reviewActivity && (
+          <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-800">
+              <div className="bg-[#120c7a] p-6 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Award className="text-yellow-400" size={24} />
+                  <div>
+                    <h4 className="font-extrabold text-xs uppercase tracking-wider text-blue-200">
+                      Activity Verification Board (HOD Review)
+                    </h4>
+                    <p className="text-base font-bold truncate mt-0.5">
+                      {reviewActivity.studentName || reviewActivity.facultyName} 
+                      ({reviewActivity.regNo || reviewActivity.facultyId || "N/A"})
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => { setShowActivityModal(false); setReviewActivity(null); }} className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Basic Fields */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Activity Code</span>
+                    <span className="text-sm font-extrabold text-zinc-800">{reviewActivity.activityCode || "STEP"}</span>
+                  </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Activity Name</span>
+                    <span className="text-sm font-extrabold text-zinc-800">{reviewActivity.activityName || reviewActivity.title}</span>
+                  </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Date</span>
+                    <span className="text-sm font-bold text-zinc-700">{reviewActivity.date || reviewActivity.fromDate}</span>
+                  </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Points Claimed</span>
+                    <span className="text-sm font-extrabold text-[#120c7a]">{reviewActivity.points || reviewActivity.totalPoints || "-"} Pts</span>
+                  </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
+                    <span className="text-sm font-bold text-zinc-800">{reviewActivity.department} / {reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
+                  </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>
+                    <span className="text-xs font-semibold text-zinc-700">
+                      {reviewActivity.nbaCriterion ? `NBA: ${reviewActivity.nbaCriterion}` : ""} 
+                      {reviewActivity.naacCriterion ? ` | NAAC: ${reviewActivity.naacCriterion}` : ""}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Additional fields based on activity type */}
+                <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
+                  {Object.entries(reviewActivity).filter(([k, v]) => 
+                    v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole", "isStep"].includes(k)
+                  ).map(([key, value]) => {
+                    if (key === "formData") {
+                      if (Array.isArray(value) && value.length > 0) {
+                        const basicInfoKeys = new Set(["programme", "department", "batch", "academicYear", "semester", "section", "date", "submittedBy", "month"]);
+                        const headers = Object.keys(value[0]).filter(hk => !basicInfoKeys.has(hk));
+                        return (
+                          <div key={key} className="space-y-2 w-full">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                              Activity Record List
+                            </span>
+                            <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="bg-zinc-50 border-b border-zinc-200">
+                                    {headers.map(h => (
+                                      <th key={h} className="px-3 py-2 text-[9px] font-bold text-zinc-400 uppercase">
+                                        {h.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-100">
+                                  {value.map((row, rIdx) => (
+                                    <tr key={rIdx} className="hover:bg-zinc-50/50">
+                                      {headers.map(h => (
+                                        <td key={h} className="px-3 py-2 text-zinc-700 font-medium">
+                                          {row[h] || "—"}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }
+
+                    if (key === "evidenceFiles") {
+                      if (Array.isArray(value) && value.length > 0) {
+                        return (
+                          <div key={key} className="space-y-1.5 w-full">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                              Attached Files Info
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {value.map((file, fIdx) => (
+                                <div key={fIdx} className="flex items-center gap-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] font-medium text-zinc-600 shadow-sm">
+                                  <FileText size={12} className="text-blue-500" />
+                                  <span>{file.name}</span>
+                                  <span className="text-[9px] text-zinc-400">({(file.size / 1024).toFixed(1)} KB)</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }
+
+                    if (["submittedBy", "month", "academicYear", "semester", "programme"].includes(key)) {
+                      return null;
+                    }
+
+                    return (
+                      <div key={key} className="flex gap-4">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider w-40 shrink-0">
+                          {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                        </span>
+                        <span className="text-zinc-700 font-medium">
+                          {typeof value === 'object' ? JSON.stringify(value) : value}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Evidence Review */}
+                {reviewActivity.evidenceUrl && (
+                  <div>
+                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-2">Uploaded Evidence</span>
+                    <div className="border border-zinc-200 bg-zinc-50 rounded-2xl p-2 flex items-center justify-center min-h-60 overflow-hidden shadow-inner">
+                      {reviewActivity.evidenceUrl.endsWith('.pdf') ? (
+                        <iframe src={reviewActivity.evidenceUrl} className="w-full h-96 rounded-xl" title="Evidence PDF" />
+                      ) : (
+                        <img src={reviewActivity.evidenceUrl} alt="Evidence" className="max-w-full max-h-96 object-contain rounded-xl shadow-md" referrerPolicy="no-referrer" />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Return for correction input */}
+                {showReturnInput && (
+                  <div className="space-y-2 p-4 bg-rose-50 border border-rose-100 rounded-2xl">
+                    <label className="block text-xs font-extrabold text-rose-800 uppercase tracking-wider">Correction Feedback comments:</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Provide details of corrections required..."
+                      value={returnComment}
+                      onChange={e => setReturnComment(e.target.value)}
+                      className="w-full rounded-xl border border-rose-200 p-3 text-xs font-medium placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setShowReturnInput(false)} className="px-3 py-1.5 bg-zinc-200 text-zinc-600 text-[10px] font-bold rounded-lg cursor-pointer">Cancel</button>
+                      <button onClick={() => handleReturnActivity(reviewActivity)} disabled={isActioning} className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-lg flex items-center gap-1 cursor-pointer">
+                        {isActioning ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />} Return for Correction
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {reviewActivity.comments && (
+                  <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                    <span className="text-xs font-bold text-blue-800 uppercase tracking-wider block mb-1">Previous comments:</span>
+                    <p className="text-sm text-blue-700">{reviewActivity.comments}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 bg-zinc-50 border-t border-zinc-100 flex items-center justify-end gap-2">
+                <button onClick={() => { setShowActivityModal(false); setReviewActivity(null); }} className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer">
+                  Close
+                </button>
+                {!showReturnInput && (
+                  <>
+                    <button onClick={() => setShowReturnInput(true)} className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold rounded-xl transition-all flex items-center gap-1 cursor-pointer">
+                      <X size={14} /> Return for Correction
+                    </button>
+                    <button onClick={() => handleApproveActivity(reviewActivity)} disabled={isActioning} className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer">
+                      {isActioning ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={3} />}
+                      Approve & Grant Points
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ═══ Attendance Overview ═══ */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">

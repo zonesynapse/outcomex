@@ -77,6 +77,7 @@ export default function Attendance() {
   const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState("");
+  const [periods, setPeriods] = useState([]);
   const [totalConducted, setTotalConducted] = useState("");
 
   const [timetableConfig, setTimetableConfig] = useState(null);
@@ -186,7 +187,10 @@ export default function Attendance() {
     }
     if (sec) setSection(sec);
     if (date) setAttendanceDate(date);
-    if (periodVal) setPeriod(periodVal);
+    if (periodVal) {
+      setPeriod(periodVal);
+      setPeriods(prev => [...new Set([...prev, periodVal])]);
+    }
     if (subj && prog && dept && bat && ay && sem) {
       setSubject(JSON.stringify({ code: subj, batch: bat, ay, sem, section: sec || '', dept, progKey: prog }));
     }
@@ -380,14 +384,41 @@ export default function Attendance() {
         });
       });
 
+      // Filter by active semester configs from AcademicCalendar (matches FacultyDashboard visibleGroups logic)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const activeSemConfigs = semesterConfigs.filter(cfg => {
+        if (!cfg.startDate || !cfg.endDate) return false;
+        const start = new Date(cfg.startDate + 'T00:00:00');
+        const end = new Date(cfg.endDate + 'T00:00:00');
+        return today >= start && today <= end;
+      });
+      const filteredContexts = activeSemConfigs.length > 0 ? contexts.filter(ctx => {
+        return activeSemConfigs.some(cfg => {
+          const batches = Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch];
+          const batchMatch = batches.some(b => String(b) === String(ctx.batch));
+          if (!batchMatch) return false;
+
+          const semNumMatch = String(ctx.sem).match(/\d+/);
+          const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
+          if (isNaN(semNum)) return true;
+
+          const isContextOdd = semNum % 2 !== 0;
+          const isConfigOdd = String(cfg.semesterType || 'Odd').toLowerCase() === 'odd';
+          return cfg.programme === ctx.progKey
+            && cfg.academicYear === ctx.ay
+            && isContextOdd === isConfigOdd;
+        });
+      }) : contexts;
+
       const namesMap = await fetchAllCourseNamesMap();
 
-      setSubjectContexts(contexts);
+      setSubjectContexts(filteredContexts);
 
       const uniqueSubjectAssignments = [];
       const seenAssignments = new Set();
 
-      contexts.forEach(ctx => {
+      filteredContexts.forEach(ctx => {
         const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}-${ctx.section}`;
         if (!seenAssignments.has(assignmentIdentifier)) {
           uniqueSubjectAssignments.push({
@@ -401,7 +432,7 @@ export default function Attendance() {
     });
 
     return () => unsubscribe();
-  }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay]);
+  }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay, semesterConfigs]);
 
   const handleSubjectChange = (val) => {
     if (!val) {
@@ -410,6 +441,7 @@ export default function Attendance() {
       setAcademicYear("");
       setSemester("");
       setSection("");
+      setPeriods([]);
       setTopicTaught("");
       setTeachingAid("");
       setTeachingMethodology("");
@@ -423,6 +455,7 @@ export default function Attendance() {
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
     setSection(selectedCtx.section || "");
+    setPeriods([]);
     setIsEventAttendance(false);
     setEventName("");
   };
@@ -637,11 +670,12 @@ export default function Attendance() {
     }));
   };
 
-  // Auto-load attendance when date or period changes
+  // Auto-load attendance when date or periods change
   useEffect(() => {
-    if (!Object.keys(masterList).length || !attendanceDate) return;
+    if (!Object.keys(masterList).length || !attendanceDate || !periods.length) return;
 
-    const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
+    const firstPeriod = periods[0];
+    const recordKey = `${attendanceDate}_P${firstPeriod}`;
     const dateRecord = attendanceData?.records?.[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
@@ -715,18 +749,19 @@ export default function Attendance() {
     else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
 
     setStudents(studentArray);
-  }, [attendanceDate, period, attendanceData, masterList, periodConflict]);
+  }, [attendanceDate, periods, attendanceData, masterList, periodConflict]);
 
   // Check if period is already marked by another subject in the same batch for overlapping students
   useEffect(() => {
-    if (!period || !attendanceDate || !batch || !academicYear || !semester || !programme || !department) {
+    if (!periods.length || !attendanceDate || !batch || !academicYear || !semester || !programme || !department) {
       setPeriodConflict(null);
       return;
     }
+    const firstPeriod = periods[0];
     const progKey = formatProgrammeKey(programme);
     const semNum = String(semester).match(/\d+/)?.[0];
     const batchPrefix = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_`;
-    const recordKey = `${attendanceDate}_P${period}`;
+    const recordKey = `${attendanceDate}_P${firstPeriod}`;
     let currentSubjectCode = '';
     try { currentSubjectCode = JSON.parse(subject || '{}').code || ''; } catch { }
 
@@ -980,8 +1015,8 @@ export default function Attendance() {
       alert("Please ensure all filters and Total Conducted hours are provided.");
       return;
     }
-    if (!period) {
-      alert("Please select a Period before saving attendance.");
+    if (!periods.length) {
+      alert("Please select at least one Period before saving attendance.");
       return;
     }
     if (!isEventAttendance) {
@@ -1052,32 +1087,36 @@ export default function Attendance() {
       mergedStudentsMap = freshMap;
     }
 
-    const dateRecord = {
-      period,
-      totalHours: parseInt(totalConducted, 10) || 1,
-      students: mergedStudentsMap,
-      topicTaught: isEventAttendance ? "" : topicTaught.trim(),
-      teachingAid: isEventAttendance ? "" : teachingAid,
-      teachingMethodology: isEventAttendance ? "" : teachingMethodology,
-      markedBy: isAnotherFacultyRecord ? currentRecordData.markedBy : currentUid,
-      updatedAt: new Date().toISOString()
-    };
-    if (isEventAttendance) {
-      dateRecord.isEvent = true;
-      dateRecord.eventName = eventName.trim();
+    // Loop through all selected periods
+    const existingRecords = attendanceData?.records || {};
+    let updatedRecords = { ...existingRecords };
+    let nextTotal = isEventAttendance ? parseInt(totalConducted, 10) : parseInt(totalConducted, 10) + periods.length;
+
+    for (const p of periods) {
+      const dateRecord = {
+        period: p,
+        totalHours: parseInt(totalConducted, 10) || 1,
+        students: mergedStudentsMap,
+        topicTaught: isEventAttendance ? "" : topicTaught.trim(),
+        teachingAid: isEventAttendance ? "" : teachingAid,
+        teachingMethodology: isEventAttendance ? "" : teachingMethodology,
+        markedBy: isAnotherFacultyRecord ? currentRecordData.markedBy : currentUid,
+        updatedAt: new Date().toISOString()
+      };
+      if (isEventAttendance) {
+        dateRecord.isEvent = true;
+        dateRecord.eventName = eventName.trim();
+      }
+      const recordKey = `${attendanceDate}_P${p}`;
+      updatedRecords[recordKey] = dateRecord;
     }
 
     try {
-      const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
-      const existingRecords = attendanceData?.records || {};
-      const updatedRecords = { ...existingRecords, [recordKey]: dateRecord };
-      const nextTotal = isEventAttendance ? parseInt(totalConducted, 10) : parseInt(totalConducted, 10) + 1;
-
       await setDoc(doc(db, "attendance", attendanceDocId), {
         _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
         records: updatedRecords
       });
-      alert(`Attendance for ${attendanceDate} (Period ${period}) saved successfully!`);
+      alert(`Attendance for ${attendanceDate} (Periods: ${periods.join(', ')}) saved successfully!`);
 
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
@@ -1086,10 +1125,10 @@ export default function Attendance() {
     setSaving(false);
   };
 
-  const handleClearAttendance = async () => {
-    if (!period) return;
-    const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
-    if (!confirm(`Clear attendance for ${attendanceDate} (Period ${period})? This cannot be undone.`)) return;
+  const handleClearAttendance = async (periodToClear) => {
+    if (!periodToClear) return;
+    const recordKey = `${attendanceDate}_P${periodToClear}`;
+    if (!confirm(`Clear attendance for ${attendanceDate} (Period ${periodToClear})? This cannot be undone.`)) return;
 
     setSaving(true);
     try {
@@ -1111,7 +1150,7 @@ export default function Attendance() {
       setTopicTaught("");
       setTeachingAid("");
       setTeachingMethodology("");
-      alert(`Attendance for ${attendanceDate} (Period ${period}) cleared.`);
+      alert(`Attendance for ${attendanceDate} (Period ${periodToClear}) cleared.`);
     } catch (err) { console.error(err); alert("Failed to clear attendance."); }
     setSaving(false);
   };
@@ -1266,19 +1305,42 @@ export default function Attendance() {
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Period <span className="text-rose-500">*</span></label>
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <select value={period} onChange={e => setPeriod(e.target.value)}
-                    className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
-                  >
-                    <option value="">Select Period</option>
-                    {availablePeriodsWithTiming.filter(p => !lockedPeriods.has(p.value) || p.value === period).map(p => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <select value="" onChange={e => {
+                      const val = e.target.value;
+                      if (val && !periods.includes(val)) {
+                        setPeriods(prev => [...prev, val]);
+                      }
+                      e.target.value = "";
+                    }}
+                      className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
+                    >
+                      <option value="">Select Period</option>
+                      {availablePeriodsWithTiming.filter(p => !lockedPeriods.has(p.value) || periods.includes(p.value)).map(p => (
+                        <option key={p.value} value={p.value}>{p.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
+                  </div>
                 </div>
-                {(currentRecordData && period) || (periodConflict && period) ? (
+                {periods.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {periods.map(p => {
+                      const periodInfo = availablePeriodsWithTiming.find(pi => pi.value === p);
+                      return (
+                        <span key={p} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[10px] font-bold text-blue-700">
+                          {periodInfo ? periodInfo.label : `Period ${p}`}
+                          <button type="button" onClick={() => setPeriods(prev => prev.filter(x => x !== p))} className="hover:text-red-500 transition-colors">
+                            <X size={10} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {periods.length > 0 && ((currentRecordData && periods.some(p => attendanceData?.records?.[`${attendanceDate}_P${p}`])) || (periodConflict && periods.includes(periodConflict.record ? Object.keys(periodConflict.record)[0].split('_P')[1] : ''))) ? (
                   <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${(currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
                     ? 'bg-red-100 border-red-300 text-red-700'
                     : 'bg-amber-100 border-amber-300 text-amber-700'
@@ -1423,13 +1485,17 @@ export default function Attendance() {
                 {saving ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={15} />}
                 Save
               </button>
-              {currentRecordData && period && readOnlyRegs.size === 0 && (
-                <button onClick={handleClearAttendance} disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
-                >
-                  <X size={15} /> Clear
-                </button>
-              )}
+              {currentRecordData && periods.length > 0 && readOnlyRegs.size === 0 && periods.map(p => {
+                  const recordKey = `${attendanceDate}_P${p}`;
+                  const hasRecord = attendanceData?.records?.[recordKey];
+                  return hasRecord ? (
+                    <button key={p} onClick={() => handleClearAttendance(p)} disabled={saving}
+                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
+                    >
+                      <X size={15} /> Clear P{p}
+                    </button>
+                  ) : null;
+                })}
               <button
                 onClick={() => {
                   if (!subject) {

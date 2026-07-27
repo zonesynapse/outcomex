@@ -1,170 +1,106 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { collection, onSnapshot, query, where, doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy, doc, getDoc } from "firebase/firestore";
 import { 
-  FileText, Download, Filter, Loader2, Calendar, BarChart3, 
-  Users, Award, Pencil, Printer, X, Eye, CheckCircle2 
+  Award, Clock, Eye, Download, Search, Filter, Calendar, Users, 
+  CheckCircle2, Loader2, BookOpen, Layers, X, FileText, Printer, ArrowRight, AlertCircle
 } from "lucide-react";
 import Layout from "../components/Layout";
-import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
-import { sanitizeKey } from "../lib/utils";
+import { ACTIVITY_REGISTRY } from "../data/activityRegistry";
+import { formatProgDisplay, formatBatchDisplay, sanitizeKey } from "../lib/utils";
 
-const getCategoryFromCode = (code) => {
-  if (code.startsWith("A")) return "student";
-  if (code.startsWith("B")) return "department";
-  if (code.startsWith("C")) return "faculty";
-  return "student";
-};
-
-export default function ActivityReports() {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [activities, setActivities] = useState([]);
+export default function ActivityApproval() {
   const [currentUserData, setCurrentUserData] = useState(null);
+  const [userRole, setUserRole] = useState("");
+  const [userDept, setUserDept] = useState("");
+  const [currentUid, setCurrentUid] = useState("");
   
-  // Filters
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [activities, setActivities] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const [selectedProg, setSelectedProg] = useState("");
+  const [selectedDept, setSelectedDept] = useState("");
+  const [selectedBatch, setSelectedBatch] = useState("");
+  const [selectedSection, setSelectedSection] = useState("");
+  const [selectedActivityCode, setSelectedActivityCode] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [selectedStatus, setSelectedStatus] = useState("all");
-  const [selectedDept, setSelectedDept] = useState("");
 
-  // Tabs and monthly reports approved list
-  const [activeTab, setActiveTab] = useState("monthly"); // "monthly" or "individual"
-  const [approvedReports, setApprovedReports] = useState([]);
-  const [reportsLoading, setReportsLoading] = useState(true);
-
-  // Views
+  const [reviewActivity, setReviewActivity] = useState(null);
   const [previewMode, setPreviewMode] = useState(false);
-  const [detailActivity, setDetailActivity] = useState(null);
+  const [isForwarding, setIsForwarding] = useState(false);
+  const [reportStatusDoc, setReportStatusDoc] = useState(null);
 
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  // Load current user details
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (user) {
-        getDoc(doc(db, "users", user.uid)).then(snap => {
+        setCurrentUid(user.uid);
+        const userRef = doc(db, 'users', user.uid);
+        getDoc(userRef).then(snap => {
           if (snap.exists()) {
             const ud = snap.data();
             setCurrentUserData(ud);
+            setUserRole(ud.role || "");
             const dept = ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "";
+            setUserDept(dept);
+            // Auto-filter by HOD's department
             if (ud.role === "HOD" && dept) {
               setSelectedDept(dept);
             }
           }
-          setLoading(false);
         });
-      } else {
-        setLoading(false);
       }
     });
     return () => unsub();
   }, []);
 
+  // Real-time approved activities listener
   useEffect(() => {
-    const q = query(
-      collection(db, "monthly_reports"),
-      where("status", "==", "Approved")
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list = [];
-      snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() });
-      });
-      setApprovedReports(list);
-      setReportsLoading(false);
-    }, (err) => {
-      console.error("Error loading approved reports:", err);
-      setReportsLoading(false);
-    });
-    return () => unsub();
-  }, []);
-
-  const filteredReports = useMemo(() => {
-    const userRole = currentUserData?.role || "";
-    const userDept = currentUserData?.department || currentUserData?.assignedDepartment || currentUserData?.departmentName || currentUserData?.dept || currentUserData?.deptName || currentUserData?.facultyDepartment || currentUserData?.departmentCode || "";
-    
-    return approvedReports.filter(rep => {
-      if (userRole === "HOD" && userDept && rep.department !== userDept) return false;
-      if (selectedDept && rep.department !== selectedDept) return false;
-      if (selectedMonth && parseInt(rep.month) !== parseInt(selectedMonth)) return false;
-      if (selectedYear && rep.year !== selectedYear) return false;
-      return true;
-    });
-  }, [approvedReports, currentUserData, selectedDept, selectedMonth, selectedYear]);
-
-  const [reportStatusDoc, setReportStatusDoc] = useState(null);
-
-  useEffect(() => {
-    if (!selectedDept || !selectedMonth || !selectedYear || !previewMode) {
-      setReportStatusDoc(null);
-      return;
-    }
-    const reportId = `report_${sanitizeKey(selectedDept)}_${selectedMonth}_${selectedYear}`;
-    getDoc(doc(db, "monthly_reports", reportId)).then(snap => {
-      if (snap.exists()) {
-        setReportStatusDoc(snap.data());
-      } else {
-        setReportStatusDoc(null);
-      }
-    });
-  }, [selectedDept, selectedMonth, selectedYear, previewMode]);
-
-  useEffect(() => {
+    setLoading(true);
     let list1 = [];
     let list2 = [];
 
     const q1 = query(
       collection(db, "activity_entries"),
-      orderBy("createdAt", "desc")
+      where("status", "==", "Approved")
     );
     const unsub1 = onSnapshot(q1, (snapshot) => {
       list1 = [];
       snapshot.forEach((d) => {
         list1.push({ id: d.id, ...d.data() });
       });
-      const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
-      });
-      setActivities(combined);
+      combineAndSet();
     }, (err) => console.error("Error loading activity_entries:", err));
 
     const q2 = query(
       collection(db, "step_activities"),
-      orderBy("createdAt", "desc")
+      where("status", "==", "Approved")
     );
     const unsub2 = onSnapshot(q2, (snapshot) => {
       list2 = [];
       snapshot.forEach((d) => {
-        const data = d.data();
-        let nba = "";
-        let naac = "";
-        if (data.category === "technical") { nba = "C2.2.3"; naac = "3.2.2"; }
-        else if (data.category === "research") { nba = "C3.4"; naac = "3.3.3"; }
-        else if (data.category === "industry") { nba = "C2.8"; naac = "3.2.1"; }
-        else if (data.category === "social") { nba = "C9.11"; naac = "7.1.1"; }
-        else if (data.category === "leadership") { nba = "C9.7"; naac = "5.3.1"; }
-        else { nba = "C9.2"; naac = "5.1.2"; }
-
-        list2.push({ 
-          id: d.id, 
-          isStep: true, 
-          activityCode: "STEP", 
-          activityName: data.activityName || data.activityType || "STEP Activity", 
-          nbaCriterion: nba,
-          naacCriterion: naac,
-          ...data 
-        });
+        list2.push({ id: d.id, isStep: true, activityCode: "STEP", ...d.data() });
       });
+      combineAndSet();
+    }, (err) => console.error("Error loading step_activities:", err));
+
+    const combineAndSet = () => {
       const combined = [...list1, ...list2].sort((a, b) => {
         const dateA = a.createdAt || '';
         const dateB = b.createdAt || '';
         return dateB.localeCompare(dateA);
       });
       setActivities(combined);
-    }, (err) => console.error("Error loading step_activities:", err));
+      setLoading(false);
+    };
 
     return () => {
       unsub1();
@@ -172,66 +108,93 @@ export default function ActivityReports() {
     };
   }, []);
 
-  const months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-  ];
+  // Fetch report status (forwarded to Principal or Approved)
+  useEffect(() => {
+    if (!selectedDept || !selectedMonth || !selectedYear) {
+      setReportStatusDoc(null);
+      return;
+    }
+    const reportId = `report_${sanitizeKey(selectedDept)}_${selectedMonth}_${selectedYear}`;
+    const unsub = onSnapshot(doc(db, "monthly_reports", reportId), (snap) => {
+      if (snap.exists()) {
+        setReportStatusDoc(snap.data());
+      } else {
+        setReportStatusDoc(null);
+      }
+    });
+    return () => unsub();
+  }, [selectedDept, selectedMonth, selectedYear]);
 
   // Derive dropdown options dynamically
-  const deptOptions = useMemo(() => {
-    return [...new Set(activities.map(a => a.department).filter(Boolean))].sort();
-  }, [activities]);
+  const deptOptions = useMemo(() => [...new Set(activities.map(a => a.department).filter(Boolean))].sort(), [activities]);
+  const batchOptions = useMemo(() => [...new Set(activities.map(a => a.batch).filter(Boolean))].sort(), [activities]);
+  const programmeOptions = useMemo(() => [...new Set(activities.map(a => a.programme).filter(Boolean))].sort(), [activities]);
+  const sectionOptions = useMemo(() => [...new Set(activities.map(a => a.section).filter(Boolean))].sort(), [activities]);
+  const activityCodeOptions = useMemo(() => [...new Set(activities.map(a => a.activityCode).filter(Boolean))].sort(), [activities]);
 
+  // Filtered Approved Activities
   const filteredActivities = useMemo(() => {
-    return activities.filter(a => {
-      if (selectedCategory !== "all" && getCategoryFromCode(a.activityCode || "") !== selectedCategory) return false;
-      if (selectedStatus !== "all" && a.status !== selectedStatus) return false;
-      if (selectedDept && a.department !== selectedDept) return false;
-      
+    return activities.filter((act) => {
+      if (userRole === "HOD" && userDept && act.department !== userDept) return false;
+      if (selectedDept && act.department !== selectedDept) return false;
+
+      const matchesBatch = !selectedBatch || act.batch === selectedBatch;
+      const matchesProg = !selectedProg || act.programme === selectedProg;
+      const matchesSection = !selectedSection || act.section === selectedSection;
+      const matchesActivityCode = !selectedActivityCode || act.activityCode === selectedActivityCode;
+
+      const matchesSearch = !searchQuery.trim() || 
+        (act.studentName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.facultyName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.regNo || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.activityName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.title || "").toLowerCase().includes(searchQuery.toLowerCase());
+
       if (selectedMonth) {
-        const date = a.date || a.fromDate || "";
-        const m = date.split("-")[1];
+        const dateVal = act.date || act.fromDate || "";
+        const m = dateVal.split("-")[1];
         if (m && parseInt(m) !== parseInt(selectedMonth)) return false;
       }
       if (selectedYear) {
-        const date = a.date || a.fromDate || "";
-        const y = date.split("-")[0];
+        const dateVal = act.date || act.fromDate || "";
+        const y = dateVal.split("-")[0];
         if (y && y !== selectedYear) return false;
       }
-      return true;
-    });
-  }, [activities, selectedCategory, selectedMonth, selectedYear, selectedStatus, selectedDept]);
 
-  const stats = useMemo(() => {
-    const total = filteredActivities.length;
-    const approved = filteredActivities.filter(a => a.status === "Approved").length;
-    const pending = filteredActivities.filter(a => a.status === "Pending" || a.status === "HOD_Pending").length;
-    const rejected = filteredActivities.filter(a => a.status === "Rejected").length;
-    return { total, approved, pending, rejected };
+      return matchesBatch && matchesProg && matchesSection && matchesActivityCode && matchesSearch;
+    });
+  }, [activities, selectedBatch, selectedDept, selectedProg, selectedSection, selectedActivityCode, searchQuery, userRole, userDept, selectedMonth, selectedYear]);
+
+  // Group activities month-wise
+  const groupedByMonth = useMemo(() => {
+    const groups = {};
+    filteredActivities.forEach(act => {
+      let mKey = "Unknown Month";
+      const dateVal = act.date || act.fromDate;
+      if (dateVal) {
+        const d = new Date(dateVal + 'T00:00:00');
+        if (!isNaN(d)) {
+          mKey = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        }
+      }
+      if (!groups[mKey]) groups[mKey] = [];
+      groups[mKey].push(act);
+    });
+
+    return Object.entries(groups).sort((a, b) => {
+      if (a[0] === "Unknown Month") return 1;
+      if (b[0] === "Unknown Month") return -1;
+      const dateAStr = a[1]?.[0]?.date || a[1]?.[0]?.fromDate || "";
+      const dateBStr = b[1]?.[0]?.date || b[1]?.[0]?.fromDate || "";
+      if (!dateAStr) return 1;
+      if (!dateBStr) return -1;
+      const da = new Date(dateAStr + 'T00:00:00');
+      const db = new Date(dateBStr + 'T00:00:00');
+      return db - da;
+    });
   }, [filteredActivities]);
 
-  const handleCSVExport = () => {
-    const headers = ["ID", "Activity Code", "Activity Name", "Category", "Status", "Submitted By", "Department", "Date", "NBA Criterion", "NAAC Criterion"];
-    const rows = filteredActivities.map(a => {
-      const reg = ACTIVITY_REGISTRY.find(r => r.code === a.activityCode);
-      return [
-        a.id, a.activityCode, a.activityName || "",
-        ACTIVITY_CATEGORIES[getCategoryFromCode(a.activityCode || "")]?.label || "",
-        a.status, a.facultyName || a.studentName || "", a.department || "",
-        a.date || a.fromDate || "", reg?.nbaCriterion || a.nbaCriterion || "", reg?.naacCriterion || a.naacCriterion || ""
-      ];
-    });
-    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${v}"`).join(","))].join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", `Activity_Report_${selectedYear}${selectedMonth ? "_" + selectedMonth : ""}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // Helper to extract image evidence URLs
+  // Extract images from activity
   const getImages = (act) => {
     const urls = [];
     if (act.evidenceUrl) {
@@ -253,73 +216,72 @@ export default function ActivityReports() {
     return urls;
   };
 
-  // Group verified activities strictly for the monthly report preview
-  const reportActivities = useMemo(() => {
-    return activities.filter(a => {
-      // Must be approved HOD / Admin verified
-      if (a.status !== "Approved") return false;
-      
-      // Strict department matching
-      if (selectedDept && a.department !== selectedDept) return false;
-      
-      // Date verification
-      const dateVal = a.date || a.fromDate || "";
-      if (selectedMonth && dateVal) {
-        const m = dateVal.split("-")[1];
-        if (m && parseInt(m) !== parseInt(selectedMonth)) return false;
-      } else {
-        return false; // Month filter is required for report generation
-      }
-      
-      if (selectedYear && dateVal) {
-        const y = dateVal.split("-")[0];
-        if (y && y !== selectedYear) return false;
-      }
-      return true;
-    });
-  }, [activities, selectedDept, selectedMonth, selectedYear]);
+  // Sections for A4 compiled document report
+  const partA_GuestLectures = useMemo(() => filteredActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry")), [filteredActivities]);
+  const partA_Association = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "leadership"), [filteredActivities]);
+  const partA_Internships = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship"))), [filteredActivities]);
+  const partA_OnlineCourses = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "onlineCourse"), [filteredActivities]);
+  const partA_PaperPresentations = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present")))), [filteredActivities]);
+  const partA_Publications = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ")))), [filteredActivities]);
+  const partA_Conferences = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "technical"), [filteredActivities]);
+  const partA_ExtraCurricular = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social")), [filteredActivities]);
+  const partA_Placements = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "placement"), [filteredActivities]);
 
-  // Section Filters for Monthly Report
-  const partA_GuestLectures = useMemo(() => reportActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry")), [reportActivities]);
-  const partA_Association = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "leadership"), [reportActivities]);
-  const partA_Internships = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship"))), [reportActivities]);
-  const partA_OnlineCourses = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "onlineCourse"), [reportActivities]);
-  const partA_PaperPresentations = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present")))), [reportActivities]);
-  const partA_Publications = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ")))), [reportActivities]);
-  const partA_Conferences = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "technical"), [reportActivities]);
-  const partA_ExtraCurricular = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social")), [reportActivities]);
-  const partA_Placements = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "placement"), [reportActivities]);
+  const partB_Meetings = useMemo(() => filteredActivities.filter(a => a.activityCode === "B1"), [filteredActivities]);
+  const partB_Advisory = useMemo(() => filteredActivities.filter(a => a.activityCode === "B2"), [filteredActivities]);
+  const partB_Purchases = useMemo(() => filteredActivities.filter(a => a.activityCode === "B3"), [filteredActivities]);
+  const partB_Mous = useMemo(() => filteredActivities.filter(a => a.activityCode === "B4"), [filteredActivities]);
+  const partB_Parents = useMemo(() => filteredActivities.filter(a => a.activityCode === "B5"), [filteredActivities]);
+  const partB_Audits = useMemo(() => filteredActivities.filter(a => a.activityCode === "B7"), [filteredActivities]);
+  const partB_Newsletters = useMemo(() => filteredActivities.filter(a => a.activityCode === "B8"), [filteredActivities]);
 
-  const partB_Meetings = useMemo(() => reportActivities.filter(a => a.activityCode === "B1"), [reportActivities]);
-  const partB_Advisory = useMemo(() => reportActivities.filter(a => a.activityCode === "B2"), [reportActivities]);
-  const partB_Purchases = useMemo(() => reportActivities.filter(a => a.activityCode === "B3"), [reportActivities]);
-  const partB_Mous = useMemo(() => reportActivities.filter(a => a.activityCode === "B4"), [reportActivities]);
-  const partB_Parents = useMemo(() => reportActivities.filter(a => a.activityCode === "B5"), [reportActivities]);
-  const partB_Audits = useMemo(() => reportActivities.filter(a => a.activityCode === "B7"), [reportActivities]);
-  const partB_Newsletters = useMemo(() => reportActivities.filter(a => a.activityCode === "B8"), [reportActivities]);
+  const partC_Phd = useMemo(() => filteredActivities.filter(a => a.activityCode === "C1"), [filteredActivities]);
+  const partC_Publications = useMemo(() => filteredActivities.filter(a => a.activityCode === "C2"), [filteredActivities]);
+  const partC_Attended = useMemo(() => filteredActivities.filter(a => a.activityCode === "C3"), [filteredActivities]);
+  const partC_Organized = useMemo(() => filteredActivities.filter(a => a.activityCode === "C4"), [filteredActivities]);
+  const partC_Online = useMemo(() => filteredActivities.filter(a => a.activityCode === "C5"), [filteredActivities]);
+  const partC_Funding = useMemo(() => filteredActivities.filter(a => a.activityCode === "C6"), [filteredActivities]);
+  const partC_Patents = useMemo(() => filteredActivities.filter(a => a.activityCode === "C7"), [filteredActivities]);
+  const partC_Contributions = useMemo(() => filteredActivities.filter(a => a.activityCode === "C8"), [filteredActivities]);
+  const partC_Achievements = useMemo(() => filteredActivities.filter(a => a.activityCode === "C9"), [filteredActivities]);
 
-  const partC_Phd = useMemo(() => reportActivities.filter(a => a.activityCode === "C1"), [reportActivities]);
-  const partC_Publications = useMemo(() => reportActivities.filter(a => a.activityCode === "C2"), [reportActivities]);
-  const partC_Attended = useMemo(() => reportActivities.filter(a => a.activityCode === "C3"), [reportActivities]);
-  const partC_Organized = useMemo(() => reportActivities.filter(a => a.activityCode === "C4"), [reportActivities]);
-  const partC_Online = useMemo(() => reportActivities.filter(a => a.activityCode === "C5"), [reportActivities]);
-  const partC_Funding = useMemo(() => reportActivities.filter(a => a.activityCode === "C6"), [reportActivities]);
-  const partC_Patents = useMemo(() => reportActivities.filter(a => a.activityCode === "C7"), [reportActivities]);
-  const partC_Contributions = useMemo(() => reportActivities.filter(a => a.activityCode === "C8"), [reportActivities]);
-  const partC_Achievements = useMemo(() => reportActivities.filter(a => a.activityCode === "C9"), [reportActivities]);
-
-  // All extracted report images
   const allReportImages = useMemo(() => {
     const imagesList = [];
-    reportActivities.forEach(act => {
+    filteredActivities.forEach(act => {
       const imgs = getImages(act);
       imgs.forEach(i => imagesList.push(i));
     });
     return imagesList;
-  }, [reportActivities]);
+  }, [filteredActivities]);
+
+  const handleForwardToPrincipal = async () => {
+    if (!selectedDept || !selectedMonth || !selectedYear) return;
+    setIsForwarding(true);
+    const reportId = `report_${sanitizeKey(selectedDept)}_${selectedMonth}_${selectedYear}`;
+    try {
+      await setDoc(doc(db, "monthly_reports", reportId), {
+        id: reportId,
+        department: selectedDept,
+        month: selectedMonth,
+        monthName: months[parseInt(selectedMonth) - 1],
+        year: selectedYear,
+        status: "Principal_Pending",
+        submittedBy: currentUid,
+        submittedByName: currentUserData?.facultyName || "HOD",
+        submittedAt: new Date().toISOString(),
+        comments: ""
+      }, { merge: true });
+      alert("Monthly Report successfully forwarded to Principal for approval!");
+    } catch (err) {
+      console.error("Error forwarding monthly report:", err);
+      alert("Failed to forward report. Please try again.");
+    } finally {
+      setIsForwarding(false);
+    }
+  };
 
   return (
-    <Layout title="Activity Reports">
+    <Layout>
       <style>{`
         @media print {
           body {
@@ -356,284 +318,221 @@ export default function ActivityReports() {
         }
       `}</style>
 
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         
-        {/* Toggle between standard view and Monthly Report Document Preview */}
         {!previewMode ? (
           <>
-            {/* Standard Header */}
-            <div className="bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 rounded-2xl p-6 text-white flex justify-between items-center">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <BarChart3 size={24} />
-                  <h1 className="text-xl font-black">Activity Reports</h1>
+            {/* Header Block */}
+            <div className="bg-gradient-to-r from-blue-900 to-indigo-950 rounded-3xl p-6 md:p-8 shadow-xl text-white mb-8 relative overflow-hidden">
+              <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
+              <div className="absolute left-1/3 bottom-0 translate-y-12 w-96 h-96 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
+              
+              <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full text-xs font-bold text-blue-200">
+                    <CheckCircle2 size={12} className="text-emerald-400" />
+                    Verified Accomplishments
+                  </div>
+                  <h1 className="text-3xl font-black tracking-tight md:text-4xl">Approved Activity Registry</h1>
+                  <p className="text-sm text-blue-200 font-medium max-w-xl">
+                    Comprehensive log of all approved student and faculty activities verified by HOD, segmented month-wise.
+                  </p>
                 </div>
-                <p className="text-sm text-blue-200">Monthly & criterion-wise activity report generation</p>
-              </div>
-              {selectedMonth && selectedDept && (
-                <button
-                  onClick={() => setPreviewMode(true)}
-                  className="px-5 py-2.5 bg-white text-[#120c7a] rounded-xl text-xs font-black shadow-lg hover:bg-zinc-50 transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Printer size={14} /> Document Preview
-                </button>
-              )}
-            </div>
-
-            {/* Tab Switcher */}
-            <div className="flex gap-2 border-b border-zinc-200 pb-px no-print">
-              <button
-                onClick={() => {
-                  setActiveTab("monthly");
-                  setPreviewMode(false);
-                }}
-                className={`pb-2.5 px-4 text-xs font-black border-b-2 transition-all cursor-pointer ${
-                  activeTab === "monthly"
-                    ? "border-[#120c7a] text-[#120c7a]"
-                    : "border-transparent text-zinc-400 hover:text-zinc-600"
-                }`}
-              >
-                Approved Monthly Reports
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("individual");
-                  setPreviewMode(false);
-                }}
-                className={`pb-2.5 px-4 text-xs font-black border-b-2 transition-all cursor-pointer ${
-                  activeTab === "individual"
-                    ? "border-[#120c7a] text-[#120c7a]"
-                    : "border-transparent text-zinc-400 hover:text-zinc-600"
-                }`}
-              >
-                Individual Activity Submissions
-              </button>
-            </div>
-
-            {/* Filters */}
-            <div className="bg-white rounded-2xl p-4 border border-zinc-200 flex flex-wrap gap-3 items-end no-print">
-              {activeTab === "individual" && (
-                <>
-                  <div>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Category</label>
-                    <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
-                      className="border border-zinc-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white">
-                      <option value="all">All Categories</option>
-                      {Object.entries(ACTIVITY_CATEGORIES).map(([k, v]) => (
-                        <option key={k} value={k}>{v.label}</option>
-                      ))}
-                    </select>
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10 text-center shrink-0 min-w-32">
+                    <span className="text-[10px] font-black text-blue-300 uppercase tracking-widest block">Approved Total</span>
+                    <span className="text-3xl font-black block mt-1">{filteredActivities.length}</span>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Status</label>
-                    <select value={selectedStatus} onChange={e => setSelectedStatus(e.target.value)}
-                      className="border border-zinc-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white">
-                      <option value="all">All Status</option>
-                      <option value="Pending">Pending</option>
-                      <option value="Approved">Approved</option>
-                      <option value="Rejected">Rejected</option>
-                      <option value="Returned">Returned</option>
-                      <option value="Draft">Draft</option>
-                    </select>
-                  </div>
-                </>
-              )}
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Department</label>
-                <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)}
-                  disabled={currentUserData?.role === "HOD" && selectedDept}
-                  className="border border-zinc-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white">
-                  <option value="">All Departments</option>
-                  {deptOptions.map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
+                  {selectedMonth && selectedDept && (
+                    <button
+                      onClick={() => setPreviewMode(true)}
+                      className="px-5 py-3 bg-white text-[#120c7a] rounded-2xl text-xs font-black shadow-lg hover:bg-zinc-50 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Printer size={14} /> Document Preview
+                    </button>
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Month</label>
-                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-                  className="border border-zinc-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white">
-                  <option value="">All Months</option>
-                  {months.map((m, i) => (
-                    <option key={i} value={i+1}>{m}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Year</label>
-                <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)}
-                  className="border border-zinc-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white">
-                  {[2024, 2025, 2026, 2027, 2028].map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
-              {activeTab === "individual" && (
-                <button onClick={handleCSVExport}
-                  className="bg-[#120c7a] text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-[#120c7a]/90 flex items-center gap-2 cursor-pointer">
-                  <Download size={14} /> Export CSV
-                </button>
-              )}
             </div>
 
-            {activeTab === "monthly" ? (
-              /* Approved Monthly Reports List View */
-              <div className="bg-white rounded-2xl border border-zinc-200 overflow-x-auto">
-                <div className="p-5 border-b border-zinc-100 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-extrabold text-zinc-800">Approved Institution Monthly Reports</h3>
-                    <p className="text-[11px] text-zinc-400 font-medium">Select a monthly report document below to open the finalized preview & print view.</p>
+            {/* Filters Panel */}
+            <div className="bg-white rounded-3xl shadow-sm border border-zinc-100 p-6 mb-8">
+              <div className="flex items-center gap-2 mb-4">
+                <Filter size={18} className="text-[#120c7a]" />
+                <h3 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Filter Verified Submissions</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                <div className="col-span-1 md:col-span-2">
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Search Query</label>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-3.5 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Search name, register number, or title..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 pl-9 pr-4 py-2.5 text-xs font-semibold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    />
                   </div>
                 </div>
-                
-                {reportsLoading ? (
-                  <div className="p-16 text-center">
-                    <Loader2 className="animate-spin text-indigo-600 mx-auto mb-3" size={32} />
-                    <p className="text-xs font-semibold text-zinc-600">Loading approved monthly reports repository...</p>
-                  </div>
-                ) : filteredReports.length === 0 ? (
-                  <div className="p-16 text-center text-zinc-400">
-                    <FileText size={36} className="mx-auto text-zinc-300 mb-3" />
-                    <p className="text-xs font-semibold text-zinc-500">No approved monthly report documents found.</p>
-                  </div>
-                ) : (
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-200 text-left">
-                        <th className="p-3 font-bold text-zinc-600">S.No</th>
-                        <th className="p-3 font-bold text-zinc-600">Department</th>
-                        <th className="p-3 font-bold text-zinc-600">Report Month / Year</th>
-                        <th className="p-3 font-bold text-zinc-600">Status</th>
-                        <th className="p-3 font-bold text-zinc-600">Forwarded By</th>
-                        <th className="p-3 font-bold text-zinc-600 text-center">Approved At</th>
-                        <th className="p-3 font-bold text-zinc-600 text-center">Actions</th>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Program</label>
+                  <select value={selectedProg} onChange={e => setSelectedProg(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
+                    <option value="">All Programs</option>
+                    {programmeOptions.map(p => <option key={p} value={p}>{formatProgDisplay(p)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department</label>
+                  <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white" disabled={userRole === "HOD" && userDept}>
+                    <option value="">All Departments</option>
+                    {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Month</label>
+                  <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
+                    <option value="">All Months</option>
+                    {months.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Year</label>
+                  <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
+                    {[2024, 2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* List View */}
+            <div className="bg-white rounded-3xl border border-zinc-100 overflow-hidden shadow-sm">
+              <div className="p-6 border-b border-zinc-100">
+                <h3 className="text-base font-extrabold text-zinc-800">Verified Activity Log List</h3>
+                <p className="text-xs text-zinc-400 font-medium">Click view on any record to inspect uploader logs and attached certificates.</p>
+              </div>
+
+              {loading ? (
+                <div className="p-16 text-center">
+                  <Loader2 className="animate-spin text-indigo-600 mx-auto mb-3" size={32} />
+                  <p className="text-sm font-semibold text-zinc-600">Loading approved activity registry...</p>
+                </div>
+              ) : filteredActivities.length === 0 ? (
+                <div className="p-16 text-center text-zinc-400">
+                  <Clock size={36} className="mx-auto text-zinc-300 mb-3" />
+                  <p className="text-sm font-semibold text-zinc-600">No approved activity records found matching filters.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm text-zinc-600">
+                    <thead className="bg-zinc-50/70 text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider">
+                      <tr>
+                        <th className="p-4">Submitted By</th>
+                        <th className="p-4">Department / Batch</th>
+                        <th className="p-4">Activity Name</th>
+                        <th className="p-4 text-center">Date</th>
+                        <th className="p-4 text-center">Status</th>
+                        <th className="p-4 text-center">Points</th>
+                        <th className="p-4 text-center">NBA/NAAC</th>
+                        <th className="p-4 text-center">Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {filteredReports.map((rep, idx) => (
-                        <tr key={rep.id} className="border-b border-zinc-100 hover:bg-zinc-50 font-medium">
-                          <td className="p-3 font-mono text-zinc-400">{idx + 1}</td>
-                          <td className="p-3 font-bold text-zinc-800">Department of {rep.department}</td>
-                          <td className="p-3 font-semibold text-zinc-700">{rep.monthName} {rep.year}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-emerald-100 text-emerald-800">
-                              Approved
-                            </span>
-                          </td>
-                          <td className="p-3 text-zinc-500">{rep.submittedByName || "HOD"}</td>
-                          <td className="p-3 text-center text-zinc-500">{rep.approvedAt ? new Date(rep.approvedAt).toLocaleDateString() : "-"}</td>
-                          <td className="p-3 text-center">
-                            <button
-                              onClick={() => {
-                                setSelectedMonth(rep.month);
-                                setSelectedYear(rep.year);
-                                setSelectedDept(rep.department);
-                                setPreviewMode(true);
-                              }}
-                              className="px-3.5 py-1.5 bg-[#120c7a] text-white rounded-lg text-[10px] font-extrabold transition-all cursor-pointer hover:bg-blue-900 inline-flex items-center gap-1"
-                            >
-                              <Eye size={11} /> Open Document
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            ) : (
-              <>
-                {/* Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    { label: "Total Activities", value: stats.total, icon: FileText, color: "text-blue-600", bg: "bg-blue-50" },
-                    { label: "Approved", value: stats.approved, icon: Award, color: "text-emerald-600", bg: "bg-emerald-50" },
-                    { label: "Pending Review", value: stats.pending, icon: Loader2, color: "text-amber-600", bg: "bg-amber-50" },
-                    { label: "Rejected", value: stats.rejected, icon: FileText, color: "text-rose-600", bg: "bg-rose-50" },
-                  ].map((s, i) => (
-                    <div key={i} className={`${s.bg} rounded-xl p-4 border border-zinc-100`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        {s.label === "Pending Review" ? (
-                          <s.icon size={16} className={`${s.color} ${s.value > 0 ? "animate-spin" : ""}`} />
-                        ) : (
-                          <s.icon size={16} className={s.color} />
-                        )}
-                        <span className={`text-[10px] font-bold uppercase tracking-wider ${s.color}`}>{s.label}</span>
-                      </div>
-                      <span className="text-2xl font-black text-zinc-800">{s.value}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* List Table */}
-                <div className="bg-white rounded-2xl border border-zinc-200 overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-200">
-                        <th className="text-left p-3 font-bold text-zinc-600">S.No</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Activity Code</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Activity Name</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Category</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Status</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Submitted By</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Department</th>
-                        <th className="text-left p-3 font-bold text-zinc-600">Date</th>
-                        <th className="text-center p-3 font-bold text-zinc-600">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredActivities.length === 0 ? (
-                        <tr><td colSpan={9} className="p-6 text-center text-zinc-400 font-semibold">No activities found for selected filters.</td></tr>
-                      ) : filteredActivities.map((a, i) => (
-                        <tr key={a.id} className="border-b border-zinc-100 hover:bg-zinc-50">
-                          <td className="p-3 font-mono text-zinc-400">{i+1}</td>
-                          <td className="p-3 font-bold text-[#120c7a]">{a.activityCode}</td>
-                          <td className="p-3 font-semibold text-zinc-800">{a.activityName || a.title || "-"}</td>
-                          <td className="p-3">{ACTIVITY_CATEGORIES[getCategoryFromCode(a.activityCode || "")]?.label || "-"}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              a.status === "Approved" ? "bg-emerald-100 text-emerald-700" :
-                              a.status === "Pending" || a.status === "HOD_Pending" ? "bg-amber-100 text-amber-700" :
-                              a.status === "Rejected" ? "bg-rose-100 text-rose-700" :
-                              a.status === "Returned" ? "bg-orange-100 text-orange-700" :
-                              "bg-zinc-100 text-zinc-600"
-                            }`}>{a.status || "Draft"}</span>
-                          </td>
-                          <td className="p-3">{a.facultyName || a.studentName || "-"}</td>
-                          <td className="p-3">{a.department || "-"}</td>
-                          <td className="p-3 text-zinc-500">{a.date || a.fromDate || "-"}</td>
-                          <td className="p-3 text-center flex justify-center gap-1.5 font-bold">
-                            <button
-                              onClick={() => setDetailActivity(a)}
-                              className="px-2 py-1 bg-zinc-100 text-zinc-700 rounded text-[10px] font-bold hover:bg-zinc-200 transition-all flex items-center gap-1 cursor-pointer"
-                            >
-                              <Eye size={12} /> View
-                            </button>
-                            {a.status === "Draft" && (
-                              <button onClick={() => {
-                                if (a.isStep) {
-                                  navigate(`/step-activities/edit/${a.id}`);
-                                } else {
-                                  navigate(`/activities/${a.activityCode}/edit/${a.id}`);
-                                }
-                              }}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded text-[10px] font-bold hover:bg-indigo-100 transition-all cursor-pointer">
-                                <Pencil size={12} /> Edit
-                              </button>
-                            )}
-                          </td>
-                        </tr>
+                    <tbody className="divide-y divide-zinc-100 font-medium">
+                      {groupedByMonth.map(([monthName, activitiesList]) => (
+                        <React.Fragment key={monthName}>
+                          <tr className="bg-zinc-50 border-y border-zinc-100">
+                            <td colSpan={8} className="px-4 py-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                                  <Calendar size={13} className="text-[#120c7a]" />
+                                  {monthName}
+                                </span>
+                                <span className="text-[9px] bg-zinc-200 text-zinc-700 px-2.5 py-0.5 rounded-full font-bold">
+                                  {activitiesList.length} approved
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                          {activitiesList.map((act) => {
+                            const registry = ACTIVITY_REGISTRY.find(r => r.code === act.activityCode);
+                            return (
+                              <tr key={act.id} className="hover:bg-zinc-50/50 transition-colors">
+                                <td className="p-4">
+                                  <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+                                  <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{act.regNo || act.facultyId || ""}</p>
+                                </td>
+                                <td className="p-4">
+                                  <p className="font-bold text-zinc-700">{act.department}</p>
+                                  <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
+                                </td>
+                                <td className="p-4 max-w-xs md:max-w-sm">
+                                  <p className="font-bold text-zinc-800 truncate">{act.activityName || act.title || registry?.name || "Unnamed Activity"}</p>
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 bg-blue-50 text-blue-700 border border-blue-100 uppercase">
+                                    {act.activityCode}
+                                  </span>
+                                </td>
+                                <td className="p-4 text-center font-bold text-zinc-700">{act.date || act.fromDate || "-"}</td>
+                                <td className="p-4 text-center">
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-emerald-100 text-emerald-800">
+                                    Approved
+                                  </span>
+                                </td>
+                                <td className="p-4 text-center font-extrabold text-[#120c7a]">{act.points || act.totalPoints || "-"}</td>
+                                <td className="p-4 text-center text-[10px] font-bold">
+                                  {registry?.nbaCriterion && <div className="text-blue-700">NBA: {registry.nbaCriterion}</div>}
+                                  {registry?.naacCriterion && <div className="text-emerald-700">NAAC: {registry.naacCriterion}</div>}
+                                </td>
+                                <td className="p-4 text-center">
+                                  <button
+                                    onClick={() => setReviewActivity(act)}
+                                    className="px-3 py-1.5 bg-[#120c7a]/5 hover:bg-[#120c7a]/15 text-[#120c7a] rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Eye size={12} /> View Details
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              </>
-            )}
+              )}
+            </div>
           </>
         ) : (
-          /* Document Report Preview Mode */
+          /* Report Preview Mode with Forward to Principal Workflow */
           <div className="space-y-6">
             
+            {/* Status bar */}
+            <div className="no-print">
+              {reportStatusDoc?.status === "Approved" ? (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl flex items-center gap-2 text-xs font-bold shadow-sm">
+                  <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                  <span>This Monthly Report has been approved and signed by the Principal! (Approved on {new Date(reportStatusDoc.approvedAt).toLocaleDateString()})</span>
+                </div>
+              ) : reportStatusDoc?.status === "Principal_Pending" ? (
+                <div className="p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl flex items-center gap-2 text-xs font-bold shadow-sm">
+                  <Clock size={16} className="text-amber-600 shrink-0 animate-pulse" />
+                  <span>This Monthly Report is currently forwarded to the Principal and is pending approval.</span>
+                </div>
+              ) : reportStatusDoc?.status === "Returned" ? (
+                <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl flex flex-col gap-1.5 text-xs shadow-sm">
+                  <div className="flex items-center gap-2 font-bold">
+                    <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                    <span>Report Returned for Correction:</span>
+                  </div>
+                  <p className="pl-6 font-semibold italic text-rose-700">Comments: "{reportStatusDoc.comments}"</p>
+                </div>
+              ) : (
+                <div className="p-4 bg-zinc-50 border border-zinc-200 text-zinc-700 rounded-2xl flex items-center gap-2 text-xs font-bold shadow-sm">
+                  <AlertCircle size={16} className="text-zinc-500 shrink-0" />
+                  <span>Report Draft: This compiled report has not been forwarded to the Principal yet.</span>
+                </div>
+              )}
+            </div>
+
             {/* Action Bar */}
             <div className="bg-white p-4 border border-zinc-200 rounded-2xl flex justify-between items-center no-print">
               <button
@@ -642,12 +541,25 @@ export default function ActivityReports() {
               >
                 <X size={14} /> Back to List
               </button>
-              <button
-                onClick={() => window.print()}
-                className="px-5 py-2.5 bg-[#120c7a] text-white rounded-xl text-xs font-black shadow-md hover:bg-[#0f0a66] transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer size={15} /> Download PDF
-              </button>
+
+              <div className="flex items-center gap-3">
+                {(!reportStatusDoc || reportStatusDoc.status === "Returned") && (
+                  <button
+                    onClick={handleForwardToPrincipal}
+                    disabled={isForwarding}
+                    className="px-5 py-2.5 bg-gradient-to-r from-blue-700 to-indigo-800 text-white rounded-xl text-xs font-black shadow-md hover:from-blue-800 hover:to-indigo-900 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  >
+                    {isForwarding ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+                    Forward to Principal
+                  </button>
+                )}
+                <button
+                  onClick={() => window.print()}
+                  className="px-5 py-2.5 bg-zinc-800 text-white rounded-xl text-xs font-black shadow-md hover:bg-zinc-900 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer size={15} /> Print/Download PDF
+                </button>
+              </div>
             </div>
 
             {/* Document sheet */}
@@ -1233,11 +1145,10 @@ export default function ActivityReports() {
             </div>
           </div>
         )}
-
       </div>
 
-      {/* Detail Viewer Modal */}
-      {detailActivity && (
+      {/* View Detail Modal */}
+      {reviewActivity && (
         <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-800">
             <div className="bg-[#120c7a] p-6 text-white flex items-center justify-between">
@@ -1245,15 +1156,15 @@ export default function ActivityReports() {
                 <Award className="text-yellow-400" size={24} />
                 <div>
                   <h4 className="font-extrabold text-xs uppercase tracking-wider text-blue-200">
-                    Activity Details Log
+                    Approved Activity Details
                   </h4>
                   <p className="text-base font-bold truncate mt-0.5">
-                    {detailActivity.studentName || detailActivity.facultyName} 
-                    ({detailActivity.regNo || detailActivity.facultyId || "N/A"})
+                    {reviewActivity.studentName || reviewActivity.facultyName} 
+                    ({reviewActivity.regNo || reviewActivity.facultyId || "N/A"})
                   </p>
                 </div>
               </div>
-              <button onClick={() => setDetailActivity(null)} className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white">
+              <button onClick={() => setReviewActivity(null)} className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white">
                 <X size={20} />
               </button>
             </div>
@@ -1263,36 +1174,36 @@ export default function ActivityReports() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Activity Code</span>
-                  <span className="text-sm font-extrabold text-zinc-800">{detailActivity.activityCode || "STEP"}</span>
+                  <span className="text-sm font-extrabold text-zinc-800">{reviewActivity.activityCode || "STEP"}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Activity Name</span>
-                  <span className="text-sm font-extrabold text-zinc-800">{detailActivity.activityName || detailActivity.title}</span>
+                  <span className="text-sm font-extrabold text-zinc-800">{reviewActivity.activityName || reviewActivity.title}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Date</span>
-                  <span className="text-sm font-bold text-zinc-700">{detailActivity.date || detailActivity.fromDate}</span>
+                  <span className="text-sm font-bold text-zinc-700">{reviewActivity.date || reviewActivity.fromDate}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Points Claimed</span>
-                  <span className="text-sm font-extrabold text-[#120c7a]">{detailActivity.points || detailActivity.totalPoints || "-"} Pts</span>
+                  <span className="text-sm font-extrabold text-[#120c7a]">{reviewActivity.points || reviewActivity.totalPoints || "-"} Pts</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                  <span className="text-sm font-bold text-zinc-800">{detailActivity.department} / {detailActivity.batch} / {detailActivity.section || "Sec-A"}</span>
+                  <span className="text-sm font-bold text-zinc-800">{reviewActivity.department} / {reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>
                   <span className="text-xs font-semibold text-zinc-700">
-                    {detailActivity.nbaCriterion ? `NBA: ${detailActivity.nbaCriterion}` : ""} 
-                    {detailActivity.naacCriterion ? ` | NAAC: ${detailActivity.naacCriterion}` : ""}
+                    {reviewActivity.nbaCriterion ? `NBA: ${reviewActivity.nbaCriterion}` : ""} 
+                    {reviewActivity.naacCriterion ? ` | NAAC: ${reviewActivity.naacCriterion}` : ""}
                   </span>
                 </div>
               </div>
 
               {/* Additional fields */}
               <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
-                {Object.entries(detailActivity).filter(([k, v]) => 
+                {Object.entries(reviewActivity).filter(([k, v]) => 
                   v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole", "isStep"].includes(k)
                 ).map(([key, value]) => {
                   if (key === "formData") {
@@ -1374,22 +1285,32 @@ export default function ActivityReports() {
               </div>
 
               {/* Evidence Review */}
-              {detailActivity.evidenceUrl && (
+              {reviewActivity.evidenceUrl && (
                 <div>
                   <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider block mb-2">Uploaded Evidence</span>
                   <div className="border border-zinc-200 bg-zinc-50 rounded-2xl p-2 flex items-center justify-center min-h-60 overflow-hidden shadow-inner">
-                    {detailActivity.evidenceUrl.endsWith('.pdf') ? (
-                      <iframe src={detailActivity.evidenceUrl} className="w-full h-96 rounded-xl" title="Evidence PDF" />
+                    {reviewActivity.evidenceUrl.endsWith('.pdf') ? (
+                      <iframe src={reviewActivity.evidenceUrl} className="w-full h-96 rounded-xl" title="Evidence PDF" />
                     ) : (
-                      <img src={detailActivity.evidenceUrl} alt="Evidence" className="max-w-full max-h-96 object-contain rounded-xl shadow-md" referrerPolicy="no-referrer" />
+                      <img src={reviewActivity.evidenceUrl} alt="Evidence" className="max-w-full max-h-96 object-contain rounded-xl shadow-md" referrerPolicy="no-referrer" />
                     )}
                   </div>
+                </div>
+              )}
+
+              {reviewActivity.comments && (
+                <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider block mb-1">Approval Verification Info:</span>
+                  <p className="text-sm text-emerald-700">{reviewActivity.comments}</p>
+                  {reviewActivity.reviewedByName && (
+                    <p className="text-[10px] text-emerald-600 font-bold mt-1">Verified By: {reviewActivity.reviewedByName}</p>
+                  )}
                 </div>
               )}
             </div>
 
             <div className="p-4 bg-zinc-50 border-t border-zinc-100 flex justify-end">
-              <button onClick={() => setDetailActivity(null)} className="px-5 py-2 bg-[#120c7a] text-white text-xs font-extrabold rounded-xl transition-all cursor-pointer">
+              <button onClick={() => setReviewActivity(null)} className="px-5 py-2 bg-[#120c7a] text-white text-xs font-extrabold rounded-xl transition-all cursor-pointer">
                 Close
               </button>
             </div>

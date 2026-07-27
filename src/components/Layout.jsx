@@ -121,8 +121,8 @@ const allPossibleItems = [
 
   // Activity Module
   { id: "activity-list", icon: LayoutDashboard, label: "Activity Dashboard", path: "/activities" },
+  { id: "activity-approval", icon: CheckCircle2, label: "Activity Approvals", path: "/activities/approval" },
   { id: "activity-new", icon: Plus, label: "New Activity", path: "/activities/new" },
-  { id: "activity-approval", icon: ClipboardCheck, label: "Activity Approvals", path: "/activities?tab=approvals" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
   { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities/nba-export" },
 ];
@@ -193,7 +193,7 @@ const modules = [
     id: "activity",
     label: "Activity",
     icon: Award,
-    itemIds: ["step-points", "step-analytics", "activity-list", "activity-new", "activity-approval", "activity-reports", "activity-nba-export"]
+    itemIds: ["step-points", "step-analytics", "activity-list", "activity-approval", "activity-new", "activity-reports", "activity-nba-export"]
   },
   {
     id: "mentoring",
@@ -224,10 +224,11 @@ export default function Layout({ children, title }) {
 
   useEffect(() => {
     // Automatically expand the module containing the active path
+    const currentFullPath = location.pathname + location.search;
     const activeModule = modules.find(m => 
       m.itemIds.some(id => {
         const item = allPossibleItems.find(i => i.id === id);
-        return item && location.pathname === item.path;
+        return item && currentFullPath === item.path;
       })
     );
     if (activeModule) {
@@ -236,7 +237,7 @@ export default function Layout({ children, title }) {
         return { ...prev, [activeModule.id]: true };
       });
     }
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
 
   const toggleModule = (moduleId) => {
     setExpandedModules(prev => ({
@@ -737,7 +738,7 @@ export default function Layout({ children, title }) {
         <nav className="px-3 py-3 space-y-0.5">
           {/* Global Items */}
           {globalItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = (location.pathname + location.search) === item.path;
             return (
               <Link 
                 key={item.label}
@@ -760,7 +761,7 @@ export default function Layout({ children, title }) {
 
           {/* Module Based Groups */}
           {moduleGroups.map((module) => {
-            const moduleActive = module.items.some(item => location.pathname === item.path);
+            const moduleActive = module.items.some(item => (location.pathname + location.search) === item.path);
             return (
             <div key={module.id} className="space-y-0.5">
               <button
@@ -779,7 +780,7 @@ export default function Layout({ children, title }) {
               <div className={`overflow-hidden transition-all duration-250 ease-[cubic-bezier(0.4,0,0.2,1)] ${expandedModules[module.id] ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
                 <div className="ml-4 pl-4 border-l border-white/10 space-y-0.5 py-0.5">
                   {module.items.map((item) => {
-                    const isActive = location.pathname === item.path;
+                    const isActive = (location.pathname + location.search) === item.path;
                     return (
                       <Link 
                         key={item.label}

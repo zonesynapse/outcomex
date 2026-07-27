@@ -340,4 +340,33 @@
   - **Attendance.jsx**: Added `isEventAttendance` (checkbox) and `eventName` (text input) state. When checkbox checked: topicTaught/teachingAid/teachingMethodology fields hidden, event name input shown, validation for topic/teaching fields skipped. Save logic stores `isEvent: true`, `eventName` in the record, sets topic/teaching fields to "". `cumulativeAttended` skips event records. `handleSubjectChange` resets event state. Auto-load effect restores event state when loading existing event records.
   - **student/Attendance.jsx**: `rawEntries` now includes `isEvent`/`eventName`. Subject-wise stats skip event entries (not counted in overall%). Date-wise rows show event name as subject name and "-" as code, with faculty name who marked attendance.
   - **FacultyDashboard.jsx** (`facultyAttendanceRows`): Event records show "- (Event)" as code and event name as subject name in the Attendance Status table.
-  - **HODDashboard.jsx** (`attendanceWithPeriods`): Event records show "-" with "(Event)" badge as subject code and event name in amber styling in the Attendance Status table. All three row-push locations updated to pass `isEvent` flag.
+   - **HODDashboard.jsx** (`attendanceWithPeriods`): Event records show "-" with "(Event)" badge as subject code and event name in amber styling in the Attendance Status table. All three row-push locations updated to pass `isEvent` flag.
+
+### 34. FeeOperations.jsx rewrite — `users` collection + date filter + Excel export
+- **Problem**: FeeOperations showed a static UI with hardcoded/placeholder data. Student dropdown loaded from `placement_students` (wrong collection).
+- **Fixes**:
+  - Student dropdown now loads from `users` collection where `role === 'Student'`, filtered by programme/department/batch
+  - Fee computation reads `fee_structure` doc per programme and computes actual amount from year/sem fields
+  - Department display format cleaned (prog prefix removed, e.g., "Computer_Science_Engineering" → "CSE")
+  - Added date-range filter (from/to) with reset button
+  - Added Excel export (XLSX) via SheetJS with student name, regNo, amount, paid status, fee date columns
+  - Fee records stored per-student under `fees/{programmeKey}_{deptKey}_{batchKey}_{yearKey}_{semKey}` with `studentData.{regNo}` field
+  - Paid toggle writes `{ paid: bool, paidDate: ISO, feeHead, amount }` per student
+
+### 35. ActivityReports.jsx — Edit button for Draft entries + navigation fix
+- **Problem**: ActivityReports had no way to edit draft entries. Users had to delete and re-create.
+- **Fix**:
+  - Added Edit button (pencil icon) for Draft status entries in the activity table
+  - Button navigates to `/activities/{activityCode}/edit/{docId}` which maps to ActivityEntry edit route
+  - `ActivityEntry.jsx` now extracts `id` from URL params and loads existing data in `useEffect` for editing
+
+### 36. MentorMeetings.jsx — student data source fix (users → students collection)
+- **Problem**: "My Students" tab loaded student list from `users` collection (filtered by `role === 'Student'`) and matched by `regNo` to allocation regs. But for new admission flow data, the student's `regNo` in `users` is empty (register number isn't assigned yet) — they're identified by admission number in the `students` collection. This caused allocated students to not appear.
+- **Fix**: Changed student loading from `users` collection to `students` collection — iterates over `students` docs and matches field keys against `activeRegs` from `mentor_allocations`. Student objects built with `regNo: key`, `uid: key`, `programme/dept/batch/ay/sem/section` from `_meta` or doc ID parsing.
+
+### 37. MentorMeetings.jsx — profile data fallback when `student_index` missing
+- **Problem**: After switching to `students` collection, `openProfile` used `student_index` lookup for profile data. For OLD upload data, `student_index` doesn't exist (created only during HOD section assignment, which was a later feature). StudentManagement.jsx had `_profile_data` fallback (from `users` collection) but MentorMeetings student objects (from `students` collection) lack `_profile_data` — profile showed empty.
+- **Fix**:
+  - Added `sourceDocId: docSnap.id` to each student object during list building (tracks which `students` doc the student came from)
+  - In `openProfile`, added fallback after `student_index` fails: reads `_student_data[reg]` directly from `students/{sourceDocId}` with real-time listener
+  - Existing `_profile_data` fallback kept as last-resort

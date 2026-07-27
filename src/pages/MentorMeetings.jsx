@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { db, auth } from "../firebase";
-import { doc, getDoc, onSnapshot, collection, updateDoc } from "firebase/firestore";
+import { doc, getDoc, getDocs, onSnapshot, collection, updateDoc, query, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
@@ -197,6 +197,7 @@ export default function MentorMeetings() {
   const [sameAsPresent, setSameAsPresent] = useState(false);
   const [quotaOptions, setQuotaOptions] = useState([]);
   const profileUnsubRef = useRef(null);
+  const usersDocIdRef = useRef('');
   const editingRef = useRef(false);
 
   const [meetings, setMeetings] = useState([]);
@@ -269,6 +270,7 @@ export default function MentorMeetings() {
             const meta = data._meta || {};
             list.push({
               regNo: key, displayName: name, studentName: name, uid: key,
+              sourceDocId: docSnap.id,
               programme: meta.programme || (docIdParts ? docIdParts[1] : ''),
               department: meta.department || '',
               batch: meta.batch || (docIdParts ? docIdParts[2] : ''),
@@ -341,6 +343,26 @@ export default function MentorMeetings() {
     try {
       const reg = student.regNo || '';
       let loaded = false;
+      usersDocIdRef.current = '';
+
+      // Enrich student with user data (email, mobile, programme, department)
+      if (reg) {
+        const usersSnap = await getDocs(query(collection(db, 'users'), where('regNo', '==', reg), where('role', '==', 'Student')));
+        if (!usersSnap.empty) {
+          const uDoc = usersSnap.docs[0];
+          const uData = uDoc.data();
+          usersDocIdRef.current = uDoc.id;
+          setProfileStudent(prev => ({
+            ...prev,
+            email: uData.email || prev.email || '',
+            mobile: uData.mobile || uData.phoneNumber || prev.mobile || '',
+            programme: uData.programme || prev.programme || '',
+            department: uData.department || prev.department || '',
+            batch: uData.batch || prev.batch || '',
+          }));
+        }
+      }
+
       if (reg) {
         const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
         if (idxSnap.exists()) {
@@ -349,12 +371,21 @@ export default function MentorMeetings() {
             setProfileStudentDocId(sDocId);
             const sSnap = await getDoc(doc(db, 'students', sDocId));
             if (sSnap.exists()) {
-              const extra = sSnap.data()?._student_data?.[reg] || {};
+              const sData = sSnap.data();
+              const extra = sData._student_data?.[reg] || {};
               if (Object.keys(extra).length > 0) {
                 setStudentProfileData(extra);
                 setEditingProfileData({ ...extra });
                 if (extra._sameAsPresent === 'true') setSameAsPresent(true);
                 loaded = true;
+              }
+              if (sData._meta) {
+                setProfileStudent(prev => ({
+                  ...prev,
+                  programme: prev.programme || sData._meta.programme || '',
+                  department: prev.department || sData._meta.department || '',
+                  batch: prev.batch || sData._meta.batch || '',
+                }));
               }
             }
             profileUnsubRef.current = onSnapshot(doc(db, 'students', sDocId), (snap) => {
@@ -369,6 +400,35 @@ export default function MentorMeetings() {
           }
         }
       }
+      if (!loaded && student.sourceDocId) {
+        const sSnap = await getDoc(doc(db, 'students', student.sourceDocId));
+        if (sSnap.exists()) {
+          const sData = sSnap.data();
+          const extra = sData._student_data?.[reg] || {};
+          if (Object.keys(extra).length > 0) {
+            setProfileStudentDocId(student.sourceDocId);
+            setStudentProfileData(extra);
+            setEditingProfileData({ ...extra });
+            if (extra._sameAsPresent === 'true') setSameAsPresent(true);
+            loaded = true;
+            profileUnsubRef.current = onSnapshot(doc(db, 'students', student.sourceDocId), (snap) => {
+              if (!snap.exists()) return;
+              const extra2 = snap.data()?._student_data?.[reg] || {};
+              setStudentProfileData(extra2);
+              if (!editingRef.current) setEditingProfileData({ ...extra2 });
+              if (extra2._sameAsPresent === 'true') setSameAsPresent(true);
+            });
+          }
+          if (!loaded && sData._meta) {
+            setProfileStudent(prev => ({
+              ...prev,
+              programme: prev.programme || sData._meta.programme || '',
+              department: prev.department || sData._meta.department || '',
+              batch: prev.batch || sData._meta.batch || '',
+            }));
+          }
+        }
+      }
       if (!loaded && student._profile_data) {
         const pd = student._profile_data;
         const initial = {};
@@ -377,6 +437,7 @@ export default function MentorMeetings() {
         setStudentProfileData(initial);
         setEditingProfileData({ ...initial });
         if (pd._sameAsPresent === 'true') setSameAsPresent(true);
+        loaded = true;
       }
     } catch (err) { console.error('Error loading student data:', err); }
     setLoadingProfile(false);
@@ -384,6 +445,7 @@ export default function MentorMeetings() {
 
   const closeProfile = () => {
     if (profileUnsubRef.current) { profileUnsubRef.current(); profileUnsubRef.current = null; }
+    usersDocIdRef.current = '';
     editingRef.current = false;
     setProfileStudent(null);
     setEditing(false);
@@ -417,7 +479,9 @@ export default function MentorMeetings() {
   const saveEdit = async () => {
     if (!profileStudent) return;
     try {
-      await updateDoc(doc(db, "users", profileStudent.uid), editData);
+      if (usersDocIdRef.current) {
+        await updateDoc(doc(db, "users", usersDocIdRef.current), editData);
+      }
       if (profileStudentDocId && profileStudent.regNo) {
         const extra = {};
         PROFILE_SECTIONS.forEach(sec => sec.fields.forEach(f => {
@@ -982,7 +1046,6 @@ export default function MentorMeetings() {
                       { label: 'Department', key: 'department', placeholder: 'Department' },
                       { label: 'Batch', key: 'batch', placeholder: 'Batch' },
                       { label: 'Mobile', key: 'mobile', placeholder: 'Mobile Number' },
-                      { label: 'Address', key: 'address', placeholder: 'Address' },
                     ].map(field => (
                       <div key={field.key} className="space-y-1">
                         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest px-0.5">{field.label}</label>

@@ -41,12 +41,6 @@ export default function ActivityPicker() {
   return (
     <Layout title="New Activity">
       <div className="p-4 md:p-8 max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl md:text-3xl font-black text-zinc-800">New Activity</h1>
-          <p className="text-sm text-zinc-500 mt-1">Select an activity type to create a new entry</p>
-        </div>
-
         {/* Search */}
         <div className="relative mb-8">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />

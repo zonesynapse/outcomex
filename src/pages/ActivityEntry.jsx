@@ -26,7 +26,7 @@ const getCategoryFromCode = (code) => {
 };
 
 export default function ActivityEntry() {
-  const { code } = useParams(); // e.g., "A5"
+  const { code, id } = useParams(); // e.g., "A5" or "A5/edit/docId"
   const navigate = useNavigate();
   
   const [currentUserData, setCurrentUserData] = useState(null);
@@ -40,7 +40,6 @@ export default function ActivityEntry() {
   const [dragOver, setDragOver] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [draftId, setDraftId] = useState(null);
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [sectionConfigs, setSectionConfigs] = useState({});
 
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -101,18 +100,7 @@ export default function ActivityEntry() {
     return [firstSem, firstSem + 1];
   }, [formData.batch, formData.academicYear]);
 
-  const monthOptions = useMemo(() => {
-    const now = new Date();
-    const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-    const currentMonth = months[now.getMonth()];
-    const prevDate = new Date(now);
-    prevDate.setMonth(prevDate.getMonth() - 1);
-    const prevMonth = months[prevDate.getMonth()];
-    return [
-      { label: `${currentMonth} ${now.getFullYear()}`, value: currentMonth },
-      { label: `${prevMonth} ${prevDate.getFullYear()}`, value: prevMonth }
-    ];
-  }, []);
+
 
   // Multi-row state for activities like A5, A7, A8
   const [rows, setRows] = useState([{}]);
@@ -160,10 +148,35 @@ export default function ActivityEntry() {
       const config = ACTIVITY_REGISTRY.find(a => a.code === code);
       setActivityConfig(config);
       if (config?.isMultiRow) {
-        setRows([{}]); // Start with one empty row
+        setRows([{}]);
       }
     }
   }, [code]);
+
+  // Load existing entry for editing
+  useEffect(() => {
+    if (!id || !code) return;
+    const loadEdit = async () => {
+      try {
+        const snap = await getDoc(doc(db, "activity_entries", id));
+        if (snap.exists()) {
+          const data = snap.data();
+          setDraftId(id);
+          const { formData: savedFormData, evidenceFiles, status, activityCode, activityName, category, submittedBy, submittedById, submittedByRole, createdAt, updatedAt, ...rest } = data;
+          if (data.formData && activityConfig?.isMultiRow) {
+            setRows(Array.isArray(data.formData) ? data.formData : [data.formData]);
+          }
+          setFormData(prev => ({ ...prev, ...rest, ...(data.formData && !activityConfig?.isMultiRow ? data.formData : {}) }));
+          if (data.evidenceFiles) {
+            setUploadedFiles(data.evidenceFiles);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading edit data:", err);
+      }
+    };
+    loadEdit();
+  }, [id, code, activityConfig]);
 
   const handleInputChange = (field, value, rowIndex = null) => {
     if (rowIndex !== null) {
@@ -259,7 +272,7 @@ export default function ActivityEntry() {
     if (activityConfig?.isMultiRow) {
       dataToValidate.forEach((row, idx) => {
         activityConfig.fields.forEach(field => {
-          if (BASIC_INFO_KEYS.has(field.key)) return;
+          if (BASIC_INFO_KEYS.has(field.key) || field.key === 'evidence') return;
           if (field.required && !row[field.key]) {
             newErrors[`${field.key}_${idx}`] = `${field.label} is required`;
           }
@@ -267,7 +280,7 @@ export default function ActivityEntry() {
       });
     } else {
       activityConfig?.fields.forEach(field => {
-        if (BASIC_INFO_KEYS.has(field.key)) return;
+        if (BASIC_INFO_KEYS.has(field.key) || field.key === 'evidence') return;
         if (field.required && !formData[field.key]) {
           newErrors[field.key] = `${field.label} is required`;
         }
@@ -282,13 +295,23 @@ export default function ActivityEntry() {
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
-
   const saveDraft = async () => {
     if (!activityConfig) return;
     setSaving(true);
     try {
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      const dateVal = formData.date || formData.fromDate;
+      let month = formData.month || monthNames[new Date().getMonth()];
+      if (dateVal) {
+        const d = new Date(dateVal);
+        if (!isNaN(d.getTime())) {
+          month = monthNames[d.getMonth()];
+        }
+      }
+
       const dataToSave = {
         ...formData,
+        month,
         activityCode: code,
         activityName: activityConfig.name,
         category: getCategoryFromCode(code),
@@ -319,11 +342,20 @@ export default function ActivityEntry() {
     }
   };
 
-  const handleSaveWithMonth = async (month) => {
+  const handleSave = async () => {
     if (!validateForm()) return;
-    setShowMonthPicker(false);
     setSaving(true);
     try {
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      const dateVal = formData.date || formData.fromDate;
+      let month = monthNames[new Date().getMonth()];
+      if (dateVal) {
+        const d = new Date(dateVal);
+        if (!isNaN(d.getTime())) {
+          month = monthNames[d.getMonth()];
+        }
+      }
+
       const dataToSave = {
         ...formData,
         month,
@@ -736,33 +768,10 @@ export default function ActivityEntry() {
               <button type="button" onClick={saveDraft} disabled={saving} className="px-5 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-extrabold rounded-xl transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
                 <Save size={14} /> {draftId ? "Update Draft" : "Save as Draft"}
               </button>
-              <button type="button" onClick={() => setShowMonthPicker(true)} disabled={saving} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
+              <button type="button" onClick={handleSave} disabled={saving} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 Save
               </button>
-              {showMonthPicker && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowMonthPicker(false)} />
-                  <div className="absolute right-0 top-full mt-2 bg-white rounded-2xl shadow-xl border border-zinc-200 p-3 z-50 min-w-[220px]">
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2 px-1">Select Month</p>
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {monthOptions.map(m => (
-                        <button
-                          key={m.value}
-                          type="button"
-                          onClick={() => handleSaveWithMonth(m.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-emerald-300 hover:bg-emerald-50 text-left transition-all cursor-pointer"
-                        >
-                          <span className="text-sm font-bold text-zinc-700">{m.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <button type="button" onClick={() => setShowMonthPicker(false)} className="mt-2 w-full text-center text-[11px] text-zinc-400 font-medium hover:text-zinc-600 py-1 cursor-pointer">
-                      Cancel
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
           </div>
         </form>

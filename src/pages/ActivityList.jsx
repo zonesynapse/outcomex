@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
@@ -34,7 +34,8 @@ export default function ActivityList() {
   const [studentsIndex, setStudentsIndex] = useState({});
   const [facultyIndex, setFacultyIndex] = useState({});
   const tabParam = searchParams.get("tab");
-  const initialTab = tabParam === "approvals" ? "student" : (tabParam || "student");
+  const isApprovalsRoute = location.pathname === "/activities/approvals";
+  const initialTab = isApprovalsRoute ? "approvals" : (tabParam && ["student", "faculty", "department", "approvals", "reports", "nba-export"].includes(tabParam) ? tabParam : "student");
   const [activeTab, setActiveTab] = useState(initialTab); // student, faculty, department, approvals, reports, nba-export
   
   // Search & Filter states
@@ -59,6 +60,7 @@ export default function ActivityList() {
 
   // Modal states
   const [reviewActivity, setReviewActivity] = useState(null);
+  const reviewRegistry = useMemo(() => reviewActivity ? ACTIVITY_REGISTRY.find(r => r.code === reviewActivity.activityCode) : null, [reviewActivity]);
   const [returnComment, setReturnComment] = useState("");
   const [isActioning, setIsActioning] = useState(false);
   const [showReturnInput, setShowReturnInput] = useState(false);
@@ -92,18 +94,22 @@ export default function ActivityList() {
 
   // Set status filter to Pending when approvals tab is active
   useEffect(() => {
-    if (tabParam === "approvals") {
+    if (isApprovalsRoute || tabParam === "approvals") {
       setSelectedStatus("Pending");
     }
-  }, [tabParam]);
+  }, [tabParam, isApprovalsRoute]);
 
   // Sync query param tab from URL
   useEffect(() => {
+    if (isApprovalsRoute) {
+      setActiveTab("approvals");
+      return;
+    }
     const tab = searchParams.get("tab");
     if (tab && ["student", "faculty", "department", "approvals", "reports", "nba-export"].includes(tab)) {
       setActiveTab(tab);
     }
-  }, [searchParams]);
+  }, [searchParams, isApprovalsRoute]);
 
   // Real-time activities listener (both activity_entries and step_activities)
   useEffect(() => {
@@ -332,6 +338,34 @@ export default function ActivityList() {
     });
   }, [activities, activeTab, selectedStatus, selectedBatch, selectedDept, selectedProg, selectedSection, selectedActivityCode, selectedAcademicYear, searchQuery]);
 
+  const groupedByMonth = useMemo(() => {
+    const groups = {};
+    filteredActivities.forEach(act => {
+      let mKey = "Unknown Month";
+      const dateVal = act.date || act.fromDate;
+      if (dateVal) {
+        const d = new Date(dateVal + 'T00:00:00');
+        if (!isNaN(d)) {
+          mKey = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        }
+      }
+      if (!groups[mKey]) groups[mKey] = [];
+      groups[mKey].push(act);
+    });
+
+    return Object.entries(groups).sort((a, b) => {
+      if (a[0] === "Unknown Month") return 1;
+      if (b[0] === "Unknown Month") return -1;
+      const dateAStr = a[1]?.[0]?.date || a[1]?.[0]?.fromDate || "";
+      const dateBStr = b[1]?.[0]?.date || b[1]?.[0]?.fromDate || "";
+      if (!dateAStr) return 1;
+      if (!dateBStr) return -1;
+      const da = new Date(dateAStr + 'T00:00:00');
+      const db = new Date(dateBStr + 'T00:00:00');
+      return db - da;
+    });
+  }, [filteredActivities]);
+
   // Stats
   const stats = useMemo(() => {
     let catActivities;
@@ -356,17 +390,17 @@ export default function ActivityList() {
     try {
       const docRef = doc(db, reviewActivity.isStep ? "step_activities" : "activity_entries", reviewActivity.id);
       await setDoc(docRef, {
-        status: "Approved",
-        comments: "Approved",
+        status: "HOD_Pending",
+        comments: "Approved by first-level reviewer",
         reviewedBy: auth.currentUser?.uid || "",
         reviewedByName: currentUserData?.facultyName || currentUserData?.displayName || "Reviewer",
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      alert("Activity approved successfully!");
+      alert("Activity approved and forwarded to HOD for final verification!");
       setReviewActivity(null);
     } catch (err) {
       console.error("Error approving:", err);
-      alert("Failed to approve. Please try again.");
+      alert("Failed to forward. Please try again.");
     } finally {
       setIsActioning(false);
     }
@@ -1163,62 +1197,81 @@ export default function ActivityList() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 font-medium">
-                  {filteredActivities.map((act) => {
-                    const registry = ACTIVITY_REGISTRY.find(r => r.code === act.activityCode);
-                    const status = act.status || "Draft";
-                    return (
-                      <tr key={act.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="p-4">
-                          <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
-                          <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-bold mt-0.5 uppercase">
-                            <span>{act.regNo || act.facultyId || ""}</span>
-                            {act.regNo && act.facultyId && <span>•</span>}
+                  {groupedByMonth.map(([monthName, activitiesList]) => (
+                    <React.Fragment key={monthName}>
+                      {/* Month Group Header Row */}
+                      <tr className="bg-zinc-50 border-y border-zinc-100">
+                        <td colSpan={8} className="px-4 py-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                              <Calendar size={13} className="text-[#120c7a]" />
+                              {monthName}
+                            </span>
+                            <span className="text-[9px] bg-zinc-200 text-zinc-700 px-2.5 py-0.5 rounded-full font-bold">
+                              {activitiesList.length} {activitiesList.length === 1 ? 'submission' : 'submissions'}
+                            </span>
                           </div>
                         </td>
-                        <td className="p-4">
-                          <p className="font-bold text-zinc-700">{act.department}</p>
-                          <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
-                        </td>
-                        <td className="p-4 max-w-xs md:max-w-sm">
-                          <p className="font-bold text-zinc-800 truncate">{act.activityName || act.title || registry?.name || "Unnamed Activity"}</p>
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 uppercase bg-blue-50 text-blue-700 border border-blue-100`}>
-                            {act.activityCode}
-                          </span>
-                        </td>
-                        <td className="p-4 text-center font-bold text-zinc-700">{act.date || act.fromDate || "-"}</td>
-                        <td className="p-4 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${
-                            status === "Approved" ? "bg-emerald-100 text-emerald-800" :
-                            status === "Pending" ? "bg-amber-100 text-amber-800" :
-                            status === "Returned" ? "bg-rose-100 text-rose-800" :
-                            status === "Rejected" ? "bg-red-100 text-red-800" :
-                            "bg-zinc-100 text-zinc-600"
-                          }`}>
-                            {status}
-                          </span>
-                        </td>
-                        <td className="p-4 text-center font-extrabold text-[#120c7a]">{act.points || act.totalPoints || "-"}</td>
-                        <td className="p-4 text-center text-[10px] font-bold">
-                          {registry?.nbaCriterion && <div className="text-blue-700">NBA: {registry.nbaCriterion}</div>}
-                          {registry?.naacCriterion && <div className="text-emerald-700">NAAC: {registry.naacCriterion}</div>}
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              setViewActivity(act);
-                              setReviewActivity(act);
-                              setReturnComment("");
-                              setShowReturnInput(false);
-                            }}
-                            className="px-3 py-1.5 bg-[#120c7a]/5 hover:bg-[#120c7a]/15 text-[#120c7a] rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Eye size={12} />
-                            {status === "Pending" ? "Review" : "View"}
-                          </button>
-                        </td>
                       </tr>
-                    );
-                  })}
+                      {/* Activity Rows for this month */}
+                      {activitiesList.map((act) => {
+                        const registry = ACTIVITY_REGISTRY.find(r => r.code === act.activityCode);
+                        const status = act.status || "Draft";
+                        return (
+                          <tr key={act.id} className="hover:bg-zinc-50/50 transition-colors">
+                            <td className="p-4">
+                              <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+                              <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-bold mt-0.5 uppercase">
+                                <span>{act.regNo || act.facultyId || ""}</span>
+                                {act.regNo && act.facultyId && <span>•</span>}
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <p className="font-bold text-zinc-700">{act.department}</p>
+                              <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
+                            </td>
+                            <td className="p-4 max-w-xs md:max-w-sm">
+                              <p className="font-bold text-zinc-800 truncate">{act.activityName || act.title || registry?.name || "Unnamed Activity"}</p>
+                              <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 uppercase bg-blue-50 text-blue-700 border border-blue-100`}>
+                                {act.activityCode}
+                              </span>
+                            </td>
+                            <td className="p-4 text-center font-bold text-zinc-700">{act.date || act.fromDate || "-"}</td>
+                            <td className="p-4 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${
+                                status === "Approved" ? "bg-emerald-100 text-emerald-800" :
+                                status === "Pending" ? "bg-amber-100 text-amber-800" :
+                                status === "Returned" ? "bg-rose-100 text-rose-800" :
+                                status === "Rejected" ? "bg-red-100 text-red-800" :
+                                "bg-zinc-100 text-zinc-600"
+                              }`}>
+                                {status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-center font-extrabold text-[#120c7a]">{act.points || act.totalPoints || "-"}</td>
+                            <td className="p-4 text-center text-[10px] font-bold">
+                              {registry?.nbaCriterion && <div className="text-blue-700">NBA: {registry.nbaCriterion}</div>}
+                              {registry?.naacCriterion && <div className="text-emerald-700">NAAC: {registry.naacCriterion}</div>}
+                            </td>
+                            <td className="p-4 text-center">
+                              <button
+                                onClick={() => {
+                                  setViewActivity(act);
+                                  setReviewActivity(act);
+                                  setReturnComment("");
+                                  setShowReturnInput(false);
+                                }}
+                                className="px-3 py-1.5 bg-[#120c7a]/5 hover:bg-[#120c7a]/15 text-[#120c7a] rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye size={12} />
+                                {status === "Pending" ? "Review" : "View"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1276,24 +1329,97 @@ export default function ActivityList() {
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>
                   <span className="text-xs font-semibold text-zinc-700">
-                    {registry?.nbaCriterion ? `NBA: ${registry.nbaCriterion}` : ""} 
-                    {registry?.naacCriterion ? ` | NAAC: ${registry.naacCriterion}` : ""}
+                    {reviewRegistry?.nbaCriterion ? `NBA: ${reviewRegistry.nbaCriterion}` : ""} 
+                    {reviewRegistry?.naacCriterion ? ` | NAAC: ${reviewRegistry.naacCriterion}` : ""}
                   </span>
                 </div>
               </div>
 
               {/* Additional fields based on activity type */}
-              <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-100 space-y-3 text-xs">
+              <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
                 {Object.entries(reviewActivity).filter(([k, v]) => 
-                  v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName"].includes(k)
-                ).map(([key, value]) => (
-                  <div key={key} className="flex gap-4">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider w-40 shrink-0">
-                      {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                    </span>
-                    <span className="text-zinc-700 font-medium">{typeof value === 'object' ? JSON.stringify(value) : value}</span>
-                  </div>
-                ))}
+                  v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole"].includes(k)
+                ).map(([key, value]) => {
+                  // 1. If key is 'formData'
+                  if (key === "formData") {
+                    if (Array.isArray(value) && value.length > 0) {
+                      const basicInfoKeys = new Set(["programme", "department", "batch", "academicYear", "semester", "section", "date", "submittedBy", "month"]);
+                      const headers = Object.keys(value[0]).filter(hk => !basicInfoKeys.has(hk));
+                      return (
+                        <div key={key} className="space-y-2 w-full">
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                            Activity Record List
+                          </span>
+                          <div className="border border-zinc-200 rounded-xl overflow-hidden bg-white">
+                            <table className="w-full text-left text-xs">
+                              <thead>
+                                <tr className="bg-zinc-50 border-b border-zinc-200">
+                                  {headers.map(h => (
+                                    <th key={h} className="px-3 py-2 text-[9px] font-bold text-zinc-400 uppercase">
+                                      {h.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-100">
+                                {value.map((row, rIdx) => (
+                                  <tr key={rIdx} className="hover:bg-zinc-50/50">
+                                    {headers.map(h => (
+                                      <td key={h} className="px-3 py-2 text-zinc-700 font-medium">
+                                        {row[h] || "—"}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null; // Skip flat formData object since it is already spread
+                  }
+
+                  // 2. If key is 'evidenceFiles'
+                  if (key === "evidenceFiles") {
+                    if (Array.isArray(value) && value.length > 0) {
+                      return (
+                        <div key={key} className="space-y-1.5 w-full">
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                            Attached Files Info
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {value.map((file, fIdx) => (
+                              <div key={fIdx} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] font-medium text-zinc-600 shadow-sm">
+                                <FileText size={12} className="text-blue-500" />
+                                <span>{file.name}</span>
+                                <span className="text-[9px] text-zinc-400">({(file.size / 1024).toFixed(1)} KB)</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }
+
+                  // 3. Skip other metadata fields that are already in the main header
+                  if (["submittedBy", "month", "academicYear", "semester", "programme"].includes(key)) {
+                    return null;
+                  }
+
+                  // 4. Default key-value pair rendering
+                  return (
+                    <div key={key} className="flex gap-4">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider w-40 shrink-0">
+                        {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                      </span>
+                      <span className="text-zinc-700 font-medium">
+                        {typeof value === 'object' ? JSON.stringify(value) : value}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Evidence Review */}
@@ -1361,12 +1487,9 @@ export default function ActivityList() {
 
                 {reviewActivity.status === "Pending" && !showReturnInput && (
                   <>
-                    <button onClick={() => setShowReturnInput(true)} className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold rounded-xl transition-all flex items-center gap-1 cursor-pointer">
-                      <X size={14} /> Return for Correction
-                    </button>
                     <button onClick={handleApprove} disabled={isActioning} className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer">
                       {isActioning ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} strokeWidth={3} />}
-                      Approve & Grant Points
+                      Approve for Grade Points
                     </button>
                   </>
                 )}

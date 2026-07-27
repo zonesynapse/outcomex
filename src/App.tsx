@@ -79,6 +79,7 @@ import InventoryApprovals from "./pages/inventory/InventoryApprovals";
 import InventoryFulfill from "./pages/inventory/InventoryFulfill";
 import StudentStepPoints from "./pages/student/StepPoints";
 import ActivityList from "./pages/ActivityList";
+import ActivityApproval from "./pages/ActivityApproval";
 import ActivityEntry from "./pages/ActivityEntry";
 import ActivityReports from "./pages/ActivityReports";
 import ActivityNbaExport from "./pages/ActivityNbaExport";
@@ -199,6 +200,8 @@ export default function App() {
 
         {/* Activity Module Routes */}
         <Route path="/activities" element={<ProtectedRoute><ActivityList /></ProtectedRoute>} />
+        <Route path="/activities/approvals" element={<ProtectedRoute><ActivityList /></ProtectedRoute>} />
+        <Route path="/activities/approval" element={<ProtectedRoute><ActivityApproval /></ProtectedRoute>} />
         <Route path="/activities/reports" element={<ProtectedRoute><ActivityReports /></ProtectedRoute>} />
         <Route path="/activities/nba-export" element={<ProtectedRoute><ActivityNbaExport /></ProtectedRoute>} />
         <Route path="/activities/new" element={<ProtectedRoute><ActivityPicker /></ProtectedRoute>} />

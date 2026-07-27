@@ -176,7 +176,7 @@ export default function FacultyDashboard() {
       if (semesterConfigs.length > 0) {
         console.warn('[FacultyDashboard] No active semesters match today. Configure semester_config with dates covering today.');
       }
-      return [];
+      return assignedGroups;
     }
     return assignedGroups.filter(g =>
       activeSemesters.some(as => {
@@ -675,26 +675,68 @@ export default function FacultyDashboard() {
     const tasks = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    currentWeekDates.forEach(date => {
-      if (date >= today) return;
-      if (semesterConfigs.length > 0) {
-        const isInAnySemester = semesterConfigs.some(cfg => {
-          if (!cfg.startDate || !cfg.endDate) return false;
-          const start = new Date(cfg.startDate + 'T00:00:00');
-          const end = new Date(cfg.endDate + 'T00:00:00');
-          return date >= start && date <= end;
-        });
-        if (!isInAnySemester) return;
+
+    visibleGroups.forEach(g => {
+      // Find specific semester config for this group
+      const as = semesterConfigs.find(cfg => {
+        if (cfg.programme !== g.progKey) return false;
+        if (cfg.academicYear !== g.academicYear) return false;
+        const configBatches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+        const isBatchMatch = configBatches.some(b => String(b) === String(g.batch));
+        if (!isBatchMatch) return false;
+
+        const semNumMatch = String(g.semester).match(/\d+/);
+        const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
+        if (isNaN(semNum)) return true;
+
+        const isGroupOdd = semNum % 2 !== 0;
+        const isConfigOdd = String(cfg.semesterType || 'Odd').toLowerCase() === 'odd';
+        return isGroupOdd === isConfigOdd;
+      });
+
+      if (!as || !as.startDate || !as.endDate) return;
+
+      const semStart = new Date(as.startDate + 'T00:00:00');
+      const semEnd = new Date(as.endDate + 'T00:00:00');
+
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      // Start date of window: max of (30 days ago, semStart)
+      let checkStart = new Date(today);
+      checkStart.setDate(today.getDate() - 30);
+      if (semStart > checkStart) {
+        checkStart = new Date(semStart);
       }
-      const dateStr = formatDateKey(date);
-      const isHoliday = academicEvents[dateStr]?.some(e => e.type === 'Holiday');
-      if (isHoliday) return;
-      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-      visibleGroups.forEach(g => {
+
+      // End date of window: min of (yesterday, semEnd)
+      let checkEnd = new Date(yesterday);
+      if (semEnd < checkEnd) {
+        checkEnd = new Date(semEnd);
+      }
+
+      if (checkStart > checkEnd) return;
+
+      const checkDates = [];
+      let cursor = new Date(checkStart);
+      while (cursor <= checkEnd) {
+        checkDates.push(new Date(cursor));
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      checkDates.forEach(date => {
+        const dateStr = formatDateKey(date);
+        
+        // 1. Holiday Check: Skip if the date is configured as a Holiday in the Academic Calendar
+        const isHoliday = academicEvents[dateStr]?.some(e => e.type === 'Holiday');
+        if (isHoliday) return;
+
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
         const ttKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
         const tt = timetableData[ttKey];
         const daySchedule = tt?.facultyEntries?.[dayName] || {};
+        
         Object.entries(daySchedule).forEach(([period, entries]) => {
           entries.forEach(entry => {
             const parts = String(entry).split('|');
@@ -754,9 +796,10 @@ export default function FacultyDashboard() {
         });
       });
     });
+
     tasks.sort((a, b) => b.date.localeCompare(a.date) || a.period - b.period);
     return tasks;
-  }, [visibleGroups, timetableData, facultyAttendanceData, currentWeekDates, courseNames, semesterConfigs, currentUid, academicEvents]);
+  }, [visibleGroups, timetableData, facultyAttendanceData, courseNames, semesterConfigs, currentUid, academicEvents]);
   const missedCount = useMemo(() => attendanceTasks.length, [attendanceTasks]);
 
   const statsCards = [
@@ -1123,7 +1166,7 @@ export default function FacultyDashboard() {
                 <p className="text-sm text-zinc-400 mt-1">No missed attendance or pending tasks.</p>
               </div>
             ) : (
-              <div className="divide-y divide-zinc-100">
+              <div className="divide-y divide-zinc-100 max-h-[350px] overflow-y-auto">
                 {/* Attendance tasks */}
                 {attendanceTasks.map((task, idx) => {
                   const dateParts = task.date.split('-');

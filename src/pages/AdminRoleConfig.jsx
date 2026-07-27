@@ -113,9 +113,9 @@ export default function AdminRoleConfig() {
     { id: "inventory-approvals", label: "Inventory — Request Approvals", path: "/inventory/approvals" },
     { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill" },
     { id: "activity-list", label: "Activity — Dashboard", path: "/activities" },
-    { id: "activity-approval", label: "Activity — Approval Queue", path: "/activities" },
-    { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities" },
-    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities" },
+    { id: "activity-new", label: "Activity — New Entry", path: "/activities/new" },
+    { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities/reports" },
+    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities/nba-export" },
     { id: "mentor-allocation", label: "Mentor — Allocation", path: "/mentor/allocation" },
     { id: "mentor-meetings", label: "Mentor — Activities", path: "/mentor/meetings" },
     { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports" }
