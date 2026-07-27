@@ -146,6 +146,7 @@ export default function FacultyDashboard() {
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [facultyAttendanceLoading, setFacultyAttendanceLoading] = useState(false);
   const [facultyAttendanceData, setFacultyAttendanceData] = useState({});
+  const [facultyCourseEnrolments, setFacultyCourseEnrolments] = useState({});
   const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
   const [allStudentNames, setAllStudentNames] = useState({});
@@ -174,12 +175,13 @@ export default function FacultyDashboard() {
     if (activeSemesters.length === 0) {
       if (semesterConfigs.length > 0) {
         console.warn('[FacultyDashboard] No active semesters match today. Configure semester_config with dates covering today.');
-        return [];
       }
-      return assignedGroups;
+      return [];
     }
     return assignedGroups.filter(g =>
       activeSemesters.some(as => {
+        if (as.programme !== g.progKey) return false;
+        if (as.academicYear !== g.academicYear) return false;
         const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
         const isBatchMatch = configBatches.some(b =>
           String(b) === String(g.batch)
@@ -301,6 +303,7 @@ export default function FacultyDashboard() {
     let cancelled = false;
     const fetchAttendance = async () => {
       const results = {};
+      const enrolResults = {};
       // Use batch-level prefixes so we fetch ALL attendance docs for the batch,
       // not just the faculty's own subject codes — needed for substitute detection
       const batchPrefixes = [];
@@ -311,15 +314,24 @@ export default function FacultyDashboard() {
         }
       }
       try {
-        const allSnap = await getDocs(collection(db, 'attendance'));
+        const [allSnap, enrolSnap] = await Promise.all([
+          getDocs(collection(db, 'attendance')),
+          getDocs(collection(db, 'course_enrolments'))
+        ]);
         allSnap.forEach(d => {
           if (batchPrefixes.some(p => d.id.startsWith(p))) {
             results[d.id] = d.data();
           }
         });
-      } catch (e) { console.warn('[FacultyDashboard] Attendance fetch error:', e); }
+        enrolSnap.forEach(d => {
+          if (batchPrefixes.some(p => d.id.startsWith(p))) {
+            enrolResults[d.id] = d.data();
+          }
+        });
+      } catch (e) { console.warn('[FacultyDashboard] Fetch error:', e); }
       if (!cancelled) {
         setFacultyAttendanceData(results);
+        setFacultyCourseEnrolments(enrolResults);
         setFacultyAttendanceLoading(false);
       }
     };
@@ -646,12 +658,113 @@ export default function FacultyDashboard() {
   const totalApprovedCount = useMemo(() => pendingQps.filter(q => q.status === 'approved_by_hod').length, [pendingQps]);
   const totalRecorrectCount = useMemo(() => pendingQps.filter(q => q.status === 'recorrected').length, [pendingQps]);
 
+  const currentWeekDates = useMemo(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((day + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 6 }).map((_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return d;
+    });
+  }, []);
+
+  const attendanceTasks = useMemo(() => {
+    const tasks = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    currentWeekDates.forEach(date => {
+      if (date >= today) return;
+      if (semesterConfigs.length > 0) {
+        const isInAnySemester = semesterConfigs.some(cfg => {
+          if (!cfg.startDate || !cfg.endDate) return false;
+          const start = new Date(cfg.startDate + 'T00:00:00');
+          const end = new Date(cfg.endDate + 'T00:00:00');
+          return date >= start && date <= end;
+        });
+        if (!isInAnySemester) return;
+      }
+      const dateStr = formatDateKey(date);
+      const isHoliday = academicEvents[dateStr]?.some(e => e.type === 'Holiday');
+      if (isHoliday) return;
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      visibleGroups.forEach(g => {
+        const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+        const ttKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
+        const tt = timetableData[ttKey];
+        const daySchedule = tt?.facultyEntries?.[dayName] || {};
+        Object.entries(daySchedule).forEach(([period, entries]) => {
+          entries.forEach(entry => {
+            const parts = String(entry).split('|');
+            const code = parts[0] || '';
+            if (!code) return;
+            const sectionSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+            const exactId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
+            const baseId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
+            const attData = facultyAttendanceData[exactId] || facultyAttendanceData[baseId];
+            const recordKey = `${dateStr}_P${period}`;
+            let rec = attData?.records?.[recordKey];
+            let recordFound = !!rec;
+
+            // 1. Direct record: if it exists but was marked by a substitute, attendance was done
+            if (rec && rec.markedBy && rec.markedBy !== currentUid) {
+              recordFound = true;
+            } else if (!rec) {
+              // 2. No direct record — check if a substitute marked a different subject for same group/period
+              const groupPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+              const secSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+              for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
+                if (!aData?.records?.[recordKey]) continue;
+                if (!dId.startsWith(groupPrefix)) continue;
+                if (g.section) {
+                  if (!dId.endsWith(secSuffix)) continue;
+                } else {
+                  if (dId.includes('_Sec-')) continue;
+                }
+                let rest = dId.slice(groupPrefix.length);
+                if (secSuffix && rest.endsWith(secSuffix)) rest = rest.slice(0, rest.length - secSuffix.length);
+                if (rest && rest !== code) {
+                  recordFound = true;
+                  break;
+                }
+              }
+            }
+
+            if (!recordFound) {
+              tasks.push({
+                type: 'missed',
+                date: dateStr,
+                period: parseInt(period),
+                code,
+                progKey: g.progKey,
+                department: g.department,
+                batch: g.batch,
+                academicYear: g.academicYear,
+                semester: g.semester,
+                section: g.section || '',
+                subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
+                batchLabel: `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`,
+                dayName,
+                groupKey: ttKey
+              });
+            }
+          });
+        });
+      });
+    });
+    tasks.sort((a, b) => b.date.localeCompare(a.date) || a.period - b.period);
+    return tasks;
+  }, [visibleGroups, timetableData, facultyAttendanceData, currentWeekDates, courseNames, semesterConfigs, currentUid, academicEvents]);
+  const missedCount = useMemo(() => attendanceTasks.length, [attendanceTasks]);
+
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },
     { label: "Drafts", value: totalDraftCount, icon: FileText, color: "slate" },
     { label: "Pending Review", value: totalForwardedCount, icon: Clock, color: "blue" },
     { label: "Approved", value: totalApprovedCount, icon: CheckCircle2, color: "emerald" },
-    { label: "Recorrection", value: totalRecorrectCount, icon: AlertCircle, color: "amber" },
+    { label: "Missed Attendance", value: missedCount, icon: AlertCircle, color: "amber" },
   ];
 
   const colorMap = {
@@ -804,8 +917,17 @@ export default function FacultyDashboard() {
           const batchLabel = `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`;
 
           if (rec) {
+            const isEvent = rec?.isEvent || false;
+            const eventName = rec?.eventName || '';
+            const enrolDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${sanitizeKey(subSubjectCode || code)}`;
+            const enrolData = facultyCourseEnrolments[enrolDocId];
+            const enrolledKeys = enrolData ? new Set(Object.keys(enrolData).filter(k => enrolData[k])) : null;
+
             const stuMap = rec.students || {};
-            const e2 = Object.entries(stuMap);
+            const e2 = Object.entries(stuMap).filter(([reg]) => {
+              if (!enrolledKeys) return true;
+              return enrolledKeys.has(reg);
+            });
             rows.push({
               period, hasRecord: true, code, batchLabel, subFound,
               presentCount: e2.filter(([, h]) => getH(h) > 0).length,
@@ -814,8 +936,9 @@ export default function FacultyDashboard() {
               presentStudents: e2.filter(([, h]) => getH(h) > 0).map(([r]) => r),
               absentStudents: e2.filter(([, h]) => getH(h) === 0).map(([r]) => r),
               odStudents: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).map(([r]) => r),
-              subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
+              subjectName: isEvent ? eventName : (getCourseName(courseNames, code, g.department, g.progKey) || ''),
               subSubjectCode, subFacultyName,
+              isEvent,
             });
           } else {
             rows.push({
@@ -824,6 +947,7 @@ export default function FacultyDashboard() {
               presentStudents: [], absentStudents: [], odStudents: [],
               subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
               subSubjectCode, subFacultyName,
+              isEvent: false,
             });
           }
         });
@@ -831,21 +955,22 @@ export default function FacultyDashboard() {
     });
     rows.sort((a, b) => Number(a.period) - Number(b.period));
     return rows;
-  }, [visibleGroups, timetableData, facultyAttendanceData, attendanceDate, courseNames, codeOwners, facultyNames, currentUid]);
+  }, [visibleGroups, timetableData, facultyAttendanceData, facultyCourseEnrolments, attendanceDate, courseNames, codeOwners, facultyNames, currentUid]);
+
+  const attendanceDateEvents = useMemo(() => academicEvents[attendanceDate] || [], [academicEvents, attendanceDate]);
+  const attendanceDateIsHoliday = useMemo(() => attendanceDateEvents.some(e => e.type === 'Holiday'), [attendanceDateEvents]);
+  const attendanceDateOutsideSemester = useMemo(() => {
+    if (!semesterConfigs.length) return false;
+    const selected = new Date(attendanceDate + 'T00:00:00');
+    return !semesterConfigs.some(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return false;
+      const s = new Date(cfg.startDate + 'T00:00:00');
+      const e = new Date(cfg.endDate + 'T00:00:00');
+      return selected >= s && selected <= e;
+    });
+  }, [semesterConfigs, attendanceDate]);
 
   const todayKey = useMemo(() => formatDateKey(new Date()), []);
-  const currentWeekDates = useMemo(() => {
-    const now = new Date();
-    const day = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - ((day + 6) % 7));
-    monday.setHours(0, 0, 0, 0);
-    return Array.from({ length: 6 }).map((_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d;
-    });
-  }, []);
 
   return (
     <Layout title="Faculty Dashboard">
@@ -975,72 +1100,120 @@ export default function FacultyDashboard() {
             )}
           </div>
 
-          {/* Tasks */}
+          {/* Missed Attendance */}
           <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                <CheckCircle2 size={20} className="text-[#120c7a]" />
-                Tasks
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{recorrectCount}</span>
+                <CalendarCheck2 size={20} className="text-[#120c7a]" />
+                Missed Attendance
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{missedCount}</span>
               </h2>
             </div>
             {pendingLoading ? (
               <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
                 <Loader2 className="animate-spin" size={20} />
-                <span className="text-sm font-semibold">Loading tasks...</span>
+                <span className="text-sm font-semibold">Checking attendance...</span>
               </div>
-            ) : recorrectCount === 0 ? (
+            ) : missedCount + recorrectCount === 0 ? (
               <div className="py-16 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-3">
                   <CheckCircle2 size={28} />
                 </div>
-                <p className="text-lg font-bold text-zinc-700">No pending tasks</p>
-                <p className="text-sm text-zinc-400 mt-1">All caught up!</p>
+                <p className="text-lg font-bold text-zinc-700">All caught up!</p>
+                <p className="text-sm text-zinc-400 mt-1">No missed attendance or pending tasks.</p>
               </div>
             ) : (
               <div className="divide-y divide-zinc-100">
-                {pendingQps.filter(q => q.status === 'recorrected').map((qp) => (
-                  <div key={`task-${qp.compositeKey}-${qp.id}`}
-                    className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <span className="text-sm font-bold text-zinc-800">{qp.subject}</span>
-                          {qp.subject_name && (
-                            <>
-                              <span className="text-[10px] text-zinc-300">•</span>
-                              <span className="text-xs text-zinc-500 truncate">{qp.subject_name}</span>
-                            </>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="inline-flex items-center gap-1 rounded-lg bg-red-50 text-red-700 px-2 py-0.5 text-[10px] font-bold border border-red-200">
-                            <AlertCircle size={10} /> Recorrection
-                          </span>
-                          <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
-                            <FileText size={10} /> {qp.exam_name || qp.qpaper_name}
-                          </span>
-                          <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                            {qp.batch || "-"}
-                          </span>
-                        </div>
-                        {qp.hod_comments && (
-                          <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                            <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                            <p className="text-xs text-amber-800 leading-relaxed">{qp.hod_comments}</p>
+                {/* Attendance tasks */}
+                {attendanceTasks.map((task, idx) => {
+                  const dateParts = task.date.split('-');
+                  const displayDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+                  return (
+                    <div key={`att-${idx}`} className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="text-sm font-bold text-zinc-800">{task.code}</span>
+                            {task.subjectName && <span className="text-xs text-zinc-500 truncate">— {task.subjectName}</span>}
                           </div>
-                        )}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 text-amber-700 px-2 py-0.5 text-[10px] font-bold border border-amber-200">
+                              <AlertCircle size={10} /> Missed
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                              {displayDate} — P{task.period}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
+                              {task.dayName}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                              {task.batchLabel}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => navigate(`/attendance?prog=${task.progKey}&dept=${task.department}&batch=${task.batch}&ay=${task.academicYear}&sem=${task.semester}&subject=${task.code}&date=${task.date}&period=${task.period}&section=${task.section}`)}
+                          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#120c7a]/5 text-[#120c7a] text-xs font-bold hover:bg-[#120c7a]/10 transition-all"
+                        >
+                          <Edit2 size={14} />
+                          Mark Now
+                        </button>
                       </div>
-                      <button
-                        onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95"
-                      >
-                        <Edit2 size={14} />
-                        Fix & Re-forward
-                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
+                {/* Recorrection tasks */}
+                {recorrectCount > 0 && (
+                  <>
+                    {recorrectCount > 0 && missedCount > 0 && (
+                      <div className="px-6 py-2 bg-zinc-50 text-[10px] font-bold text-zinc-400 uppercase tracking-wider border-t border-zinc-100">
+                        QP Recorrection ({recorrectCount})
+                      </div>
+                    )}
+                    {pendingQps.filter(q => q.status === 'recorrected').map((qp) => (
+                      <div key={`task-${qp.compositeKey}-${qp.id}`}
+                        className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="text-sm font-bold text-zinc-800">{qp.subject}</span>
+                              {qp.subject_name && (
+                                <>
+                                  <span className="text-[10px] text-zinc-300">•</span>
+                                  <span className="text-xs text-zinc-500 truncate">{qp.subject_name}</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-red-50 text-red-700 px-2 py-0.5 text-[10px] font-bold border border-red-200">
+                                <AlertCircle size={10} /> Recorrection
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
+                                <FileText size={10} /> {qp.exam_name || qp.qpaper_name}
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
+                                {qp.batch || "-"}
+                              </span>
+                            </div>
+                            {qp.hod_comments && (
+                              <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                                <p className="text-xs text-amber-800 leading-relaxed">{qp.hod_comments}</p>
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                            className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95"
+                          >
+                            <Edit2 size={14} />
+                            Fix & Re-forward
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1059,11 +1232,26 @@ export default function FacultyDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
-                className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+              {(() => {
+                const semMinDate = semesterConfigs.reduce((min, cfg) => {
+                  if (!cfg.startDate) return min;
+                  return !min || cfg.startDate < min ? cfg.startDate : min;
+                }, null);
+                return (
+                  <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+                    min={semMinDate || undefined}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+                );
+              })()}
               <span className="text-[11px] font-bold text-blue-200 bg-white/10 px-2.5 py-1.5 rounded-lg">
                 {new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
               </span>
+              {attendanceDateOutsideSemester && (
+                <span className="text-[10px] font-bold text-rose-300 bg-rose-500/20 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-rose-400/30">
+                  <AlertCircle size={12} /> Outside Semester Range
+                </span>
+              )}
               <button onClick={() => navigate("/attendance")}
                 className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold rounded-xl transition-all backdrop-blur-sm border border-white/20">
                 Go to Attendance
@@ -1075,6 +1263,29 @@ export default function FacultyDashboard() {
             <div className="p-8 text-center">
               <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
               <p className="text-xs text-zinc-400 font-medium">Checking attendance records...</p>
+            </div>
+          ) : attendanceDateIsHoliday ? (
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+                <Calendar size={28} />
+              </div>
+              <p className="text-lg font-bold text-rose-700">Holiday</p>
+              <div className="flex flex-wrap gap-2 justify-center mt-2">
+                {attendanceDateEvents.filter(e => e.type === 'Holiday').map(ev => (
+                  <span key={ev.id} className="inline-flex items-center gap-1 px-3 py-1 bg-rose-50 text-rose-600 text-xs font-bold rounded-full border border-rose-200">
+                    {ev.title}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-400 mt-2">No classes — Academic Calendar holiday.</p>
+            </div>
+          ) : attendanceDateOutsideSemester ? (
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+                <AlertCircle size={28} />
+              </div>
+              <p className="text-lg font-bold text-rose-700">Outside Semester Range</p>
+              <p className="text-xs text-zinc-400 mt-2">This date is not within any configured semester period. Attendance cannot be marked.</p>
             </div>
           ) : facultyAttendanceRows.length === 0 ? (
             <div className="p-8 text-center">
@@ -1101,9 +1312,18 @@ export default function FacultyDashboard() {
                       <td className="px-4 py-3 text-xs text-center font-black text-indigo-700">P{row.period}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-zinc-800">{row.code}</span>
-                          {row.subjectName && <span className="text-[10px] text-zinc-400 truncate max-w-[180px]">{row.subjectName}</span>}
-                          {row.subFound && (
+                          {row.isEvent ? (
+                            <>
+                              <span className="text-xs font-semibold text-amber-700">- (Event)</span>
+                              {row.subjectName && <span className="text-[10px] text-amber-500 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs font-semibold text-zinc-800">{row.code}</span>
+                              {row.subjectName && <span className="text-[10px] text-zinc-400 truncate max-w-[180px]">{row.subjectName}</span>}
+                            </>
+                          )}
+                          {row.subFound && !row.isEvent && (
                             <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-amber-600 font-bold">
                               <span className="inline-block px-1.5 py-0.5 bg-amber-50 rounded border border-amber-200">Sub</span>
                               {row.subFacultyName && <span>by {row.subFacultyName}</span>}

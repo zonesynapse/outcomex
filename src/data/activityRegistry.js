@@ -11,7 +11,6 @@ export const ACTIVITY_REGISTRY = [
     ownerType: "hod",
     description: "Class committee meetings minutes and action taken",
     fields: [
-      { key: "className", label: "Class / Year / Section", type: "text", required: true },
       { key: "meetingNo", label: "Meeting Number", type: "text", required: true },
       { key: "date", label: "Date", type: "date", required: true },
       { key: "chairman", label: "Chairman Name", type: "text", required: true },
@@ -20,7 +19,7 @@ export const ACTIVITY_REGISTRY = [
       { key: "agenda", label: "Agenda Items Discussed", type: "textarea", required: true },
       { key: "decisions", label: "Decisions / Action Taken", type: "textarea", required: true },
       { key: "nextMeetingDate", label: "Next Meeting Date", type: "date", required: false },
-      { key: "evidence", label: "Evidence Files (Signed Minutes)", type: "file", accept: "pdf", maxFiles: 3, required: true }
+      { key: "evidence", label: "Evidence Files (Minutes)", type: "file", accept: "pdf", maxFiles: 3, required: true }
     ],
     evidenceRequired: true,
     approvalRequired: true,
@@ -121,7 +120,6 @@ export const ACTIVITY_REGISTRY = [
     ownerType: "hod",
     description: "Parent-teacher meeting records",
     fields: [
-      { key: "className", label: "Class / Year / Section", type: "text", required: true },
       { key: "date", label: "Date", type: "date", required: true },
       { key: "parentsInvited", label: "Parents Invited (count)", type: "number", required: true },
       { key: "parentsAttended", label: "Parents Attended (count)", type: "number", required: true },

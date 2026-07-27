@@ -333,3 +333,11 @@
 - **Problem**: `loadUsersPage` used `getDocs` (one-time fetch) with cursor-based pagination. After mutations (role change, department change, approve), calling `refreshPage()` didn't reliably show the update — required full browser refresh.
 - **Root cause**: Paginated `getDocs` with `startAfter` cursors meant the re-fetched page might exclude the updated document due to cursor position. Additionally, the `getCountFromServer` call showed stale totals.
 - **Fix**: Replaced `loadUsersPage`/`getDocs` with `onSnapshot` real-time listener on the `users` collection. All non-student users are now stored in `users` state and filtered/sorted/paginated client-side via `useMemo`. Removed `pageCursors`, `hasMore`, `totalUserCount` state vars, and all `refreshPage()` calls. Removed unused Firestore imports (`orderBy`, `limit`, `startAfter`, `getCountFromServer`).
+
+### 33. "Consider for the period" (Event) checkbox in Attendance.jsx
+- **Goal**: Allow faculty to mark attendance for events (sports, workshop, guest lecture) without counting toward the subject's attendance stats.
+- **What changed**:
+  - **Attendance.jsx**: Added `isEventAttendance` (checkbox) and `eventName` (text input) state. When checkbox checked: topicTaught/teachingAid/teachingMethodology fields hidden, event name input shown, validation for topic/teaching fields skipped. Save logic stores `isEvent: true`, `eventName` in the record, sets topic/teaching fields to "". `cumulativeAttended` skips event records. `handleSubjectChange` resets event state. Auto-load effect restores event state when loading existing event records.
+  - **student/Attendance.jsx**: `rawEntries` now includes `isEvent`/`eventName`. Subject-wise stats skip event entries (not counted in overall%). Date-wise rows show event name as subject name and "-" as code, with faculty name who marked attendance.
+  - **FacultyDashboard.jsx** (`facultyAttendanceRows`): Event records show "- (Event)" as code and event name as subject name in the Attendance Status table.
+  - **HODDashboard.jsx** (`attendanceWithPeriods`): Event records show "-" with "(Event)" badge as subject code and event name in amber styling in the Attendance Status table. All three row-push locations updated to pass `isEvent` flag.

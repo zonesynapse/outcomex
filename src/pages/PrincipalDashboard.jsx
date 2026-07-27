@@ -386,8 +386,9 @@ export default function PrincipalDashboard() {
       }
     }
     if (progEndIdx < 0) progEndIdx = 1;
+    const progKey = parts.slice(0, progEndIdx).join('_');
     const deptKey = parts.slice(progEndIdx, batchIdx).join('_').trim();
-    return { batch, deptKey, progDisplay };
+    return { batch, deptKey, progKey, progDisplay };
   };
 
   const fetchAbsenteesForDate = async (date) => {
@@ -411,12 +412,26 @@ export default function PrincipalDashboard() {
         });
       });
 
+      // Collect unique enrollment doc IDs
+      const enrolDocIds = new Set();
+      const docInfos = []; // { enrolDocId, deptLabel, regNo }
       snap.forEach(docSnap => {
         const data = docSnap.data();
         if (!data?.records) return;
 
         const parsed = parseAttendanceDocId(docSnap.id);
         if (!parsed || !activeBatches.has(parsed.batch)) return;
+
+        // Extract ay, semNum, subjectCode for enrollment check
+        const parts = docSnap.id.split('_');
+        const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+        if (batchIdx < 0 || batchIdx + 3 >= parts.length) return;
+        const ay = parts[batchIdx + 1];
+        const semNum = parts[batchIdx + 2];
+        const subjectCodeStart = batchIdx + 3;
+        let subjectCode = parts.slice(subjectCodeStart).join('_').replace(/_(Sec-\w+)$/, '');
+
+        const enrolDocId = `${parsed.progKey || ''}_${sanitizeKey(parsed.deptKey)}_${sanitizeKey(parsed.batch)}_${sanitizeKey(ay)}_${semNum}_${sanitizeKey(subjectCode)}`;
 
         Object.entries(data.records).forEach(([recordKey, record]) => {
           const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
@@ -426,11 +441,31 @@ export default function PrincipalDashboard() {
             const hrs = typeof hVal === 'object' && hVal !== null ? (hVal.hours ?? 0) : (hVal ?? 0);
             if (Number(hrs) === 0 || hVal === false) {
               const deptLabel = parsed.progDisplay ? `${parsed.progDisplay} ${parsed.deptKey}` : parsed.deptKey;
-              if (!absentees[deptLabel]) absentees[deptLabel] = {};
-              absentees[deptLabel][regNo] = nameMap[regNo] || regNo;
+              enrolDocIds.add(enrolDocId);
+              docInfos.push({ enrolDocId, deptLabel, regNo });
             }
           });
         });
+      });
+
+      // Fetch enrollment data for all unique subjects
+      const enrolMap = {};
+      await Promise.all([...enrolDocIds].map(async (eid) => {
+        try {
+          const eSnap = await getDoc(doc(db, 'course_enrolments', eid));
+          if (eSnap.exists()) {
+            const eData = eSnap.data();
+            enrolMap[eid] = new Set(Object.keys(eData).filter(k => eData[k]));
+          }
+        } catch (e) { /* enrollment doc may not exist */ }
+      }));
+
+      // Build final absentees map filtered by enrollment
+      docInfos.forEach(({ enrolDocId, deptLabel, regNo }) => {
+        const enrolledSet = enrolMap[enrolDocId];
+        if (enrolledSet && !enrolledSet.has(regNo)) return; // not enrolled → skip
+        if (!absentees[deptLabel]) absentees[deptLabel] = {};
+        absentees[deptLabel][regNo] = nameMap[regNo] || regNo;
       });
 
       setTodayAbsentees(absentees);

@@ -144,38 +144,70 @@ export default function Attendance() {
               period: parseInt(periodStr),
               recordKey: key,
               status,
-              markedBy: rec?.markedBy || ''
+              markedBy: rec?.markedBy || '',
+              isEvent: rec?.isEvent || false,
+              eventName: rec?.eventName || ''
             });
           });
         });
 
-        // Group raw entries by recordKey (date_Pperiod)
-        const entriesByRecordKey = {};
-        const subjectPresenceCount = {};
-
-        rawEntries.forEach(entry => {
-          if (!entriesByRecordKey[entry.recordKey]) entriesByRecordKey[entry.recordKey] = [];
-          entriesByRecordKey[entry.recordKey].push(entry);
-
-          if (entry.status === 'P' || entry.status === 'OD') {
-            subjectPresenceCount[entry.subjectCode] = (subjectPresenceCount[entry.subjectCode] || 0) + 1;
-          }
+        // Filter by course enrollment: only count subjects the student is actually enrolled in
+        const uniqueEnrolKeys = new Set();
+        const enrolKeyMap = {}; // docId → enrolKey
+        rawEntries.forEach(e => {
+          const parts = e.docId.split('_');
+          const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+          if (batchIdx < 0 || batchIdx + 3 >= parts.length) return;
+          const batchKey = parts[batchIdx];
+          const ayKey = parts[batchIdx + 1];
+          const semNum = parts[batchIdx + 2];
+          const enrolKey = `${progKey}_${deptKey}_${sanitizeKey(batchKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
+          enrolKeyMap[e.docId] = enrolKey;
+          uniqueEnrolKeys.add(enrolKey);
+        });
+        const enrolMap = {};
+        await Promise.all([...uniqueEnrolKeys].map(async (ek) => {
+          try {
+            const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
+            if (eSnap.exists()) {
+              const eData = eSnap.data();
+              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
+            }
+          } catch (e) { /* enrollment doc may not exist */ }
+        }));
+        const filteredEntries = rawEntries.filter(e => {
+          // 1. Course enrollment doc (precise — for data saved after enrollment tracking)
+          const ek = enrolKeyMap[e.docId];
+          if (ek && enrolMap[ek]) return enrolMap[ek].has(regNo);
+          // 2. Fallback: subject must be assigned to this batch (handles old data without enrollment docs)
+          return !!facultyUidMap[e.subjectCode];
         });
 
-        // For each recordKey, resolve multi-course period conflict
+        // Dedup by recordKey: when no enrollment docs exist, a student may appear in multiple subjects
+        // for the same period (old data). Dedup ensures each period is counted at most once.
+        const entriesByRecordKey = {};
+        filteredEntries.forEach(e => {
+          if (!entriesByRecordKey[e.recordKey]) entriesByRecordKey[e.recordKey] = [];
+          entriesByRecordKey[e.recordKey].push(e);
+        });
         const resolvedEntries = [];
-
         Object.values(entriesByRecordKey).forEach(group => {
           if (group.length === 1) {
             resolvedEntries.push(group[0]);
-          } else if (group.length > 1) {
-            const presentEntries = group.filter(e => e.status === 'P' || e.status === 'OD');
-            if (presentEntries.length > 0) {
-              presentEntries.sort((a, b) => (subjectPresenceCount[b.subjectCode] || 0) - (subjectPresenceCount[a.subjectCode] || 0));
-              resolvedEntries.push(presentEntries[0]);
+          } else {
+            // Multiple subjects for same period — try to keep only enrolled subjects
+            const enrolledInGroup = group.filter(e => {
+              const ek = enrolKeyMap[e.docId];
+              const enrolledSet = enrolMap[ek];
+              return enrolledSet && enrolledSet.has(regNo);
+            });
+            if (enrolledInGroup.length > 0) {
+              enrolledInGroup.forEach(e => resolvedEntries.push(e));
             } else {
-              group.sort((a, b) => (subjectPresenceCount[b.subjectCode] || 0) - (subjectPresenceCount[a.subjectCode] || 0));
-              resolvedEntries.push(group[0]);
+              // Can't determine enrollment — pick present/OD if any, else first
+              const present = group.filter(e => e.status === 'P' || e.status === 'OD');
+              if (present.length > 0) resolvedEntries.push(present[0]);
+              else resolvedEntries.push(group[0]);
             }
           }
         });
@@ -186,6 +218,19 @@ export default function Attendance() {
 
         resolvedEntries.forEach(entry => {
           const isAttended = (entry.status === 'P' || entry.status === 'OD');
+
+          if (entry.isEvent) {
+            if (!dateMap[entry.dateStr]) dateMap[entry.dateStr] = [];
+            dateMap[entry.dateStr].push({
+              subject: '-',
+              period: entry.period,
+              present: isAttended,
+              isEvent: true,
+              subjectName: entry.eventName || '',
+              facultyName: entry.markedBy ? (facultyNames[entry.markedBy] || '') : entry.markedBy
+            });
+            return;
+          }
 
           if (!subjectStats[entry.subjectCode]) {
             subjectStats[entry.subjectCode] = {
@@ -231,11 +276,17 @@ export default function Attendance() {
         const allRows = [];
         Object.entries(dateMap).forEach(([date, entries]) => {
           entries.sort((a, b) => a.period - b.period || a.subject.localeCompare(b.subject));
-          entries.forEach(e => allRows.push({
-            date, ...e,
-            subjectName: codeNameMap[e.subject] || subjectNames[e.subject] || '',
-            facultyName: codeFacultyMap[e.subject] || ''
-          }));
+          entries.forEach(e => {
+            if (e.isEvent) {
+              allRows.push({ date, ...e });
+            } else {
+              allRows.push({
+                date, ...e,
+                subjectName: codeNameMap[e.subject] || subjectNames[e.subject] || '',
+                facultyName: codeFacultyMap[e.subject] || ''
+              });
+            }
+          });
         });
         allRows.sort((a, b) => b.date.localeCompare(a.date) || a.period - b.period);
         setDateWiseRows(allRows);
@@ -404,12 +455,21 @@ export default function Attendance() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {dayRows.map((row, i) => (
+                              {dayRows.map((row, i) => (
                               <tr key={i} className="hover:bg-blue-50/30 transition-colors">
                                 <td className="px-4 py-2">
                                   <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
-                                    {row.subjectName && <span className="text-[10px] text-slate-400 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
+                                    {row.isEvent ? (
+                                      <>
+                                        <span className="text-sm font-bold text-slate-700 font-mono">-</span>
+                                        <span className="text-[10px] text-amber-600 font-medium truncate max-w-[180px]">{row.subjectName || 'Event'}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="text-sm font-bold text-slate-700 font-mono">{row.subject}</span>
+                                        {row.subjectName && <span className="text-[10px] text-slate-400 font-medium truncate max-w-[180px]">{row.subjectName}</span>}
+                                      </>
+                                    )}
                                   </div>
                                 </td>
                                 <td className="px-4 py-2">

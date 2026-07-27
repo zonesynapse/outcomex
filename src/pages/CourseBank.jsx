@@ -21,6 +21,7 @@ export default function CreateCourse() {
   const [credits, setCredits] = useState(3);
   const [periods, setPeriods] = useState({ l: 0, t: 0, p: 0 });
   const [courseType, setCourseType] = useState("Program Course");
+  const [isNonProgramCourse, setIsNonProgramCourse] = useState(false);
   const [numCOs, setNumCOs] = useState(0);
   const [coDefs, setCoDefs] = useState([]);
   const [coContents, setCoContents] = useState([]);
@@ -207,6 +208,7 @@ export default function CreateCourse() {
           p: Number(periods.p) || 0
         },
         type: courseType,
+        isNonProgramCourse,
         regulation,
         programme: progKey,
         department: deptKey,
@@ -220,6 +222,7 @@ export default function CreateCourse() {
       setShowCreate(false);
       setCourseCode("");
       setCourseName("");
+      setIsNonProgramCourse(false);
       setCredits(3);
       setPeriods({ l: 0, t: 0, p: 0 });
       setNumCOs(0);
@@ -298,6 +301,7 @@ export default function CreateCourse() {
           name: course?.name || "",
           credits: course?.credits,
           type: course?.type,
+          isNonProgramCourse: course?.isNonProgramCourse ?? false,
           periods: course?.periods || { l: 0, t: 0, p: 0 },
           co: Array.isArray(course?.co) ? course.co : [],
           _sourceDept: course?.department || "Overall",
@@ -327,6 +331,7 @@ export default function CreateCourse() {
               name: docData.name || "",
               credits: docData.credits,
               type: docData.type,
+              isNonProgramCourse: docData.isNonProgramCourse ?? false,
               periods: docData.periods || { l: 0, t: 0, p: 0 },
               co,
               _sourceDept: docData.department || "Overall",
@@ -345,6 +350,7 @@ export default function CreateCourse() {
     setCredits(match.credits ?? 3);
     setPeriods(match.periods || { l: 0, t: 0, p: 0 });
     setCourseType(match.type || "Program Course");
+    setIsNonProgramCourse(match.isNonProgramCourse ?? false);
 
     const cos = Array.isArray(match.co) ? match.co : [];
     setCoDefs(cos.map(co => co?.description || co?.name || ""));
@@ -475,6 +481,7 @@ export default function CreateCourse() {
                       setCourseName("");
                       setCredits(3);
                       setCourseType("Program Course");
+                      setIsNonProgramCourse(false);
                       setNumCOs(0);
                       setCoDefs([]);
                       setCoContents([]);
@@ -526,12 +533,23 @@ export default function CreateCourse() {
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <label className="text-sm font-bold text-zinc-600">Course Name</label>
-                  <input
-                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
-                    value={courseName}
-                    onChange={(e) => setCourseName(e.target.value)}
-                    placeholder="Enter course name"
-                  />
+                  <div className="flex items-center gap-3">
+                    <input
+                      className="flex-1 bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                      value={courseName}
+                      onChange={(e) => setCourseName(e.target.value)}
+                      placeholder="Enter course name"
+                    />
+                    <label className="flex items-center gap-2 cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={isNonProgramCourse}
+                        onChange={(e) => setIsNonProgramCourse(e.target.checked)}
+                        className="w-4 h-4 rounded border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]/30"
+                      />
+                      <span className="text-xs font-semibold text-zinc-500 select-none">is non-program course</span>
+                    </label>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-zinc-600">Course Type</label>

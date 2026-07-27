@@ -49,6 +49,14 @@ export default function StudentDashboard() {
         const batchKey = sanitizeKey(batch);
         const snapshot = await getDocs(collection(db, "attendance"));
 
+        // Extract subject code from doc ID
+        const extractSubjectCode = (docId) => {
+          const p = docId.split('_');
+          const batchIdx = p.findIndex(part => /^\d{4}-\d{4}$/.test(part));
+          if (batchIdx >= 0 && batchIdx + 3 < p.length) return p.slice(batchIdx + 3).join('_').replace(/_(Sec-\w+)$/, '');
+          return p.slice(4).join('_');
+        };
+
         const rawEntries = [];
         snapshot.forEach((docSnap) => {
           const id = docSnap.id;
@@ -56,6 +64,8 @@ export default function StudentDashboard() {
           const data = docSnap.data();
           const records = data?.records;
           if (!records) return;
+
+          const subjectCode = extractSubjectCode(id);
 
           Object.entries(records).forEach(([key, rec]) => {
             const rawH = rec?.students?.[regNo];
@@ -66,13 +76,43 @@ export default function StudentDashboard() {
             if (hours > 0) status = 'P';
             else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
 
-            rawEntries.push({ recordKey: key, status, subjectCode: id });
+            rawEntries.push({ recordKey: key, status, subjectCode, docId: id });
           });
+        });
+
+        // Filter by course enrollment (backward compat with old data)
+        const uniqueEnrolKeys = new Set();
+        const enrolKeyByDoc = {};
+        rawEntries.forEach(e => {
+          const p = e.docId.split('_');
+          const batchIdx = p.findIndex(part => /^\d{4}-\d{4}$/.test(part));
+          if (batchIdx < 0 || batchIdx + 3 >= p.length) return;
+          const ayKey = p[batchIdx + 1];
+          const semNum = p[batchIdx + 2];
+          const ek = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
+          enrolKeyByDoc[e.docId] = ek;
+          uniqueEnrolKeys.add(ek);
+        });
+        const enrolMap = {};
+        await Promise.all([...uniqueEnrolKeys].map(async (ek) => {
+          try {
+            const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
+            if (eSnap.exists()) {
+              const eData = eSnap.data();
+              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
+            }
+          } catch (e) { /* enrollment doc may not exist */ }
+        }));
+        const filteredEntries = rawEntries.filter(e => {
+          const ek = enrolKeyByDoc[e.docId];
+          const enrolledSet = enrolMap[ek];
+          if (!enrolledSet) return true;
+          return enrolledSet.has(regNo);
         });
 
         const entriesByRecordKey = {};
         const subjectPresenceCount = {};
-        rawEntries.forEach(entry => {
+        filteredEntries.forEach(entry => {
           if (!entriesByRecordKey[entry.recordKey]) entriesByRecordKey[entry.recordKey] = [];
           entriesByRecordKey[entry.recordKey].push(entry);
           if (entry.status === 'P' || entry.status === 'OD') {

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, getDoc, getDocs, setDoc, onSnapshot, collection, deleteField } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -73,6 +74,7 @@ export default function Attendance() {
   const [semesters, setSemesters] = useState([]);
   const [section, setSection] = useState("");
   const [sectionConfigs, setSectionConfigs] = useState({});
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState("");
   const [totalConducted, setTotalConducted] = useState("");
@@ -144,6 +146,10 @@ export default function Attendance() {
   const [teachingAid, setTeachingAid] = useState("");
   const [teachingMethodology, setTeachingMethodology] = useState("");
 
+  // Event attendance fields (not counted toward subject)
+  const [isEventAttendance, setIsEventAttendance] = useState(false);
+  const [eventName, setEventName] = useState("");
+
   // Cross-subject period conflict detection
   const [periodConflict, setPeriodConflict] = useState(null); // { subjectCode, markedBy }
 
@@ -154,6 +160,37 @@ export default function Attendance() {
   const [reportFromDate, setReportFromDate] = useState("");
   const [reportToDate, setReportToDate] = useState("");
   const [reportData, setReportData] = useState(null);
+  const [searchParams] = useSearchParams();
+  const urlSectionRef = useRef('');
+  const urlDeptRef = useRef('');
+
+  useEffect(() => {
+    const prog = searchParams.get('prog');
+    const dept = searchParams.get('dept');
+    const bat = searchParams.get('batch');
+    const ay = searchParams.get('ay');
+    const sem = searchParams.get('sem');
+    const subj = searchParams.get('subject');
+    const date = searchParams.get('date');
+    const periodVal = searchParams.get('period');
+    const sec = searchParams.get('section');
+    urlSectionRef.current = sec || '';
+    urlDeptRef.current = dept || '';
+    if (prog) setProgramme(prog);
+    if (dept) setDepartment(dept);
+    if (bat) setBatch(bat);
+    if (ay) setAcademicYear(ay);
+    if (sem) {
+      const s = parseInt(sem, 10);
+      setSemester(`${getOrdinal(s)} Semester`);
+    }
+    if (sec) setSection(sec);
+    if (date) setAttendanceDate(date);
+    if (periodVal) setPeriod(periodVal);
+    if (subj && prog && dept && bat && ay && sem) {
+      setSubject(JSON.stringify({ code: subj, batch: bat, ay, sem, section: sec || '', dept, progKey: prog }));
+    }
+  }, []);
 
   const derivedProgs = useMemo(() => {
     if (!facultyAssignPrefixes.length) return [];
@@ -205,6 +242,20 @@ export default function Attendance() {
     });
   }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS]);
 
+  // Normalize department key (e.g. "B_E_Bio Medical Engineering" or "Computer_Science")
+  // to display name (e.g. "B.E. Bio Medical Engineering" or "Computer Science")
+  // once filteredDepartments has options, so the <select> value matches an option
+  useEffect(() => {
+    const rawDept = urlDeptRef.current;
+    if (!rawDept || !programme) return;
+    if (!filteredDepartments.length) return;
+    const norm = s => s.replace(/[._ ]+/g, ' ').trim().toLowerCase();
+    const match = filteredDepartments.find(d => norm(d) === norm(rawDept));
+    if (match && match !== department) {
+      setDepartment(match);
+    }
+  }, [filteredDepartments, programme]);
+
   const batches = useMemo(() => {
     const progKey = formatProgrammeKey(programme);
     return getActiveBatches(progKey);
@@ -230,6 +281,17 @@ export default function Attendance() {
     return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
   }, [batch, department, programme, sectionConfigs]);
 
+  // Re-apply section from URL once sectionConfigs populate the dropdown options
+  // If no section in URL but only 1 section configured, auto-select it
+  useEffect(() => {
+    const sec = urlSectionRef.current;
+    if (sec && availableSections.length > 0 && availableSections.includes(sec) && section !== sec) {
+      setSection(sec);
+    } else if (!sec && availableSections.length === 1 && !section) {
+      setSection(availableSections[0]);
+    }
+  }, [availableSections, programme, department, batch]);
+
   useEffect(() => {
     if (batch && academicYear) {
       const years = getAcademicYears(batch);
@@ -254,6 +316,35 @@ export default function Attendance() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
+      const configs = [];
+      snap.forEach(d => { configs.push({ id: d.id, ...d.data() }); });
+      setSemesterConfigs(configs);
+    });
+    return () => unsub();
+  }, []);
+
+  const dateRangeInfo = useMemo(() => {
+    if (!semesterConfigs.length) return { blocked: false, msg: '' };
+    const selected = new Date(attendanceDate + 'T00:00:00');
+    let minDate = null;
+    let maxDate = null;
+    let inRange = false;
+    semesterConfigs.forEach(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return;
+      const s = new Date(cfg.startDate + 'T00:00:00');
+      const e = new Date(cfg.endDate + 'T00:00:00');
+      if (!minDate || s < minDate) minDate = s;
+      if (!maxDate || e > maxDate) maxDate = e;
+      if (selected >= s && selected <= e) inRange = true;
+    });
+    if (inRange) return { blocked: false, msg: '', minDate, maxDate };
+    if (selected < minDate) return { blocked: true, msg: 'This date is before the semester start date. Attendance cannot be marked before the semester begins.', minDate, maxDate };
+    if (selected > maxDate) return { blocked: true, msg: 'This date is after the semester end date. Attendance cannot be marked after the semester ends.', minDate, maxDate };
+    return { blocked: true, msg: 'This date is outside the configured semester date range.', minDate, maxDate };
+  }, [semesterConfigs, attendanceDate]);
 
   // New Logic: Fetch subjects based on Programme and Department assignments
   useEffect(() => {
@@ -322,6 +413,8 @@ export default function Attendance() {
       setTopicTaught("");
       setTeachingAid("");
       setTeachingMethodology("");
+      setIsEventAttendance(false);
+      setEventName("");
       return;
     }
     setSubject(val);
@@ -330,6 +423,8 @@ export default function Attendance() {
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
     setSection(selectedCtx.section || "");
+    setIsEventAttendance(false);
+    setEventName("");
   };
 
   const computePeriodStart = useCallback((i, config) => {
@@ -550,9 +645,18 @@ export default function Attendance() {
     const dateRecord = attendanceData?.records?.[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
-    setTopicTaught(dateRecord?.topicTaught || "");
-    setTeachingAid(dateRecord?.teachingAid || "");
-    setTeachingMethodology(dateRecord?.teachingMethodology || "");
+    const isEvent = dateRecord?.isEvent || false;
+    setIsEventAttendance(isEvent);
+    setEventName(dateRecord?.eventName || "");
+    if (isEvent) {
+      setTopicTaught("");
+      setTeachingAid("");
+      setTeachingMethodology("");
+    } else {
+      setTopicTaught(dateRecord?.topicTaught || "");
+      setTeachingAid(dateRecord?.teachingAid || "");
+      setTeachingMethodology(dateRecord?.teachingMethodology || "");
+    }
 
     const totalH = parseInt(dateRecord?.totalHours, 10) || 1;
 
@@ -589,7 +693,7 @@ export default function Attendance() {
       // Check period conflict (another subject's attendance for same period)
       let status = studentExists ? (hours > 0 ? 'P' : 'A') : '';
       let isConflict = false;
-      if (!status && periodConflict?.record?.[reg]) {
+      if (periodConflict?.record?.[reg]) {
         const conflictVal = periodConflict.record[reg];
         const conflictHours = typeof conflictVal === 'number' ? conflictVal : (conflictVal.hours || 0);
         hours = conflictHours;
@@ -682,62 +786,71 @@ export default function Attendance() {
     }
 
     const totalClasses = allKeys.length;
-    const progKey = formatProgrammeKey(programme);
-    const semNum = String(semester).match(/\d+/)?.[0];
-    const selectedSubjectObj = JSON.parse(subject);
-    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
 
     // Derive display labels for each key (date-only → plain, compound → "date (Period X)")
     const keyLabels = {};
     allKeys.forEach(k => {
+      const rec = attendanceData.records[k];
+      const isEvent = rec?.isEvent;
       if (k.includes('_P')) {
         const idx = k.lastIndexOf('_P');
-        keyLabels[k] = `${k.slice(0, idx)} (P${k.slice(idx + 2)})`;
+        const baseLabel = `${k.slice(0, idx)} (P${k.slice(idx + 2)})`;
+        keyLabels[k] = isEvent && rec?.eventName ? `${baseLabel} [${rec.eventName}]` : baseLabel;
       } else {
         keyLabels[k] = k;
       }
     });
 
-    getDoc(doc(db, "students", compositeKey)).then(studentSnap => {
-      const masterList = studentSnap.data() || {};
-      const order = masterList._order;
+    const order = masterList._order;
+    const joiningAY = masterList._joiningAY || {};
 
-      const studentMap = {};
-      Object.entries(masterList)
-        .filter(([key]) => !key.startsWith('_'))
-        .forEach(([reg, nameVal]) => {
-          studentMap[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
-        });
-
-      const studentStats = Object.keys(studentMap).map(reg => {
-        let attended = 0, markedClasses = 0;
-        const dailyRecords = {};
-        allKeys.forEach(key => {
-          const rec = attendanceData.records[key];
-          const rawHours = rec?.students?.[reg];
-          const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
-          const isPresent = hours !== undefined && hours > 0;
-          const isAbsent = hours !== undefined && hours <= 0;
-          if (hours !== undefined) markedClasses++;
-          if (isPresent) attended++;
-          dailyRecords[key] = isPresent ? 'P' : (isAbsent ? 'A' : '—');
-        });
-        return {
-          reg,
-          name: studentMap[reg],
-          attended,
-          totalClasses: markedClasses,
-          percentage: markedClasses > 0 ? ((attended / markedClasses) * 100).toFixed(2) : "0.00",
-          dailyRecords
-        };
+    const studentMap = {};
+    Object.entries(masterList)
+      .filter(([key]) => !key.startsWith('_'))
+      .filter(([reg]) => {
+        if (!academicYear) return true;
+        const jAY = joiningAY[reg];
+        if (!jAY) return true;
+        return jAY <= academicYear;
+      })
+      .forEach(([reg, nameVal]) => {
+        studentMap[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
       });
 
-      if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-      else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
-
-      setReportData({ dates: allKeys, keyLabels, students: studentStats, totalClasses });
+    const studentStats = Object.keys(studentMap).map(reg => {
+      let attended = 0, markedClasses = 0;
+      const dailyRecords = {};
+      allKeys.forEach(key => {
+        const rec = attendanceData.records[key];
+        const rawHours = rec?.students?.[reg];
+        const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
+        if (rec?.isEvent) {
+          const isPresent = hours !== undefined && hours > 0;
+          dailyRecords[key] = isPresent ? 'P' : (hours !== undefined ? 'A' : '—');
+          return;
+        }
+        const isPresent = hours !== undefined && hours > 0;
+        const isAbsent = hours !== undefined && hours <= 0;
+        if (hours !== undefined) markedClasses++;
+        if (isPresent) attended++;
+        dailyRecords[key] = isPresent ? 'P' : (isAbsent ? 'A' : '—');
+      });
+      return {
+        reg,
+        name: studentMap[reg],
+        attended,
+        totalClasses: markedClasses,
+        percentage: markedClasses > 0 ? ((attended / markedClasses) * 100).toFixed(2) : "0.00",
+        dailyRecords
+      };
     });
+
+    const eventDates = new Set(allKeys.filter(k => attendanceData.records[k]?.isEvent));
+
+    if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
+    else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
+
+    setReportData({ dates: allKeys, keyLabels, students: studentStats, totalClasses, eventDates });
   };
 
   const handleExportReport = async () => {
@@ -855,6 +968,14 @@ export default function Attendance() {
   );
 
   const handleSaveAttendance = async () => {
+    if (dateRangeInfo.blocked) {
+      alert(dateRangeInfo.msg);
+      return;
+    }
+    if (attendanceDate > new Date().toISOString().split('T')[0]) {
+      alert("Cannot mark attendance for future dates.");
+      return;
+    }
     if (!programme || !department || !batch || !subject || !totalConducted || !attendanceDate) {
       alert("Please ensure all filters and Total Conducted hours are provided.");
       return;
@@ -863,23 +984,25 @@ export default function Attendance() {
       alert("Please select a Period before saving attendance.");
       return;
     }
-    if (!topicTaught.trim()) {
-      alert("Please enter what topic was taught today.");
-      return;
-    }
-    if (!teachingAid) {
-      alert("Please select the Teaching Aid used today.");
-      return;
-    }
-    if (!teachingMethodology) {
-      alert("Please select the Teaching Methodology used today.");
-      return;
+    if (!isEventAttendance) {
+      if (!topicTaught.trim()) {
+        alert("Please enter what topic was taught today.");
+        return;
+      }
+      if (!teachingAid) {
+        alert("Please select the Teaching Aid used today.");
+        return;
+      }
+      if (!teachingMethodology) {
+        alert("Please select the Teaching Methodology used today.");
+        return;
+      }
     }
 
     // Collect attendance summary for confirmation
-    const absentList = students.filter(s => s.status === 'A');
-    const odList = students.filter(s => s.status === 'OD');
-    const notMarkedList = students.filter(s => s.status === '');
+    const absentList = activeStudents.filter(s => s.status === 'A');
+    const odList = activeStudents.filter(s => s.status === 'OD');
+    const notMarkedList = activeStudents.filter(s => s.status === '');
     if (absentList.length > 0 || odList.length > 0 || notMarkedList.length > 0) {
       setSaveConfirmation({ absent: absentList, od: odList, notMarked: notMarkedList });
       return; // wait for confirm
@@ -905,12 +1028,13 @@ export default function Attendance() {
 
     const makeStudentEntry = (s) => ({
       hours: s.hours,
-      topicTaught: s.topicTaught || topicTaught.trim(),
-      teachingAid: s.teachingAid || teachingAid,
-      teachingMethodology: s.teachingMethodology || teachingMethodology
+      topicTaught: isEventAttendance ? "" : (s.topicTaught || topicTaught.trim()),
+      teachingAid: isEventAttendance ? "" : (s.teachingAid || teachingAid),
+      teachingMethodology: isEventAttendance ? "" : (s.teachingMethodology || teachingMethodology)
     });
 
     students.forEach(s => {
+      if (s._conflict) return; // skip conflict students
       if (s.status === '') return; // skip unmarked
       if (isAnotherFacultyRecord && s.reg in existingStudents) return; // skip existing in merge mode
       newStudentsMap[s.reg] = makeStudentEntry(s);
@@ -922,6 +1046,7 @@ export default function Attendance() {
       // No new entries and not a merge — regular flow, build map from all marked students
       const freshMap = {};
       students.forEach(s => {
+        if (s._conflict) return; // skip conflict students
         if (s.status !== '') freshMap[s.reg] = makeStudentEntry(s);
       });
       mergedStudentsMap = freshMap;
@@ -931,18 +1056,22 @@ export default function Attendance() {
       period,
       totalHours: parseInt(totalConducted, 10) || 1,
       students: mergedStudentsMap,
-      topicTaught: topicTaught.trim(),
-      teachingAid,
-      teachingMethodology,
+      topicTaught: isEventAttendance ? "" : topicTaught.trim(),
+      teachingAid: isEventAttendance ? "" : teachingAid,
+      teachingMethodology: isEventAttendance ? "" : teachingMethodology,
       markedBy: isAnotherFacultyRecord ? currentRecordData.markedBy : currentUid,
       updatedAt: new Date().toISOString()
     };
+    if (isEventAttendance) {
+      dateRecord.isEvent = true;
+      dateRecord.eventName = eventName.trim();
+    }
 
     try {
       const recordKey = period ? `${attendanceDate}_P${period}` : attendanceDate;
       const existingRecords = attendanceData?.records || {};
       const updatedRecords = { ...existingRecords, [recordKey]: dateRecord };
-      const nextTotal = parseInt(totalConducted, 10) + 1;
+      const nextTotal = isEventAttendance ? parseInt(totalConducted, 10) : parseInt(totalConducted, 10) + 1;
 
       await setDoc(doc(db, "attendance", attendanceDocId), {
         _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
@@ -1015,6 +1144,7 @@ export default function Attendance() {
     if (!attendanceData?.records) return {};
     const counts = {};
     Object.values(attendanceData.records).forEach(record => {
+      if (record.isEvent) return;
       Object.entries(record.students || {}).forEach(([reg, val]) => {
         const hours = typeof val === 'number' ? val : (val?.hours || 0);
         if (Number(hours) > 0) counts[reg] = (counts[reg] || 0) + 1;
@@ -1023,9 +1153,16 @@ export default function Attendance() {
     return counts;
   }, [attendanceData]);
 
+  // ─── non-event record count (excludes event attendance from total classes) ───
+  const nonEventRecordCount = useMemo(() => {
+    if (!attendanceData?.records) return 0;
+    return Object.values(attendanceData.records).filter(r => !r.isEvent).length;
+  }, [attendanceData]);
+
   // ─── derived stats ───
-  const pctPresent = students.length
-    ? ((students.filter(s => s.status === 'P' || s.status === 'OD').length / students.length) * 100).toFixed(1)
+  const activeStudents = students.filter(s => !s._conflict);
+  const pctPresent = activeStudents.length
+    ? ((activeStudents.filter(s => s.status === 'P' || s.status === 'OD').length / activeStudents.length) * 100).toFixed(1)
     : '—';
 
   // Read-only student regs (existing entries from another faculty for current subject or period conflict)
@@ -1047,10 +1184,10 @@ export default function Attendance() {
         {/* ═══ Hero Stats ═══ */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { icon: Users, label: 'Total Students', value: students.length, color: 'from-indigo-500 to-blue-600' },
+            { icon: Users, label: 'Total Students', value: activeStudents.length, color: 'from-indigo-500 to-blue-600' },
             { icon: CalendarCheck2, label: 'Today\'s Attendance', value: `${pctPresent}%`, color: 'from-emerald-500 to-teal-600' },
             { icon: Calendar, label: 'Date', value: attendanceDate, color: 'from-violet-500 to-purple-600' },
-            { icon: FileText, label: 'Total Classes', value: recordDates.length || '—', color: 'from-amber-500 to-orange-600' },
+            { icon: FileText, label: 'Total Classes', value: nonEventRecordCount || '—', color: 'from-amber-500 to-orange-600' },
           ].map(({ icon: Icon, label, value, color }) => (
             <div key={label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${color} p-5 shadow-xl`}>
               <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/5" />
@@ -1113,9 +1250,19 @@ export default function Attendance() {
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Date</label>
               <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+                min={dateRangeInfo.minDate ? dateRangeInfo.minDate.toISOString().split('T')[0] : undefined}
                 max={new Date().toISOString().split('T')[0]}
-                className="w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
+                className={`w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none focus:ring-2 transition-all ${
+                  dateRangeInfo.blocked
+                    ? 'border-rose-300 text-rose-600 focus:ring-rose-500/40'
+                    : 'border-blue-200 text-blue-700 focus:ring-blue-500/40'
+                }`}
               />
+              {dateRangeInfo.blocked && (
+                <p className="text-[10px] font-bold text-rose-600 mt-1 flex items-center gap-1">
+                  <AlertCircle size={12} /> {dateRangeInfo.msg}
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Period <span className="text-rose-500">*</span></label>
@@ -1144,13 +1291,43 @@ export default function Attendance() {
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-emerald-600 uppercase tracking-widest px-0.5">Total Classes</label>
               <div className="w-full bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs font-black text-emerald-700 cursor-not-allowed">
-                {recordDates.length || '—'}
+                {nonEventRecordCount || '—'}
               </div>
             </div>
           </div>
 
-          {/* Topic Taught, Teaching Aid, Teaching Methodology */}
+          {/* Consider for the period (Event) checkbox */}
           {subject && (
+            <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isEventAttendance}
+                  onChange={e => {
+                    setIsEventAttendance(e.target.checked);
+                    if (!e.target.checked) setEventName("");
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40 cursor-pointer"
+                />
+                <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest">Consider for the period (Event)</span>
+              </label>
+              {isEventAttendance && (
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-amber-600 uppercase tracking-widest px-0.5">Event Name <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    value={eventName}
+                    onChange={e => setEventName(e.target.value)}
+                    placeholder="e.g., Sports Day, Workshop, Guest Lecture..."
+                    className="w-full bg-gradient-to-r from-amber-50/50 to-amber-50/10 border border-amber-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-amber-950 outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all placeholder:text-slate-400"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Topic Taught, Teaching Aid, Teaching Methodology */}
+          {subject && !isEventAttendance && (
             <div className="mt-5 pt-5 border-t border-slate-100 space-y-4">
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold text-indigo-600 uppercase tracking-widest px-0.5">Topic Taught <span className="text-rose-500">*</span></label>
@@ -1345,12 +1522,12 @@ export default function Attendance() {
                       <td className="px-5 py-3.5">
                         <div className="flex items-center justify-center gap-2.5">
                           <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                            <div className={`h-full rounded-full transition-all duration-700 ${((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                              }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100, 100)}%` }} />
+                            <div className={`h-full rounded-full transition-all duration-700 ${((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                              }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100, 100)}%` }} />
                           </div>
-                          <span className={`text-xs font-black min-w-[46px] text-right ${((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
+                          <span className={`text-xs font-black min-w-[46px] text-right ${((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
                             }`}>
-                            {((cumulativeAttended[s.reg] || 0) / (recordDates.length || 1) * 100).toFixed(1)}%
+                            {((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1) * 100).toFixed(1)}%
                           </span>
                         </div>
                       </td>
@@ -1482,7 +1659,7 @@ export default function Attendance() {
                 </div>
               </div>
               {/* Body */}
-              <div className="overflow-x-auto max-h-[calc(90vh-80px)] p-4 md:p-6">
+              <div className="overflow-auto max-h-[calc(90vh-100px)] p-4 md:p-6">
                 {reportData.students.length === 0 ? (
                   <div className="py-16 flex flex-col items-center gap-4">
                     <div className="p-4 rounded-2xl bg-amber-50"><FileX size={40} className="text-amber-300" /></div>
@@ -1490,19 +1667,28 @@ export default function Attendance() {
                   </div>
                 ) : (
                   <table className="w-full border-collapse">
-                    <thead>
+                    <thead className="sticky top-0 z-10">
                       <tr className="bg-amber-50/50">
-                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Reg No</th>
-                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Student Name</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest">Total</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest">Attended</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest">Absent</th>
-                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">%</th>
-                        {reportData.dates.map(d => (
-                          <th key={d} className="px-2 py-3.5 text-center text-[9px] font-black text-amber-700 uppercase tracking-widest whitespace-nowrap min-w-[60px]">
-                            {reportData.keyLabels?.[d] || d}
-                          </th>
-                        ))}
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Reg No</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Student Name</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Total</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Attended</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Absent</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">%</th>
+                        {reportData.dates.map(d => {
+                          const label = reportData.keyLabels?.[d] || d;
+                          const bracketMatch = label.match(/^(.*)(\[.*\])$/);
+                          const isEventCol = reportData.eventDates?.has(d);
+                          return (
+                            <th key={d} className={`px-2 py-3.5 text-center text-[9px] font-black uppercase tracking-widest whitespace-nowrap min-w-[60px] bg-amber-50/90 backdrop-blur-sm ${isEventCol ? 'bg-amber-100/80 border-x-2 border-amber-300' : 'text-amber-700'}`}>
+                              {bracketMatch ? (
+                                <><span className={isEventCol ? 'text-amber-700' : ''}>{bracketMatch[1]}</span><span className="text-amber-400 font-extrabold">{bracketMatch[2]}</span></>
+                              ) : (
+                                label
+                              )}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1523,11 +1709,16 @@ export default function Attendance() {
                                 <span className={`text-xs font-black min-w-[44px] text-right ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>{s.percentage}%</span>
                               </div>
                             </td>
-                            {reportData.dates.map(d => (
-                              <td key={d} className={`px-2 py-3.5 text-center text-xs font-black ${s.dailyRecords[d] === 'P' ? 'text-emerald-600' : s.dailyRecords[d] === 'OD' ? 'text-blue-600' : 'text-rose-500'}`}>
-                                {s.dailyRecords[d] || '—'}
-                              </td>
-                            ))}
+                            {reportData.dates.map(d => {
+                              const isEvent = reportData.eventDates?.has(d);
+                              const val = s.dailyRecords[d];
+                              const cellColor = val === 'P' ? 'text-emerald-600' : val === 'OD' ? 'text-blue-600' : val === 'A' ? 'text-rose-500' : 'text-slate-300';
+                              return (
+                                <td key={d} className={`px-2 py-3.5 text-center text-xs font-black whitespace-nowrap ${isEvent ? 'bg-amber-50/60 border-x-2 border-amber-200' : ''} ${cellColor}`}>
+                                  {val || '—'}
+                                </td>
+                              );
+                            })}
                           </tr>
                         );
                       })}

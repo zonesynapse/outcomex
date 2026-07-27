@@ -21,6 +21,13 @@ function bsKey(key) {
   return String(key).replace(/[.#$[\]/]/g, '_');
 }
 
+const formatDateKey = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const colorMap = {
   blue: { bg: "bg-blue-50", text: "text-blue-600", iconBg: "bg-blue-100", border: "border-blue-200", gradient: "from-blue-500" },
   amber: { bg: "bg-amber-50", text: "text-amber-600", iconBg: "bg-amber-100", border: "border-amber-200", gradient: "from-amber-500" },
@@ -74,6 +81,7 @@ export default function HODDashboard() {
   const [deptMetadata, setDeptMetadata] = useState({});
   const [approvedStudentsList, setApprovedStudentsList] = useState([]);
   const [allStudentNames, setAllStudentNames] = useState({});
+  const [academicEvents, setAcademicEvents] = useState({});
   const [attendanceOverview, setAttendanceOverview] = useState({});
   const [attendanceOverviewLoading, setAttendanceOverviewLoading] = useState(false);
   const [subjectNamesMap, setSubjectNamesMap] = useState({});
@@ -333,6 +341,28 @@ export default function HODDashboard() {
   }, []);
 
   useEffect(() => {
+    const eventsRef = collection(db, 'academic_calendar_events');
+    const unsub = onSnapshot(eventsRef, (snap) => {
+      const dateMap = {};
+      snap.forEach(doc => {
+        const ev = { id: doc.id, ...doc.data() };
+        const start = new Date(ev.fromDate);
+        const end = new Date(ev.toDate);
+        if (!ev.fromDate || !ev.toDate || isNaN(start.getTime()) || isNaN(end.getTime())) return;
+        let cursor = new Date(start);
+        while (cursor <= end) {
+          const dStr = formatDateKey(cursor);
+          if (!dateMap[dStr]) dateMap[dStr] = [];
+          dateMap[dStr].push(ev);
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      });
+      setAcademicEvents(dateMap);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
     const unsub = onSnapshot(collection(db, 'department_metadata'), (snap) => {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
@@ -557,9 +587,48 @@ export default function HODDashboard() {
     });
   }, [semesterConfigs, attendanceDate]);
 
+  const attendanceDateOutsideSemester = useMemo(() => {
+    if (!semesterConfigs.length) return false;
+    const selected = new Date(attendanceDate + 'T00:00:00');
+    return !semesterConfigs.some(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return false;
+      const s = new Date(cfg.startDate + 'T00:00:00');
+      const e = new Date(cfg.endDate + 'T00:00:00');
+      return selected >= s && selected <= e;
+    });
+  }, [semesterConfigs, attendanceDate]);
+
+  const attendanceDateEvents = useMemo(() => academicEvents[attendanceDate] || [], [academicEvents, attendanceDate]);
+  const attendanceDateIsHoliday = useMemo(() => attendanceDateEvents.some(e => e.type === 'Holiday'), [attendanceDateEvents]);
+  const attendanceDateIsSunday = useMemo(() => new Date(attendanceDate + 'T00:00:00').getDay() === 0, [attendanceDate]);
+
   const availablePeriods = useMemo(() => Array.from({ length: 8 }, (_, i) => String(i + 1)), []);
 
   const [detailModal, setDetailModal] = useState({ open: false, title: '', students: [] });
+  const [subjectEnrollments, setSubjectEnrollments] = useState({}); // enrolDocId → Set<regNo>
+
+  // Load course enrollment data for all subjects in attendance overview (backward compat)
+  useEffect(() => {
+    const items = Object.values(resolvedAttendanceOverview).flat();
+    if (items.length === 0) { setSubjectEnrollments({}); return; }
+    let cancelled = false;
+    const fetchEnrollments = async () => {
+      const map = {};
+      await Promise.all(items.map(async (item) => {
+        const enrolDocId = `${item.progKey}_${sanitizeKey(item.attDeptKey)}_${sanitizeKey(item.batch)}_${sanitizeKey(item.ay)}_${item.sem}_${sanitizeKey(item.subjectCode)}`;
+        try {
+          const snap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+          if (snap.exists()) {
+            const data = snap.data();
+            map[enrolDocId] = new Set(Object.keys(data).filter(k => data[k]));
+          }
+        } catch (e) { /* enrollment doc may not exist */ }
+      }));
+      if (!cancelled) setSubjectEnrollments(map);
+    };
+    fetchEnrollments();
+    return () => { cancelled = true; };
+  }, [resolvedAttendanceOverview]);
 
   const batchStrength = useMemo(() => {
     // Only include batches that have an ACTIVE semester_config (today within startDate→endDate)
@@ -605,9 +674,35 @@ export default function HODDashboard() {
     const getH = (v) => (typeof v === 'object' && v !== null ? (v.hours ?? 0) : (v ?? 0));
     const result = {};
     const dayName = new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+    const isHoliday = academicEvents[attendanceDate]?.some(e => e.type === 'Holiday');
+    if (dayName === 'Sunday' || isHoliday) {
+      Object.entries(resolvedAttendanceOverview).forEach(([batch, items]) => {
+        result[batch] = { items: [], section: items[0]?.section || '', sem: items[0]?.sem || '', hasTimetable: false, isHoliday: true };
+      });
+      return result;
+    }
     Object.entries(resolvedAttendanceOverview).forEach(([batch, items]) => {
       const rows = [];
-      const daySchedule = (timetableAllocation[batch] || {})[dayName];
+      let daySchedule = (timetableAllocation[batch] || {})[dayName];
+      // Expand continuous periods into individual entries
+      if (daySchedule) {
+        const expanded = {};
+        Object.entries(daySchedule).forEach(([period, rawEntries]) => {
+          const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
+          entries.forEach(entry => {
+            const parts = String(entry || '').split('|');
+            const code = parts[0].trim();
+            const span = parseInt(parts[1], 10) || 1;
+            if (!code) return;
+            for (let p = parseInt(period), end = p + span; p < end; p++) {
+              const pStr = String(p);
+              if (!expanded[pStr]) expanded[pStr] = [];
+              if (!expanded[pStr].includes(code)) expanded[pStr].push(code);
+            }
+          });
+        });
+        daySchedule = expanded;
+      }
       if (daySchedule) {
         const processedPeriods = new Set();
         Object.entries(daySchedule).forEach(([period, rawEntries]) => {
@@ -660,7 +755,11 @@ export default function HODDashboard() {
             }
 
             const stuMap = rec?.students || {};
-            const entries2 = Object.entries(stuMap);
+            // Filter by course enrollment for backward compat (old data may include non-enrolled students)
+            const subj = actualItem || item;
+            const enrolDocId = `${subj.progKey}_${sanitizeKey(subj.attDeptKey)}_${sanitizeKey(subj.batch)}_${sanitizeKey(subj.ay)}_${subj.sem}_${sanitizeKey(subj.subjectCode)}`;
+            const enrolledSet = subjectEnrollments[enrolDocId];
+            const entries2 = Object.entries(stuMap).filter(([reg]) => !enrolledSet || enrolledSet.has(reg));
             const present = entries2.filter(([, h]) => getH(h) > 0);
             const absent = entries2.filter(([, h]) => getH(h) === 0);
             const od = entries2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
@@ -725,11 +824,13 @@ export default function HODDashboard() {
             if (rec) {
               rows.push({
                 period, hasRecord: true,
-                subjectCode, subjectName,
+                subjectCode: rec?.isEvent ? '-' : subjectCode,
+                subjectName: rec?.isEvent ? (rec?.eventName || 'Event') : subjectName,
                 section, facultyName,
                 presentCount: present.length, absentCount: absent.length, odCount: od.length,
                 presentStudents: present, absentStudents: absent, odStudents: od,
                 substituteFaculty, substituteSubjectCode,
+                isEvent: rec?.isEvent || false,
               });
             } else {
               rows.push({
@@ -739,6 +840,7 @@ export default function HODDashboard() {
                 presentCount: 0, absentCount: 0, odCount: 0,
                 presentStudents: [], absentStudents: [], odStudents: [],
                 substituteFaculty: '', substituteSubjectCode: '',
+                isEvent: false,
               });
             }
           });
@@ -765,11 +867,13 @@ export default function HODDashboard() {
                 }
                 rows.push({
                   period: p, hasRecord: true,
-                  subjectCode: item.subjectCode, subjectName: item.subjectName,
+                  subjectCode: rec?.isEvent ? '-' : item.subjectCode,
+                  subjectName: rec?.isEvent ? (rec?.eventName || 'Event') : item.subjectName,
                   section: item.section, facultyName: item.facultyName,
                   presentCount: present.length, absentCount: absent.length, odCount: od.length,
                   presentStudents: present, absentStudents: absent, odStudents: od,
                   substituteFaculty, substituteSubjectCode: '',
+                  isEvent: rec?.isEvent || false,
                 });
               }
             }
@@ -796,11 +900,13 @@ export default function HODDashboard() {
               }
               rows.push({
                 period: p, hasRecord: true,
-                subjectCode: item.subjectCode, subjectName: item.subjectName,
+                subjectCode: rec?.isEvent ? '-' : item.subjectCode,
+                subjectName: rec?.isEvent ? (rec?.eventName || 'Event') : item.subjectName,
                 section: item.section, facultyName: item.facultyName,
                 presentCount: present.length, absentCount: absent.length, odCount: od.length,
                 presentStudents: present, absentStudents: absent, odStudents: od,
                 substituteFaculty, substituteSubjectCode: '',
+                isEvent: rec?.isEvent || false,
               });
             });
           } else {
@@ -838,7 +944,7 @@ export default function HODDashboard() {
       return filtered;
     }
     return result;
-  }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters, usersMap]);
+  }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters, usersMap, academicEvents]);
 
   const taskCount = useMemo(() => tasks.length, [tasks]);
 
@@ -1274,11 +1380,26 @@ export default function HODDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
-                className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+              {(() => {
+                const semMinDate = semesterConfigs.reduce((min, cfg) => {
+                  if (!cfg.startDate) return min;
+                  return !min || cfg.startDate < min ? cfg.startDate : min;
+                }, null);
+                return (
+                  <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+                    min={semMinDate || undefined}
+                    max={new Date().toISOString().split('T')[0]}
+                    className="px-2.5 py-1.5 text-xs font-semibold text-white bg-white/15 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 [color-scheme:dark]" />
+                );
+              })()}
               <span className="text-[11px] font-bold text-blue-200 bg-white/10 px-2.5 py-1.5 rounded-lg">
                 {new Date(attendanceDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
               </span>
+              {attendanceDateOutsideSemester && (
+                <span className="text-[10px] font-bold text-rose-300 bg-rose-500/20 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-rose-400/30">
+                  <AlertCircle size={12} /> Outside Semester Range
+                </span>
+              )}
               {attendanceOverviewLoading && <RefreshCw size={16} className="text-white/60 animate-spin" />}
               <button onClick={() => navigate("/attendance")}
                 className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold rounded-xl transition-all backdrop-blur-sm border border-white/20">
@@ -1291,6 +1412,37 @@ export default function HODDashboard() {
             <div className="p-8 text-center">
               <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
               <p className="text-xs text-zinc-400 font-medium">Checking attendance records...</p>
+            </div>
+          ) : attendanceDateIsHoliday ? (
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+                <Calendar size={28} />
+              </div>
+              <p className="text-lg font-bold text-rose-700">Holiday</p>
+              <div className="flex flex-wrap gap-2 justify-center mt-2">
+                {attendanceDateEvents.filter(e => e.type === 'Holiday').map(ev => (
+                  <span key={ev.id} className="inline-flex items-center gap-1 px-3 py-1 bg-rose-50 text-rose-600 text-xs font-bold rounded-full border border-rose-200">
+                    {ev.title}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-400 mt-2">No classes — Academic Calendar holiday.</p>
+            </div>
+          ) : attendanceDateIsSunday ? (
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-3">
+                <Calendar size={28} />
+              </div>
+              <p className="text-lg font-bold text-amber-700">Sunday — Weekly Off</p>
+              <p className="text-xs text-zinc-400 mt-2">No classes scheduled on Sundays.</p>
+            </div>
+          ) : attendanceDateOutsideSemester ? (
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-3">
+                <AlertCircle size={28} />
+              </div>
+              <p className="text-lg font-bold text-rose-700">Outside Semester Range</p>
+              <p className="text-xs text-zinc-400 mt-2">This date is not within any configured semester period. Attendance cannot be marked.</p>
             </div>
           ) : Object.keys(attendanceWithPeriods).length === 0 ? (
             <div className="p-8 text-center">
@@ -1351,9 +1503,12 @@ export default function HODDashboard() {
                                       {gIdx === 0 ? (
                                         <td className={`px-3 py-2.5 text-xs text-center font-black border-b border-zinc-100 ${row.period === '?' ? 'text-amber-500' : 'text-indigo-700'}`} rowSpan={group.length}>{row.period === '?' ? '—' : `P${row.period}`}</td>
                                       ) : null}
-                                      <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">{row.subjectCode}</td>
-                                      <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[200px] truncate" title={row.substituteSubjectCode ? `${row.subjectName} (entered under ${row.substituteSubjectCode})` : row.subjectName || ""}>
-                                        {row.subjectName || "—"}
+                                      <td className="px-3 py-2.5 text-xs font-semibold text-zinc-800">
+                                        {row.isEvent ? <span className="text-amber-700">-</span> : row.subjectCode}
+                                        {row.isEvent && <span className="ml-1 text-[9px] text-amber-600 font-bold">(Event)</span>}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs max-w-[200px] truncate" title={row.substituteSubjectCode ? `${row.subjectName} (entered under ${row.substituteSubjectCode})` : row.subjectName || ""}>
+                                        <span className={row.isEvent ? 'text-amber-600 font-medium' : 'text-zinc-600'}>{row.subjectName || "—"}</span>
                                         {row.substituteSubjectCode && <span className="ml-1 text-[9px] text-amber-600 font-bold italic">(sub: {row.substituteSubjectCode})</span>}
                                       </td>
                                       <td className="px-3 py-2.5 text-xs text-zinc-600 max-w-[160px] truncate" title={row.substituteFaculty ? `${row.facultyName} (sub: ${row.substituteFaculty})` : row.facultyName}>

@@ -8,7 +8,7 @@ import {
   Settings, Plus, Trash2, Save, BookOpen, ListTodo, Target, ChevronRight, Info,
   GraduationCap, Building2, User, FileText, Calendar, AlertTriangle, CheckCircle2, XCircle, 
   ArrowRight, BarChart3, Upload, Edit, MessageSquare, AlertCircle, Star, Globe, Layers,
-  ArrowLeft, Send, RefreshCw
+  ArrowLeft, RefreshCw
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
@@ -37,8 +37,10 @@ export default function ActivityEntry() {
   const [errors, setErrors] = useState({});
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [uploadProgress, setUploadProgress] = useState({});
+  const [dragOver, setDragOver] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [draftId, setDraftId] = useState(null);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [sectionConfigs, setSectionConfigs] = useState({});
 
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -98,6 +100,19 @@ export default function ActivityEntry() {
     const firstSem = (yearNumber - 1) * 2 + 1;
     return [firstSem, firstSem + 1];
   }, [formData.batch, formData.academicYear]);
+
+  const monthOptions = useMemo(() => {
+    const now = new Date();
+    const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const currentMonth = months[now.getMonth()];
+    const prevDate = new Date(now);
+    prevDate.setMonth(prevDate.getMonth() - 1);
+    const prevMonth = months[prevDate.getMonth()];
+    return [
+      { label: `${currentMonth} ${now.getFullYear()}`, value: currentMonth },
+      { label: `${prevMonth} ${prevDate.getFullYear()}`, value: prevMonth }
+    ];
+  }, []);
 
   // Multi-row state for activities like A5, A7, A8
   const [rows, setRows] = useState([{}]);
@@ -174,9 +189,9 @@ export default function ActivityEntry() {
     }
   };
 
-  const handleFileChange = (e, field) => {
-    const files = Array.from(e.target.files);
-    if (files.length > 5) {
+  const addFiles = (fileList) => {
+    const files = Array.from(fileList);
+    if (uploadedFiles.length + files.length > 5) {
       alert("Maximum 5 files allowed");
       return;
     }
@@ -192,7 +207,45 @@ export default function ActivityEntry() {
       }
       return true;
     });
-    setUploadedFiles(prev => [...prev, ...validFiles]);
+    if (validFiles.length > 0) setUploadedFiles(prev => [...prev, ...validFiles]);
+  };
+
+  const handleFileChange = (e) => {
+    if (e.target.files?.length) addFiles(e.target.files);
+    e.target.value = '';
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addFiles(imageFiles);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setDragOver(false);
   };
 
   const removeFile = (index) => {
@@ -266,12 +319,14 @@ export default function ActivityEntry() {
     }
   };
 
-  const submitForApproval = async () => {
+  const handleSaveWithMonth = async (month) => {
     if (!validateForm()) return;
+    setShowMonthPicker(false);
     setSaving(true);
     try {
       const dataToSave = {
         ...formData,
+        month,
         activityCode: code,
         activityName: activityConfig.name,
         category: getCategoryFromCode(code),
@@ -309,11 +364,11 @@ export default function ActivityEntry() {
       }
       
       setSubmitted(true);
-      alert("Activity submitted for approval successfully!");
+      alert("Activity saved successfully!");
       navigate("/activities");
     } catch (err) {
-      console.error("Error submitting:", err);
-      alert("Failed to submit. Please try again.");
+      console.error("Error saving:", err);
+      alert("Failed to save. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -396,7 +451,7 @@ export default function ActivityEntry() {
         )}
 
         {/* Form */}
-        <form onSubmit={e => { e.preventDefault(); submitForApproval(); }}>
+        <form onSubmit={e => e.preventDefault()}>
           {/* Basic Info Section */}
           <div className="bg-white rounded-3xl shadow-sm border border-zinc-100 p-6 mb-6">
             <div className="flex items-center gap-2 mb-4">
@@ -627,15 +682,22 @@ export default function ActivityEntry() {
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-3">
                   Supporting Evidence (PDF/JPG/PNG, Max 10MB each, Max 5 files) <span className="text-red-500">*</span>
                 </label>
-                <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-6 text-center hover:border-[#120c7a] hover:bg-[#120c7a]/5 transition-all cursor-pointer">
-                  <Upload size={24} className="mx-auto text-zinc-400 mb-2" />
-                  <p className="text-xs text-zinc-500 font-medium">Drag & drop files here, or click to browse</p>
+                <div
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer ${dragOver ? 'border-emerald-400 bg-emerald-50/50' : 'border-zinc-200 hover:border-[#120c7a] hover:bg-[#120c7a]/5'}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onPaste={handlePaste}
+                  tabIndex={0}
+                >
+                  <Upload size={24} className={`mx-auto mb-2 ${dragOver ? 'text-emerald-500' : 'text-zinc-400'}`} />
+                  <p className="text-xs text-zinc-500 font-medium">Drag & drop files here, click to browse, or paste an image</p>
                   <p className="text-[9px] text-zinc-400 mt-1">Accepted: PDF, JPG, PNG • Max 10MB per file • Max 5 files</p>
                   <input
                     type="file"
                     accept=".pdf,.jpg,.jpeg,.png"
                     multiple
-                    onChange={e => handleFileChange(e, 'evidence')}
+                    onChange={handleFileChange}
                     className="hidden"
                     id="evidence-upload"
                   />
@@ -670,14 +732,37 @@ export default function ActivityEntry() {
             <button type="button" onClick={() => navigate("/activities/new")} className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-1">
               <ArrowLeft size={14} /> Back to New Activity
             </button>
-            <div className="flex gap-2 ml-auto">
+            <div className="flex gap-2 ml-auto relative">
               <button type="button" onClick={saveDraft} disabled={saving} className="px-5 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-extrabold rounded-xl transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
                 <Save size={14} /> {draftId ? "Update Draft" : "Save as Draft"}
               </button>
-              <button type="submit" disabled={saving} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                Submit for Approval
+              <button type="button" onClick={() => setShowMonthPicker(true)} disabled={saving} className="px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-xs font-extrabold rounded-xl shadow-md hover:from-emerald-600 hover:to-teal-700 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save
               </button>
+              {showMonthPicker && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowMonthPicker(false)} />
+                  <div className="absolute right-0 top-full mt-2 bg-white rounded-2xl shadow-xl border border-zinc-200 p-3 z-50 min-w-[220px]">
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2 px-1">Select Month</p>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {monthOptions.map(m => (
+                        <button
+                          key={m.value}
+                          type="button"
+                          onClick={() => handleSaveWithMonth(m.value)}
+                          className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 hover:border-emerald-300 hover:bg-emerald-50 text-left transition-all cursor-pointer"
+                        >
+                          <span className="text-sm font-bold text-zinc-700">{m.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" onClick={() => setShowMonthPicker(false)} className="mt-2 w-full text-center text-[11px] text-zinc-400 font-medium hover:text-zinc-600 py-1 cursor-pointer">
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </form>
