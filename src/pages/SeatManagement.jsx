@@ -142,11 +142,11 @@ export default function SeatManagement() {
   const isAdmin = userData?.role === 'Admin' || 
                  auth.currentUser?.email === import.meta.env.VITE_MASTER_ADMIN_EMAIL;
 
-  // Calculate filled seats from enquiries (only status === "Admission")
+  // Calculate filled seats from enquiries (only status === "Approved")
   const filledSeatsByDept = useMemo(() => {
     const counts = {};
     enquiries.forEach((enq) => {
-      if (enq.status !== "Admission" && enq.status !== "Approved") return;
+      if (enq.status !== "Approved") return;
 
       const dept = enq.department;
       if (!dept) return;
