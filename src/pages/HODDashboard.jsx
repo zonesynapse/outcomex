@@ -872,6 +872,7 @@ export default function HODDashboard() {
             const stuMap = rec?.students || {};
             // Filter by course enrollment for backward compat (old data may include non-enrolled students)
             const subj = actualItem || item;
+            if (!subj) { console.warn('[HODDash] No matching subject for timetable entry:', { code, period: attendanceDate + '_P' + period, batch }); return null; }
             const enrolDocId = `${subj.progKey}_${sanitizeKey(subj.attDeptKey)}_${sanitizeKey(subj.batch)}_${sanitizeKey(subj.ay)}_${subj.sem}_${sanitizeKey(subj.subjectCode)}`;
             const enrolledSet = subjectEnrollments[enrolDocId];
             const entries2 = Object.entries(stuMap).filter(([reg]) => !enrolledSet || enrolledSet.has(reg));
