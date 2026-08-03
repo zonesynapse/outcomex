@@ -7,7 +7,7 @@ import { formatProgDisplay } from "../../lib/utils";
 import { 
   LayoutDashboard, User, CheckCircle, BarChart3, Clock, IndianRupee,
   BookOpen, FileText, CalendarDays, ClipboardList, Library, Briefcase,
-  Download, Bell, Menu, X, Award, Users
+  Download, Bell, Menu, X, Award, Users, Megaphone, Globe, Building2
 } from "lucide-react";
 
 const studentMenuItems = [
@@ -27,6 +27,7 @@ const studentMenuItems = [
   { id: "mentor", icon: Users, label: "My Mentor", path: "/student/mentor" },
   { id: "downloads", icon: Download, label: "Downloads", path: "/student/downloads" },
   { id: "notices", icon: Bell, label: "Notifications", path: "/student/notices" },
+  { id: "circulars", icon: Megaphone, label: "Circulars", path: "/student/circulars" },
 ];
 
 export default function StudentLayout({ children, title }) {
@@ -35,6 +36,9 @@ export default function StudentLayout({ children, title }) {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [notices, setNotices] = useState([]);
   const [userData, setUserData] = useState(null);
+  const [approvedCirculars, setApprovedCirculars] = useState([]);
+  const [circularPopup, setCircularPopup] = useState({ open: false, circular: null });
+  const [viewedCirculars, setViewedCirculars] = useState(new Set());
   const noticesRef = useRef(null);
   const profileRef = useRef(null);
   const navigate = useNavigate();
@@ -173,6 +177,52 @@ export default function StudentLayout({ children, title }) {
     return () => unsubNotices();
   }, []);
 
+  // Fetch approved circulars
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "circulars"), (snap) => {
+      const list = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.status === "Approved") {
+          list.push({ id: d.id, ...data });
+        }
+      });
+      list.sort((a, b) => {
+        const da = a.principalApprovedAt || a.createdAt || "";
+        const db = b.principalApprovedAt || b.createdAt || "";
+        return db.localeCompare(da);
+      });
+      setApprovedCirculars(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Show popup for unread approved circulars
+  useEffect(() => {
+    const uid = userData?.uid;
+    if (!uid) return;
+    const unviewed = approvedCirculars.filter(c => !c.viewedBy?.[uid]);
+    if (unviewed.length > 0 && !circularPopup.open) {
+      setCircularPopup({ open: true, circular: unviewed[0] });
+    }
+  }, [approvedCirculars, userData]);
+
+  const markCircularViewed = async (circId) => {
+    if (!userData?.uid) return;
+    try {
+      await updateDoc(doc(db, "circulars", circId), {
+        [`viewedBy.${userData.uid}`]: new Date().toISOString()
+      });
+    } catch (e) { /* ignore */ }
+  };
+
+  const dismissCircularPopup = () => {
+    if (circularPopup.circular) {
+      markCircularViewed(circularPopup.circular.id);
+    }
+    setCircularPopup({ open: false, circular: null });
+  };
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (noticesRef.current && !noticesRef.current.contains(event.target)) {
@@ -226,6 +276,27 @@ export default function StudentLayout({ children, title }) {
         </button>
         <h3 className="flex-grow text-center text-white text-xl font-bold tracking-tight uppercase">{title || "Student Portal"}</h3>
         <div className="flex items-center gap-3">
+          {/* Circulars Bell */}
+          <div className="relative">
+            <button
+              onClick={() => navigate("/student/circulars")}
+              className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer border-2 border-white/20 bg-white/10 hover:bg-white/20 text-white transition-all relative"
+              title="Circulars"
+            >
+              <Megaphone size={20} />
+              {(() => {
+                const uid = userData?.uid;
+                if (!uid) return null;
+                const unviewed = approvedCirculars.filter(c => !c.viewedBy?.[uid]);
+                return unviewed.length > 0 ? (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 rounded-full text-[9px] font-bold text-white flex items-center justify-center ring-2 ring-[#120c7a]">
+                    {unviewed.length > 9 ? '9+' : unviewed.length}
+                  </span>
+                ) : null;
+              })()}
+            </button>
+          </div>
+
           {/* Notifications Bell Dropdown */}
           <div className="relative" ref={noticesRef}>
             <button 
@@ -369,6 +440,54 @@ export default function StudentLayout({ children, title }) {
       <main className="transition-all duration-300">
         {children}
       </main>
+
+      {/* Circular Popup Modal */}
+      {circularPopup.open && circularPopup.circular && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={dismissCircularPopup} />
+          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden mx-auto" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-white/20">
+                    <Megaphone size={16} className="text-white" />
+                  </div>
+                  <span className="text-xs font-bold text-blue-200 uppercase tracking-wider">New Circular</span>
+                </div>
+                <button onClick={dismissCircularPopup} className="p-1 rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+              <h3 className="text-base font-bold text-white mt-2 pr-8">{circularPopup.circular.title}</h3>
+              <p className="text-[11px] text-blue-200 mt-1 flex items-center gap-1">
+                {circularPopup.circular.type === "institution" ? <Globe size={11} /> : <Building2 size={11} />}
+                {circularPopup.circular.type === "institution" ? "Institution Level" : circularPopup.circular.department || "Department"}
+                <span className="mx-1.5">•</span>
+                {new Date(circularPopup.circular.principalApprovedAt || circularPopup.circular.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+              </p>
+            </div>
+            <div className="px-5 py-4 max-h-[50vh] overflow-y-auto">
+              <div className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">
+                {circularPopup.circular.content}
+              </div>
+            </div>
+            <div className="px-5 py-3 bg-zinc-50 border-t border-zinc-200 flex items-center justify-between">
+              <button
+                onClick={() => { dismissCircularPopup(); navigate("/student/circulars"); }}
+                className="text-xs font-semibold text-[#120c7a] hover:underline"
+              >
+                View All Circulars
+              </button>
+              <button
+                onClick={dismissCircularPopup}
+                className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0e095e] transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

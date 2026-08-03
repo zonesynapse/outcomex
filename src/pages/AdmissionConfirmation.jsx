@@ -470,6 +470,136 @@ export default function AdmissionConfirmation() {
     }
   };
 
+  const findProgrammeForDept = (dept) => {
+    if (!dept || !allDeptMap) return "";
+    for (const [prog, depts] of Object.entries(allDeptMap)) {
+      if (depts.includes(dept)) return prog;
+    }
+    return "";
+  };
+
+  const generateReceipt = async () => {
+    const { default: jsPDF } = await import("jspdf");
+    const { default: autoTable } = await import("jspdf-autotable");
+    const doc = new jsPDF({ orientation: "portrait", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 15;
+
+    // College header
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("CKCET - ADMISSION RECEIPT", pageWidth / 2, y, { align: "center" });
+    y += 10;
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.text("Chennai Krishnaswamy College of Engineering & Technology", pageWidth / 2, y, { align: "center" });
+    y += 6;
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "italic");
+    doc.text("(Approved by AICTE, Affiliated to Anna University)", pageWidth / 2, y, { align: "center" });
+    y += 12;
+
+    // Receipt details
+    const choice1Dept = enquiry.department || "";
+    const programme = findProgrammeForDept(choice1Dept);
+
+    const receiptData = [
+      ["Receipt No", `ADM-${enquiry.applicationNo || enquiry.enquiryId || "N/A"}`],
+      ["Date", new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })],
+      ["Application No", enquiry.applicationNo || "-"],
+      ["Student Name", applicantName],
+      ["Father / Guardian", enquiry.fatherGuardianName || "-"],
+      ["Programme", programme || enquiry.programme || "-"],
+      ["Choice 1 - Department", choice1Dept || "-"],
+      ["Batch", enquiry.batch || "-"],
+      ["Academic Year", enquiry.academicYear || "-"],
+    ];
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Field", "Details"]],
+      body: receiptData,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [18, 12, 122], textColor: [255, 255, 255], fontStyle: "bold" },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: 55 },
+        1: { cellWidth: "auto" },
+      },
+    });
+
+    y = doc.lastAutoTable.finalY + 15;
+
+    // Fee details if payments exist
+    if (enquiry.payments && enquiry.payments.length > 0) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Fee Details", pageWidth / 2, y, { align: "center" });
+      y += 8;
+
+      const feeRows = enquiry.payments.map((p, i) => [
+        `Payment ${i + 1}`,
+        p.feeCategory || "-",
+        p.feeAmount || "-",
+        p.paymentMode || "-",
+        p.paymentDate || "-",
+      ]);
+      const totalAmount = enquiry.payments.reduce((sum, p) => sum + (parseFloat(p.feeAmount) || 0), 0);
+
+      autoTable(doc, {
+        startY: y,
+        head: [["#", "Category", "Amount", "Mode", "Date"]],
+        body: feeRows,
+        foot: [["", "Total", totalAmount.toFixed(2), "", ""]],
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        headStyles: { fillColor: [18, 12, 122], textColor: [255, 255, 255], fontStyle: "bold" },
+        footStyles: { fillColor: [240, 240, 240], fontStyle: "bold", fontSize: 8 },
+      });
+
+      y = doc.lastAutoTable.finalY + 15;
+    }
+
+    // Student details section
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("Student Information", pageWidth / 2, y, { align: "center" });
+    y += 8;
+
+    const studentInfo = [
+      ["Mobile", enquiry.mobile || "-"],
+      ["Email", enquiry.emailId || "-"],
+      ["Gender", enquiry.gender || "-"],
+      ["Date of Birth", enquiry.dateOfBirth || "-"],
+      ["Community", enquiry.community || "-"],
+      ["Address", [enquiry.permanentAddress, enquiry.permanentCity, enquiry.permanentDistrict, enquiry.permanentState].filter(Boolean).join(", ") || "-"],
+    ];
+
+    autoTable(doc, {
+      startY: y,
+      head: [["Field", "Details"]],
+      body: studentInfo,
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [100, 100, 100], textColor: [255, 255, 255], fontStyle: "bold" },
+      columnStyles: {
+        0: { fontStyle: "bold", cellWidth: 40 },
+        1: { cellWidth: "auto" },
+      },
+    });
+
+    y = doc.lastAutoTable.finalY + 20;
+
+    // Footer
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "italic");
+    doc.text("This is a computer-generated receipt and does not require a signature.", pageWidth / 2, y, { align: "center" });
+    y += 4;
+    doc.text(`Generated on: ${new Date().toLocaleString("en-IN")}`, pageWidth / 2, y, { align: "center" });
+
+    // Save/print
+    const blobUrl = doc.output("bloburl");
+    window.open(blobUrl, "_blank");
+  };
+
   const choices = [
     { label: "Choice 1", value: enquiry?.department },
     { label: "Choice 2", value: enquiry?.department2 },
@@ -924,14 +1054,26 @@ export default function AdmissionConfirmation() {
                 <CheckCircle2 size={18} /> Admitted
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => navigate("/admissions/confirm")}
-              className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-800"
-            >
-              <ArrowLeft size={16} />
-              Back to List
-            </button>
+            <div className="flex items-center gap-2">
+              {enquiry.status === "Approved" && (
+                <button
+                  type="button"
+                  onClick={generateReceipt}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#120c7a] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0e0960]"
+                >
+                  <FileText size={16} />
+                  Generate Receipt
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => navigate("/admissions/confirm")}
+                className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-800"
+              >
+                <ArrowLeft size={16} />
+                Back to List
+              </button>
+            </div>
           </div>
         </div>
 

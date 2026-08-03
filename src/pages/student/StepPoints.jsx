@@ -7,6 +7,7 @@ import {
   Trash2, Send, ArrowRight, Loader2, Info, Check, X, Eye, FileText, Printer, FileCheck
 } from "lucide-react";
 import { formatProgDisplay } from "../../lib/utils";
+import { uploadBase64, userStoragePath, deleteByUrl } from "../../utils/fileUpload";
 
 export const STEP_CATEGORIES = {
   technical: {
@@ -267,8 +268,8 @@ export default function StudentStepPoints() {
   };
 
   const handleFileSelected = (file) => {
-    if (file.size > 307200) { // 300KB
-      alert("Certificate size must be under 300KB to ensure storage efficiency.");
+    if (file.size > 5242880) { // 5MB
+      alert("Certificate size must be under 5MB.");
       return;
     }
     setEvidenceFileName(file.name);
@@ -434,7 +435,8 @@ export default function StudentStepPoints() {
       };
 
       if (claimEvidence) {
-        payload.evidenceUrl = claimEvidence;
+        const storagePath = userStoragePath(userData.uid, "step_certificates", evidenceFileName || "certificate.jpg");
+        payload.evidenceUrl = await uploadBase64(storagePath, claimEvidence);
       } else if (editClaimId) {
         payload.evidenceUrl = activities.find(a => a.id === editClaimId)?.evidenceUrl || "";
       }
@@ -774,7 +776,7 @@ export default function StudentStepPoints() {
 
             {/* Evidence File Drag & Drop */}
             <div>
-              <label className="block text-xs font-bold text-zinc-500 mb-2">Upload Certificate Proof (Max 300KB, JPEG/PNG image preferred)</label>
+              <label className="block text-xs font-bold text-zinc-500 mb-2">Upload Certificate Proof (Max 5MB, JPEG/PNG image preferred)</label>
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -785,7 +787,7 @@ export default function StudentStepPoints() {
                 <span className="text-xs font-bold text-zinc-600">
                   {evidenceFileName || "Drag & Drop Certificate here, or Click to Browse"}
                 </span>
-                <span className="text-[10px] text-zinc-400 font-semibold">JPEG, PNG formats under 300KB</span>
+                <span className="text-[10px] text-zinc-400 font-semibold">JPEG, PNG formats under 5MB</span>
                 <input 
                   type="file" 
                   ref={fileInputRef} 

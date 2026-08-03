@@ -12,7 +12,7 @@ import { useLocation } from "react-router-dom";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
-import { formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
 import Layout from "../components/Layout";
 import * as XLSX from "xlsx";
 
@@ -1535,7 +1535,8 @@ export default function FeeOperations() {
         const resolvedName = p.studentName || sData?.displayName || sData?.studentName || "Student";
         const resolvedEmail = sData?.email || "";
         const resolvedReg = p.examNumber || sData?.regNo || sData?.admissionNo || "—";
-        const resolvedDept = sData?.department ? `${formatProgrammeKey(sData.programme)} - ${sData.department}` : "—";
+        const resolvedProg = p.programme || sData?.programme || "";
+        const resolvedDept = p.department || sData?.department || "";
         
         // HDFC fields
         const txId = p.rawRecord?.gatewayResponse?.txnId || p.rawRecord?.gatewayResponse?.epgTxnId || p.rawRecord?.refNo || "—";
@@ -1621,12 +1622,13 @@ export default function FeeOperations() {
 
                   {/* Student & Transaction Info Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 md:gap-y-0 md:gap-x-8 text-xs md:text-sm relative z-10">
-                    <div className="space-y-0.5">
+                     <div className="space-y-0.5">
                       <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Student Details</p>
                       <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
                       <p className="text-slate-500 break-all">{resolvedEmail || "—"}</p>
                       <p className="text-slate-500">Reg/Adm No: {resolvedReg}</p>
-                      <p className="text-slate-500 leading-tight">Dept: {resolvedDept}</p>
+                      <p className="text-slate-500">Programme: {resolvedProg ? formatProgDisplay(resolvedProg) : "—"}</p>
+                      <p className="text-slate-500">Department: {resolvedDept || "—"}</p>
                     </div>
                     <div className="space-y-0.5">
                       <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Receipt Information</p>

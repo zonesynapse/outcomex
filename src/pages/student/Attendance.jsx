@@ -44,6 +44,7 @@ export default function Attendance() {
   const [overallPercentage, setOverallPercentage] = useState(0);
   const [totalClasses, setTotalClasses] = useState(0);
   const [totalPresent, setTotalPresent] = useState(0);
+  const [totalOd, setTotalOd] = useState(0);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -132,9 +133,14 @@ export default function Attendance() {
             if (rawH === undefined) return; // Student was not in this record
 
             const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
+            const storedStatus = typeof rawH === 'object' && rawH !== null ? rawH.status : undefined;
             let status = 'A';
-            if (hours > 0) status = 'P';
-            else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            if (storedStatus) {
+              status = storedStatus;
+            } else {
+              if (hours > 0) status = 'P';
+              else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            }
 
             const [, dateStr, periodStr] = dateMatch;
             rawEntries.push({
@@ -217,7 +223,7 @@ export default function Attendance() {
         const dateMap = {};
 
         resolvedEntries.forEach(entry => {
-          const isAttended = (entry.status === 'P' || entry.status === 'OD');
+          const isAttended = (entry.status === 'P');
 
           if (entry.isEvent) {
             if (!dateMap[entry.dateStr]) dateMap[entry.dateStr] = [];
@@ -237,11 +243,13 @@ export default function Attendance() {
               docId: entry.docId,
               subjectCode: entry.subjectCode,
               totalClasses: 0,
-              attended: 0
+              attended: 0,
+              odCount: 0
             };
           }
           subjectStats[entry.subjectCode].totalClasses += 1;
           if (isAttended) subjectStats[entry.subjectCode].attended += 1;
+          if (entry.status === 'OD') subjectStats[entry.subjectCode].odCount += 1;
 
           if (!dateMap[entry.dateStr]) dateMap[entry.dateStr] = [];
           dateMap[entry.dateStr].push({
@@ -253,7 +261,9 @@ export default function Attendance() {
 
         const subjects = [];
         Object.values(subjectStats).forEach(s => {
-          const pct = s.totalClasses > 0 ? (s.attended / s.totalClasses) * 100 : 0;
+          const nonOdClasses = s.totalClasses - s.odCount;
+          const pct = nonOdClasses > 0 ? (s.attended / nonOdClasses) * 100 : 0;
+          const odPct = s.totalClasses > 0 ? (s.odCount / s.totalClasses) * 100 : 0;
           const facultyUid = facultyUidMap[s.subjectCode] || '';
           subjects.push({
             docId: s.docId,
@@ -262,7 +272,9 @@ export default function Attendance() {
             facultyName: facultyUid ? (facultyNames[facultyUid] || '') : '',
             totalClasses: s.totalClasses,
             attended: s.attended,
+            odCount: s.odCount,
             percentage: pct,
+            odPercentage: odPct,
           });
         });
 
@@ -293,9 +305,12 @@ export default function Attendance() {
 
         const total = subjects.reduce((s, r) => s + r.totalClasses, 0);
         const present = subjects.reduce((s, r) => s + r.attended, 0);
+        const nonOdTotal = subjects.reduce((s, r) => s + (r.totalClasses - r.odCount), 0);
+        const totalOd = subjects.reduce((s, r) => s + r.odCount, 0);
         setTotalClasses(total);
         setTotalPresent(present);
-        setOverallPercentage(total > 0 ? (present / total) * 100 : 0);
+        setTotalOd(totalOd);
+        setOverallPercentage(nonOdTotal > 0 ? (present / nonOdTotal) * 100 : 0);
       } catch (err) { console.error(err); }
       setLoading(false);
     };
@@ -330,7 +345,7 @@ export default function Attendance() {
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Subjects</p>
           <p className="text-3xl font-black text-[#120c7a] mt-2">{subjectWise.length}</p>
@@ -348,6 +363,10 @@ export default function Attendance() {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Attended</p>
           <p className="text-3xl font-black text-emerald-600 mt-2">{totalPresent}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
+          <p className="text-xs font-bold text-blue-500 uppercase tracking-widest">OD</p>
+          <p className="text-3xl font-black text-blue-600 mt-2">{totalOd || 0}</p>
         </div>
       </div>
 
@@ -368,9 +387,11 @@ export default function Attendance() {
                 <tr className="bg-slate-50/50">
                   <th className="px-4 md:px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Subject</th>
                   <th className="px-4 md:px-8 py-4 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">Faculty</th>
-                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Total Classes</th>
+                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Total</th>
                   <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Attended</th>
-                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">Percentage</th>
+                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-blue-500 uppercase tracking-widest">OD</th>
+                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest">%</th>
+                  <th className="px-4 md:px-8 py-4 text-center text-[11px] font-black text-blue-400 uppercase tracking-widest">OD%</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -391,6 +412,9 @@ export default function Attendance() {
                     <td className="px-4 md:px-8 py-4 text-center">
                       <span className="text-sm font-bold text-slate-600">{rec.attended}</span>
                     </td>
+                    <td className="px-4 md:px-8 py-4 text-center">
+                      <span className="text-sm font-bold text-blue-600">{rec.odCount}</span>
+                    </td>
                     <td className="px-4 md:px-8 py-4">
                       <div className="flex items-center justify-center gap-3">
                         <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden hidden md:block">
@@ -403,6 +427,9 @@ export default function Attendance() {
                           {rec.percentage.toFixed(1)}%
                         </span>
                       </div>
+                    </td>
+                    <td className="px-4 md:px-8 py-4 text-center">
+                      <span className="text-sm font-bold text-blue-500">{rec.odPercentage.toFixed(1)}%</span>
                     </td>
                   </tr>
                 ))}

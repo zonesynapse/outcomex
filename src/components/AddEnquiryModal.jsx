@@ -18,6 +18,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { useRegulations } from "../hooks/useRegulations";
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, formatProgDisplay } from "../lib/utils";
+import { uploadBase64, deleteByUrl, userStoragePath } from "../utils/fileUpload";
 
 const STATUS_OPTIONS = ["Enquiry", "Application"];
 const EXAM_OPTIONS = ["+2", "Diploma", "UG"];
@@ -129,6 +130,7 @@ export default function AddEnquiryModal({
   const { getActiveBatches } = useBatches(durations);
   const dobInputRef = useRef(null);
   const enquiryDateInputRef = useRef(null);
+  const pendingFilesRef = useRef({});
   const readOnly = mode === "view";
 
   useEffect(() => {
@@ -270,10 +272,10 @@ export default function AddEnquiryModal({
     { key: "passportPhoto", label: "Passport Photo" }
   ];
 
-  const fileToBase64 = (file) =>
+  const fileToBase64ForPreview = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve({ name: file.name, type: file.type, data: String(reader.result) });
+      reader.onload = () => resolve(String(reader.result));
       reader.onerror = (err) => reject(err);
       reader.readAsDataURL(file);
     });
@@ -452,11 +454,13 @@ export default function AddEnquiryModal({
         doc.setTextColor(50, 50, 50);
         doc.text(`Receipt No: ${receiptNo}`, 14, currentY);
         doc.text(`Date of Payment: ${payment.paymentDate || "N/A"}`, 14, currentY + 8);
+        doc.text(`Programme: ${form.programme || "N/A"}`, 14, currentY + 16);
         
         doc.text(`Student Name: ${studentName}`, 120, currentY);
         doc.text(`Application No: ${appNo}`, 120, currentY + 8);
+        doc.text(`Department: ${form.department || "N/A"}`, 120, currentY + 16);
 
-        currentY += 18;
+        currentY += 26;
 
         autoTable(doc, {
           startY: currentY,
@@ -547,11 +551,13 @@ export default function AddEnquiryModal({
         doc.text(`Receipt No: ${receiptNo}`, 14, currentY);
         const lastPaymentDate = validPayments[validPayments.length - 1].paymentDate || "N/A";
         doc.text(`Latest Date: ${lastPaymentDate}`, 14, currentY + 8);
+        doc.text(`Programme: ${form.programme || "N/A"}`, 14, currentY + 16);
         
         doc.text(`Student Name: ${studentName}`, 120, currentY);
         doc.text(`Application No: ${appNo}`, 120, currentY + 8);
+        doc.text(`Department: ${form.department || "N/A"}`, 120, currentY + 16);
 
-        currentY += 18;
+        currentY += 26;
 
         const tableBody = validPayments.map((p, idx) => [
           `Payment ${idx + 1}: ${p.feeCategory || "N/A"} (${p.paymentDate || "N/A"})`,
@@ -618,10 +624,10 @@ export default function AddEnquiryModal({
 
   const handleFileChange = async (key, file, target) => {
     if (!file) return;
-    if (file.size > 100 * 1024) {
+    if (file.size > 1024 * 1024) {
       setErrors((prev) => ({
         ...prev,
-        [key]: "File exceeds 100kb limit"
+        [key]: "File exceeds 1MB limit"
       }));
       if (target) {
         target.value = "";
@@ -634,12 +640,13 @@ export default function AddEnquiryModal({
       return errs;
     });
     try {
-      const encoded = await fileToBase64(file);
+      const previewUrl = await fileToBase64ForPreview(file);
+      pendingFilesRef.current[key] = file;
       setForm((prev) => ({
         ...prev,
         documents: {
           ...(prev.documents || {}),
-          [key]: encoded
+          [key]: { name: file.name, type: file.type, data: previewUrl, _pending: true }
         }
       }));
     } catch (e) {
@@ -647,7 +654,12 @@ export default function AddEnquiryModal({
     }
   };
 
-  const removeDocument = (key) => {
+  const removeDocument = async (key) => {
+    const doc = form.documents?.[key];
+    if (doc?.url) {
+      try { await deleteByUrl(doc.url); } catch (e) { /* ignore */ }
+    }
+    delete pendingFilesRef.current[key];
     setForm((prev) => {
       const docs = { ...(prev.documents || {}) };
       delete docs[key];
@@ -860,6 +872,24 @@ export default function AddEnquiryModal({
       return;
     }
 
+    const uid = initialValues?.enquiryId || `enq_${Date.now()}`;
+
+    const uploadedDocs = { ...(form.documents || {}) };
+    await Promise.all(
+      Object.entries(uploadedDocs).map(async ([key, doc]) => {
+        if (doc?._pending && doc.data) {
+          const storagePath = userStoragePath(uid, "enquiry_documents", doc.name || key);
+          const downloadUrl = await uploadBase64(storagePath, doc.data);
+          uploadedDocs[key] = { name: doc.name, type: doc.type, url: downloadUrl };
+        } else if (doc?.data && !doc?.url) {
+          const storagePath = userStoragePath(uid, "enquiry_documents", doc.name || key);
+          const downloadUrl = await uploadBase64(storagePath, doc.data);
+          uploadedDocs[key] = { name: doc.name, type: doc.type, url: downloadUrl };
+        }
+      })
+    );
+    pendingFilesRef.current = {};
+
     await onSubmit?.({
       firstName: normalizeText(form.firstName).trim(),
       lastName: normalizeText(form.lastName).trim(),
@@ -900,7 +930,7 @@ export default function AddEnquiryModal({
         paymentDate: formatDisplayToISO(p.paymentDate),
         upiNumber: normalizeText(p.upiNumber).trim(),
       })) : [],
-      documents: form.documents || {},
+      documents: uploadedDocs,
       ...getApplicationPayload()
     });
   };
@@ -1497,33 +1527,33 @@ export default function AddEnquiryModal({
                 </div>
               </Section>
 
-              <Section title="Checklist / Documents" description="Upload supporting documents. Files are stored as base64 in RTDB.">
+              <Section title="Checklist / Documents" description="Upload supporting documents (max 1MB each). Files are uploaded to Firebase Storage.">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {DOCUMENT_CHECKLIST.map((doc) => {
-                    const existing = form.documents && form.documents[doc.key];
+                  {DOCUMENT_CHECKLIST.map((checkDoc) => {
+                    const existing = form.documents && form.documents[checkDoc.key];
                     return (
-                      <div key={doc.key} className="rounded-xl border border-zinc-200 bg-white p-3">
+                      <div key={checkDoc.key} className="rounded-xl border border-zinc-200 bg-white p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
-                          <span className="text-sm font-semibold text-zinc-700">{doc.label}</span>
+                          <span className="text-sm font-semibold text-zinc-700">{checkDoc.label}</span>
                           {!readOnly && existing && (
-                            <button type="button" onClick={() => removeDocument(doc.key)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
+                            <button type="button" onClick={() => removeDocument(checkDoc.key)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
                           )}
                         </div>
                         {existing ? (
                           <div className="space-y-2">
-                            <a href={existing.data} target="_blank" rel="noreferrer" className="block truncate text-sm font-medium text-[#120c7a] underline">{existing.name}</a>
-                            <div className="text-xs text-zinc-500">Stored as base64 in RTDB</div>
+                            <a href={existing.url || existing.data} target="_blank" rel="noreferrer" className="block truncate text-sm font-medium text-[#120c7a] underline">{existing.name}</a>
+                            <div className="text-xs text-zinc-500">{existing._pending ? "Pending upload" : "Uploaded to Firebase Storage"}</div>
                             {!readOnly && (
-                              <button type="button" onClick={() => removeDocument(doc.key)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
+                              <button type="button" onClick={() => removeDocument(checkDoc.key)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
                             )}
                           </div>
                         ) : readOnly ? (
                           <div className="text-sm text-zinc-400">Not provided</div>
                         ) : (
                           <div className="space-y-2">
-                            <input type="file" accept="image/*,application/pdf" onChange={(e) => handleFileChange(doc.key, e.target.files && e.target.files[0], e.target)} className="block w-full text-sm text-zinc-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[#120c7a] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[#0f0a66]" />
-                            {errors[doc.key] && (
-                              <p className="text-xs font-medium text-red-600">{errors[doc.key]}</p>
+                            <input type="file" accept="image/*,application/pdf" onChange={(e) => handleFileChange(checkDoc.key, e.target.files && e.target.files[0], e.target)} className="block w-full text-sm text-zinc-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[#120c7a] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-[#0f0a66]" />
+                            {errors[checkDoc.key] && (
+                              <p className="text-xs font-medium text-red-600">{errors[checkDoc.key]}</p>
                             )}
                           </div>
                         )}

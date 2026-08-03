@@ -72,9 +72,14 @@ export default function StudentDashboard() {
             if (rawH === undefined) return;
 
             const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
+            const storedStatus = typeof rawH === 'object' && rawH !== null ? rawH.status : undefined;
             let status = 'A';
-            if (hours > 0) status = 'P';
-            else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            if (storedStatus) {
+              status = storedStatus;
+            } else {
+              if (hours > 0) status = 'P';
+              else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            }
 
             rawEntries.push({ recordKey: key, status, subjectCode, docId: id });
           });

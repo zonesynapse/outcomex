@@ -4,6 +4,7 @@ import { signOut, onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, onSnapshot, collection, getDocs } from "firebase/firestore";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { formatProgDisplay } from "../lib/utils";
+import { uploadBase64, userStoragePath, deleteByUrl } from "../utils/fileUpload";
 import { 
   X, 
   Menu,
@@ -46,7 +47,9 @@ import {
   ClipboardCheck,
   PackageCheck,
   Download,
-  Plus
+  Plus,
+  Megaphone,
+  UserCheck
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -84,6 +87,7 @@ const allPossibleItems = [
   { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
   { id: "questionpaper", icon: BookOpen, label: "Question Paper Generator", path: "/question-paper-generator" },
   { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
+  { id: "ia-schedule-creation", icon: Calendar, label: "IA Schedule Creation", path: "/ia/schedule-create" },
   { id: "library-catalog", icon: BookOpen, label: "Catalog", path: "/library/catalog" },
   { id: "library-circulation", icon: ArrowLeftRight, label: "Circulation", path: "/library/circulation" },
   { id: "library-reports", icon: BarChart3, label: "Reports", path: "/library/reports" },
@@ -125,6 +129,14 @@ const allPossibleItems = [
   { id: "activity-new", icon: Plus, label: "New Activity", path: "/activities/new" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
   { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities/nba-export" },
+
+  // Circular Module
+  { id: "circulars", icon: Megaphone, label: "Circulars", path: "/circulars" },
+
+  // HR Module
+  { id: "faculty-appraisal-request", icon: FileText, label: "Appraisal Request", path: "/hr/appraisal" },
+  { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
+  { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" }
 ];
 
 const modules = [
@@ -138,7 +150,7 @@ const modules = [
     id: "ia",
     label: "IA",
     icon: Network,
-    itemIds: ["questionpaper", "markk"]
+    itemIds: ["questionpaper", "markk", "ia-schedule-creation"]
   },
   {
     id: "admission",
@@ -200,6 +212,18 @@ const modules = [
     label: "Mentoring",
     icon: Users,
     itemIds: ["mentor-allocation", "mentor-meetings", "mentor-reports"]
+  },
+  {
+    id: "communication",
+    label: "Communication",
+    icon: Megaphone,
+    itemIds: ["circulars"]
+  },
+  {
+    id: "hr",
+    label: "HR",
+    icon: UserCheck,
+    itemIds: ["faculty-appraisal-request", "faculty-appraisal-reviews", "appraisal-settings"]
   }
 ];
 
@@ -212,6 +236,7 @@ export default function Layout({ children, title }) {
   const [rolePermissions, setRolePermissions] = useState(null);
   const [facultyPermissions, setFacultyPermissions] = useState(null);
   const [hasAssignments, setHasAssignments] = useState(false);
+  const [appraisalSchedule, setAppraisalSchedule] = useState(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editData, setEditData] = useState({ programme: "", department: "", signatureUrl: "" });
   const { departments: allDepartments } = useDepartments();
@@ -327,6 +352,18 @@ export default function Layout({ children, title }) {
   }, []);
 
   useEffect(() => {
+    const docRef = doc(db, "appraisal_config", "schedule");
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        setAppraisalSchedule(snap.data());
+      } else {
+        setAppraisalSchedule(null);
+      }
+    }, (err) => console.error("Error listening to appraisal schedule:", err));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
     let unsubscribe = () => {};
 
     if (userRole === 'HOD' && hasAssignments) {
@@ -384,11 +421,25 @@ export default function Layout({ children, title }) {
     if (!user) return;
     try {
       const userRef = doc(db, "users", user.uid);
-      // Programme and Department are admin-managed. Only update signature here.
-      await setDoc(userRef, {
-        signatureUrl: editData.signatureUrl === "CLEAR" ? "" : (editData.signatureUrl || userData?.signatureUrl || "")
-      }, { merge: true });
-      setIsEditingProfile(false); // Close editing mode after successful update
+      let finalSignatureUrl = userData?.signatureUrl || "";
+
+      if (editData.signatureUrl === "CLEAR") {
+        if (userData?.signatureUrl?.startsWith("https://firebasestorage")) {
+          await deleteByUrl(userData.signatureUrl).catch(() => {});
+        }
+        finalSignatureUrl = "";
+      } else if (editData.signatureUrl && editData.signatureUrl !== userData?.signatureUrl && editData.signatureUrl.startsWith("data:")) {
+        if (userData?.signatureUrl?.startsWith("https://firebasestorage")) {
+          await deleteByUrl(userData.signatureUrl).catch(() => {});
+        }
+        const path = userStoragePath(user.uid, "signatures", `sig_${user.uid}.png`);
+        finalSignatureUrl = await uploadBase64(path, editData.signatureUrl);
+      } else if (editData.signatureUrl) {
+        finalSignatureUrl = editData.signatureUrl;
+      }
+
+      await setDoc(userRef, { signatureUrl: finalSignatureUrl }, { merge: true });
+      setIsEditingProfile(false);
     } catch (error) {
       console.error("Update Profile Error:", error);
     }
@@ -430,6 +481,35 @@ export default function Layout({ children, title }) {
   if (effectivePermissions !== null) {
     // Dynamic items based on Admin configuration
     allPossibleItems.forEach(item => {
+      if (item.id === "faculty-appraisal-request") {
+        const isAdminOrHR = userRole === "HR" || userRole === "Admin";
+        const isFacultyOrHOD = userRole === "Faculty" || userRole === "HOD";
+        
+        if (isAdminOrHR) {
+          menuItems.push(item);
+          return;
+        }
+        
+        if (isFacultyOrHOD) {
+          if (appraisalSchedule) {
+            const now = new Date().getTime();
+            const start = appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).getTime() : null;
+            const end = appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).getTime() : null;
+            const isActive = appraisalSchedule.isActive;
+            
+            let isOpen = isActive;
+            if (start && now < start) isOpen = false;
+            if (end && now > end) isOpen = false;
+            
+            if (isOpen) {
+              menuItems.push(item);
+            }
+          }
+          return;
+        }
+        return;
+      }
+
       if (effectivePermissions.includes(item.id)) {
         menuItems.push(item);
       }

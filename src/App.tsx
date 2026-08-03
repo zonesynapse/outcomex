@@ -88,6 +88,13 @@ import MentorAllocation from "./pages/MentorAllocation";
 import MentorMeetings from "./pages/MentorMeetings";
 import MentorReports from "./pages/MentorReports";
 import StudentMentorProfile from "./pages/student/MentorProfile";
+import CircularCreate from "./pages/CircularCreate";
+import CircularList from "./pages/CircularList";
+import StudentCirculars from "./pages/student/Circulars";
+import FacultyAppraisal from "./pages/FacultyAppraisal";
+import AppraisalReviews from "./pages/AppraisalReviews";
+import AppraisalSettings from "./pages/AppraisalSettings";
+import IAScheduleCreation from "./pages/IAScheduleCreation";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -193,6 +200,15 @@ export default function App() {
         <Route path="/inventory/approvals" element={<ProtectedRoute><InventoryApprovals /></ProtectedRoute>} />
         <Route path="/inventory/fulfill" element={<ProtectedRoute><InventoryFulfill /></ProtectedRoute>} />
 
+        {/* Circular Module Routes */}
+        <Route path="/circulars" element={<ProtectedRoute><CircularList /></ProtectedRoute>} />
+        <Route path="/circulars/create" element={<ProtectedRoute><CircularCreate /></ProtectedRoute>} />
+
+        {/* HR Module Routes */}
+        <Route path="/hr/appraisal" element={<ProtectedRoute><FacultyAppraisal /></ProtectedRoute>} />
+        <Route path="/hr/reviews" element={<ProtectedRoute><AppraisalReviews /></ProtectedRoute>} />
+        <Route path="/hr/settings" element={<ProtectedRoute><AppraisalSettings /></ProtectedRoute>} />
+
         {/* Mentoring Module Routes */}
         <Route path="/mentor/allocation" element={<ProtectedRoute><MentorAllocation /></ProtectedRoute>} />
         <Route path="/mentor/meetings" element={<ProtectedRoute><MentorMeetings /></ProtectedRoute>} />
@@ -215,6 +231,7 @@ export default function App() {
         <Route path="/questionpaper" element={<ProtectedRoute><QuestionPaper /></ProtectedRoute>} />
         <Route path="/question-paper-generator" element={<ProtectedRoute><QuestionPaperGenerator /></ProtectedRoute>} />
         <Route path="/cia-configuration" element={<ProtectedRoute><CIAConfiguration /></ProtectedRoute>} />
+        <Route path="/ia/schedule-create" element={<ProtectedRoute><IAScheduleCreation /></ProtectedRoute>} />
 
         {/* Student Routes */}
         <Route path="/student/dashboard" element={<ProtectedRoute><StudentLayout title="Dashboard"><StudentDashboard /></StudentLayout></ProtectedRoute>} />
@@ -233,6 +250,7 @@ export default function App() {
         <Route path="/student/downloads" element={<ProtectedRoute><StudentLayout title="Downloads"><StudentDownloads /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/mentor" element={<ProtectedRoute><StudentLayout title="My Mentor"><StudentMentorProfile /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/circulars" element={<ProtectedRoute><StudentLayout title="Circulars"><StudentCirculars /></StudentLayout></ProtectedRoute>} />
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />

@@ -116,6 +116,7 @@ export default function Upload() {
           name: course?.name || "",
           credits: course?.credits || 0,
           type: course?.type,
+          isNonOBE: course?.isNonOBE ?? false,
           _sourceDept: course?.department || "Overall",
         }));
       setAvailableCourses(filtered);
@@ -142,7 +143,8 @@ export default function Upload() {
           ...updatedSem[index],
           code: match.code,
           name: match.name,
-          credits: match.credits
+          credits: match.credits,
+          isNonOBE: match.isNonOBE ?? false
         };
         return { ...prev, [sem]: updatedSem };
       });
@@ -244,7 +246,8 @@ export default function Upload() {
                       ...sub,
                       saved: true,
                       isActive: sub.isActive !== undefined ? sub.isActive : true,
-                      isElective: sub.isElective !== undefined ? sub.isElective : false
+                      isElective: sub.isElective !== undefined ? sub.isElective : false,
+                      isNonOBE: sub.isNonOBE !== undefined ? sub.isNonOBE : false
                     }));
                   return [i + 1, subjects];
                 })
@@ -375,7 +378,7 @@ export default function Upload() {
   const addSubject = (sem) => {
     setSemestersData(prev => ({
       ...prev,
-      [sem]: [...prev[sem], { code: "", name: "", credits: "", isActive: true, isElective: false, saved: false }]
+      [sem]: [...prev[sem], { code: "", name: "", credits: "", isActive: true, isElective: false, isNonOBE: false, saved: false }]
     }));
   };
 
@@ -729,6 +732,7 @@ export default function Upload() {
                                   <th className="pb-2 font-medium">Subject Name</th>
                                   <th className="pb-2 font-medium w-24">Credits</th>
                                   <th className="pb-2 font-medium text-center">Elective</th>
+                                  <th className="pb-2 font-medium text-center">Non-OBE</th>
                                   <th className="pb-2 font-medium w-10"></th>
                                 </tr>
                               </thead>
@@ -806,6 +810,14 @@ export default function Upload() {
                                         type="checkbox"
                                         checked={!!sub.isElective}
                                         onChange={(e) => updateSubject(sem, idx, 'isElective', e.target.checked)}
+                                        className="w-4 h-4 mx-auto"
+                                      />
+                                    </td>
+                                    <td className="py-2 pr-2 text-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!sub.isNonOBE}
+                                        onChange={(e) => updateSubject(sem, idx, 'isNonOBE', e.target.checked)}
                                         className="w-4 h-4 mx-auto"
                                       />
                                     </td>

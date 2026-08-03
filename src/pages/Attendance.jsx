@@ -650,7 +650,7 @@ export default function Attendance() {
 
     const total = parseInt(totalConducted, 10) || 0;
     let val = 0;
-    if (status === 'P' || status === 'OD') {
+    if (status === 'P') {
       val = total;
     }
 
@@ -713,7 +713,7 @@ export default function Attendance() {
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
       const val = dateRecord?.students?.[reg];
       const studentExists = val !== undefined;
-      let hours = 0, stuTopic = '', stuAid = '', stuMethod = '';
+      let hours = 0, stuTopic = '', stuAid = '', stuMethod = '', storedStatus = '';
       if (studentExists) {
         if (typeof val === 'number') {
           hours = val; // backward compat: old format { reg: hours }
@@ -722,16 +722,18 @@ export default function Attendance() {
           stuTopic = val.topicTaught || '';
           stuAid = val.teachingAid || '';
           stuMethod = val.teachingMethodology || '';
+          storedStatus = val.status || '';
         }
       }
       // Check period conflict (another subject's attendance for same period)
-      let status = studentExists ? (hours > 0 ? 'P' : 'A') : '';
+      let status = studentExists ? (storedStatus || (hours > 0 ? 'P' : 'A')) : '';
       let isConflict = false;
       if (periodConflict?.record?.[reg]) {
         const conflictVal = periodConflict.record[reg];
         const conflictHours = typeof conflictVal === 'number' ? conflictVal : (conflictVal.hours || 0);
+        const conflictStatus = typeof conflictVal === 'object' ? conflictVal.status : '';
         hours = conflictHours;
-        status = conflictHours > 0 ? 'P' : 'A';
+        status = conflictStatus || (conflictHours > 0 ? 'P' : 'A');
         isConflict = true;
       }
       return {
@@ -853,29 +855,43 @@ export default function Attendance() {
       });
 
     const studentStats = Object.keys(studentMap).map(reg => {
-      let attended = 0, markedClasses = 0;
+      let attended = 0, markedClasses = 0, odCount = 0;
       const dailyRecords = {};
       allKeys.forEach(key => {
         const rec = attendanceData.records[key];
         const rawHours = rec?.students?.[reg];
         const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
+        const storedStatus = rawHours !== undefined && typeof rawHours === 'object' ? rawHours.status : undefined;
+
         if (rec?.isEvent) {
-          const isPresent = hours !== undefined && hours > 0;
-          dailyRecords[key] = isPresent ? 'P' : (hours !== undefined ? 'A' : '—');
+          const isPresent = storedStatus ? (storedStatus === 'P') : (hours !== undefined && hours > 0);
+          dailyRecords[key] = storedStatus || (isPresent ? 'P' : (hours !== undefined ? 'A' : '—'));
           return;
         }
-        const isPresent = hours !== undefined && hours > 0;
-        const isAbsent = hours !== undefined && hours <= 0;
+        let statusStr = '—';
+        if (storedStatus === 'OD') {
+          odCount++;
+          statusStr = 'OD';
+        } else if (storedStatus === 'P' || (hours !== undefined && hours > 0 && !storedStatus)) {
+          attended++;
+          statusStr = 'P';
+        } else if (storedStatus === 'A' || (hours !== undefined && hours <= 0 && !storedStatus)) {
+          statusStr = 'A';
+        } else if (hours !== undefined) {
+          statusStr = hours > 0 ? 'P' : 'A';
+        }
         if (hours !== undefined) markedClasses++;
-        if (isPresent) attended++;
-        dailyRecords[key] = isPresent ? 'P' : (isAbsent ? 'A' : '—');
+        dailyRecords[key] = statusStr;
       });
+      const classesForPct = markedClasses - odCount;
       return {
         reg,
         name: studentMap[reg],
         attended,
         totalClasses: markedClasses,
-        percentage: markedClasses > 0 ? ((attended / markedClasses) * 100).toFixed(2) : "0.00",
+        odCount,
+        percentage: classesForPct > 0 ? ((attended / classesForPct) * 100).toFixed(2) : (markedClasses > 0 ? "0.00" : "0.00"),
+        odPercentage: markedClasses > 0 ? ((odCount / markedClasses) * 100).toFixed(2) : "0.00",
         dailyRecords
       };
     });
@@ -962,26 +978,29 @@ export default function Attendance() {
     // ── Table ──
     const headers = ['Reg No', 'Student Name'];
     reportData.dates.forEach(d => headers.push(reportData.keyLabels?.[d] || d));
-    headers.push('Total', 'Attended', 'Absent', '%');
+    headers.push('Total', 'Attended', 'Absent', 'OD', '%', 'OD%');
 
     const rows = reportData.students.map(s => {
+      const absent = s.totalClasses - s.attended - s.odCount;
       const row = [s.reg, s.name];
       reportData.dates.forEach(d => row.push(s.dailyRecords[d] || '—'));
-      row.push(String(s.totalClasses), String(s.attended), String(s.totalClasses - s.attended), `${s.percentage}%`);
+      row.push(String(s.totalClasses), String(s.attended), String(absent), String(s.odCount), `${s.percentage}%`, `${s.odPercentage}%`);
       return row;
     });
 
-    // Dynamic column styles: fixed widths for RegNo, Name, Total/Attended/Absent/%; date cols auto-sized
+    // Dynamic column styles: fixed widths for RegNo, Name, Total/Attended/Absent/OD/%/OD%; date cols auto-sized
     const dateColCount = reportData.dates.length;
     const colStyles = {
       0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
       1: { halign: 'left', cellWidth: 34 },
     };
     const lastIdx = 2 + dateColCount;
-    colStyles[lastIdx] = { halign: 'center', cellWidth: 12 };
-    colStyles[lastIdx + 1] = { halign: 'center', cellWidth: 14 };
-    colStyles[lastIdx + 2] = { halign: 'center', cellWidth: 12 };
-    colStyles[lastIdx + 3] = { halign: 'center', cellWidth: 14 };
+    colStyles[lastIdx] = { halign: 'center', cellWidth: 10 };
+    colStyles[lastIdx + 1] = { halign: 'center', cellWidth: 12 };
+    colStyles[lastIdx + 2] = { halign: 'center', cellWidth: 10 };
+    colStyles[lastIdx + 3] = { halign: 'center', cellWidth: 8 };
+    colStyles[lastIdx + 4] = { halign: 'center', cellWidth: 10 };
+    colStyles[lastIdx + 5] = { halign: 'center', cellWidth: 10 };
 
     autoTable(doc, {
       head: [headers],
@@ -1062,6 +1081,7 @@ export default function Attendance() {
     const newStudentsMap = {};
 
     const makeStudentEntry = (s) => ({
+      status: s.status,
       hours: s.hours,
       topicTaught: isEventAttendance ? "" : (s.topicTaught || topicTaught.trim()),
       teachingAid: isEventAttendance ? "" : (s.teachingAid || teachingAid),
@@ -1186,7 +1206,23 @@ export default function Attendance() {
       if (record.isEvent) return;
       Object.entries(record.students || {}).forEach(([reg, val]) => {
         const hours = typeof val === 'number' ? val : (val?.hours || 0);
+        const status = typeof val === 'object' ? val?.status : '';
+        if (status === 'OD') return;
         if (Number(hours) > 0) counts[reg] = (counts[reg] || 0) + 1;
+      });
+    });
+    return counts;
+  }, [attendanceData]);
+
+  // ─── cumulative OD count ───
+  const cumulativeOD = useMemo(() => {
+    if (!attendanceData?.records) return {};
+    const counts = {};
+    Object.values(attendanceData.records).forEach(record => {
+      if (record.isEvent) return;
+      Object.entries(record.students || {}).forEach(([reg, val]) => {
+        const status = typeof val === 'object' ? val?.status : '';
+        if (status === 'OD') counts[reg] = (counts[reg] || 0) + 1;
       });
     });
     return counts;
@@ -1201,7 +1237,7 @@ export default function Attendance() {
   // ─── derived stats ───
   const activeStudents = students.filter(s => !s._conflict);
   const pctPresent = activeStudents.length
-    ? ((activeStudents.filter(s => s.status === 'P' || s.status === 'OD').length / activeStudents.length) * 100).toFixed(1)
+    ? ((activeStudents.filter(s => s.status === 'P').length / activeStudents.length) * 100).toFixed(1)
     : '—';
 
   // Read-only student regs (existing entries from another faculty for current subject or period conflict)
@@ -1740,7 +1776,9 @@ export default function Attendance() {
                         <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Total</th>
                         <th className="px-4 py-3.5 text-center text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Attended</th>
                         <th className="px-4 py-3.5 text-center text-[10px] font-black text-rose-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">Absent</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-600 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">OD</th>
                         <th className="px-4 py-3.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">%</th>
+                        <th className="px-4 py-3.5 text-center text-[10px] font-black text-blue-500 uppercase tracking-widest bg-amber-50/90 backdrop-blur-sm">OD%</th>
                         {reportData.dates.map(d => {
                           const label = reportData.keyLabels?.[d] || d;
                           const bracketMatch = label.match(/^(.*)(\[.*\])$/);
@@ -1759,7 +1797,7 @@ export default function Attendance() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {reportData.students.map(s => {
-                        const absent = s.totalClasses - s.attended;
+                        const absent = s.totalClasses - s.attended - s.odCount;
                         return (
                           <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
                             <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
@@ -1767,6 +1805,7 @@ export default function Attendance() {
                             <td className="px-4 py-3.5 text-center text-xs font-black text-blue-700">{s.totalClasses}</td>
                             <td className="px-4 py-3.5 text-center text-xs font-black text-emerald-700">{s.attended}</td>
                             <td className="px-4 py-3.5 text-center text-xs font-black text-rose-600">{absent}</td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-blue-600">{s.odCount}</td>
                             <td className="px-4 py-3.5">
                               <div className="flex items-center justify-center gap-2">
                                 <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
@@ -1775,6 +1814,7 @@ export default function Attendance() {
                                 <span className={`text-xs font-black min-w-[44px] text-right ${parseFloat(s.percentage) < 75 ? 'text-rose-600' : 'text-emerald-600'}`}>{s.percentage}%</span>
                               </div>
                             </td>
+                            <td className="px-4 py-3.5 text-center text-xs font-black text-blue-600">{s.odPercentage}%</td>
                             {reportData.dates.map(d => {
                               const isEvent = reportData.eventDates?.has(d);
                               const val = s.dailyRecords[d];

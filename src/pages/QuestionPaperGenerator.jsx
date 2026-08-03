@@ -5,7 +5,8 @@ import Layout from '../components/Layout';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
 import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query } from 'firebase/firestore'; // Firestore imports
-import { getQuestionPaperHTML } from '../utils/questionPaperUtils'; // Import the utility function
+import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
+import { uploadFile, userStoragePath } from '../utils/fileUpload'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
@@ -105,6 +106,26 @@ export default function QuestionPaperGenerator() {
     try { const p = JSON.parse(subj); return p.code || ''; } catch { return subj; }
   }, []);
 
+  const handleCkImageUpload = (editor) => {
+    editor.on('fileUploadRequest', function(evt) {
+      const fileLoader = evt.data.fileLoader;
+      const file = fileLoader.file;
+      if (!file) return;
+      evt.cancel();
+      const uid = auth.currentUser?.uid || 'anonymous';
+      const path = userStoragePath(uid, 'ckeditor_images', file.name);
+      uploadFile(path, file, file.type).then(downloadUrl => {
+        fileLoader.url = downloadUrl;
+        fileLoader.uploaded = true;
+        fileLoader.fire('uploadDone', { url: downloadUrl, fileName: file.name });
+      }).catch(error => {
+        console.error('CKEditor image upload failed:', error);
+        fileLoader.message = error.message;
+        fileLoader.fire('uploadError', { message: error.message });
+      });
+    });
+  };
+
   const initInlineQbEditor = useCallback(() => {
     try {
       if (!window.CKEDITOR) return;
@@ -127,6 +148,7 @@ export default function QuestionPaperGenerator() {
           try { editor.focus(); } catch { /* ignore focus errors */ }
         } catch { /* ignore */ }
       });
+      handleCkImageUpload(editor);
     } catch (e) {
       console.error('initInlineQbEditor', e);
     }
@@ -1849,22 +1871,9 @@ export default function QuestionPaperGenerator() {
 
         if (assignmentSnap.exists()) {
           const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
-
-          if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
-            // Show all subjects that have at least one allocation to ANY faculty
-            const allAllocatedCodes = new Set();
-            Object.values(assignments).forEach(userAssignments => {
-              if (Array.isArray(userAssignments)) {
-                userAssignments.forEach(code => allAllocatedCodes.add(code));
-              }
-            });
-            const filteredSubjects = fetchedSubjects.filter(s => allAllocatedCodes.has(s.value));
-            setSubjects(filteredSubjects);
-          } else {
-            const userAssignments = assignments[currentUser.uid] || [];
-            const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.value));
-            setSubjects(filteredSubjects);
-          }
+          const userAssignments = assignments[currentUser.uid] || [];
+          const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.value));
+          setSubjects(filteredSubjects);
         } else {
           setSubjects([]);
         }
@@ -1996,6 +2005,7 @@ export default function QuestionPaperGenerator() {
               });
             } catch { }
           });
+          handleCkImageUpload(editor);
         });
       } else {
         setTimeout(attemptInit, 120);
@@ -2028,7 +2038,7 @@ export default function QuestionPaperGenerator() {
         versionCheck: false,
         width: '210mm',
         height: '297mm',
-        extraPlugins: 'print',
+        extraPlugins: 'print,uploadimage',
         toolbar: [
           { name: 'document', items: ['Source', '-', 'Print'] },
           { name: 'clipboard', items: ['Undo', 'Redo'] },
@@ -2145,6 +2155,7 @@ export default function QuestionPaperGenerator() {
           console.warn('Failed to apply A4 styles to CKEditor instance', e);
         }
       });
+      handleCkImageUpload(editor);
     } catch (e) {
       console.error('initEditor error:', e);
     }

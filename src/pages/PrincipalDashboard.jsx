@@ -5,7 +5,7 @@ import {
   CheckCircle2, XCircle, Eye, Send, AlertTriangle, ArrowRight,
   UserCheck, Library, Activity, Zap, FileText, Clock,
   Calendar, DollarSign, Target, Award, BarChart3, Bell,
-  ChevronRight, School, MapPin, X, User
+  ChevronRight, School, MapPin, X, User, Megaphone, Loader2, Globe, Building2
 } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
@@ -80,6 +80,15 @@ export default function PrincipalDashboard() {
   const [absenteesLoading, setAbsenteesLoading] = useState(false);
   const [selectedAbsentDept, setSelectedAbsentDept] = useState('All');
 
+  const [pendingCirculars, setPendingCirculars] = useState([]);
+  const [circularsLoading, setCircularsLoading] = useState(true);
+  const [circularModal, setCircularModal] = useState({ open: false });
+  const [selectedCircular, setSelectedCircular] = useState(null);
+  const [showCircularPreview, setShowCircularPreview] = useState(false);
+  const [circularReturnComment, setCircularReturnComment] = useState("");
+  const [showCircularReturn, setShowCircularReturn] = useState(false);
+  const [circularActioning, setCircularActioning] = useState(false);
+
   useEffect(() => {
     const q = query(
       collection(db, "monthly_reports"),
@@ -95,6 +104,27 @@ export default function PrincipalDashboard() {
     }, (err) => {
       console.error("Error loading monthly_reports:", err);
       setReportsLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // Fetch pending circulars
+  useEffect(() => {
+    const q = query(
+      collection(db, "circulars"),
+      where("status", "==", "Principal_Pending")
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = [];
+      snapshot.forEach((d) => {
+        list.push({ id: d.id, ...d.data() });
+      });
+      list.sort((a, b) => ((a.createdAt || "") > (b.createdAt || "") ? -1 : 1));
+      setPendingCirculars(list);
+      setCircularsLoading(false);
+    }, (err) => {
+      console.error("Error loading circulars:", err);
+      setCircularsLoading(false);
     });
     return () => unsub();
   }, []);
@@ -213,6 +243,56 @@ export default function PrincipalDashboard() {
     }
   };
 
+  // Circular handlers
+  const handleApproveCircular = async (circ) => {
+    if (!circ) return;
+    setCircularActioning(true);
+    try {
+      await setDoc(doc(db, "circulars", circ.id), {
+        status: "Approved",
+        principalApprovedBy: auth.currentUser?.uid || "",
+        principalApprovedByName: "Principal",
+        principalApprovedAt: new Date().toISOString(),
+        principalComments: "Approved by Principal"
+      }, { merge: true });
+      showToast("Circular approved and published to students!");
+      setSelectedCircular(null);
+      setShowCircularPreview(false);
+    } catch (err) {
+      console.error("Error approving circular:", err);
+      showToast("Failed to approve circular", "error");
+    } finally {
+      setCircularActioning(false);
+    }
+  };
+
+  const handleReturnCircular = async (circ) => {
+    if (!circ) return;
+    if (!circularReturnComment.trim()) {
+      showToast("Please enter comments explaining the corrections needed.", "error");
+      return;
+    }
+    setCircularActioning(true);
+    try {
+      await setDoc(doc(db, "circulars", circ.id), {
+        status: "Returned",
+        returnComment: circularReturnComment,
+        returnedBy: auth.currentUser?.uid || "",
+        returnedAt: new Date().toISOString()
+      }, { merge: true });
+      showToast("Circular returned for correction.");
+      setSelectedCircular(null);
+      setShowCircularPreview(false);
+      setCircularReturnComment("");
+      setShowCircularReturn(false);
+    } catch (err) {
+      console.error("Error returning circular:", err);
+      showToast("Failed to return circular", "error");
+    } finally {
+      setCircularActioning(false);
+    }
+  };
+
   // Helper to extract image evidence URLs
   const getImages = (act) => {
     const urls = [];
@@ -271,6 +351,39 @@ export default function PrincipalDashboard() {
     });
     return imagesList;
   }, [reportActivities]);
+
+  // Helper to render section photo galleries directly under tables
+  const renderSectionGallery = (activitiesArray, captionLabel) => {
+    const images = [];
+    activitiesArray.forEach(act => {
+      getImages(act).forEach(img => {
+        images.push(img);
+      });
+    });
+    if (images.length === 0) return null;
+    return (
+      <div className="mt-4 border border-zinc-900 p-4 bg-white page-break-inside-avoid text-center">
+        <div className="grid grid-cols-2 gap-6 justify-center items-center">
+          {images.map((img, i) => (
+            <div key={i} className="flex flex-col items-center justify-center p-2 bg-zinc-50 border border-zinc-200 rounded">
+              <img 
+                src={img.url} 
+                alt={img.title} 
+                className="max-h-48 max-w-full object-contain border border-zinc-300 shadow-sm"
+                referrerPolicy="no-referrer"
+              />
+              <span className="text-[9px] font-sans text-zinc-500 text-center mt-1 uppercase tracking-wide">
+                {img.title}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] font-bold text-red-600 uppercase mt-3 tracking-wider text-center font-serif">
+          {captionLabel}
+        </p>
+      </div>
+    );
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -712,6 +825,7 @@ export default function PrincipalDashboard() {
     { key: "enquiries", label: "Total Enquiries", value: stats.total, icon: FileText, color: "indigo", href: "/admissions/enquiries", format: (v) => v.toLocaleString() },
     { key: "placed", label: "Students Placed", value: placedCount, icon: Briefcase, color: "emerald", href: "/placement/dashboard", format: (v) => v.toLocaleString() },
     { key: "fee", label: "Fee Collected", value: feeTotal, icon: CreditCard, color: "violet", href: "/fee/dashboard", format: (v) => formatCurrency(v) },
+    { key: "circulars", label: "Circulars Pending", value: pendingCirculars.length, icon: Megaphone, color: "cyan", href: null, onClick: "circularModal", format: (v) => String(v) },
   ];
 
   const colorMap = {
@@ -791,6 +905,116 @@ export default function PrincipalDashboard() {
   return (
     <>
       <Layout title="Principal Dashboard">
+        <style>{`
+          @media print {
+            /* Hide default browser headers/footers */
+            @page {
+              size: A4;
+              margin: 0;
+            }
+            /* Hide all screen-only/non-essential elements */
+            .no-print, header, nav, aside, footer, button, .action-bar, .modal-backdrop, .modal {
+              display: none !important;
+            }
+            /* Clean up root, body, and all parent wrapper divs */
+            html, body {
+              background: white !important;
+              color: black !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 100% !important;
+              height: auto !important;
+            }
+          /* Ensure all parent wraps are invisible */
+          #root, main, .min-h-screen, .flex, .py-8, .px-4, .max-w-7xl, .space-y-6, div {
+            background: transparent !important;
+            box-shadow: none !important;
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            print-color-adjust: exact !important;
+            -webkit-print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
+            /* Clean flat print sheet with standard professional 20mm document padding */
+            .print-container {
+              display: block !important;
+              background: white !important;
+              padding: 20mm !important;
+              margin: 0 !important;
+              box-shadow: none !important;
+              border: none !important;
+              border-radius: 0 !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              box-sizing: border-box !important;
+              print-color-adjust: exact !important;
+              -webkit-print-color-adjust: exact !important;
+              color-adjust: exact !important;
+            }
+            table {
+              page-break-inside: auto;
+              border-collapse: collapse !important;
+              width: 100% !important;
+            }
+            tr {
+              page-break-inside: avoid !important;
+              page-break-after: auto !important;
+            }
+            thead {
+              display: table-header-group !important;
+            }
+            img {
+              max-height: 250px !important;
+              page-break-inside: avoid !important;
+              print-color-adjust: exact !important;
+              -webkit-print-color-adjust: exact !important;
+              color-adjust: exact !important;
+            }
+          }
+
+          /* Professional document stylesheet overrides */
+          .print-container {
+            font-family: 'Times New Roman', Times, serif !important;
+            font-size: 10px !important;
+            color: #111 !important;
+            line-height: 1.4 !important;
+          }
+          .print-container h2 {
+            font-size: 13px !important;
+            font-weight: bold !important;
+          }
+          .print-container h3 {
+            font-size: 11px !important;
+            font-weight: bold !important;
+          }
+          .print-container h4 {
+            font-size: 10px !important;
+            font-weight: bold !important;
+          }
+          .print-container table {
+            font-size: 8.5px !important;
+          }
+          .print-container table th {
+            font-size: 8.5px !important;
+            font-weight: bold !important;
+            padding: 4px 6px !important;
+            background-color: #fafafa !important;
+          }
+          .print-container table td {
+            font-size: 8.5px !important;
+            padding: 4px 6px !important;
+          }
+          .print-container p {
+            font-size: 9px !important;
+            line-height: 1.4 !important;
+          }
+          .print-container span {
+            font-size: 8px !important;
+          }
+        `}</style>
         <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
 
           {/* Welcome Header */}
@@ -837,6 +1061,7 @@ export default function PrincipalDashboard() {
                 if (kpi.onClick === "pendingPopup") openPendingPopup();
                 else if (kpi.onClick === "reportsPopup") openReportsPopup();
                 else if (kpi.onClick === "strengthModal") setStrengthModal({ open: true });
+                else if (kpi.onClick === "circularModal") setCircularModal({ open: true });
                 else if (navHref) navigate(navHref);
               };
               const clickable = !!(navHref || kpi.onClick);
@@ -989,6 +1214,92 @@ export default function PrincipalDashboard() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Circular Pending Approvals */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+                <Megaphone size={20} className="text-cyan-500" />
+                Circulars Pending Approval
+                {pendingCirculars.length > 0 && (
+                  <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full font-bold">{pendingCirculars.length}</span>
+                )}
+              </h2>
+              <button onClick={() => setCircularModal({ open: true })}
+                className="text-xs font-semibold text-[#120c7a] hover:underline flex items-center gap-1">
+                View All <ArrowRight size={12} />
+              </button>
+            </div>
+            {circularsLoading ? (
+              <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
+                <div className="p-8 text-center">
+                  <div className="w-8 h-8 border-2 border-[#120c7a] border-t-transparent rounded-full animate-spin mx-auto" />
+                </div>
+              </div>
+            ) : pendingCirculars.length === 0 ? (
+              <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-100 text-cyan-600 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 size={24} />
+                </div>
+                <h3 className="text-lg font-bold text-zinc-900">All Circulars Processed!</h3>
+                <p className="text-sm text-zinc-500 mt-1">No circulars pending your approval.</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px]">
+                    <thead>
+                      <tr className="bg-zinc-50 border-b border-zinc-200">
+                        <th className="px-5 py-3.5 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-500">Title</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-500">Type</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-500">From</th>
+                        <th className="px-5 py-3.5 text-left text-[10px] font-bold uppercase tracking-wider text-zinc-500">Date</th>
+                        <th className="px-5 py-3.5 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-500">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {pendingCirculars.slice(0, 5).map((circ) => (
+                        <tr key={circ.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="px-5 py-4">
+                            <p className="text-sm font-semibold text-zinc-900 truncate max-w-xs">{circ.title}</p>
+                          </td>
+                          <td className="px-5 py-4">
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${
+                              circ.type === "institution"
+                                ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}>
+                              {circ.type === "institution" ? <Globe size={11} /> : <Building2 size={11} />}
+                              {circ.type === "institution" ? "Institution" : "Department"}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-sm text-zinc-700">{circ.createdByName || "Unknown"}</td>
+                          <td className="px-5 py-4 text-sm text-zinc-500">{formatDate(circ.createdAt)}</td>
+                          <td className="px-5 py-4">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button onClick={(e) => { e.stopPropagation(); setSelectedCircular(circ); setShowCircularPreview(true); }}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-700 text-white text-[11px] font-bold shadow-sm hover:shadow-md transition-all"
+                                title="Review">
+                                <Eye size={12} /> Review
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {pendingCirculars.length > 5 && (
+                  <div className="px-5 py-3 bg-zinc-50 border-t border-zinc-200 text-center">
+                    <button onClick={() => setCircularModal({ open: true })}
+                      className="text-xs font-semibold text-[#120c7a] hover:underline">
+                      View all {pendingCirculars.length} circulars
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1777,18 +2088,23 @@ export default function PrincipalDashboard() {
                 </div>
               </div>
             )}
-
             {/* A4 compiled document sheet */}
-            <div className="bg-white shadow-xl border border-zinc-200 p-12 rounded-3xl max-w-4xl mx-auto font-serif text-zinc-900 leading-relaxed space-y-8">
+            <div className="bg-white shadow-xl border border-zinc-200 p-12 rounded-3xl max-w-4xl mx-auto print-container font-serif text-zinc-900 leading-relaxed space-y-6">
               
               {/* Document Header */}
-              <div className="text-center border-b-2 border-black pb-4 mb-6">
-                <h2 className="text-xl font-bold tracking-wide uppercase">CK COLLEGE OF ENGINEERING & TECHNOLOGY</h2>
-                <p className="text-xs uppercase font-semibold text-zinc-600">Jayaram Nagar, Chellangkuppam, Cuddalore - 607 003.</p>
-                <h3 className="text-base font-bold mt-3 uppercase tracking-wider">
-                  DEPARTMENT OF {selectedReport.department ? selectedReport.department.toUpperCase() : ""}
+              <div className="flex justify-center mb-6">
+                <img 
+                  src="/logo.png" 
+                  alt="CK College of Engineering & Technology Logo" 
+                  className="max-h-24 w-auto object-contain"
+                />
+              </div>
+
+              <div className="text-center space-y-1 mb-6">
+                <h3 className="text-md font-bold text-zinc-800 font-serif uppercase tracking-wide">
+                  Department of {selectedReport.department ? selectedReport.department : ""}
                 </h3>
-                <h4 className="text-sm font-black mt-2 underline uppercase tracking-widest">
+                <h4 className="text-xs font-black text-zinc-950 tracking-wider uppercase">
                   MONTHLY REPORT FOR THE MONTH OF {selectedReport.monthName?.toUpperCase()} - {selectedReport.year}
                 </h4>
               </div>
@@ -1802,550 +2118,876 @@ export default function PrincipalDashboard() {
                 <>
                   {/* PART A */}
                   <div className="space-y-6">
-                    <h2 className="text-base font-black border-b border-zinc-400 pb-1 uppercase tracking-wide">
-                      Part A: Activities related to the Students
-                    </h2>
+                    <div className="text-center mb-6">
+                      <h3 className="text-sm font-bold underline font-serif uppercase tracking-wide">
+                        Part A: Activities related to the Students
+                      </h3>
+                    </div>
 
                     {/* A.1 Guest Lectures */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">1. Industry Oriented Guest Lectures Organized</h3>
-                      {partA_GuestLectures.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">No. of Students</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Program Details</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Resource Person</th>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        1. Industry Oriented Guest Lecture Organized: {partA_GuestLectures.length === 0 ? "Nil" : ""}
+                      </h4>
+                      <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                        <thead>
+                          <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                            <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                            <th className="border border-zinc-900 p-2 uppercase">Year/Sem</th>
+                            <th className="border border-zinc-900 p-2 uppercase">Date & Time</th>
+                            <th className="border border-zinc-900 p-2 uppercase">No of Student</th>
+                            <th className="border border-zinc-900 p-2 uppercase">Name of the Program / Internship</th>
+                            <th className="border border-zinc-900 p-2 uppercase">Resource Person</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {partA_GuestLectures.length === 0 ? (
+                            <tr className="text-center">
+                              <td className="border border-zinc-900 p-2">-</td>
+                              <td className="border border-zinc-900 p-2">-</td>
+                              <td className="border border-zinc-900 p-2">-</td>
+                              <td className="border border-zinc-900 p-2">-</td>
+                              <td className="border border-zinc-900 p-2 font-bold">Nil</td>
+                              <td className="border border-zinc-900 p-2">-</td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {partA_GuestLectures.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2">{act.date || act.fromDate || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.studentsCount || act.noOfStudents || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.activityName || act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.resourcePerson || act.speaker || "-"}</td>
+                          ) : (
+                            partA_GuestLectures.map((act, index) => (
+                              <tr key={act.id} className="text-center">
+                                <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
+                                <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                <td className="border border-zinc-900 p-2">{act.noOfStudents || act.studentsCount || "-"}</td>
+                                <td className="border border-zinc-900 p-2 font-bold text-left">{act.activityName || act.title || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left">{act.resourcePerson || act.speaker || "-"}</td>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                      {renderSectionGallery(partA_GuestLectures, "Illustration of Industry Oriented Guest Lecture")}
+                    </div>
+
+                    {/* A.2 Students Association Activities */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        2. Association Activities Organized: {partA_Association.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_Association.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Event Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">No of Participants</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Details</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partA_Association.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.activityName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.noOfStudents || act.studentsCount || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.briefReport || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_Association, "Illustration of Students Association Activities")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.2 Association activities */}
+                    {/* A.3 Industrial Training / Internships */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">2. Students Association Activities</h3>
-                      {partA_Association.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Event Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">No. of Students</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Outcome/Remarks</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_Association.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2">{act.date || act.fromDate || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.activityName || act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.noOfStudents || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.remarks || act.outcome || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        3. Industrial Visit / Internship / In-plant Training: {partA_Internships.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_Internships.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Student Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Year/Sem</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Industry Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Duration</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_Internships.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.studentName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.industryName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_Internships, "Illustration of Industrial Practical Knowledge Training")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.3 Internships / Industrial Training */}
+                    {/* A.4 Online Courses by Students */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">3. Industrial Practical Training / Internships</h3>
-                      {partA_Internships.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Duration</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Company / Venue</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">No. of Students</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Program Title</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_Internships.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2">{act.duration || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.hostInstitution || act.company || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.students || act.noOfStudents || "1"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.activityName || act.title || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        4. Online Courses Completed by Students: {partA_OnlineCourses.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_OnlineCourses.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S. No.</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Year / Sem</th>
+                                <th className="border border-zinc-900 p-2 uppercase">No of Student Registered</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Title of the On-line Course</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Duration (Start date | End date)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">University</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status of the Online Course</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_OnlineCourses.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">1</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.courseName || act.activityName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.platform || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "Completed"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_OnlineCourses, "Photo Gallery for Online Course Accomplishments")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.4 Online Courses */}
+                    {/* A.5 Paper Presentation */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">4. Student Co-curricular Online Courses</h3>
-                      {partA_OnlineCourses.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Course Title</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Platform / University</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Duration</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Students Registered</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_OnlineCourses.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.activityName || act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.platform || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.weeks || act.duration || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.studentName || act.noOfStudents || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center text-emerald-700 font-bold uppercase">{act.status || "Completed"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        5. Paper Presentation inside/outside state: {partA_PaperPresentations.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_PaperPresentations.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Name of the Students</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Year/ Sem</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Program Organized By</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Name of the Event</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Prize/ Participated</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_PaperPresentations.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.studentName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.organizedBy || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.activityName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.prizeDetails || act.awardType || "Participated"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_PaperPresentations, "Photo Gallery for Event Participation")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.5 Presentations / Symposia */}
+                    {/* A.6 Co-curricular Activities / Technical Exhibitions */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">5. Paper presented / Project presented / Symposia</h3>
-                      {partA_PaperPresentations.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Student Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Organized By</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Event Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Prize/Participated</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_PaperPresentations.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.studentName || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.hostInstitution || act.organizedBy || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.activityName || act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.date || act.fromDate || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold">{act.remarks || "Participated"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        6. Co-curricular activities: {partA_Conferences.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_Conferences.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Name of the Student</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Year/Sem</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Organized By</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Event Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Awards / Participation</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_Conferences.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.studentName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.organizedBy || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.activityName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.prizeDetails || act.awardType || "Participated"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_Conferences, "PHOTO GALLERY FOR THE TECHNICAL EXHIBITION")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.6 Extra-curricular */}
+                    {/* A.7 Extra-Curricular Activities */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">6. Extra-Curricular activities (Sports/NSS/NCC)</h3>
-                      {partA_ExtraCurricular.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Game/Event</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Venue</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Students Count</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Prize Details</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_ExtraCurricular.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.activityName || act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.date || act.fromDate || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.venue || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.noOfStudents || "1"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold text-center">{act.remarks || act.prize || "Participated"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        7. Extra-Curricular activities: {partA_ExtraCurricular.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_ExtraCurricular.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Game/Event</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Venue</th>
+                                <th className="border border-zinc-900 p-2 uppercase">No. of Students participated</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Prize details</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Remarks</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_ExtraCurricular.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.activityName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.venue || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.studentName ? 1 : (act.noOfStudents || 1)}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.prizeDetails || act.awardType || "Participated"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.remarks || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_ExtraCurricular, "Photo Gallery for Event Participation")}
+                        </div>
                       )}
                     </div>
 
-                    {/* A.7 Placements */}
+                    {/* 10. Placement Details */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">7. Placements / Training Activities</h3>
-                      {partA_Placements.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Company Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Salary (LPA)</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Students Placed</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partA_Placements.map((act, index) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.company || act.activityName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.date || act.fromDate || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold text-emerald-700">{act.salary || act.remarks || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.studentName || act.noOfStudents || "1"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        10. Placement Details: {partA_Placements.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partA_Placements.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Student Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Company Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Designation</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Salary Package (LPA)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date of Offer</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partA_Placements.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.studentName || act.studentNames || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.companyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.designation || act.jobTitle || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.ctc || act.package || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.offerDate || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partA_Placements, "Photo Gallery for Placement Offers")}
+                        </div>
                       )}
                     </div>
+
                   </div>
 
                   {/* PART B */}
-                  <div className="space-y-6">
-                    <h2 className="text-base font-black border-b border-zinc-400 pb-1 uppercase tracking-wide">
-                      Part B: Details of Department Level Activities
-                    </h2>
+                  <div className="space-y-6 pt-6 border-t border-zinc-300">
+                    <div className="text-center mb-6">
+                      <h3 className="text-sm font-bold underline font-serif uppercase tracking-wide">
+                        Part B: Details of Department Level Activities
+                      </h3>
+                    </div>
 
                     {/* B.1 Class Committee Meetings */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">1. Class Committee Meetings</h3>
-                      {partB_Meetings.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Meeting No</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Chairman</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Agenda</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Decisions / Action Taken</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partB_Meetings.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center font-mono">{act.meetingNo || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.chairman || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.agenda || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-semibold text-blue-800">{act.decisions || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        1. Class Committee Meetings: {partB_Meetings.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Meetings.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Meeting No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Chairman</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Agenda</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Decisions / Action Taken</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partB_Meetings.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-mono">{act.meetingNo || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.chairman || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.agenda || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left font-bold">{act.decisions || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Meetings, "Photo Gallery for Class Committee Meetings")}
+                        </div>
                       )}
                     </div>
 
-                    {/* B.2 Purchases */}
+                    {/* B.2 Advisory Board Meetings */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">2. Equipment Purchased / Service & Maintenance</h3>
-                      {partB_Purchases.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Equipment Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Lab Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Type</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Cost (₹)</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Vendor</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partB_Purchases.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.equipmentName || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.labName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold uppercase text-zinc-500">{act.type || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-right font-bold text-indigo-700">₹{parseFloat(act.cost || 0).toLocaleString("en-IN")}</td>
-                                <td className="border border-zinc-400 p-2">{act.vendor || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center uppercase font-black">{act.status || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        2. Department Advisory Board Meetings: {partB_Advisory.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Advisory.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Meeting No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">External Members</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Agenda</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Key Suggestions / Decisions</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partB_Advisory.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-mono">{act.meetingNo || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.externalMembers || act.members || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.agenda || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left font-bold">{act.suggestions || act.decisions || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Advisory, "Photo Gallery for Advisory Board Meetings")}
+                        </div>
                       )}
                     </div>
 
-                    {/* B.3 Parents Meet */}
+                    {/* B.3 Laboratory Equipment Purchased / Maintenance */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">3. Parent-Teacher Meetings</h3>
-                      {partB_Parents.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Attended / Invited</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Issues Raised</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Action Taken</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partB_Parents.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold">{act.parentsAttended || 0} / {act.parentsInvited || 0}</td>
-                                <td className="border border-zinc-400 p-2">{act.issuesRaised || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold text-emerald-800">{act.actionTaken || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        3. Equipment Purchased / Service & Maintenance: {partB_Purchases.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Purchases.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Equipment Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Lab Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Type</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Cost (₹)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Vendor</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partB_Purchases.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.equipmentName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.labName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.type || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-right font-bold">₹{parseFloat(act.cost || 0).toLocaleString("en-IN")}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.vendorName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Purchases, "Photo Gallery for Equipment Purchased / Service & Maintenance")}
+                        </div>
                       )}
                     </div>
 
-                    {/* B.4 MoUs */}
+                    {/* B.4 Parents Teachers Association Meetings */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">4. MoUs / Collaborations Signed</h3>
-                      {partB_Mous.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Organisation</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Type</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Level</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date Signed</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Benefits / Activities</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partB_Mous.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.organisationName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold text-blue-700">{act.type || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.level || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.dateSigned || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.keyActivities || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        4. PTA Meetings: {partB_Parents.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Parents.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Year/Sem</th>
+                                <th className="border border-zinc-900 p-2 uppercase">No of Parents</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Feedback/Outcome</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partB_Parents.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.yearSem || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.noOfParents || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.feedbackSummary || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Parents, "Photo Gallery for PTA Meetings")}
+                        </div>
                       )}
                     </div>
+
+                    {/* B.5 Memorandums of Understanding (MoUs) */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        5. Memorandums of Understanding (MoUs): {partB_Mous.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Mous.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Organization Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Signed Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Validity</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Activities Planned</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partB_Mous.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.orgName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.validityPeriod || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.activitiesPlan || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Mous, "Photo Gallery for MoUs & Industry Collaborations")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* B.6 Academic Audits Conducted */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        6. Academic Audits Conducted: {partB_Audits.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Audits.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Audit Type</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">External Auditor</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Observations/Action Taken</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partB_Audits.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold">{act.auditType || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.auditorName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.observations || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Audits, "Photo Gallery for Academic Audits")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* B.7 Newsletters Published */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        7. Newsletters Published: {partB_Newsletters.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Newsletters.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Newsletter Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Volume / Issue</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date of Release</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partB_Newsletters.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.volumeIssue || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Newsletters, "Photo Gallery for Newsletters & Department Publications")}
+                        </div>
+                      )}
+                    </div>
+
                   </div>
 
                   {/* PART C */}
-                  <div className="space-y-6">
-                    <h2 className="text-base font-black border-b border-zinc-400 pb-1 uppercase tracking-wide">
-                      Part C: Activities related to Staff members
-                    </h2>
+                  <div className="space-y-6 pt-6 border-t border-zinc-300">
+                    <div className="text-center mb-6">
+                      <h3 className="text-sm font-bold underline font-serif uppercase tracking-wide">
+                        Part C: Details of Faculty Level Activities
+                      </h3>
+                    </div>
 
-                    {/* C.1 Ph.D. work Progress */}
+                    {/* C.1 PhD Registrations / Awarded */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">1. Ph.D. work Progress of Faculty members</h3>
-                      {partC_Phd.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Supervisor</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">University</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Monthly Progress Details</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partC_Phd.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.supervisor || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.university || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.monthlyProgress || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center uppercase font-bold text-indigo-700">{act.status || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        1. PhD Registrations / Awarded: {partC_Phd.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Phd.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">University</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Topic</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partC_Phd.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.universityName || act.university || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.phdTopic || act.monthlyProgress || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Phd, "Photo Gallery for Faculty Ph.D Registrations & Awards")}
+                        </div>
                       )}
                     </div>
 
-                    {/* C.2 Faculty Publications */}
+                    {/* C.2 Journal & Conference Publications */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">2. Faculty Publications (Conference & Journals)</h3>
-                      {partC_Publications.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Type</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Title of Paper</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Publisher / Conference</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date Published</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partC_Publications.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold uppercase text-zinc-500">{act.type || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.title || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.journalConference || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.datePublished || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        2. Journal & Conference Publications: {partC_Publications.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Publications.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Paper Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Journal/Conference</th>
+                                <th className="border border-zinc-900 p-2 uppercase">ISSN/ISBN</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Impact Factor</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partC_Publications.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.paperTitle || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.journalName || act.journalConference || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.issn || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold">{act.impactFactor || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Publications, "Photo Gallery for Faculty Journal & Conference Publications")}
+                        </div>
                       )}
                     </div>
 
-                    {/* C.3 FDPs / Seminars Attended */}
+                    {/* C.3 Faculty FDP / Seminars / Workshops Attended */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">3. Faculty Conferences/FDPs/Workshops Participated</h3>
-                      {partC_Attended.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Program Title</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Organized By</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Duration (Days)</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Dates</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partC_Attended.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.programmeTitle || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.organisedBy || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold">{act.durationDays || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center text-[10px]">{act.fromDate} to {act.toDate}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        3. Faculty FDP / Seminars / Workshops Attended: {partC_Attended.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Attended.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Program Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Organizing Body</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date & Duration</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partC_Attended.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.programName || act.programmeTitle || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.organizedBy || act.organisedBy || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || act.fromDate || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Attended, "Photo Gallery for Faculty FDP & Seminars Attended")}
+                        </div>
                       )}
                     </div>
 
-                    {/* C.4 Faculty Online Courses */}
+                    {/* C.4 Faculty FDP / Seminars / Workshops Organized */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">4. Status of Faculty Pursuing Online Courses</h3>
-                      {partC_Online.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Course Title</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Platform / University</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Duration (Weeks)</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partC_Online.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.courseName || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.platform || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center">{act.weeks || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-center text-emerald-800 font-bold uppercase">{act.status || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        4. Faculty FDP / Seminars / Workshops Organized: {partC_Organized.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Organized.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Coordinator</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Program Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Resource Person</th>
+                                <th className="border border-zinc-900 p-2 uppercase">No of Participants</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partC_Organized.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.programName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.resourcePerson || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.participantsCount || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Organized, "Photo Gallery for Faculty FDP & Seminars Organized")}
+                        </div>
                       )}
                     </div>
 
-                    {/* C.5 R&D Project Funding Received */}
+                    {/* C.5 Faculty Online Courses Completed */}
                     <div>
-                      <h3 className="text-xs font-bold mb-2 uppercase">5. Funded Research Projects / Consultancy</h3>
-                      {partC_Funding.length === 0 ? (
-                        <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
-                      ) : (
-                        <table className="w-full text-left text-xs border-collapse border border-zinc-400">
-                          <thead>
-                            <tr className="bg-zinc-50 border border-zinc-400">
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Project Title</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Funding Agency</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">PI Name</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Grant Amount (₹)</th>
-                              <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {partC_Funding.map((act) => (
-                              <tr key={act.id}>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.projectTitle || "-"}</td>
-                                <td className="border border-zinc-400 p-2">{act.fundingAgency || "-"}</td>
-                                <td className="border border-zinc-400 p-2 font-bold">{act.piName || "-"}</td>
-                                <td className="border border-zinc-400 p-2 text-right font-bold text-emerald-700">₹{parseFloat(act.grantAmount || 0).toLocaleString("en-IN")}</td>
-                                <td className="border border-zinc-400 p-2 text-center font-bold uppercase">{act.status || "-"}</td>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        5. Faculty Online Courses Completed: {partC_Online.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Online.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Course Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Platform</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Duration (Weeks)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Dates</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Score/Grade</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {partC_Online.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.courseName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.platform || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.weeks || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.startDate && act.endDate ? `${act.startDate} to ${act.endDate}` : act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.grade || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "Completed"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Online, "Photo Gallery for Faculty Online Courses")}
+                        </div>
                       )}
                     </div>
+
+                    {/* C.6 Funded Research Projects / Consultancy */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        6. Funded Research Projects / Consultancy: {partC_Funding.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Funding.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Project Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Funding Agency</th>
+                                <th className="border border-zinc-900 p-2 uppercase">PI Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Grant Amount (₹)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partC_Funding.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.projectTitle || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.fundingAgency || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left font-bold">{act.piName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-right font-bold text-emerald-700 font-serif">₹{parseFloat(act.grantAmount || 0).toLocaleString("en-IN")}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Funding, "Photo Gallery for Funded Research Projects & Consultancy")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* C.7 Patents Filed / Published / Granted by Faculty */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        7. Patents Filed / Published / Granted by Faculty: {partC_Patents.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Patents.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Inventors</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Patent Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Application No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Filing Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Type</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partC_Patents.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.inventors || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.patentTitle || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-mono">{act.applicationNo || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.filingDate || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.type || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "Published"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Patents, "Photo Gallery for Faculty Patents")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* C.8 Faculty External Contributions */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        8. Faculty External Contributions (Guest Lectures, BoS, Examiner, etc.): {partC_Contributions.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Contributions.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Role / Title</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Host Institution</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Duration</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partC_Contributions.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.title || act.role || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.hostInstitution || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.duration || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Contributions, "Photo Gallery for Faculty External Contributions")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* C.9 Faculty Achievements / Awards / Recognitions */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        9. Faculty Achievements / Awards / Recognitions: {partC_Achievements.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Achievements.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Award / Recognition Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Awarding Body</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Level</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partC_Achievements.map((act, index) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2">{index + 1}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.awardName || act.title || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.awardingBody || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.level || "National"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Achievements, "Photo Gallery for Faculty Achievements")}
+                        </div>
+                      )}
+                    </div>
+
                   </div>
-
-                  {/* PHOTO GALLERY AT THE END */}
-                  {allReportImages.length > 0 && (
-                    <div className="pt-8 border-t border-zinc-300">
-                      <h2 className="text-sm font-bold text-center uppercase tracking-widest text-zinc-600 mb-4">
-                        PHOTO GALLERY FOR THE DEPARTMENTS EVENTS & INVOLVEMENTS
-                      </h2>
-                      <div className="grid grid-cols-2 gap-6 justify-center">
-                        {allReportImages.map((img, i) => (
-                          <div key={i} className="flex flex-col items-center justify-center p-3 bg-zinc-50 border border-zinc-200 rounded-2xl page-break-inside-avoid">
-                            <img 
-                              src={img.url} 
-                              alt={img.title} 
-                              className="max-w-full max-h-48 object-contain rounded-lg shadow-sm"
-                              referrerPolicy="no-referrer"
-                            />
-                            <span className="text-[10px] font-bold text-zinc-500 text-center mt-2 uppercase tracking-wide">
-                              {img.title}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {/* Signatures footer */}
                   <div className="pt-12 grid grid-cols-3 text-center text-xs font-bold font-serif gap-4 mt-8 page-break-inside-avoid">
@@ -2360,13 +3002,172 @@ export default function PrincipalDashboard() {
                     <div>
                       <p className="mt-8 border-t border-zinc-400 pt-2 mx-6">Principal</p>
                       <p className="text-[9px] text-zinc-500 font-sans mt-0.5">
-                        CKCET
+                        {selectedReport.status === "Approved" ? "Approved & Signed" : "CKCET"}
                       </p>
                     </div>
                   </div>
                 </>
-              )}
+              )}            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Circular Pending Popup */}
+      {circularModal.open && (
+        <div className="fixed inset-0 z-[190] flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setCircularModal({ open: false })} />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-200">
+              <div className="flex items-center gap-3">
+                <Megaphone size={20} className="text-cyan-500" />
+                <h3 className="text-lg font-bold text-zinc-900">Circulars Pending Approval</h3>
+                <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full font-bold">{pendingCirculars.length}</span>
+              </div>
+              <button onClick={() => setCircularModal({ open: false })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition-colors">
+                <X size={18} className="text-zinc-500" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {circularsLoading ? (
+                <div className="text-center py-12">
+                  <Loader2 className="animate-spin text-cyan-500 mx-auto mb-3" size={32} />
+                  <p className="text-zinc-500 text-sm font-semibold">Loading circulars...</p>
+                </div>
+              ) : pendingCirculars.length === 0 ? (
+                <div className="text-center py-12">
+                  <CheckCircle2 size={40} className="mx-auto text-emerald-400 mb-3" />
+                  <p className="text-zinc-500 font-medium">No pending circulars to approve</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {pendingCirculars.map((circ) => (
+                    <div key={circ.id} className="flex items-center justify-between p-4 rounded-xl bg-zinc-50 border border-zinc-200 hover:bg-zinc-100 transition-colors">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
+                            circ.type === "institution"
+                              ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}>
+                            {circ.type === "institution" ? <Globe size={10} /> : <Building2 size={10} />}
+                            {circ.type === "institution" ? "Institution" : "Dept"}
+                          </span>
+                        </div>
+                        <p className="text-sm font-bold text-zinc-900 truncate">{circ.title}</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          {circ.createdByName || "Unknown"} • {formatDate(circ.createdAt)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedCircular(circ);
+                          setShowCircularPreview(true);
+                        }}
+                        className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-700 text-white rounded-lg text-xs font-black shadow hover:from-cyan-700 hover:to-blue-800 transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ml-3"
+                      >
+                        <Eye size={12} /> Review
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Circular Review Modal */}
+      {showCircularPreview && selectedCircular && (
+        <div className="fixed inset-0 bg-black/60 z-[200] backdrop-blur-sm flex flex-col">
+          <div className="bg-white p-4 border-b border-zinc-200 flex justify-between items-center px-6">
+            <div className="flex items-center gap-3">
+              <Megaphone size={20} className="text-[#120c7a]" />
+              <div>
+                <h3 className="text-sm font-extrabold text-zinc-800 uppercase tracking-wide">Review Circular</h3>
+                <p className="text-[11px] text-zinc-500 font-semibold">
+                  {selectedCircular.title} | {selectedCircular.type === "institution" ? "Institution Level" : `Department: ${selectedCircular.department || "N/A"}`}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setShowCircularPreview(false);
+                  setSelectedCircular(null);
+                  setShowCircularReturn(false);
+                  setCircularReturnComment("");
+                }}
+                className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => setShowCircularReturn(p => !p)}
+                className="px-4 py-2 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Return for Correction
+              </button>
+              <button
+                onClick={() => handleApproveCircular(selectedCircular)}
+                disabled={circularActioning}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-xl text-xs font-black shadow hover:from-emerald-700 hover:to-teal-800 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-60"
+              >
+                {circularActioning ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                Approve & Publish
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-8 bg-zinc-100">
+            {showCircularReturn && (
+              <div className="max-w-4xl mx-auto mb-6 bg-white p-5 rounded-2xl border border-rose-200 shadow-md">
+                <label className="block text-xs font-black text-rose-700 uppercase tracking-wider mb-2">
+                  Comments / corrections required
+                </label>
+                <textarea
+                  placeholder="Explain what corrections are required..."
+                  value={circularReturnComment}
+                  onChange={e => setCircularReturnComment(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs font-medium text-zinc-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white"
+                />
+                <div className="flex justify-end gap-2 mt-3">
+                  <button
+                    onClick={() => setShowCircularReturn(false)}
+                    className="px-3.5 py-1.5 bg-zinc-200 text-zinc-600 text-xs font-bold rounded-lg hover:bg-zinc-300 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleReturnCircular(selectedCircular)}
+                    disabled={circularActioning}
+                    className="px-4 py-1.5 bg-rose-600 text-white text-xs font-black rounded-lg hover:bg-rose-700 transition-all cursor-pointer disabled:opacity-65"
+                  >
+                    {circularActioning ? "Submitting..." : "Send Back"}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="max-w-4xl mx-auto bg-white shadow-xl border border-zinc-200 rounded-3xl overflow-hidden">
+              <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] px-8 py-6">
+                <div className="flex items-center gap-3">
+                  <Megaphone size={24} className="text-white/80" />
+                  <div>
+                    <h2 className="text-xl font-bold text-white">{selectedCircular.title}</h2>
+                    <p className="text-blue-200 text-xs mt-1">
+                      {selectedCircular.type === "institution" ? "Institution Level Circular" : `Department of ${selectedCircular.department || "N/A"}`}
+                      <span className="mx-2">•</span>
+                      {formatDate(selectedCircular.createdAt)}
+                      <span className="mx-2">•</span>
+                      By {selectedCircular.createdByName || "Unknown"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-8">
+                <div className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">
+                  {selectedCircular.content}
+                </div>
+              </div>
             </div>
           </div>
         </div>

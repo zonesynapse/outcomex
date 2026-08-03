@@ -5,6 +5,7 @@ import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X, ChevronDown, ChevronRight, Save, Phone, MapPin, BookOpen, Users, Heart, Award, Globe, Hash } from "lucide-react";
 import { formatProgDisplay, sanitizeKey } from "../../lib/utils";
 import { getSeatConfigurationsRealtime } from "../../services/seatService";
+import { uploadBase64, userStoragePath, deleteByUrl } from "../../utils/fileUpload";
 
 const SECTIONS = [
   {
@@ -259,8 +260,18 @@ export default function StudentProfile() {
 
   const handleSaveSig = async () => {
     if (!auth.currentUser) return;
-    await setDoc(doc(db, "users", auth.currentUser.uid), { signatureUrl: sigUrl }, { merge: true });
-    setUserData(prev => ({ ...prev, signatureUrl: sigUrl }));
+    let urlToSave = sigUrl;
+    const isNewUpload = sigUrl && sigUrl.startsWith('data:');
+    if (isNewUpload) {
+      const oldSig = userData?.signatureUrl;
+      if (oldSig && oldSig.startsWith('http')) {
+        await deleteByUrl(oldSig).catch(() => {});
+      }
+      const storagePath = userStoragePath(auth.currentUser.uid, 'signatures', 'signature.png');
+      urlToSave = await uploadBase64(storagePath, sigUrl);
+    }
+    await setDoc(doc(db, "users", auth.currentUser.uid), { signatureUrl: urlToSave }, { merge: true });
+    setUserData(prev => ({ ...prev, signatureUrl: urlToSave }));
     setEditSig(false);
     showToast("Signature saved");
   };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
@@ -15,6 +15,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
 import { formatProgrammeKey, sanitizeKey, getAcademicYears, formatProgDisplay } from "../lib/utils";
+import { uploadFile, userStoragePath, deleteByUrl } from "../utils/fileUpload";
 
 const BASIC_INFO_KEYS = new Set(["programme", "department", "batch", "academicYear", "semester", "section", "date", "submittedBy", "month"]);
 
@@ -41,9 +42,18 @@ export default function ActivityEntry() {
   const [submitted, setSubmitted] = useState(false);
   const [draftId, setDraftId] = useState(null);
   const [sectionConfigs, setSectionConfigs] = useState({});
+  const fileRef = useRef({});
 
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches } = useBatches(durations);
+  const departmentOptions = useMemo(() => {
+    if (!formData.programme) return [];
+    const allDepts = (PROGRAMME_DEPARTMENTS[formatProgrammeKey(formData.programme)] || []).sort();
+    if (!id && currentUserData?.department) {
+      return allDepts.filter(d => d === currentUserData.department);
+    }
+    return allDepts;
+  }, [formData.programme, PROGRAMME_DEPARTMENTS, id, currentUserData?.department]);
   const activeBatchesList = useMemo(() => {
     if (!formData.programme) return [];
     const progKey = formatProgrammeKey(formData.programme);
@@ -220,7 +230,14 @@ export default function ActivityEntry() {
       }
       return true;
     });
-    if (validFiles.length > 0) setUploadedFiles(prev => [...prev, ...validFiles]);
+    if (validFiles.length > 0) {
+      const newEntries = validFiles.map(f => {
+        const tempId = `evidence_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        fileRef.current[tempId] = f;
+        return { tempId, name: f.name, size: f.size, type: f.type };
+      });
+      setUploadedFiles(prev => [...prev, ...newEntries]);
+    }
   };
 
   const handleFileChange = (e) => {
@@ -262,6 +279,14 @@ export default function ActivityEntry() {
   };
 
   const removeFile = (index) => {
+    const file = uploadedFiles[index];
+    if (!file) return;
+    if (file.tempId) {
+      delete fileRef.current[file.tempId];
+    }
+    if (file.url) {
+      deleteByUrl(file.url).catch(err => console.error("Error deleting file from Storage:", err));
+    }
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -295,6 +320,23 @@ export default function ActivityEntry() {
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
+
+  const uploadEvidenceFiles = async () => {
+    if (!uploadedFiles.length) return [];
+    return Promise.all(uploadedFiles.map(async (file) => {
+      if (file.url) {
+        return { name: file.name, size: file.size, type: file.type, url: file.url };
+      }
+      if (file.tempId && fileRef.current[file.tempId]) {
+        const fileObj = fileRef.current[file.tempId];
+        const path = userStoragePath(auth.currentUser?.uid || 'unknown', 'evidence', file.name);
+        const url = await uploadFile(path, fileObj, fileObj.type);
+        return { name: file.name, size: file.size, type: file.type, url };
+      }
+      return { name: file.name, size: file.size, type: file.type };
+    }));
+  };
+
   const saveDraft = async () => {
     if (!activityConfig) return;
     setSaving(true);
@@ -309,6 +351,7 @@ export default function ActivityEntry() {
         }
       }
 
+      const evidenceFiles = await uploadEvidenceFiles();
       const dataToSave = {
         ...formData,
         month,
@@ -322,7 +365,7 @@ export default function ActivityEntry() {
         submittedById: auth.currentUser?.uid,
         submittedByRole: currentUserData?.role,
         formData: activityConfig.isMultiRow ? rows : formData,
-        evidenceFiles: uploadedFiles.map(f => ({ name: f.name, size: f.size, type: f.type }))
+        evidenceFiles
       };
 
       let docRef;
@@ -356,6 +399,7 @@ export default function ActivityEntry() {
         }
       }
 
+      const evidenceFiles = await uploadEvidenceFiles();
       const dataToSave = {
         ...formData,
         month,
@@ -369,7 +413,7 @@ export default function ActivityEntry() {
         submittedById: auth.currentUser?.uid,
         submittedByRole: currentUserData?.role,
         formData: activityConfig.isMultiRow ? rows : formData,
-        evidenceFiles: uploadedFiles.map(f => ({ name: f.name, size: f.size, type: f.type }))
+        evidenceFiles
       };
 
       let docRef;
@@ -515,7 +559,7 @@ export default function ActivityEntry() {
                   required
                 >
                   <option value="">{formData.programme ? "Select Department" : "Select Programme first"}</option>
-                  {formData.programme && (PROGRAMME_DEPARTMENTS[formatProgrammeKey(formData.programme)] || []).sort().map(d => (
+                  {departmentOptions.map(d => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>

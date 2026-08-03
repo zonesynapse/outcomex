@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs, query, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -51,75 +51,87 @@ export default function AdminRoleConfig() {
 
   // All available system pages
   const ALL_PAGES = [
-    { id: "reports", label: "Reports", path: "/reports" },
-    { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard" },
-    { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard" },
-    { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard" },
-    { id: "course-bank", label: "Course Bank", path: "/course-bank" },
-    { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles" },
-    { id: "student-management", label: "Student Management", path: "/student-management" },
-    { id: "info-configuration", label: "Info Configuration", path: "/info-configuration" },
-    { id: "curriculum", label: "Curriculum", path: "/curriculum" },
-    // { id: "regulation-formation", label: "Regulation Formation", path: "/regulation-formation" },
-    { id: "blooms-taxonomy", label: "Bloom's Taxonomy", path: "/blooms-taxonomy" },
-    { id: "hod-role-configuration", label: "Faculty Course Allocation", path: "/hod-role-configuration" },
-    { id: "po_and_pso_configuration", label: "PO's Configuration", path: "/po_and_pso_configuration" },
-    { id: "upload", label: "Update Namelist", path: "/upload" },
-    // { id: "cia-configuration", label: "CIA Configuration", path: "/cia-configuration" },
-    { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment" },
-    { id: "admission-enquiries", label: "Admission Enquiries", path: "/admissions/enquiries" },
-    { id: "seat-management", label: "Seat Management", path: "/admissions/seats" },
-    { id: "admission-confirmation", label: "Admission Confirmation", path: "/admissions/confirm" },
-    { id: "fee-config", label: "Fee Configuration", path: "/admissions/fees" },
-    { id: "fee-dashboard", label: "Fee Dashboard", path: "/fee/dashboard" },
-    { id: "fee-operations", label: "Fee Operations", path: "/fee/operations" },
-    { id: "fee-control", label: "Fee Control", path: "/fee/control" },
-    { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission" },
-    { id: "co-po", label: "CO-PO Mapping", path: "/co-po" },
-    { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment" },
-    { id: "co_configuration", label: "CO Configuration", path: "/co_configuration" },
-    { id: "questionpaper", label: "Question Paper Generator", path: "/question-paper-generator" },
-    { id: "markk", label: "Marks Entry", path: "/markk" },
-    { id: "attendance", label: "Attendance", path: "/attendance" },
-    { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar" },
-    { id: "timetable", label: "Time Table Configuration", path: "/tt" },
-    { id: "timetable-creation", label: "Time Table Creation", path: "/timetable-creation" },
-    { id: "library-catalog", label: "Library — Catalog", path: "/library/catalog" },
-    { id: "library-circulation", label: "Library — Circulation", path: "/library/circulation" },
-    { id: "library-reports", label: "Library — Reports", path: "/library/reports" },
-    { id: "library-categories", label: "Library — Categories", path: "/library/categories" },
-    { id: "library-entry-exit", label: "Library — Entry / Exit", path: "/library/entry-exit" },
-    { id: "placement-dashboard", label: "Placement — Dashboard", path: "/placement/dashboard" },
-    { id: "placement-companies", label: "Placement — Companies", path: "/placement/companies" },
-    { id: "placement-drives", label: "Placement — Drives", path: "/placement/drives" },
-    { id: "placement-students", label: "Placement — Students", path: "/placement/students" },
-    { id: "placement-activities", label: "Placement — Interviews & Training", path: "/placement/activities" },
-    { id: "placement-applications", label: "Placement — Applications", path: "/placement/applications" },
-    { id: "placement-interviews", label: "Placement — Interviews", path: "/placement/interviews" },
-    { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers" },
-    { id: "placement-training", label: "Placement — Training", path: "/placement/training" },
-    { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports" },
-    { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles" },
-    { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries" },
-    { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports" },
-    { id: "qp-converter", label: "Question Paper Converter", path: "/qp-converter" },
-    { id: "step-points", label: "STEP Activity Points", path: "/step-points" },
-    { id: "step-settings", label: "STEP Settings Configuration", path: "/step-settings" },
-    { id: "step-analytics", label: "STEP Analytics & Insights", path: "/step-analytics" },
-    { id: "inventory-dashboard", label: "Inventory — Dashboard", path: "/inventory/dashboard" },
-    { id: "inventory-items", label: "Inventory — Stock Management", path: "/inventory/items" },
-    { id: "inventory-request", label: "Inventory — Request Item", path: "/inventory/request" },
-    { id: "inventory-my-requests", label: "Inventory — My Requests", path: "/inventory/my-requests" },
-    { id: "inventory-approvals", label: "Inventory — Request Approvals", path: "/inventory/approvals" },
-    { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill" },
-    { id: "activity-list", label: "Activity — Dashboard", path: "/activities" },
-    { id: "activity-new", label: "Activity — New Entry", path: "/activities/new" },
-    { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities/reports" },
-    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities/nba-export" },
-    { id: "mentor-allocation", label: "Mentor — Allocation", path: "/mentor/allocation" },
-    { id: "mentor-meetings", label: "Mentor — Activities", path: "/mentor/meetings" },
-    { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports" }
+    { id: "reports", label: "Reports", path: "/reports", module: "General" },
+    { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard", module: "General" },
+    { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard", module: "General" },
+    { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard", module: "General" },
+    { id: "course-bank", label: "Course Bank", path: "/course-bank", module: "Academics" },
+    { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles", module: "Configuration" },
+    { id: "student-management", label: "Student Management", path: "/student-management", module: "Academics" },
+    { id: "info-configuration", label: "Info Configuration", path: "/info-configuration", module: "Configuration" },
+    { id: "curriculum", label: "Curriculum", path: "/curriculum", module: "Configuration" },
+    { id: "blooms-taxonomy", label: "Bloom's Taxonomy", path: "/blooms-taxonomy", module: "OBE" },
+    { id: "hod-role-configuration", label: "Faculty Course Allocation", path: "/hod-role-configuration", module: "Academics" },
+    { id: "po_and_pso_configuration", label: "PO's Configuration", path: "/po_and_pso_configuration", module: "OBE" },
+    { id: "upload", label: "Update Namelist", path: "/upload", module: "Academics" },
+    { id: "course-enrolment", label: "Course Enrolment", path: "/course-enrolment", module: "Academics" },
+    { id: "admission-enquiries", label: "Admission Enquiries", path: "/admissions/enquiries", module: "Admission" },
+    { id: "seat-management", label: "Seat Management", path: "/admissions/seats", module: "Admission" },
+    { id: "admission-confirmation", label: "Admission Confirmation", path: "/admissions/confirm", module: "Admission" },
+    { id: "fee-config", label: "Fee Configuration", path: "/admissions/fees", module: "Fee" },
+    { id: "fee-dashboard", label: "Fee Dashboard", path: "/fee/dashboard", module: "Fee" },
+    { id: "fee-operations", label: "Fee Operations", path: "/fee/operations", module: "Fee" },
+    { id: "fee-control", label: "Fee Control", path: "/fee/control", module: "Fee" },
+    { id: "vision_and_mission", label: "Vision and Mission", path: "/vision_and_mission", module: "OBE" },
+    { id: "co-po", label: "CO-PO Mapping", path: "/co-po", module: "OBE" },
+    { id: "po-attainment", label: "PO Calculation & Attainment", path: "/po-attainment", module: "OBE" },
+    { id: "co_configuration", label: "CO Configuration", path: "/co_configuration", module: "OBE" },
+    { id: "questionpaper", label: "Question Paper Generator", path: "/question-paper-generator", module: "IA" },
+    { id: "markk", label: "Marks Entry", path: "/markk", module: "IA" },
+    { id: "attendance", label: "Attendance", path: "/attendance", module: "Academics" },
+    { id: "academic-calendar", label: "Academic Calendar", path: "/academic-calendar", module: "Academics" },
+    { id: "timetable", label: "Time Table Configuration", path: "/tt", module: "Configuration" },
+    { id: "timetable-creation", label: "Time Table Creation", path: "/timetable-creation", module: "Academics" },
+    { id: "library-catalog", label: "Library — Catalog", path: "/library/catalog", module: "Library" },
+    { id: "library-circulation", label: "Library — Circulation", path: "/library/circulation", module: "Library" },
+    { id: "library-reports", label: "Library — Reports", path: "/library/reports", module: "Library" },
+    { id: "library-categories", label: "Library — Categories", path: "/library/categories", module: "Library" },
+    { id: "library-entry-exit", label: "Library — Entry / Exit", path: "/library/entry-exit", module: "Library" },
+    { id: "placement-dashboard", label: "Placement — Dashboard", path: "/placement/dashboard", module: "Placement" },
+    { id: "placement-companies", label: "Placement — Companies", path: "/placement/companies", module: "Placement" },
+    { id: "placement-drives", label: "Placement — Drives", path: "/placement/drives", module: "Placement" },
+    { id: "placement-students", label: "Placement — Students", path: "/placement/students", module: "Placement" },
+    { id: "placement-activities", label: "Placement — Interviews & Training", path: "/placement/activities", module: "Placement" },
+    { id: "placement-applications", label: "Placement — Applications", path: "/placement/applications", module: "Placement" },
+    { id: "placement-interviews", label: "Placement — Interviews", path: "/placement/interviews", module: "Placement" },
+    { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers", module: "Placement" },
+    { id: "placement-training", label: "Placement — Training", path: "/placement/training", module: "Placement" },
+    { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports", module: "Placement" },
+    { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles", module: "COE" },
+    { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries", module: "COE" },
+    { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports", module: "COE" },
+    { id: "qp-converter", label: "Question Paper Converter", path: "/qp-converter", module: "COE" },
+    { id: "step-points", label: "STEP Activity Points", path: "/step-points", module: "Activity" },
+    { id: "step-settings", label: "STEP Settings Configuration", path: "/step-settings", module: "Configuration" },
+    { id: "step-analytics", label: "STEP Analytics & Insights", path: "/step-analytics", module: "Activity" },
+    { id: "inventory-dashboard", label: "Inventory — Dashboard", path: "/inventory/dashboard", module: "Inventory" },
+    { id: "inventory-items", label: "Inventory — Stock Management", path: "/inventory/items", module: "Inventory" },
+    { id: "inventory-request", label: "Inventory — Request Item", path: "/inventory/request", module: "Inventory" },
+    { id: "inventory-my-requests", label: "Inventory — My Requests", path: "/inventory/my-requests", module: "Inventory" },
+    { id: "inventory-approvals", label: "Inventory — Request Approvals", path: "/inventory/approvals", module: "Inventory" },
+    { id: "inventory-fulfill", label: "Inventory — Issue Items", path: "/inventory/fulfill", module: "Inventory" },
+    { id: "activity-list", label: "Activity — Dashboard", path: "/activities", module: "Activity" },
+    { id: "activity-new", label: "Activity — New Entry", path: "/activities/new", module: "Activity" },
+    { id: "activity-reports", label: "Activity — Monthly Reports", path: "/activities/reports", module: "Activity" },
+    { id: "activity-nba-export", label: "Activity — NBA Export", path: "/activities/nba-export", module: "Activity" },
+    { id: "mentor-allocation", label: "Mentor — Allocation", path: "/mentor/allocation", module: "Mentoring" },
+    { id: "mentor-meetings", label: "Mentor — Activities", path: "/mentor/meetings", module: "Mentoring" },
+    { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports", module: "Mentoring" },
+    { id: "faculty-appraisal-request", label: "HR — Appraisal Request", path: "/hr/appraisal", module: "HR" },
+    { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
+    { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
+    { id: "ia-schedule-creation", label: "IA — Schedule Creation", path: "/ia/schedule-create", module: "IA" }
   ];
+
+  const groupedPages = useMemo(() => {
+    const groups = {};
+    ALL_PAGES.forEach(page => {
+      const mod = page.module || "Other";
+      if (!groups[mod]) groups[mod] = [];
+      groups[mod].push(page);
+    });
+    return groups;
+  }, [ALL_PAGES]);
 
   useEffect(() => {
     let unsubscribeUserData = () => {};
@@ -776,28 +788,41 @@ export default function AdminRoleConfig() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 font-medium">
-                    {ALL_PAGES.map(page => (
-                      <tr key={page.id} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="px-6 py-4 text-sm text-zinc-800 sticky left-0 bg-white">
-                          <div className="flex flex-col">
-                            <span>{page.label}</span>
-                            <span className="text-[10px] text-zinc-400 font-mono">{page.path}</span>
-                          </div>
-                        </td>
-                        {availableRoles.map(role => (
-                          <td key={`${role}-${page.id}`} className="px-6 py-4 text-center">
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input 
-                                type="checkbox" 
-                                className="sr-only peer"
-                                checked={rolePermissions[role]?.includes(page.id) || false}
-                                onChange={() => handleTogglePermission(role, page.id)}
-                              />
-                              <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#120c7a]"></div>
-                            </label>
+                    {Object.entries(groupedPages).map(([moduleName, pages]) => (
+                      <React.Fragment key={moduleName}>
+                        {/* Module category spacer heading row */}
+                        <tr className="bg-indigo-50/20">
+                          <td 
+                            colSpan={availableRoles.length + 1} 
+                            className="px-6 py-2.5 text-[10px] font-black uppercase text-indigo-900 tracking-wider font-sans bg-indigo-50/25 sticky left-0"
+                          >
+                            Module: {moduleName}
                           </td>
+                        </tr>
+                        {pages.map(page => (
+                          <tr key={page.id} className="hover:bg-zinc-50/30 transition-colors">
+                            <td className="px-8 py-3.5 text-xs text-zinc-800 sticky left-0 bg-white border-l-4 border-indigo-500/20">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-800">{page.label}</span>
+                                <span className="text-[10px] text-zinc-400 font-mono mt-0.5">{page.path}</span>
+                              </div>
+                            </td>
+                            {availableRoles.map(role => (
+                              <td key={`${role}-${page.id}`} className="px-6 py-3.5 text-center">
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={rolePermissions[role]?.includes(page.id) || false}
+                                    onChange={() => handleTogglePermission(role, page.id)}
+                                  />
+                                  <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#120c7a]"></div>
+                                </label>
+                              </td>
+                            ))}
+                          </tr>
                         ))}
-                      </tr>
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>

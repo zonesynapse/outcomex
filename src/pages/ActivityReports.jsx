@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy, doc, getDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, getDoc, where } from "firebase/firestore";
 import { 
   FileText, Download, Filter, Loader2, Calendar, BarChart3, 
   Users, Award, Pencil, Printer, X, Eye, CheckCircle2 
@@ -932,9 +932,40 @@ export default function ActivityReports() {
                   )}
                 </div>
 
-                {/* B.2 Laboratory Equipment Purchased / Maintenance */}
+                {/* B.2 Department Advisory Board Meetings */}
                 <div>
-                  <h3 className="text-xs font-bold mb-2 uppercase">2. Equipment Purchased / Service & Maintenance</h3>
+                  <h3 className="text-xs font-bold mb-2 uppercase">2. Department Advisory Board Meetings</h3>
+                  {partB_Advisory.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Meeting No</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">External Members</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Agenda</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Suggestions / Decisions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partB_Advisory.map((act) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 text-center font-mono">{act.meetingNo || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.externalMembers || act.members || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.agenda || "-"}</td>
+                            <td className="border border-zinc-400 p-2 font-semibold text-indigo-700">{act.suggestions || act.decisions || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* B.3 Laboratory Equipment Purchased / Maintenance */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">3. Equipment Purchased / Service & Maintenance</h3>
                   {partB_Purchases.length === 0 ? (
                     <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
                   ) : (
@@ -956,7 +987,7 @@ export default function ActivityReports() {
                             <td className="border border-zinc-400 p-2">{act.labName || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-center font-bold uppercase text-zinc-500">{act.type || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-right font-bold text-indigo-700">₹{parseFloat(act.cost || 0).toLocaleString("en-IN")}</td>
-                            <td className="border border-zinc-400 p-2">{act.vendor || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.vendorName || act.vendor || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-center uppercase font-black">{act.status || "-"}</td>
                           </tr>
                         ))}
@@ -965,9 +996,9 @@ export default function ActivityReports() {
                   )}
                 </div>
 
-                {/* B.3 Parents Teacher Meet Conducted */}
+                {/* B.4 Parents Teacher Meet Conducted */}
                 <div>
-                  <h3 className="text-xs font-bold mb-2 uppercase">3. Parent-Teacher Meetings</h3>
+                  <h3 className="text-xs font-bold mb-2 uppercase">4. Parent-Teacher Meetings</h3>
                   {partB_Parents.length === 0 ? (
                     <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
                   ) : (
@@ -994,9 +1025,9 @@ export default function ActivityReports() {
                   )}
                 </div>
 
-                {/* B.4 MoUs Signed */}
+                {/* B.5 MoUs Signed */}
                 <div>
-                  <h3 className="text-xs font-bold mb-2 uppercase">4. MoUs / Collaborations Signed</h3>
+                  <h3 className="text-xs font-bold mb-2 uppercase">5. MoUs / Collaborations Signed</h3>
                   {partB_Mous.length === 0 ? (
                     <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
                   ) : (
@@ -1013,11 +1044,67 @@ export default function ActivityReports() {
                       <tbody>
                         {partB_Mous.map((act) => (
                           <tr key={act.id}>
-                            <td className="border border-zinc-400 p-2 font-bold">{act.organisationName || "-"}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.organisationName || act.orgName || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-center font-bold text-blue-700">{act.type || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-center">{act.level || "-"}</td>
-                            <td className="border border-zinc-400 p-2 text-center">{act.dateSigned || "-"}</td>
-                            <td className="border border-zinc-400 p-2">{act.keyActivities || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.dateSigned || act.date || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.keyActivities || act.activitiesPlan || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* B.6 Academic Audits Conducted */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">6. Academic Audits Conducted</h3>
+                  {partB_Audits.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Audit Type</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">External Auditor</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Observations/Action Taken</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partB_Audits.map((act) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.auditType || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.auditorName || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.observations || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* B.7 Newsletters Published */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">7. Newsletters Published</h3>
+                  {partB_Newsletters.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Newsletter Title</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Volume / Issue</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date of Release</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partB_Newsletters.map((act) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.title || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.volumeIssue || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1180,6 +1267,107 @@ export default function ActivityReports() {
                             <td className="border border-zinc-400 p-2 font-bold">{act.piName || "-"}</td>
                             <td className="border border-zinc-400 p-2 text-right font-bold text-emerald-700">₹{parseFloat(act.grantAmount || 0).toLocaleString("en-IN")}</td>
                             <td className="border border-zinc-400 p-2 text-center font-bold uppercase">{act.status || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* C.6 Patents Filed / Published / Granted by Faculty */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">6. Patents Filed / Published / Granted by Faculty</h3>
+                  {partC_Patents.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Inventors</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Patent Title</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Application No</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Filing Date</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Type</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partC_Patents.map((act, index) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.inventors || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.patentTitle || act.title || "-"}</td>
+                            <td className="border border-zinc-400 p-2 font-mono">{act.applicationNo || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.filingDate || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.type || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center font-bold uppercase">{act.status || "Published"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* C.7 Faculty External Contributions */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">7. Faculty External Contributions (Guest Lectures, BoS, Examiner, etc.)</h3>
+                  {partC_Contributions.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Role / Title</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Host Institution</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partC_Contributions.map((act, index) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.title || act.role || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.hostInstitution || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.duration || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* C.8 Faculty Achievements / Awards / Recognitions */}
+                <div>
+                  <h3 className="text-xs font-bold mb-2 uppercase">8. Faculty Achievements / Awards / Recognitions</h3>
+                  {partC_Achievements.length === 0 ? (
+                    <p className="text-xs italic text-zinc-500 pl-4">Nil</p>
+                  ) : (
+                    <table className="w-full text-left text-xs border-collapse border border-zinc-400">
+                      <thead>
+                        <tr className="bg-zinc-50 border border-zinc-400">
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">S.No</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Faculty Name</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Award / Recognition Name</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Awarding Body</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Date</th>
+                          <th className="border border-zinc-400 p-2 text-[10px] font-bold">Level</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {partC_Achievements.map((act, index) => (
+                          <tr key={act.id}>
+                            <td className="border border-zinc-400 p-2 text-center">{index + 1}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.awardName || act.title || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.awardingBody || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.date || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center font-bold uppercase">{act.level || "National"}</td>
                           </tr>
                         ))}
                       </tbody>

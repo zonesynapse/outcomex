@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot, getDoc, getDocs } from "firebase/firestore";
+import { doc, collection, onSnapshot, getDoc, getDocs, query, where } from "firebase/firestore";
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
@@ -382,6 +382,30 @@ export default function FacultyDashboard() {
     approvedStudentsList.forEach(s => { if (!map[s.reg]) map[s.reg] = s.name; });
     return map;
   }, [approvedStudentsList, allStudentNames]);
+
+  // Appraisal Scorecard States
+  const [userAppraisal, setUserAppraisal] = useState(null);
+  const [showAppraisalScorecardModal, setShowAppraisalScorecardModal] = useState(false);
+
+  useEffect(() => {
+    if (!currentUid) return;
+    const q = query(
+      collection(db, "faculty_appraisals"),
+      where("facultyUid", "==", currentUid)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      let found = null;
+      snapshot.forEach((d) => {
+        const data = d.data();
+        // Prefer appraisals with HOD validation
+        if (data.hodValidation && (data.status === "HOD_Approved" || data.status === "Approved")) {
+          found = { id: d.id, ...data };
+        }
+      });
+      setUserAppraisal(found);
+    }, (err) => console.error("Error loading user appraisal validation:", err));
+    return unsub;
+  }, [currentUid]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -971,14 +995,27 @@ export default function FacultyDashboard() {
               if (!enrolledKeys) return true;
               return enrolledKeys.has(reg);
             });
+            const present = e2.filter(([, h]) => {
+              const storedStatus = typeof h === 'object' && h !== null ? h.status : undefined;
+              return storedStatus ? (storedStatus === 'P' || storedStatus === 'OD') : (getH(h) > 0);
+            });
+            const absent = e2.filter(([, h]) => {
+              const storedStatus = typeof h === 'object' && h !== null ? h.status : undefined;
+              return storedStatus ? (storedStatus === 'A') : (getH(h) === 0);
+            });
+            const od = e2.filter(([, h]) => {
+              const storedStatus = typeof h === 'object' && h !== null ? h.status : undefined;
+              return storedStatus ? (storedStatus === 'OD') : (getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1));
+            });
+
             rows.push({
               period, hasRecord: true, code, batchLabel, subFound,
-              presentCount: e2.filter(([, h]) => getH(h) > 0).length,
-              absentCount: e2.filter(([, h]) => getH(h) === 0).length,
-              odCount: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).length,
-              presentStudents: e2.filter(([, h]) => getH(h) > 0).map(([r]) => r),
-              absentStudents: e2.filter(([, h]) => getH(h) === 0).map(([r]) => r),
-              odStudents: e2.filter(([, h]) => getH(h) === -1 || h === 'OD' || (typeof h === 'object' && h?.hours === -1)).map(([r]) => r),
+              presentCount: present.length,
+              absentCount: absent.length,
+              odCount: od.length,
+              presentStudents: present.map(([r]) => r),
+              absentStudents: absent.map(([r]) => r),
+              odStudents: od.map(([r]) => r),
               subjectName: isEvent ? eventName : (getCourseName(courseNames, code, g.department, g.progKey) || ''),
               subSubjectCode, subFacultyName,
               isEvent,
@@ -1074,6 +1111,171 @@ export default function FacultyDashboard() {
             );
           })}
         </div>
+
+        {/* Appraisal Validation Scorecard Widget */}
+        {userAppraisal && (
+          <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-700 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden mb-8 animate-fadeIn">
+            <div className="absolute right-0 top-0 w-48 h-48 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
+                  <Award size={12} className="text-amber-300" /> HR Appraisal Scorecard
+                </div>
+                <h3 className="text-base font-bold">Your performance appraisal validation is complete</h3>
+                <p className="text-emerald-100 text-xs font-medium">HOD has completed your self-appraisal form validation and scorecard verification.</p>
+              </div>
+
+              <div className="flex items-center gap-4 shrink-0 col-span-1">
+                <div className="text-right">
+                  <span className="block text-[9px] font-black text-emerald-200 uppercase tracking-wider">Secured Total Score</span>
+                  <div className="text-3xl font-black text-amber-300">
+                    {userAppraisal.hodValidation.totalScore} <span className="text-xs text-emerald-200 font-semibold">/ 100</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowAppraisalScorecardModal(true)}
+                  className="px-5 py-2.5 bg-white text-[#120c7a] hover:bg-zinc-50 rounded-xl text-xs font-black transition-all shadow-lg cursor-pointer"
+                >
+                  View Scorecard Breakdown
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Appraisal Scorecard Details Modal */}
+        {showAppraisalScorecardModal && userAppraisal && (
+          <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-800">
+              
+              <div className="bg-[#120c7a] p-6 text-white flex items-center justify-between sticky top-0 z-50">
+                <div className="flex items-center gap-3">
+                  <Award className="text-yellow-400" size={24} />
+                  <div>
+                    <h4 className="font-extrabold text-xs uppercase tracking-wider text-blue-200">
+                      Validated Performance Appraisal Scorecard
+                    </h4>
+                    <p className="text-base font-bold truncate mt-0.5">
+                      Session: {userAppraisal.academicYear} • Verified by HOD ({userAppraisal.hodValidation.validatedBy})
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowAppraisalScorecardModal(false)} 
+                  className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-6 md:p-8 space-y-6">
+                
+                {/* Part 1 Scorecard Table */}
+                <div className="bg-white border border-zinc-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="bg-[#120c7a]/5 px-5 py-3 border-b border-zinc-200 font-extrabold text-xs text-[#120c7a] uppercase tracking-wider">
+                    Part One Evaluation (Academic & Feedback)
+                  </div>
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
+                        <th className="p-3 w-12 text-center">S.No</th>
+                        <th className="p-3">KRA</th>
+                        <th className="p-3">Particulars Details</th>
+                        <th className="p-3 w-28 text-center">Max Marks</th>
+                        <th className="p-3 w-28 text-center">Auto Calculated</th>
+                        <th className="p-3 w-28 text-center">Final Verified</th>
+                        <th className="p-3">HOD Verification Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-150">
+                      {(userAppraisal.hodValidation.scorecard?.part1 || []).map((row) => (
+                        <tr key={row.id}>
+                          <td className="p-3 text-center font-bold text-slate-500">{row.sNo}</td>
+                          <td className="p-3 font-semibold text-slate-700">{row.kra}</td>
+                          <td className="p-3 text-zinc-650">
+                            <div>{row.particulars}</div>
+                            <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded mt-1 inline-block uppercase">
+                              Value: {row.value}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center font-bold text-zinc-500">{row.maxMarks}</td>
+                          <td className="p-3 text-center font-black text-slate-650">{row.calculatedMarks}</td>
+                          <td className="p-3 text-center font-black text-indigo-900 text-sm bg-indigo-50/20">{row.securedMarks}</td>
+                          <td className="p-3 text-zinc-600 font-medium italic">{row.remarks || "No comments"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Part 2 Scorecard Table */}
+                <div className="bg-white border border-zinc-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="bg-[#120c7a]/5 px-5 py-3 border-b border-zinc-200 font-extrabold text-xs text-[#120c7a] uppercase tracking-wider">
+                    Part Two Evaluation (Self & Institutional Development)
+                  </div>
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
+                        <th className="p-3 w-12 text-center">S.No</th>
+                        <th className="p-3">KRA</th>
+                        <th className="p-3">Particulars Details</th>
+                        <th className="p-3 w-28 text-center">Max Marks</th>
+                        <th className="p-3 w-28 text-center">Auto Calculated</th>
+                        <th className="p-3 w-28 text-center">Final Verified</th>
+                        <th className="p-3">HOD Verification Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-150">
+                      {(userAppraisal.hodValidation.scorecard?.part2 || []).map((row) => (
+                        <tr key={row.id}>
+                          <td className="p-3 text-center font-bold text-slate-500">{row.sNo}</td>
+                          <td className="p-3 font-semibold text-slate-700">{row.kra}</td>
+                          <td className="p-3 text-zinc-650">
+                            <div>{row.particulars}</div>
+                            <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded mt-1 inline-block uppercase">
+                              Value: {row.value}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center font-bold text-zinc-500">{row.maxMarks}</td>
+                          <td className="p-3 text-center font-black text-slate-650">{row.calculatedMarks}</td>
+                          <td className="p-3 text-center font-black text-indigo-900 text-sm bg-indigo-50/20">{row.securedMarks}</td>
+                          <td className="p-3 text-zinc-600 font-medium italic">{row.remarks || "No comments"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Score Summary Box */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white p-6 rounded-3xl shadow-xl">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest block font-serif">Validated Appraisal Score Sheet</span>
+                    <p className="text-xs text-slate-300">Auto-validation calculated based on institutional criteria parameters configured by HR.</p>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Final Verified Total Marks</span>
+                    <div className="text-3xl font-black text-amber-300">
+                      {userAppraisal.hodValidation.totalScore} <span className="text-base font-semibold text-slate-400">/ 100</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="bg-zinc-50 border-t border-zinc-150 p-4 flex justify-end">
+                <button
+                  onClick={() => setShowAppraisalScorecardModal(false)}
+                  className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Close Scorecard
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
 
         {/* Assigned Subjects + Tasks */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
