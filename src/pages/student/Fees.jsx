@@ -27,6 +27,8 @@ export default function Fees() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [seatCategory, setSeatCategory] = useState("");
+  const [studentStage, setStudentStage] = useState("");
+  const [transportStages, setTransportStages] = useState([]);
   const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
   const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
   const ignoreBeforeUnloadRef = useRef(false);
@@ -139,6 +141,7 @@ export default function Fees() {
     if (!reg) {
       // Fallback: read from _profile_data on users doc
       setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
+      setStudentStage(studentData._profile_data?.transportStage || "");
       return;
     }
 
@@ -152,6 +155,7 @@ export default function Fees() {
             if (sSnap.exists()) {
               const extra = sSnap.data()._student_data?.[reg] || {};
               setSeatCategory(extra.quotaAskedFor || "");
+              setStudentStage(extra.transportStage || "");
               return;
             }
           }
@@ -159,8 +163,21 @@ export default function Fees() {
       } catch (_) {}
       // Fallback: read from _profile_data on users doc
       setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
+      setStudentStage(studentData._profile_data?.transportStage || "");
     })();
   }, [studentData]);
+
+  // Fetch transport stage configurations
+  useEffect(() => {
+    if (!studentStage) {
+      setTransportStages([]);
+      return;
+    }
+    const unsub = onSnapshot(collection(db, "transport_stages"), (snap) => {
+      setTransportStages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => {});
+    return () => unsub();
+  }, [studentStage]);
 
   useEffect(() => {
     if (!studentData) return;
@@ -194,6 +211,22 @@ export default function Fees() {
             configs.push({ id: d.id, ...data });
           }
         });
+
+        // Transport fee: match the student's transport stage to a configured stage
+        if (studentStage && transportStages.length) {
+          const stageMatch = transportStages.find(t => String(t.stageNo).trim() === String(studentStage).trim());
+          if (stageMatch && Number(stageMatch.fee)) {
+            configs.push({
+              id: `transport_${stageMatch.id}`,
+              head: "Transport Fee",
+              academicYear: "—",
+              semester: "All",
+              amount: Number(stageMatch.fee),
+              _transport: true
+            });
+          }
+        }
+
         setFeeConfigs(configs);
       } catch (err) { console.error("Error fetching fee configs:", err); }
     };
@@ -232,7 +265,7 @@ export default function Fees() {
     return () => {
       unsubPayments();
     };
-  }, [studentData, seatCategory]);
+  }, [studentData, seatCategory, studentStage, transportStages]);
 
   useEffect(() => {
     if (!toast) return;

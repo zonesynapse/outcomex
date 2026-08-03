@@ -6,7 +6,7 @@ import {
   CreditCard, Building2, Users, Download, Printer,
   ChevronDown, ChevronRight, FileText, Wallet, Percent, BadgeCheck,
   CalendarDays, Banknote, QrCode, ShieldCheck, Filter, Copy,
-  Tags, Pencil, Layers, Save
+  Tags, Pencil, Layers, Save, Bus
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { useDepartments } from "../hooks/useDepartments";
@@ -15,6 +15,8 @@ import { getSeatConfigurationsRealtime } from "../services/seatService";
 import { formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
 import Layout from "../components/Layout";
 import * as XLSX from "xlsx";
+
+const STUDENT_CATEGORY_OPTIONS = ["Regular", "Lateral Entry", "Transfer", "Readmission"];
 
 const DEFAULT_FEE_HEADS = [
   { name: "Tuition Fee", splitType: "academic-year" },
@@ -182,12 +184,14 @@ export default function FeeOperations() {
   // Fee Structure state
   const [showFeeModal, setShowFeeModal] = useState(false);
   const [editFeeId, setEditFeeId] = useState(null);
-  const [feeForm, setFeeForm] = useState({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", head: "", amount: "", sameForAllYears: false });
+  const [feeForm, setFeeForm] = useState({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", studentCategory: "", head: "", amount: "", sameForAllYears: false });
 
   // Payment state
   const [studentSearch, setStudentSearch] = useState("");
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentQuota, setSelectedStudentQuota] = useState("");
+  const [selectedStudentCategory, setSelectedStudentCategory] = useState("");
+  const [selectedStudentStage, setSelectedStudentStage] = useState("");
   const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
 
   // Receipt state
@@ -201,6 +205,12 @@ export default function FeeOperations() {
   const [concessionForm, setConcessionForm] = useState({ studentId: "", studentName: "", examNumber: "", type: "Merit", amount: "", percentage: "", validTill: "", status: "pending", remarks: "" });
   const [saving, setSaving] = useState(false);
 
+  // Transport state
+  const [transportStages, setTransportStages] = useState([]);
+  const [showTransportModal, setShowTransportModal] = useState(false);
+  const [editTransportId, setEditTransportId] = useState(null);
+  const [transportForm, setTransportForm] = useState({ stageNo: "", location: "", fee: "" });
+
   useEffect(() => {
     const u1 = onSnapshot(collection(db, "fee_payments"), snap => setPayments(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     const u2 = onSnapshot(collection(db, "fee_receipts"), snap => setReceipts(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
@@ -210,6 +220,7 @@ export default function FeeOperations() {
     }, () => {});
     const u5 = onSnapshot(collection(db, "fee_configurations"), snap => setFeeConfigs(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     const u6 = getSeatConfigurationsRealtime(data => setSeatConfigs(data || {}), () => {});
+    const u7 = onSnapshot(collection(db, "transport_stages"), snap => setTransportStages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
     getDoc(doc(db, "fee_categories", "global")).then(snap => {
       if (snap.exists() && snap.data().categories) {
         const cats = snap.data().categories;
@@ -221,17 +232,21 @@ export default function FeeOperations() {
         }
       }
     }).catch(() => {});
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
   }, []);
 
   useEffect(() => {
     if (!selectedStudent) {
       setSelectedStudentQuota("");
+      setSelectedStudentCategory("");
+      setSelectedStudentStage("");
       return;
     }
     const reg = selectedStudent.regNo;
     if (!reg) {
       setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
+      setSelectedStudentCategory(selectedStudent._profile_data?.studentCategory || "");
+      setSelectedStudentStage(selectedStudent._profile_data?.transportStage || "");
       return;
     }
 
@@ -245,12 +260,16 @@ export default function FeeOperations() {
             if (sSnap.exists()) {
               const extra = sSnap.data()._student_data?.[reg] || {};
               setSelectedStudentQuota(extra.quotaAskedFor || "");
+              setSelectedStudentCategory(extra.studentCategory || "");
+              setSelectedStudentStage(extra.transportStage || "");
               return;
             }
           }
         }
       } catch (_) {}
       setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
+      setSelectedStudentCategory(selectedStudent._profile_data?.studentCategory || "");
+      setSelectedStudentStage(selectedStudent._profile_data?.transportStage || "");
     })();
   }, [selectedStudent]);
 
@@ -295,7 +314,7 @@ export default function FeeOperations() {
       }
       setShowFeeModal(false);
       setEditFeeId(null);
-      setFeeForm({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", head: "", amount: "", sameForAllYears: false });
+      setFeeForm({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", studentCategory: "", head: "", amount: "", sameForAllYears: false });
     } catch (err) { showToast("Error saving fee", "error"); }
     finally { setSaving(false); }
   };
@@ -352,6 +371,30 @@ export default function FeeOperations() {
     } catch (err) { showToast("Error cancelling receipt", "error"); }
   };
 
+  const handleSaveTransportStage = async () => {
+    if (!transportForm.stageNo || !transportForm.location || !transportForm.fee) return;
+    setSaving(true);
+    try {
+      const data = {
+        stageNo: String(transportForm.stageNo).trim(),
+        location: String(transportForm.location).trim(),
+        fee: Number(transportForm.fee),
+        updatedAt: Timestamp.now()
+      };
+      if (editTransportId) {
+        await updateDoc(doc(db, "transport_stages", editTransportId), data);
+        showToast("Transport stage updated");
+      } else {
+        await addDoc(collection(db, "transport_stages"), { ...data, createdAt: Timestamp.now() });
+        showToast("Transport stage added");
+      }
+      setShowTransportModal(false);
+      setEditTransportId(null);
+      setTransportForm({ stageNo: "", location: "", fee: "" });
+    } catch (err) { showToast("Error saving transport stage", "error"); }
+    finally { setSaving(false); }
+  };
+
   const filteredStudents = students.filter(s => {
     if (!studentSearch) return false;
     const q = studentSearch.toLowerCase();
@@ -381,9 +424,25 @@ export default function FeeOperations() {
       const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
       const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
       const isQuotaMatch = !selectedStudentQuota || !f.quota || f.quota === selectedStudentQuota;
+      const isCategoryMatch = !selectedStudentCategory || !f.studentCategory || f.studentCategory === selectedStudentCategory;
 
-      return isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch;
+      return isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch && isCategoryMatch;
     });
+
+    // Transport fee: match the student's transport stage to a configured stage
+    if (selectedStudentStage && transportStages.length) {
+      const stageMatch = transportStages.find(t => String(t.stageNo).trim() === String(selectedStudentStage).trim());
+      if (stageMatch && Number(stageMatch.fee)) {
+        fees.push({
+          id: `transport_${stageMatch.id}`,
+          head: "Transport Fee",
+          academicYear: "—",
+          semester: "All",
+          amount: Number(stageMatch.fee),
+          _transport: true
+        });
+      }
+    }
 
     // 2. Filter payments matching the selected student & valid payment statuses only (filter out pending/failed online payments!)
     const studentPayments = payments.filter(p => {
@@ -436,7 +495,7 @@ export default function FeeOperations() {
       outstanding, 
       headBreakdown: sortedBreakdown
     };
-  }, [selectedStudent, selectedStudentQuota, feeConfigs, payments]);
+  }, [selectedStudent, selectedStudentQuota, selectedStudentCategory, selectedStudentStage, transportStages, feeConfigs, payments]);
 
   const groupedStudentFees = useMemo(() => {
     if (!studentFeeDetails || !studentFeeDetails.fees) return [];
@@ -543,6 +602,7 @@ export default function FeeOperations() {
     { id: "collect", label: "Collect Payment", icon: IndianRupee },
     { id: "receipts", label: "Receipts", icon: FileText },
     { id: "concessions", label: "Concessions", icon: Percent },
+    { id: "transport", label: "Transport Configuration", icon: Bus },
   ];
 
   return (
@@ -599,7 +659,7 @@ export default function FeeOperations() {
                   className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all border border-zinc-200">
                   <Tags size={14} /> Manage Fee Heads
                 </button>
-                <button onClick={() => { setEditFeeId(null); setFeeForm({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", head: "", amount: "" }); setShowFeeModal(true); }}
+                <button onClick={() => { setEditFeeId(null); setFeeForm({ programme: "", batch: "", academicYear: "", semester: "", department: "", quota: "", studentCategory: "", head: "", amount: "" }); setShowFeeModal(true); }}
                   className="px-4 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20">
                   <Plus size={14} /> Add Fee Entry
                 </button>
@@ -746,6 +806,22 @@ export default function FeeOperations() {
                             <p className="text-[9px] text-zinc-400 uppercase">Quota</p>
                             <span className="inline-flex items-center px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded-lg border border-indigo-150 mt-0.5">
                               {selectedStudentQuota}
+                            </span>
+                          </div>
+                        )}
+                        {selectedStudentCategory && (
+                          <div>
+                            <p className="text-[9px] text-zinc-400 uppercase">Category</p>
+                            <span className="inline-flex items-center px-2 py-0.5 bg-purple-50 text-purple-700 text-[10px] font-bold rounded-lg border border-purple-150 mt-0.5">
+                              {selectedStudentCategory}
+                            </span>
+                          </div>
+                        )}
+                        {selectedStudentStage && (
+                          <div>
+                            <p className="text-[9px] text-zinc-400 uppercase">Transport Stage</p>
+                            <span className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-lg border border-amber-150 mt-0.5">
+                              Stage {selectedStudentStage}
                             </span>
                           </div>
                         )}
@@ -1180,7 +1256,7 @@ export default function FeeOperations() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {concessions.length === 0 ? (
+                      {concessions.length === 0 ? (
                       <tr><td colSpan={5} className="px-4 py-10 text-center text-zinc-400 text-sm">No concessions applied</td></tr>
                     ) : concessions.map((c, i) => (
                       <tr key={c.id || i} className="hover:bg-zinc-50/50 transition-colors">
@@ -1190,6 +1266,57 @@ export default function FeeOperations() {
                         <td className="px-4 py-3 text-center text-xs text-zinc-500">{c.validTill?.toDate?.()?.toLocaleDateString('en-IN') || '—'}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${c.status === 'approved' ? 'bg-emerald-50 text-emerald-700' : c.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{c.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: Transport Configuration */}
+        {tab === "transport" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-zinc-800 flex items-center gap-2"><Bus size={18} className="text-[#120c7a]" /> Transport Configuration</h3>
+                <p className="text-xs text-zinc-500 mt-1">{transportStages.length} transport stage{transportStages.length !== 1 ? 's' : ''} configured • Total fee per month: ₹{transportStages.reduce((s, t) => s + (Number(t.fee) || 0), 0).toLocaleString()}</p>
+              </div>
+              <button onClick={() => { setEditTransportId(null); setTransportForm({ stageNo: "", location: "", fee: "" }); setShowTransportModal(true); }}
+                className="px-4 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20">
+                <Plus size={14} /> Add Transport Stage
+              </button>
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-200">
+                      <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Stage No</th>
+                      <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase">Stage Location</th>
+                      <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-right">Fee (₹)</th>
+                      <th className="px-4 py-3 text-[10px] font-bold text-zinc-400 uppercase text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {transportStages.length === 0 ? (
+                      <tr><td colSpan={4} className="px-4 py-10 text-center text-zinc-400 text-sm">No transport stages configured. Add your first stage.</td></tr>
+                    ) : [...transportStages].sort((a, b) => {
+                      const na = Number(String(a.stageNo).replace(/\D/g, ''));
+                      const nb = Number(String(b.stageNo).replace(/\D/g, ''));
+                      return (isNaN(na) ? 0 : na) - (isNaN(nb) ? 0 : nb);
+                    }).map(t => (
+                      <tr key={t.id} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="px-4 py-3"><span className="inline-flex items-center justify-center min-w-8 h-8 px-2 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-black">{t.stageNo}</span></td>
+                        <td className="px-4 py-3 text-sm font-semibold text-zinc-700">{t.location}</td>
+                        <td className="px-4 py-3 text-right font-black text-sm text-zinc-800">₹{(Number(t.fee) || 0).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex gap-1 justify-center">
+                            <button onClick={() => { setEditTransportId(t.id); setTransportForm({ stageNo: String(t.stageNo || ""), location: t.location || "", fee: String(t.fee ?? "") }); setShowTransportModal(true); }} className="p-1.5 hover:bg-blue-50 rounded-lg text-zinc-400 hover:text-blue-600"><Edit3 size={14} /></button>
+                            <button onClick={async () => { try { await deleteDoc(doc(db, "transport_stages", t.id)); showToast("Deleted"); } catch (e) { showToast("Error", "error"); } }} className="p-1.5 hover:bg-red-50 rounded-lg text-zinc-400 hover:text-red-600"><Trash2 size={14} /></button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1332,6 +1459,14 @@ export default function FeeOperations() {
                       {(quotaOptions.length ? quotaOptions : ["All"]).map(q => <option key={q} value={q}>{q}</option>)}
                     </select>
                   </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Student Category</label>
+                    <select value={feeForm.studentCategory} onChange={e => setFeeForm({...feeForm, studentCategory: e.target.value})}
+                      className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
+                      <option value="">All Categories</option>
+                      {STUDENT_CATEGORY_OPTIONS.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                  </div>
                   <div className="col-span-2">
                     <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Amount (₹)</label>
                     <input value={feeForm.amount} onChange={e => setFeeForm({...feeForm, amount: e.target.value})} type="number"
@@ -1415,6 +1550,43 @@ export default function FeeOperations() {
                   className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 disabled:opacity-50 flex items-center gap-2">
                   {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <BadgeCheck size={16} />}
                   Apply Concession
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Transport Stage Modal */}
+        {showTransportModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => setShowTransportModal(false)}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
+                <h3 className="font-bold text-zinc-800 flex items-center gap-2"><Bus size={18} className="text-[#120c7a]" /> {editTransportId ? "Edit Transport Stage" : "Add Transport Stage"}</h3>
+                <button onClick={() => setShowTransportModal(false)} className="p-2 hover:bg-zinc-100 rounded-xl"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Stage Number</label>
+                  <input value={transportForm.stageNo} onChange={e => setTransportForm({...transportForm, stageNo: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="e.g. 1, 2, 3..." />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Stage Location</label>
+                  <input value={transportForm.location} onChange={e => setTransportForm({...transportForm, location: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="e.g. Anna Nagar, Tambaram..." />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fee (₹)</label>
+                  <input value={transportForm.fee} onChange={e => setTransportForm({...transportForm, fee: e.target.value})} type="number"
+                    className="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="0" />
+                </div>
+              </div>
+              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3">
+                <button onClick={() => setShowTransportModal(false)} className="px-5 py-2.5 text-sm font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl">Cancel</button>
+                <button onClick={handleSaveTransportStage} disabled={saving || !transportForm.stageNo || !transportForm.location || !transportForm.fee}
+                  className="px-6 py-2.5 bg-[#120c7a] text-white text-sm font-bold rounded-xl hover:bg-blue-900 disabled:opacity-50 flex items-center gap-2">
+                  {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <CheckCircle2 size={16} />}
+                  {editTransportId ? "Update" : "Add Stage"}
                 </button>
               </div>
             </div>

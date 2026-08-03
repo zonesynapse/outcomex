@@ -606,6 +606,14 @@ export default function AdmissionConfirmation() {
     { label: "Choice 3", value: enquiry?.department3 },
   ].filter((c) => Boolean(c.value));
 
+  const otherDeptOptions = useMemo(() => {
+    if (!enquiry?.programme || !allDeptMap) return [];
+    const chosen = [enquiry.department, enquiry.department2, enquiry.department3].filter(Boolean);
+    return (allDeptMap[enquiry.programme] || [])
+      .filter((d) => !chosen.includes(d))
+      .sort((a, b) => a.localeCompare(b));
+  }, [enquiry, allDeptMap]);
+
   if (enquiryId && loading) {
     return (
       <Layout title="Admission Confirmation">
@@ -1108,25 +1116,15 @@ export default function AdmissionConfirmation() {
         <div className="space-y-6">
           <SectionCard icon={User} title="Personal Information">
             <InfoRow label="Applicant Name" value={applicantName} />
-            <InfoRow label="Father / Guardian" value={enquiry.fatherGuardianName} />
-            <InfoRow label="Mother Name" value={enquiry.motherName} />
-            <InfoRow label="Date of Birth" value={enquiry.dateOfBirth} />
             <InfoRow label="Gender" value={enquiry.gender} />
-            <InfoRow label="Nationality" value={enquiry.nationality} />
-            <InfoRow label="Religion" value={enquiry.religion} />
-            <InfoRow label="Community / Caste" value={[enquiry.community, enquiry.caste].filter(Boolean).join(" / ")} />
-            <InfoRow label="Mother Tongue" value={enquiry.motherTongue} />
-            <InfoRow label="Blood Group" value={enquiry.bloodGroup} />
-            <InfoRow label="Marital Status" value={enquiry.maritalStatus} />
-            <InfoRow label="Aadhar No" value={enquiry.aadharNo} />
+            <InfoRow label="Date of Birth" value={enquiry.dateOfBirth} />
+            <InfoRow label="Age" value={enquiry.age} />
           </SectionCard>
 
-          <SectionCard icon={MapPin} title="Contact & Address">
+          <SectionCard icon={MapPin} title="Contact Details">
             <InfoRow label="Mobile" value={enquiry.mobile} />
             <InfoRow label="Parent Mobile" value={enquiry.parentMobile} />
             <InfoRow label="Email" value={enquiry.emailId} />
-            <InfoRow label="Present Address" value={[enquiry.presentAddress, enquiry.presentCity, enquiry.presentDistrict, enquiry.presentState, enquiry.presentPincode].filter(Boolean).join(", ")} />
-            <InfoRow label="Permanent Address" value={[enquiry.permanentAddress, enquiry.permanentCity, enquiry.permanentDistrict, enquiry.permanentState, enquiry.permanentPincode].filter(Boolean).join(", ")} />
           </SectionCard>
 
           <SectionCard icon={GraduationCap} title="Academic Details">
@@ -1134,13 +1132,35 @@ export default function AdmissionConfirmation() {
             <InfoRow label="Batch" value={enquiry.batch} />
             <InfoRow label="Academic Year" value={enquiry.academicYear} />
             <InfoRow label="School / College" value={enquiry.schoolCollege} />
+            <InfoRow label="Medium of Instruction" value={enquiry.mediumOfInstruction} />
+            <InfoRow label="Enquiry For" value={enquiry.enquiryFor} />
+            <InfoRow label="Examination Passed / Appeared" value={enquiry.examinationPassedAppeared} />
             <InfoRow label="Qualifying Exam" value={enquiry.qualifyingExamProgrammes} />
             <InfoRow label="Institute" value={enquiry.qualifyingExamInstitute} />
             <InfoRow label="Board / University" value={enquiry.qualifyingExamBoardUniversity} />
+            <InfoRow label="Month & Year of Passing" value={enquiry.qualifyingExamMonthYear} />
+            <InfoRow label="No. of Attempts" value={enquiry.qualifyingExamAttempts} />
+            <InfoRow label="% of Marks" value={enquiry.qualifyingExamMarks} />
             <InfoRow label="10th Institute" value={enquiry.qualifyingExam10thInstitute} />
             <InfoRow label="10th Board" value={enquiry.qualifyingExam10thBoard} />
+            <InfoRow label="10th Month & Year" value={enquiry.qualifyingExam10thMonthYear} />
+            <InfoRow label="10th Attempts" value={enquiry.qualifyingExam10thAttempts} />
+            <InfoRow label="10th % Marks" value={enquiry.qualifyingExam10thMarks} />
+            <InfoRow label="11th Institute" value={enquiry.qualifyingExam11thInstitute} />
+            <InfoRow label="11th Board" value={enquiry.qualifyingExam11thBoard} />
+            <InfoRow label="11th Month & Year" value={enquiry.qualifyingExam11thMonthYear} />
+            <InfoRow label="11th Attempts" value={enquiry.qualifyingExam11thAttempts} />
+            <InfoRow label="11th % Marks" value={enquiry.qualifyingExam11thMarks} />
             <InfoRow label="12th Institute" value={enquiry.qualifyingExam12thInstitute} />
             <InfoRow label="12th Board" value={enquiry.qualifyingExam12thBoard} />
+            <InfoRow label="12th Month & Year" value={enquiry.qualifyingExam12thMonthYear} />
+            <InfoRow label="12th Attempts" value={enquiry.qualifyingExam12thAttempts} />
+            <InfoRow label="12th % Marks" value={enquiry.qualifyingExam12thMarks} />
+            <InfoRow label="Diploma / Degree Institute" value={enquiry.qualifyingExamDipDegInstitute} />
+            <InfoRow label="Diploma / Degree Board" value={enquiry.qualifyingExamDipDegBoard} />
+            <InfoRow label="Diploma / Degree Month & Year" value={enquiry.qualifyingExamDipDegMonthYear} />
+            <InfoRow label="Diploma / Degree Attempts" value={enquiry.qualifyingExamDipDegAttempts} />
+            <InfoRow label="Diploma / Degree % Marks" value={enquiry.qualifyingExamDipDegMarks} />
             <InfoRow label="Maths Mark" value={enquiry.mathsMark} />
             <InfoRow label="Physics Mark" value={enquiry.physicsMark} />
             <InfoRow label="Chemistry Mark" value={enquiry.chemistryMark} />
@@ -1148,15 +1168,14 @@ export default function AdmissionConfirmation() {
             <InfoRow label="Cutoff" value={enquiry.cutoff} />
           </SectionCard>
 
-          <SectionCard icon={FileText} title="Documents & Eligibility">
+          <SectionCard icon={FileText} title="Application & Eligibility">
+            <InfoRow label="Application No" value={enquiry.applicationNo} />
+            <InfoRow label="Department Choices" value={[enquiry.department, enquiry.department2, enquiry.department3].filter(Boolean).join(" / ")} />
             <InfoRow label="Eligibility" value={enquiry.eligibility} />
             <InfoRow label="Quota Asked For" value={enquiry.quotaAskedFor} />
             <InfoRow label="Seat Category" value={enquiry.seatCategory} />
             <InfoRow label="Student Category" value={enquiry.studentCategory} />
-            <InfoRow label="Reference" value={enquiry.reference} />
-            <InfoRow label="Enquiry Attended By" value={enquiry.enquiryAttendedBy} />
-            <InfoRow label="Hosteller / Day Scholar" value={enquiry.hostellerDayScholar} />
-            <InfoRow label="Transport Required" value={enquiry.transportRequired} />
+            <InfoRow label="Status" value={enquiry.status} />
           </SectionCard>
 
           {enquiry.payments && enquiry.payments.length > 0 && (
@@ -1165,7 +1184,7 @@ export default function AdmissionConfirmation() {
                 <div key={i} className="border-b border-zinc-100 last:border-0 py-2">
                   <InfoRow label={`Payment ${i + 1} - Category`} value={p.feeCategory} />
                   <InfoRow label={`Payment ${i + 1} - Amount`} value={p.feeAmount} />
-                  <InfoRow label={`Payment ${i + 1} - Mode`} value={p.paymentMode} />
+                  <InfoRow label={`Payment ${i + 1} - Mode`} value={p.paymentMode === "pay_online" ? `Online (UTR: ${p.upiNumber || "N/A"})` : p.paymentMode} />
                   <InfoRow label={`Payment ${i + 1} - Date`} value={p.paymentDate} />
                 </div>
               ))}
@@ -1285,6 +1304,37 @@ export default function AdmissionConfirmation() {
                       </div>
                     )}
                   </div>
+
+                  {otherDeptOptions.length > 0 && (
+                    <div className="mt-5 space-y-3">
+                      <span className="block text-xs font-bold uppercase tracking-wider text-zinc-400">Other Departments in {enquiry.programme}</span>
+                      <div className="space-y-2">
+                        {otherDeptOptions.map((dept) => (
+                          <label
+                            key={dept}
+                            className={`flex items-center gap-4 rounded-xl border p-4 text-sm font-medium transition-all cursor-pointer ${
+                              selectedDept === dept
+                                ? "border-[#120c7a] bg-[#120c7a]/5 text-[#120c7a]"
+                                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="admissionDept"
+                              value={dept}
+                              checked={selectedDept === dept}
+                              onChange={() => setSelectedDept(dept)}
+                              className="h-4 w-4 border-zinc-300 text-[#120c7a] focus:ring-[#120c7a]"
+                            />
+                            <div>
+                              <span className="text-xs text-zinc-400 font-normal block">Other Department</span>
+                              <span className="text-sm font-medium">{dept}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="mt-6 flex items-center justify-end gap-3">
                     <button

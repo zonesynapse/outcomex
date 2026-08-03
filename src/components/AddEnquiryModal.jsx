@@ -975,20 +975,34 @@ export default function AddEnquiryModal({
           ${row("Title","title", enq.title)}
           ${row("Gender","gender", enq.gender)}
           ${row("Student Name","studentName", enq.studentName)}
+          ${row("Date of Birth","dateOfBirth", enq.dateOfBirth)}
+          ${row("Age","age", enq.age)}
           ${row("Father / Guardian","fatherGuardianName", enq.fatherGuardianName)}
           ${row("Mother's Name","motherName", enq.motherName)}
           ${row("Guardian's Name","guardianName", enq.guardianName)}
+          ${row("Parent Occupation","parentOccupation", enq.parentOccupation)}
           ${row("Mobile","mobile", enq.mobile)}
           ${row("Parent Mobile","parentMobile", enq.parentMobile)}
+          ${row("Landline","landline", enq.landline)}
           ${row("Parent WhatsApp No.","parentWhatsAppNo", enq.parentWhatsAppNo)}
           ${row("Student WhatsApp No.","studentWhatsAppNo", enq.studentWhatsAppNo)}
           ${row("Email ID","emailId", enq.emailId)}
-          ${row("Address","address", enq.address)}
-          ${row("Present Address","presentAddress", enq.presentAddress)}
-          ${row("Permanent Address","permanentAddress", enq.permanentAddress)}
+          ${row("Present House / Door No.","presentHouseNo", enq.presentHouseNo)}
+          ${row("Present Street","presentStreet", enq.presentStreet)}
+          ${row("Present Locality","presentLocality", enq.presentLocality)}
+          ${row("Present City","presentCity", enq.presentCity)}
+          ${row("Present District","presentDistrict", enq.presentDistrict)}
+          ${row("Present State","presentState", enq.presentState)}
+          ${row("Present Country","presentCountry", enq.presentCountry)}
           ${row("Present Pincode","presentPincode", enq.presentPincode)}
+          ${row("Permanent City","permanentCity", enq.permanentCity)}
+          ${row("Permanent District","permanentDistrict", enq.permanentDistrict)}
+          ${row("Permanent State","permanentState", enq.permanentState)}
+          ${row("Permanent Country","permanentCountry", enq.permanentCountry)}
           ${row("Permanent Pincode","permanentPincode", enq.permanentPincode)}
-          ${row("Department","department", enq.department)}
+          ${row("Department (Choice 1)","department", enq.department)}
+          ${row("Department (Choice 2)","department2", enq.department2)}
+          ${row("Department (Choice 3)","department3", enq.department3)}
           ${row("Status","status", enq.status)}
           ${row("Programme","programme", enq.programme)}
           ${row("Batch","batch", enq.batch)}
@@ -1003,6 +1017,9 @@ export default function AddEnquiryModal({
           ${row("Mother Tongue","motherTongue", enq.motherTongue)}
           ${row("Blood Group","bloodGroup", enq.bloodGroup)}
           ${row("Marital Status","maritalStatus", enq.maritalStatus)}
+          ${row("Medium of Instruction","mediumOfInstruction", enq.mediumOfInstruction)}
+          ${row("Enquiry For","enquiryFor", enq.enquiryFor)}
+          ${row("Examination Passed / Appeared","examinationPassedAppeared", enq.examinationPassedAppeared)}
           ${row("Enquiry Date","enquiryDate", enq.enquiryDate)}
           ${row("Father Occupation Sector","fatherOccupationSector", enq.fatherOccupationSector)}
           ${row("Father Organisation","fatherOrganisation", enq.fatherOrganisation)}
@@ -1065,6 +1082,7 @@ export default function AddEnquiryModal({
           ${row("Maths/P/C Mark","mathsMark", enq.mathsMark)}
           ${row("Physics/Theory Mark","physicsMark", enq.physicsMark)}
           ${row("Chemistry/Lab Mark","chemistryMark", enq.chemistryMark)}
+          ${row("Total Marks","totalMarks", enq.totalMarks)}
           ${row("Cutoff","cutoff", enq.cutoff)}
           ${(Array.isArray(enq.payments) ? enq.payments : []).map((p, i) => `
             <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">Payment ${i + 1}</td></tr>
