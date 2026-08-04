@@ -2100,7 +2100,7 @@ export default function Reports() {
     doc.text('HOD Signature', sigBaseX + sigSpacing, sigY + 4, { align: 'center' });
     doc.text('Principal Signature', sigBaseX + sigSpacing * 2, sigY + 4, { align: 'center' });
 
-    doc.output('dataurlnewwindow');
+    doc.save(`Internal_Marks_Report_${batch || "Report"}_${internalSubject || "Subject"}.pdf`);
   };
 
   const handleSaveStudents = async () => {

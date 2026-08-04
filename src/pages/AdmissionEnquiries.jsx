@@ -44,6 +44,7 @@ export default function AdmissionEnquiries() {
   const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0, approved: 0 });
   const [searchResults, setSearchResults] = useState(null);
   const [filterResults, setFilterResults] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const PAGE_SIZE = 20;
 
   const loadPage = async (page, cursor) => {
@@ -75,7 +76,7 @@ export default function AdmissionEnquiries() {
     goToPage(1);
     getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
     getEnquiriesStats().then(setStats).catch(() => {});
-  }, []);
+  }, [refreshTrigger]);
 
   useEffect(() => {
     const unsubscribe = getSeatConfigurationsRealtime(
@@ -110,7 +111,7 @@ export default function AdmissionEnquiries() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, refreshTrigger]);
 
   const hasDropdownFilter = programmeFilter || departmentFilter || statusFilter !== "All";
 
@@ -129,7 +130,7 @@ export default function AdmissionEnquiries() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [programmeFilter, departmentFilter, statusFilter, searchTerm]);
+  }, [programmeFilter, departmentFilter, statusFilter, searchTerm, refreshTrigger]);
 
   const programmeOptions = useMemo(() => {
     return Object.keys(deptMap || {}).sort();
@@ -222,8 +223,7 @@ export default function AdmissionEnquiries() {
       }
       closeModal();
       refreshPage();
-      getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
-      getEnquiriesStats().then(setStats).catch(() => {});
+      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error("Enquiry save error:", error);
       const msg = error.code === 'permission-denied' ? "Permission Denied: You don't have Admin rights." : "Failed to save enquiry";
@@ -239,8 +239,7 @@ export default function AdmissionEnquiries() {
       await deleteEnquiry(deleteTarget.enquiryId);
       showToast("Enquiry deleted successfully");
       refreshPage();
-      getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
-      getEnquiriesStats().then(setStats).catch(() => {});
+      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error("Delete enquiry error:", error);
       showToast("Failed to delete enquiry", "error");

@@ -11,6 +11,11 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { STEP_CATEGORIES } from "./student/StepPoints";
 
+function sanitizeKey(key) {
+  if (!key) return "";
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
+}
+
 const DEFAULT_CHECKLIST = [
   "STEP Activity Log Sheet (This formal summary printout)",
   "Original or attested participation/award certificates for all activities listed above",
@@ -42,6 +47,7 @@ export default function StepPoints() {
   const [loading, setLoading] = useState(true);
   const [activities, setActivities] = useState([]);
   const [studentsIndex, setStudentsIndex] = useState({});
+  const [sectionConfigs, setSectionConfigs] = useState({});
 
   // Deferral State
   const [deferralRequests, setDeferralRequests] = useState([]);
@@ -80,6 +86,16 @@ export default function StepPoints() {
   const { getActiveBatches } = useBatches(durations);
 
   const activeBatchesList = useMemo(() => getActiveBatches(), [getActiveBatches]);
+
+  // Department-scoped visibility: any user who has this page visible sees claims,
+  // but Faculty/HOD (and other staff) only see students from their own department.
+  const normalizeDept = (d) => (d || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const masterAdminEmail = (import.meta.env.VITE_MASTER_ADMIN_EMAIL || "").toLowerCase();
+  const isAdminView = currentUserData?.role === "Admin" || currentUserData?.role === "Principal" ||
+    (auth.currentUser?.email || "").toLowerCase() === masterAdminEmail;
+  const currentUserDept = currentUserData?.department || "";
+  const canViewClaim = (claimDept) =>
+    isAdminView || (claimDept && normalizeDept(claimDept) === normalizeDept(currentUserDept));
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -185,10 +201,21 @@ export default function StepPoints() {
     return () => unsub();
   }, []);
 
+  // Section configs from Curriculum.jsx (batch_sections collection)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "batch_sections"), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setSectionConfigs(data);
+    }, (err) => console.error("Error loading section configs:", err));
+    return () => unsub();
+  }, []);
+
   const filteredDeferralRequests = useMemo(() => {
     return deferralRequests.filter((def) => {
+      if (!canViewClaim(def.department)) return false;
       const matchesBatch = !selectedBatch || def.batch === selectedBatch;
-      const matchesDept = !selectedDept || def.department === selectedDept;
+      const matchesDept = !selectedDept || normalizeDept(def.department) === normalizeDept(selectedDept);
       const matchesProg = !selectedProg || def.programme === selectedProg;
       const matchesSection = !selectedSection || def.section === selectedSection;
 
@@ -198,16 +225,17 @@ export default function StepPoints() {
 
       return matchesBatch && matchesDept && matchesProg && matchesSection && matchesSearch;
     });
-  }, [deferralRequests, selectedBatch, selectedDept, selectedProg, selectedSection, searchQuery]);
+  }, [deferralRequests, selectedBatch, selectedDept, selectedProg, selectedSection, searchQuery, canViewClaim]);
 
   const pendingDeferralsCount = useMemo(() => {
     return deferralRequests.filter(d => {
+      if (!canViewClaim(d.department)) return false;
       if (currentUserData?.role === "Faculty") return d.status === "Pending Advisor Review";
       if (currentUserData?.role === "HOD") return d.status === "Pending HOD Review";
       if (currentUserData?.role === "Principal") return d.status === "Pending Principal Review";
       return d.status.startsWith("Pending");
     }).length;
-  }, [deferralRequests, currentUserData]);
+  }, [deferralRequests, currentUserData, canViewClaim]);
 
   // Filter lists derived dynamically from activities
   const batchOptions = useMemo(() => {
@@ -229,16 +257,32 @@ export default function StepPoints() {
 
   const sectionOptions = useMemo(() => {
     const s = new Set();
-    activities.forEach(a => { if (a.section) s.add(a.section); });
-    // Add default sections as fallback
-    s.add("Sec-A");
-    s.add("Sec-B");
-    s.add("Sec-C");
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const matchDept = (cfgDept) => {
+      if (selectedDept) return normalizeDept(cfgDept) === normalizeDept(selectedDept);
+      return isAdminView || normalizeDept(cfgDept) === normalizeDept(currentUserDept);
+    };
+    Object.values(sectionConfigs).forEach(cfg => {
+      if (!cfg || !cfg.numSections) return;
+      if (!matchDept(cfg.department)) return;
+      if (selectedBatch && cfg.batch && sanitizeKey(cfg.batch) !== sanitizeKey(selectedBatch)) return;
+      Array.from({ length: cfg.numSections }, (_, i) => s.add(`Sec-${letters[i]}`));
+    });
+    // Fallback to sections actually present in claims when no config exists for the department
+    if (s.size === 0) {
+      activities.forEach(a => {
+        if (!a.section) return;
+        if (!canViewClaim(a.department)) return;
+        if (selectedDept && normalizeDept(a.department) !== normalizeDept(selectedDept)) return;
+        s.add(a.section);
+      });
+    }
     return Array.from(s).sort();
-  }, [activities]);
+  }, [activities, sectionConfigs, selectedBatch, selectedDept, currentUserDept, isAdminView, canViewClaim]);
 
   const filteredActivities = useMemo(() => {
     return activities.filter((act) => {
+      if (!canViewClaim(act.department)) return false;
       const status = act.status || "Pending";
       const matchesTab = 
         activeTab === "pending" ? status === "Pending" :
@@ -246,7 +290,7 @@ export default function StepPoints() {
         activeTab === "returned" ? status === "Returned" : true;
 
       const matchesBatch = !selectedBatch || act.batch === selectedBatch;
-      const matchesDept = !selectedDept || act.department === selectedDept;
+      const matchesDept = !selectedDept || normalizeDept(act.department) === normalizeDept(selectedDept);
       const matchesProg = !selectedProg || act.programme === selectedProg;
       const matchesSection = !selectedSection || act.section === selectedSection;
 
@@ -257,7 +301,7 @@ export default function StepPoints() {
 
       return matchesTab && matchesBatch && matchesDept && matchesProg && matchesSection && matchesSearch;
     });
-  }, [activities, activeTab, selectedBatch, selectedDept, selectedProg, selectedSection, searchQuery]);
+  }, [activities, activeTab, selectedBatch, selectedDept, selectedProg, selectedSection, searchQuery, canViewClaim]);
 
   // Aggregate points per student for the compliance spreadsheet tab
   const studentComplianceData = useMemo(() => {
@@ -265,9 +309,10 @@ export default function StepPoints() {
 
     // Group activities by student
     activities.forEach((act) => {
+      if (!canViewClaim(act.department)) return;
       // Filter by selection
       if (selectedBatch && act.batch !== selectedBatch) return;
-      if (selectedDept && act.department !== selectedDept) return;
+      if (selectedDept && normalizeDept(act.department) !== normalizeDept(selectedDept)) return;
       if (selectedProg && act.programme !== selectedProg) return;
       if (selectedSection && act.section !== selectedSection) return;
 
@@ -329,7 +374,7 @@ export default function StepPoints() {
 
     // Sort by name
     return result.sort((a, b) => a.name.localeCompare(b.name));
-  }, [activities, selectedBatch, selectedDept, selectedProg, selectedSection, studentsIndex, activeCategories, activeMilestones]);
+  }, [activities, selectedBatch, selectedDept, selectedProg, selectedSection, studentsIndex, activeCategories, activeMilestones, canViewClaim]);
 
   const handleApprove = async () => {
     if (!reviewActivity) return;
@@ -507,7 +552,7 @@ export default function StepPoints() {
             <div className="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
               <span className="text-xs text-blue-200 block uppercase font-bold tracking-wider">Pending Review</span>
               <span className="text-3xl font-black text-yellow-300">
-                {activities.filter(a => a.status === "Pending").length}
+                {activities.filter(a => a.status === "Pending" && canViewClaim(a.department)).length}
               </span>
             </div>
             <div className="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
@@ -596,7 +641,7 @@ export default function StepPoints() {
         {/* Interactive Tabs Menu */}
         <div className="flex border-b border-zinc-200 mb-6 gap-2 flex-wrap">
           {[
-            { id: "pending", label: "Pending Approvals", count: activities.filter(a => a.status === "Pending").length },
+            { id: "pending", label: "Pending Approvals", count: activities.filter(a => a.status === "Pending" && canViewClaim(a.department)).length },
             { id: "approved", label: "Approved Claims", count: null },
             { id: "returned", label: "Returned Logs", count: null },
             { id: "compliance", label: "Compliance Sheet", count: null },

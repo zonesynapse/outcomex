@@ -369,9 +369,13 @@ export default function StudentLayout({ children, title }) {
               className="w-[42px] h-[42px] rounded-xl overflow-hidden flex items-center justify-center border-2 border-white/20 bg-white/10 hover:bg-white/20 transition-all"
               title="My Profile"
             >
-              <span className="font-bold text-sm text-white">
-                {userData?.studentName ? userData.studentName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'S'}
-              </span>
+              {userData?.photoURL ? (
+                <img src={userData.photoURL} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                <span className="font-bold text-sm text-white">
+                  {userData?.studentName ? userData.studentName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'S'}
+                </span>
+              )}
             </button>
             {isProfileOpen && (
               <div className="absolute right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl z-50 border border-zinc-100 overflow-hidden text-zinc-800">

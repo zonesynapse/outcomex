@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, onSnapshot, getDocs, setDoc, query, where } from "firebase/firestore";
+import { doc, collection, getDoc, onSnapshot, setDoc, query, where } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
-  Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
+  Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight, ChevronDown,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
-  Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check
+  Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
+  Download, FileSpreadsheet
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
@@ -109,6 +112,488 @@ export default function HODDashboard() {
   const [returnComment, setReturnComment] = useState("");
   const [showReturnInput, setShowReturnInput] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
+
+  // HOD Batch Attendance Report state
+  const [reportBatch, setReportBatch] = useState("");
+  const [reportSection, setReportSection] = useState("");
+  const [reportFromDate, setReportFromDate] = useState(() => {
+    const today = new Date();
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    return formatDateKey(startOfMonth);
+  });
+  const [reportToDate, setReportToDate] = useState(() => formatDateKey(new Date()));
+  const [generatedReport, setGeneratedReport] = useState(null);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [showReportPdfPreview, setShowReportPdfPreview] = useState(false);
+  const [reportPdfUrl, setReportPdfUrl] = useState("");
+  const [reportPdfDoc, setReportPdfDoc] = useState(null);
+  const [reportPdfFilename, setReportPdfFilename] = useState("");
+  const [reportSearchQuery, setReportSearchQuery] = useState("");
+  const [reportAcademicYear, setReportAcademicYear] = useState("");
+  const [reportSemester, setReportSemester] = useState("");
+  const [selectedReportSubjects, setSelectedReportSubjects] = useState([]);
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
+  const subjectDropdownRef = useRef(null);
+
+  const averageAttendance = useMemo(() => {
+    if (!generatedReport || generatedReport.students.length === 0) return "0.0";
+    const total = generatedReport.students.reduce((sum, s) => sum + parseFloat(s.percentage || 0), 0);
+    return (total / generatedReport.students.length).toFixed(1);
+  }, [generatedReport]);
+
+  const countBelow75 = useMemo(() => {
+    if (!generatedReport) return 0;
+    return generatedReport.students.filter(s => parseFloat(s.percentage || 0) < 75).length;
+  }, [generatedReport]);
+
+  const filteredReportStudents = useMemo(() => {
+    if (!generatedReport) return [];
+    if (!reportSearchQuery.trim()) return generatedReport.students;
+    const q = reportSearchQuery.toLowerCase();
+    return generatedReport.students.filter(s => 
+      s.name.toLowerCase().includes(q) || 
+      s.reg.toLowerCase().includes(q)
+    );
+  }, [generatedReport, reportSearchQuery]);
+
+  const handleGenerateBatchReport = async () => {
+    if (!reportBatch) {
+      alert("Please select a batch.");
+      return;
+    }
+    if (reportDateRange.min && reportDateRange.max && (reportFromDate < reportDateRange.min || reportToDate > reportDateRange.max)) {
+      alert(`Please select dates between ${reportDateRange.min} and ${reportDateRange.max} (as per the configured academic semester).`);
+      return;
+    }
+    setGeneratingReport(true);
+    try {
+      // Find students in batch/section
+      const targetStudents = sectionStudents.filter(s => {
+        if (s.batch !== reportBatch) return false;
+        if (reportSection) {
+          const parts = s.docId.split('_');
+          const secPart = parts.find(p => p.startsWith('Sec-'));
+          return secPart === reportSection;
+        }
+        return true;
+      });
+
+      if (targetStudents.length === 0) {
+        alert("No students found in this batch/section.");
+        setGeneratedReport(null);
+        setGeneratingReport(false);
+        return;
+      }
+
+      // Collect attendance records from already-loaded resolvedAttendanceOverview
+      // (same data source the Attendance Status section uses — avoids dept-matching issues)
+      const batchItems = (resolvedAttendanceOverview[reportBatch] || []).filter(item => {
+        if (reportAcademicYear && item.ay !== reportAcademicYear) return false;
+        if (reportSemester && item.sem !== reportSemester) return false;
+        if (reportSection && item.section !== reportSection) return false;
+        if (selectedReportSubjects.length > 0 && !selectedReportSubjects.includes(item.subjectCode)) return false;
+        return true;
+      });
+
+      const recordsMap = {};
+      const periodInfoMap = {};
+      const matchedPeriodsSet = new Set();
+
+      batchItems.forEach(item => {
+        Object.entries(item.attRecords || {}).forEach(([rk, recordVal]) => {
+          const datePart = rk.includes('_P') ? rk.slice(0, rk.lastIndexOf('_P')) : rk;
+          if (datePart >= reportFromDate && datePart <= reportToDate) {
+            matchedPeriodsSet.add(rk);
+            if (!recordsMap[rk]) recordsMap[rk] = [];
+            recordsMap[rk].push({
+              ...recordVal,
+              subjectCode: item.subjectCode
+            });
+            if (!periodInfoMap[rk]) periodInfoMap[rk] = { subjectCodes: new Set(), eventNames: new Set() };
+            if (recordVal?.isEvent) {
+              periodInfoMap[rk].eventNames.add(recordVal.eventName || 'Event');
+            } else {
+              periodInfoMap[rk].subjectCodes.add(item.subjectCode);
+            }
+          }
+        });
+      });
+
+      // Label each period with the subject code of whoever marked attendance,
+      // or the event name when the record is an event period.
+      const periodInfo = {};
+      Object.entries(periodInfoMap).forEach(([rk, info]) => {
+        const label = info.eventNames.size > 0
+          ? [...info.eventNames][0]
+          : [...info.subjectCodes].filter(Boolean).join(', ');
+        if (label) periodInfo[rk] = label;
+      });
+
+      const sortedPeriods = [...matchedPeriodsSet].sort((a, b) => {
+        const [dateA, periodA] = a.split('_P');
+        const [dateB, periodB] = b.split('_P');
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+        return (parseInt(periodA) || 0) - (parseInt(periodB) || 0);
+      });
+
+      // Group period keys by date for the date-wise map
+      const groupedPeriods = [];
+      sortedPeriods.forEach(rk => {
+        const [date] = rk.split('_P');
+        const last = groupedPeriods[groupedPeriods.length - 1];
+        if (last && last.date === date) {
+          last.periods.push(rk);
+        } else {
+          groupedPeriods.push({ date, periods: [rk] });
+        }
+      });
+
+      const studentStats = targetStudents.map(student => {
+        let attended = 0;
+        let absent = 0;
+        let odCount = 0;
+        let totalClasses = 0;
+        const dailyRecords = {};
+        const subjectStats = {};
+
+        sortedPeriods.forEach(rk => {
+          const matchedRecords = recordsMap[rk] || [];
+          let foundStatus = undefined;
+          let recordSubject = "";
+          for (const rec of matchedRecords) {
+            const stuVal = rec?.students?.[student.reg];
+            if (stuVal !== undefined) {
+              const rawH = stuVal;
+              foundStatus = typeof rawH === 'object' && rawH !== null 
+                ? (rawH.status || (rawH.hours > 0 ? 'P' : 'A')) 
+                : (rawH === 'OD' || rawH === -1 ? 'OD' : (rawH > 0 ? 'P' : 'A'));
+              recordSubject = rec.subjectCode || "";
+              break;
+            }
+          }
+
+          if (foundStatus !== undefined) {
+            dailyRecords[rk] = foundStatus;
+
+            if (recordSubject) {
+              if (!subjectStats[recordSubject]) {
+                subjectStats[recordSubject] = { attended: 0, absent: 0, od: 0, total: 0 };
+              }
+              if (foundStatus === 'P') {
+                subjectStats[recordSubject].attended++;
+                subjectStats[recordSubject].total++;
+              } else if (foundStatus === 'A') {
+                subjectStats[recordSubject].absent++;
+                subjectStats[recordSubject].total++;
+              } else if (foundStatus === 'OD') {
+                subjectStats[recordSubject].od++;
+                subjectStats[recordSubject].total++;
+              }
+            }
+
+            if (foundStatus === 'P') {
+              attended++;
+              totalClasses++;
+            } else if (foundStatus === 'A') {
+              absent++;
+              totalClasses++;
+            } else if (foundStatus === 'OD') {
+              odCount++;
+              totalClasses++;
+            }
+          } else {
+            dailyRecords[rk] = '—';
+          }
+        });
+
+        const activeClasses = totalClasses - odCount;
+        const percentage = activeClasses > 0 ? ((attended / activeClasses) * 100).toFixed(1) : "0.0";
+
+        return {
+          reg: student.reg,
+          name: student.name,
+          section: student.docId.split('_').find(p => p.startsWith('Sec-')) || 'Sec-A',
+          attended,
+          absent,
+          od: odCount,
+          total: totalClasses,
+          percentage,
+          dailyRecords,
+          subjectStats
+        };
+      });
+
+      studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
+
+      setGeneratedReport({
+        periods: sortedPeriods,
+        groupedPeriods,
+        periodInfo,
+        students: studentStats,
+        fromDate: reportFromDate,
+        toDate: reportToDate,
+        batch: reportBatch,
+        section: reportSection || "All Sections",
+        academicYear: reportAcademicYear,
+        semester: reportSemester,
+        selectedSubjects: selectedReportSubjects
+      });
+
+      showToast("Report generated successfully!", "success");
+    } catch (err) {
+      console.error("Error generating report:", err);
+      alert("Failed to generate report.");
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (!generatedReport) return;
+    const { periods, students, batch, section, fromDate, toDate } = generatedReport;
+    
+    let headers, rows;
+    headers = ["Register No", "Student Name", "Section", ...periods.map(p => {
+      const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
+      const info = generatedReport.periodInfo?.[p];
+      return info ? `P${pNum} (${info})` : `P${pNum}`;
+    }), "Total Classes", "Present", "OD", "Absent", "Percentage (%)"];
+    rows = students.map(s => {
+      const dailyVals = periods.map(p => s.dailyRecords[p]);
+      return [
+        s.reg,
+        s.name,
+        s.section,
+        ...dailyVals,
+        s.total,
+        s.attended,
+        s.od,
+        s.absent,
+        s.percentage
+      ];
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(","), ...rows.map(r => r.map(val => `"${val}"`).join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Attendance_Report_${batch}_${section}_${fromDate}_to_${toDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportPDF = async () => {
+    if (!generatedReport) return;
+    const { students, batch, section, fromDate, toDate } = generatedReport;
+    const groupedPeriods = generatedReport.groupedPeriods || [];
+
+    let logoDataUrl = null;
+    try {
+      const resp = await fetch('/logo.png');
+      const blob = await resp.blob();
+      logoDataUrl = await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch { }
+
+    const doc = new jsPDF({ orientation: 'portrait' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginL = 14;
+    const marginR = 14;
+    const usableW = pageW - marginL - marginR;
+
+    const drawHeader = (isFirst = false) => {
+      let y = 10;
+      if (isFirst && logoDataUrl) {
+        try {
+          const logoW = usableW;
+          const logoH = logoW * 0.065;
+          doc.addImage(logoDataUrl, 'PNG', marginL, y, logoW, logoH);
+          y += logoH + 3;
+        } catch { }
+      }
+      doc.setFontSize(12);
+      doc.setFont(undefined, 'bold');
+      doc.text('Batch Attendance Report', marginL, y);
+      y += 5;
+      doc.setFontSize(8);
+      doc.setFont(undefined, 'normal');
+      doc.text(`Department: ${hodDepartment}  |  Batch: ${batch}  |  Section: ${section}  |  Range: ${fromDate} to ${toDate}`, marginL, y);
+      return y + 5;
+    };
+
+    let yPos = drawHeader(true);
+
+    // ── Overall Attendance Summary Table ──
+    const summaryHeaders = ['Reg No', 'Student Name', 'Sec', 'Total', 'Present', 'OD', 'Absent', '%'];
+    const summaryRows = students.map(s => [
+      s.reg,
+      s.name,
+      s.section.replace('Sec-', ''),
+      s.total,
+      s.attended,
+      s.od,
+      s.absent,
+      s.percentage + '%'
+    ]);
+    const colStyles = {
+      0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
+      1: { halign: 'left', fontStyle: 'bold' },
+      2: { cellWidth: 10 },
+      3: { cellWidth: 14 },
+      4: { cellWidth: 15 },
+      5: { cellWidth: 12 },
+      6: { cellWidth: 15 },
+      7: { fontStyle: 'bold', cellWidth: 15 }
+    };
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text('Overall Attendance Summary', marginL, yPos);
+    yPos += 4;
+
+    autoTable(doc, {
+      head: [summaryHeaders],
+      body: summaryRows,
+      startY: yPos,
+      margin: { left: marginL, right: marginR },
+      theme: 'grid',
+      styles: { fontSize: 7, cellPadding: 1.5, halign: 'center' },
+      columnStyles: colStyles,
+      headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold' },
+      didParseCell: (data) => {
+        const pctColIndex = summaryHeaders.length - 1;
+        if (data.section === 'body' && data.column.index === pctColIndex) {
+          const val = parseFloat(data.cell.raw);
+          if (val < 75) {
+            data.cell.styles.textColor = [200, 30, 30];
+          } else {
+            data.cell.styles.textColor = [16, 128, 80];
+          }
+        }
+      }
+    });
+
+    yPos = doc.lastAutoTable.finalY + 8;
+
+    // Show daily period breakdown (filtered to the selected subjects' periods)
+    if (groupedPeriods.length > 0) {
+      if (yPos + 25 > pageH) {
+        doc.addPage();
+        yPos = drawHeader(false);
+      }
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Daily Period-wise Breakdown', marginL, yPos);
+      yPos += 5;
+
+      groupedPeriods.forEach((group, gi) => {
+        const dateLabel = group.date;
+        const dayName = new Date(group.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+
+        // Check if we have enough space; otherwise new page
+        const headerH = 8;
+        const tableRowH = 5.5;
+        const neededForHeader = headerH + 15;
+        const neededForTable = students.length * tableRowH + 10;
+        if (yPos + neededForHeader > pageH - 10) {
+          doc.addPage();
+          yPos = drawHeader(false);
+        }
+
+        // Date section header
+        doc.setFillColor(18, 12, 122);
+        doc.rect(marginL, yPos, usableW, 7, 'F');
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(255, 255, 255);
+        doc.text(`${dateLabel}  (${dayName})  —  ${group.periods.length} period(s)`, marginL + 2, yPos + 5);
+        doc.setTextColor(0, 0, 0);
+        yPos += 8;
+
+        // Build table: Reg No | Name | P1 | P2 | ... | Pn
+        const headers = ['Reg No', 'Student Name', ...group.periods.map(p => {
+          const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
+          const info = generatedReport.periodInfo?.[p];
+          return info ? `P${pNum} (${info})` : `P${pNum}`;
+        })];
+        const rows = students.map(s => {
+          const vals = group.periods.map(p => {
+            const v = s.dailyRecords[p];
+            return v || '—';
+          });
+          return [s.reg, s.name, ...vals];
+        });
+
+        autoTable(doc, {
+          head: [headers],
+          body: rows,
+          startY: yPos,
+          margin: { left: marginL, right: marginR },
+          theme: 'grid',
+          styles: { fontSize: 6.5, cellPadding: 1.2, halign: 'center', overflow: 'linebreak' },
+          columnStyles: {
+            0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
+            1: { halign: 'left', cellWidth: 45 },
+          },
+          headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold', fontSize: 6.5 },
+          didParseCell: (data) => {
+            const { section, column, cell, row } = data;
+            if (section === 'body') {
+              const ci = column.index;
+              if (ci >= 2) {
+                const val = cell.raw;
+                if (val === 'P') {
+                  cell.styles.textColor = [16, 128, 80];
+                  cell.styles.fontStyle = 'bold';
+                } else if (val === 'A') {
+                  cell.styles.textColor = [200, 30, 30];
+                  cell.styles.fontStyle = 'bold';
+                  cell.styles.fillColor = [254, 226, 226];
+                } else if (val === 'OD') {
+                  cell.styles.textColor = [30, 100, 200];
+                  cell.styles.fontStyle = 'bold';
+                }
+              }
+              if (row.index % 2 === 1 && cell.styles.fillColor === undefined) {
+                cell.styles.fillColor = [245, 245, 255];
+              }
+            }
+          },
+        });
+
+        yPos = doc.lastAutoTable.finalY + 4;
+
+        // Date summary row
+        const totalStudents = students.length;
+        let dateP = 0, dateA = 0, dateOD = 0;
+        students.forEach(s => {
+          group.periods.forEach(p => {
+            const v = s.dailyRecords[p];
+            if (v === 'P') dateP++;
+            else if (v === 'A') dateA++;
+            else if (v === 'OD') dateOD++;
+          });
+        });
+        doc.setFontSize(7);
+        doc.setFont(undefined, 'bold');
+        doc.text(`P: ${dateP}  |  A: ${dateA}  |  OD: ${dateOD}  |  Total Records: ${group.periods.length * totalStudents}`, marginL, yPos + 3);
+        yPos += 8;
+      });
+    }
+
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    setReportPdfUrl(url);
+    setReportPdfDoc(doc);
+    setReportPdfFilename(`Attendance_Report_${batch}_${section}_${fromDate}_to_${toDate}.pdf`);
+    setShowReportPdfPreview(true);
+  };
 
   useEffect(() => {
     if (!hodDepartment) {
@@ -692,6 +1177,7 @@ export default function HODDashboard() {
     return resolved;
   }, [attendanceOverview, usersMap, subjectNamesMap, hodDepartment, hodProgramme]);
 
+
   const activeSemesters = useMemo(() => {
     const selected = new Date(attendanceDate + 'T00:00:00');
     return semesterConfigs.filter(cfg => {
@@ -1062,6 +1548,206 @@ export default function HODDashboard() {
     return result;
   }, [resolvedAttendanceOverview, attendanceDate, availablePeriods, timetableAllocation, activeSemesters, usersMap, academicEvents]);
 
+  // Available batches for HOD
+  const availableReportBatches = useMemo(() => {
+    return Object.keys(attendanceWithPeriods).sort();
+  }, [attendanceWithPeriods]);
+
+  // Available sections for chosen batch
+  const availableReportSections = useMemo(() => {
+    if (!reportBatch) return [];
+    const sections = new Set();
+    sectionStudents.forEach(s => {
+      if (s.batch === reportBatch) {
+        const parts = s.docId.split('_');
+        const secPart = parts.find(p => p.startsWith('Sec-'));
+        if (secPart) sections.add(secPart);
+      }
+    });
+    return [...sections].sort();
+  }, [reportBatch, sectionStudents]);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(e.target)) {
+        setShowSubjectDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  const reportBatchItems = useMemo(() => resolvedAttendanceOverview[reportBatch] || [], [resolvedAttendanceOverview, reportBatch]);
+
+  // Compute the semester number for a SPECIFIC batch from its semester_config,
+  // using the same formula as AcademicCalendar (batch start year + config dates).
+  // Stored cfg.semesterNumber is computed from the config's FIRST batch only, so it is
+  // wrong for other batches sharing the same config — always recompute per batch.
+  const semesterNumFor = useCallback((batch, cfg) => {
+    if (!batch || !cfg || !cfg.startDate) return cfg?.semesterNumber || cfg?.semester || undefined;
+    const batchStart = parseInt(String(batch).split('-')[0], 10);
+    const startYear = new Date(cfg.startDate).getFullYear();
+    if (!batchStart || !startYear) return cfg?.semesterNumber || cfg?.semester || undefined;
+    const isOdd = cfg.semesterType !== 'Even';
+    const academicYearStart = isOdd ? startYear : startYear - 1;
+    const yearNumber = academicYearStart - batchStart + 1;
+    if (yearNumber < 1) return cfg?.semesterNumber || cfg?.semester || undefined;
+    const base = (yearNumber - 1) * 2;
+    return String(isOdd ? base + 1 : base + 2);
+  }, []);
+
+  const availableReportAcademicYears = useMemo(() => {
+    if (!reportBatch) return [];
+    const fromItems = [...new Set(reportBatchItems.map(i => i.ay).filter(Boolean))];
+    const fromConfigs = semesterConfigs
+      .filter(cfg => (Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).some(b => String(b) === reportBatch))
+      .map(c => c.academicYear)
+      .filter(Boolean);
+    return [...new Set([...fromItems, ...fromConfigs])].sort();
+  }, [reportBatch, reportBatchItems, semesterConfigs]);
+
+  const availableReportSemesters = useMemo(() => {
+    if (!reportBatch || !reportAcademicYear) return [];
+    const fromItems = [...new Set(reportBatchItems.filter(i => i.ay === reportAcademicYear).map(i => i.sem).filter(Boolean))];
+    const fromConfigs = semesterConfigs
+      .filter(cfg =>
+        (Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).some(b => String(b) === reportBatch) &&
+        cfg.academicYear === reportAcademicYear
+      )
+      .map(c => semesterNumFor(reportBatch, c))
+      .filter(Boolean);
+    return [...new Set([...fromItems, ...fromConfigs])].sort((a, b) => parseInt(a) - parseInt(b));
+  }, [reportBatch, reportAcademicYear, reportBatchItems, semesterConfigs, semesterNumFor]);
+
+  const availableReportSubjects = useMemo(() => {
+    if (!reportBatch || !reportSemester) return [];
+    const filtered = reportBatchItems.filter(item => {
+      if (item.sem !== reportSemester) return false;
+      if (reportSection && item.section && item.section !== reportSection) return false;
+      return true;
+    });
+    const unique = [];
+    const seen = new Set();
+    filtered.forEach(item => {
+      const code = item.subjectCode;
+      if (!seen.has(code)) {
+        seen.add(code);
+        const name = subjectNamesMap[code] || item.subjectName || code;
+        unique.push({ code, name });
+      }
+    });
+    return unique.sort((a, b) => a.code.localeCompare(b.code));
+  }, [reportBatch, reportSemester, reportSection, reportBatchItems, subjectNamesMap]);
+
+  // Determine current academic year (Jul→Dec = current+next, Jan→Jun = prev-current)
+  const currentAcademicYear = useMemo(() => {
+    const today = new Date();
+    const m = today.getMonth() + 1;
+    const y = today.getFullYear();
+    return m >= 7 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+  }, []);
+
+  useEffect(() => {
+    if (semesterConfigs.length > 0) {
+      const today = new Date().toISOString().split('T')[0];
+      const activeCfg = semesterConfigs.find(cfg => {
+        if (!cfg.startDate || !cfg.endDate) return false;
+        return today >= cfg.startDate && today <= cfg.endDate;
+      });
+      if (activeCfg) {
+        const batches = Array.isArray(activeCfg.batch) ? activeCfg.batch : [activeCfg.batch];
+        const firstBatch = batches[0] || "";
+        if (firstBatch && !reportBatch) {
+          setReportBatch(firstBatch);
+        }
+        if (activeCfg.academicYear && !reportAcademicYear) {
+          setReportAcademicYear(activeCfg.academicYear);
+        }
+        if (!reportSemester) {
+          const sem = semesterNumFor(firstBatch, activeCfg);
+          if (sem) setReportSemester(sem);
+        }
+      } else {
+        if (availableReportBatches.length > 0 && !reportBatch) {
+          setReportBatch(availableReportBatches[0]);
+        }
+      }
+    }
+  }, [semesterConfigs, availableReportBatches, semesterNumFor]);
+
+  useEffect(() => {
+    if (!reportBatch) return;
+    const today = new Date().toISOString().split('T')[0];
+    const batchConfigs = semesterConfigs.filter(cfg => {
+      const batches = Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch];
+      return batches.some(b => String(b) === reportBatch);
+    });
+    // Prefer the active (today) config for this batch, else current academic year
+    const activeCfg = batchConfigs.find(cfg => today >= cfg.startDate && today <= cfg.endDate);
+    const targetAY = activeCfg?.academicYear
+      || (availableReportAcademicYears.includes(currentAcademicYear) ? currentAcademicYear : undefined)
+      || (batchConfigs.map(c => c.academicYear).filter(Boolean).sort().slice(-1)[0])
+      || (reportBatchItems.map(i => i.ay).filter(Boolean).sort().slice(-1)[0]);
+    if (targetAY) {
+      setReportAcademicYear(targetAY);
+      const aySems = availableReportSemesters.length > 0
+        ? [...new Set([...(batchConfigs.filter(c => c.academicYear === targetAY).map(c => semesterNumFor(reportBatch, c)).filter(Boolean)),
+                       ...reportBatchItems.filter(i => i.ay === targetAY).map(i => i.sem).filter(Boolean)])].sort((a, b) => parseInt(a) - parseInt(b))
+        : [];
+      const activeSem = batchConfigs.find(c => c.academicYear === targetAY && today >= c.startDate && today <= c.endDate);
+      const targetSem = activeSem
+        ? semesterNumFor(reportBatch, activeSem)
+        : (aySems.length > 0 ? aySems[aySems.length - 1] : undefined);
+      if (targetSem) setReportSemester(targetSem);
+    }
+  }, [reportBatch, semesterConfigs, availableReportAcademicYears, availableReportSemesters, reportBatchItems, currentAcademicYear, semesterNumFor]);
+
+  useEffect(() => {
+    if (reportBatch && reportAcademicYear) {
+      const today = new Date().toISOString().split('T')[0];
+      const batchAYConfigs = semesterConfigs.filter(cfg =>
+        (Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).some(b => String(b) === reportBatch) && cfg.academicYear === reportAcademicYear
+      );
+      const itemSems = [...new Set(reportBatchItems.filter(i => i.ay === reportAcademicYear).map(i => i.sem).filter(Boolean))];
+      const uniqueSems = [...new Set([...batchAYConfigs.map(c => semesterNumFor(reportBatch, c)), ...itemSems].filter(Boolean))].sort((a, b) => parseInt(a) - parseInt(b));
+      const activeCfg = batchAYConfigs.find(cfg => today >= cfg.startDate && today <= cfg.endDate);
+      const targetSem = activeCfg ? semesterNumFor(reportBatch, activeCfg)
+        : (uniqueSems.includes(semesterNumFor(reportBatch, batchAYConfigs[0])) ? semesterNumFor(reportBatch, batchAYConfigs[0]) : (uniqueSems[uniqueSems.length - 1]));
+      if (uniqueSems.length > 0 && targetSem) {
+        setReportSemester(prev => (prev && uniqueSems.includes(prev)) ? prev : targetSem);
+      }
+    }
+  }, [reportAcademicYear, reportBatch, semesterConfigs, reportBatchItems, semesterNumFor]);
+
+  // Date range allowed by semester_config (AcademicCalendar) for the selected batch
+  // Reuses activeSemesters (filtered by today's date, same as attendance status)
+  const reportDateRange = useMemo(() => {
+    const active = activeSemesters.filter(cfg => {
+      if (!reportBatch) return true;
+      const batches = Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch];
+      return batches.some(b => String(b) === reportBatch);
+    });
+    let min = null;
+    let max = null;
+    active.forEach(cfg => {
+      if (!min || cfg.startDate < min) min = cfg.startDate;
+      if (!max || cfg.endDate > max) max = cfg.endDate;
+    });
+    return { min, max };
+  }, [activeSemesters, reportBatch]);
+
+  const reportDatesOutsideSemester = useMemo(() => {
+    if (!reportDateRange.min || !reportDateRange.max) return false;
+    return reportFromDate < reportDateRange.min || reportToDate > reportDateRange.max;
+  }, [reportDateRange, reportFromDate, reportToDate]);
+
+  // Clamp initial report dates into the semester-config range once configs load
+  useEffect(() => {
+    if (!reportDateRange.min || !reportDateRange.max) return;
+    setReportFromDate(prev => (prev && prev >= reportDateRange.min ? prev : reportDateRange.min));
+    setReportToDate(prev => (prev && prev <= reportDateRange.max ? prev : reportDateRange.max));
+  }, [reportDateRange]);
+
   const taskCount = useMemo(() => tasks.length, [tasks]);
 
   const todayStr = useMemo(() => new Date().toDateString(), []);
@@ -1312,242 +1998,205 @@ export default function HODDashboard() {
           })}
         </div>
 
-        {/* Search & Filter */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-              <ClipboardList size={20} className="text-[#120c7a]" />
-              Forwarded Question Papers
-              {taskCount > 0 && (
-                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{taskCount}</span>
-              )}
-            </h2>
-            <button onClick={() => setShowFilters(!showFilters)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${showFilters ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
-                }`}>
-              <Filter size={14} /> Filters
-            </button>
-          </div>
+        {/* ═══ Tasks & Approvals Grid ═══ */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 mt-8">
+          
+          {/* Column 1: Forwarded Question Papers */}
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 flex flex-col h-[580px]">
+            <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4 shrink-0">
+              <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                <ClipboardList size={18} className="text-[#120c7a]" />
+                Forwarded Question Papers
+                {taskCount > 0 && (
+                  <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{taskCount}</span>
+                )}
+              </h2>
+              <button onClick={() => setShowFilters(!showFilters)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${showFilters ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"}`}>
+                <Filter size={12} /> Filters
+              </button>
+            </div>
 
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-            <div className="p-4">
-              <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 focus-within:border-[#120c7a] focus-within:ring-2 focus-within:ring-[#120c7a]/10 transition-all">
-                <Search size={18} className="text-zinc-400" />
+            {/* Search Input inside Card */}
+            <div className="mb-4 shrink-0">
+              <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2 focus-within:border-[#120c7a] focus-within:bg-white transition-all shadow-sm">
+                <Search size={16} className="text-zinc-400" />
                 <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
-                  placeholder="Search by subject, faculty, or exam..." />
+                  className="w-full bg-transparent text-xs font-semibold outline-none placeholder:text-zinc-400 text-zinc-700"
+                  placeholder="Search subject, faculty, or exam..." />
                 {searchQuery && (
                   <button onClick={() => setSearchQuery("")} className="p-0.5 rounded-full hover:bg-zinc-200 transition-colors">
-                    <X size={14} className="text-zinc-400" />
+                    <X size={12} className="text-zinc-400" />
                   </button>
                 )}
               </div>
-            </div>
 
-            {showFilters && (
-              <div className="px-4 pb-4 border-t border-zinc-100 pt-4">
-                <div className="flex flex-wrap gap-3">
+              {showFilters && (
+                <div className="mt-3 flex flex-wrap gap-2 pt-3 border-t border-zinc-100">
                   <select value={filterBatch} onChange={(e) => setFilterBatch(e.target.value)}
-                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 outline-none focus:border-[#120c7a]">
+                    className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px] font-bold text-zinc-600 outline-none focus:border-[#120c7a]">
                     <option value="">All Batches</option>
                     {batchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
                   </select>
                   <select value={filterSemester} onChange={(e) => setFilterSemester(e.target.value)}
-                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 outline-none focus:border-[#120c7a]">
+                    className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px] font-bold text-zinc-600 outline-none focus:border-[#120c7a]">
                     <option value="">All Semesters</option>
                     {semesterOptions.map((s) => <option key={s} value={s}>Sem {s}</option>)}
                   </select>
                   {(filterBatch || filterSemester) && (
                     <button onClick={() => { setFilterBatch(""); setFilterSemester(""); }}
-                      className="text-xs font-semibold text-red-600 hover:text-red-700 px-3 py-2">
+                      className="text-[11px] font-bold text-rose-600 hover:text-rose-700 px-2 py-1.5">
                       Clear
                     </button>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Task Cards or Empty State */}
-        {tasksLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-white rounded-2xl border border-zinc-200 p-5 shadow-sm animate-pulse">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3 flex-1">
-                    <div className="w-10 h-10 rounded-full bg-zinc-200" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 w-48 rounded bg-zinc-200" />
-                      <div className="h-3 w-32 rounded bg-zinc-100" />
-                    </div>
-                  </div>
-                  <div className="h-8 w-20 rounded-xl bg-zinc-200" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : filteredTasks.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-12 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4">
-              <Sparkles size={32} />
+              )}
             </div>
-            <h3 className="text-xl font-bold text-zinc-900">
-              {searchQuery || filterBatch || filterSemester ? "No matching papers" : "All caught up!"}
-            </h3>
-            <p className="text-sm text-zinc-500 mt-1.5 max-w-sm mx-auto">
-              {searchQuery || filterBatch || filterSemester
-                ? "Try adjusting your search or filters."
-                : "No question papers are currently forwarded to you for review. You'll see them here as they come in."}
-            </p>
-            {(searchQuery || filterBatch || filterSemester) && (
-              <button onClick={() => { setSearchQuery(""); setFilterBatch(""); setFilterSemester(""); }}
-                className="mt-5 inline-flex items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2.5 text-sm font-semibold text-zinc-700 hover:border-[#120c7a] hover:text-[#120c7a] transition-all">
-                <X size={16} /> Clear Filters
-              </button>
-            )}
-            {!searchQuery && !filterBatch && !filterSemester && taskCount === 0 && (
-              <button onClick={() => navigate("/qp-generator")}
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#120c7a] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0f0a66] transition-all shadow-sm">
-                <FileText size={16} /> Go to QP Generator
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredTasks.map((qp, idx) => {
-              const name = resolveForwardedByName(qp.forwarded_by);
-              const initial = (name || "?").charAt(0).toUpperCase();
-              const examDisplay = resolveExamDisplay(qp);
-              const sentTime = timeAgo(qp.forwarded_at || qp.saved_at);
-              const colorIdx = Math.abs((qp.subject || "").length) % 6;
-              const dotColors = ["bg-blue-500", "bg-amber-500", "bg-emerald-500", "bg-violet-500", "bg-rose-500", "bg-indigo-500"];
-              const dotColor = dotColors[colorIdx];
 
-              return (
-                <div key={`${qp.compositeKey}-${qp.id}`}
-                  className="group bg-white rounded-2xl border border-zinc-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 overflow-hidden">
-                  <div className="p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
-                        <div className="w-10 h-10 rounded-full bg-[#120c7a]/10 text-[#120c7a] flex items-center justify-center text-sm font-bold shrink-0">
-                          {initial}
+            {/* Scrollable list content */}
+            <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+              {tasksLoading ? (
+                <div className="space-y-3">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="bg-zinc-50/50 rounded-2xl border border-zinc-150 p-4 shadow-sm animate-pulse h-28" />
+                  ))}
+                </div>
+              ) : filteredTasks.length === 0 ? (
+                <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col justify-center items-center h-full min-h-[250px]">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3">
+                    <Sparkles size={24} />
+                  </div>
+                  <h3 className="text-xs font-bold text-zinc-900">
+                    {searchQuery || filterBatch || filterSemester ? "No matching papers" : "All caught up!"}
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">
+                    {searchQuery || filterBatch || filterSemester
+                      ? "Try adjusting your search query or dropdown filter choices."
+                      : "No question papers waiting for your review."}
+                  </p>
+                </div>
+              ) : (
+                filteredTasks.map((qp) => {
+                  const name = resolveForwardedByName(qp.forwarded_by);
+                  const initial = (name || "?").charAt(0).toUpperCase();
+                  const examDisplay = resolveExamDisplay(qp);
+                  const sentTime = timeAgo(qp.forwarded_at || qp.saved_at);
+                  const colorIdx = Math.abs((qp.subject || "").length) % 6;
+                  const dotColors = ["bg-blue-500", "bg-amber-500", "bg-emerald-500", "bg-violet-500", "bg-rose-500", "bg-indigo-500"];
+                  const dotColor = dotColors[colorIdx];
+
+                  return (
+                    <div key={`${qp.compositeKey}-${qp.id}`}
+                      className="group bg-zinc-50/40 rounded-2xl border border-zinc-150 p-4 hover:shadow-md hover:bg-white transition-all duration-200">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                          <div className="w-8 h-8 rounded-full bg-[#120c7a]/15 text-[#120c7a] flex items-center justify-center text-xs font-black shrink-0">
+                            {initial}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-bold text-zinc-800 truncate">{name}</span>
+                              <span className="text-[10px] text-zinc-300">•</span>
+                              <span className="text-[10px] text-zinc-400">{sentTime}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span className="text-xs font-black text-zinc-800 truncate">{qp.subject}</span>
+                              {qp.subject_name && (
+                                <span className="text-[10px] text-zinc-400 truncate max-w-[130px] font-medium">{qp.subject_name}</span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              <span className="inline-flex items-center gap-0.5 rounded-md bg-blue-50/50 text-blue-700 px-1.5 py-0.5 text-[9px] font-extrabold border border-blue-100/40">
+                                {examDisplay}
+                              </span>
+                              <span className="inline-flex items-center gap-0.5 rounded-md bg-zinc-100/60 text-zinc-600 px-1.5 py-0.5 text-[9px] font-extrabold border border-zinc-200/50">
+                                {qp.batch || "-"}
+                              </span>
+                              <span className="inline-flex items-center gap-0.5 rounded-md bg-zinc-100/60 text-zinc-600 px-1.5 py-0.5 text-[9px] font-extrabold border border-zinc-200/50">
+                                Sem {qp.semester || "-"}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold text-zinc-900 truncate">{name}</span>
-                            <span className="text-[10px] text-zinc-400">•</span>
-                            <span className="text-[11px] text-zinc-500">{sentTime}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="text-sm font-bold text-zinc-800 truncate">{qp.subject}</span>
-                            {qp.subject_name && (
-                              <>
-                                <span className="text-[10px] text-zinc-400">•</span>
-                                <span className="text-[11px] text-zinc-500 truncate">{qp.subject_name}</span>
-                              </>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2.5 mt-2 flex-wrap">
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
-                              <BookOpen size={10} /> {examDisplay}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                              <Calendar size={10} /> {qp.batch || "-"}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                              Sem {qp.semester || "-"}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
-                              {qp.academic_year || "-"}
-                            </span>
-                            <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-                            <span className="text-[10px] text-amber-600 font-semibold">Pending review</span>
-                          </div>
-                        </div>
+                        <button onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
+                          className="shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[#120c7a] text-white text-[11px] font-extrabold hover:bg-[#0f0a66] transition-all shadow-sm cursor-pointer">
+                          <Eye size={12} /> Review
+                        </button>
                       </div>
-                      <button onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm hover:shadow-md active:scale-95">
-                        <Eye size={15} /> Review
-                      </button>
                     </div>
-                  </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Column 2: Pending Activity Approvals */}
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 flex flex-col h-[580px]">
+            <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4 shrink-0">
+              <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                <Award size={18} className="text-[#120c7a]" />
+                Pending Activity Approvals
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">
+                  {pendingActivities.length}
+                </span>
+              </h2>
+            </div>
+
+            {/* Scrollable list content */}
+            <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+              {activitiesLoading ? (
+                <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col justify-center items-center h-full">
+                  <Loader2 className="animate-spin text-zinc-400 mb-2" size={24} />
+                  <span className="text-xs text-zinc-400 font-medium">Checking pending activities...</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="mt-5 flex items-center gap-2 text-xs text-zinc-400 font-medium">
-          <ClipboardList size={14} />
-          Papers forwarded to you by faculty appear here as tasks.
-        </div>
-
-        {/* ═══ Pending Activity Approvals ═══ */}
-        <div className="mt-8 bg-white rounded-2xl border border-zinc-200 shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4">
-            <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-              <Award size={20} className="text-[#120c7a]" />
-              Pending Activity Approvals
-              <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-0.5 rounded-full font-bold">
-                {pendingActivities.length}
-              </span>
-            </h2>
-          </div>
-
-          {activitiesLoading ? (
-            <div className="bg-white rounded-2xl border border-zinc-200 p-5 shadow-sm animate-pulse flex items-center justify-center py-8">
-              <Loader2 className="animate-spin text-zinc-400 mr-2" size={18} />
-              <span className="text-xs text-zinc-400 font-medium">Checking pending activities...</span>
-            </div>
-          ) : pendingActivities.length === 0 ? (
-            <div className="text-center py-8">
-              <CheckCircle2 className="mx-auto text-emerald-500 mb-2" size={28} />
-              <h3 className="text-sm font-bold text-zinc-700">All caught up!</h3>
-              <p className="text-xs text-zinc-400 mt-0.5">No activities currently waiting for HOD verification.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto pr-1">
-              {pendingActivities.map((act) => {
-                const dateParts = (act.date || act.fromDate || "").split('-');
-                const displayDate = dateParts.length === 3 ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}` : (act.date || act.fromDate || "-");
-                return (
-                  <div key={act.id} className="bg-zinc-50/50 rounded-2xl border border-zinc-100 p-4 flex flex-col justify-between hover:shadow-md hover:bg-white transition-all duration-200">
-                    <div>
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div>
-                          <p className="text-sm font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+              ) : pendingActivities.length === 0 ? (
+                <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col justify-center items-center h-full min-h-[250px]">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <h3 className="text-xs font-bold text-zinc-900">All caught up!</h3>
+                  <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">No activities currently waiting for HOD verification.</p>
+                </div>
+              ) : (
+                pendingActivities.map((act) => {
+                  const dateParts = (act.date || act.fromDate || "").split('-');
+                  const displayDate = dateParts.length === 3 ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}` : (act.date || act.fromDate || "-");
+                  return (
+                    <div key={act.id} className="bg-zinc-50/40 rounded-2xl border border-zinc-150 p-4 hover:shadow-md hover:bg-white transition-all duration-200">
+                      <div className="flex items-start justify-between gap-3 mb-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-zinc-800 leading-tight">{act.studentName || act.facultyName || "N/A"}</p>
                           <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{act.regNo || act.facultyId || ""}</p>
                         </div>
-                        <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded font-black uppercase">
+                        <span className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded font-black uppercase tracking-wider shrink-0">
                           {act.activityCode || "STEP"}
                         </span>
                       </div>
-                      <p className="text-xs font-bold text-zinc-700 mb-1">{act.activityName || act.title || "Unnamed Activity"}</p>
-                      <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
-                    </div>
+                      <p className="text-xs font-bold text-zinc-700 mb-1 leading-normal line-clamp-1">{act.activityName || act.title || "Unnamed Activity"}</p>
+                      <p className="text-[10px] text-zinc-400 font-extrabold uppercase">{act.batch} &bull; {act.section || "Sec-A"}</p>
 
-                    <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3">
-                      <span className="text-[10px] text-zinc-500 font-semibold flex items-center gap-1">
-                        <Calendar size={11} /> {displayDate}
-                      </span>
-                      <button
-                        onClick={() => {
-                          setReviewActivity(act);
-                          setReturnComment("");
-                          setShowReturnInput(false);
-                          setShowActivityModal(true);
-                        }}
-                        className="px-3.5 py-1.5 bg-[#120c7a]/10 hover:bg-[#120c7a]/20 text-[#120c7a] rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
-                      >
-                        <Eye size={12} /> Verify Submission
-                      </button>
+                      <div className="mt-4 flex items-center justify-between border-t border-zinc-150/60 pt-3">
+                        <span className="text-[10px] text-zinc-500 font-semibold flex items-center gap-1">
+                          <Calendar size={11} /> {displayDate}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setReviewActivity(act);
+                            setReturnComment("");
+                            setShowReturnInput(false);
+                            setShowActivityModal(true);
+                          }}
+                          className="px-3 py-1.5 bg-[#120c7a]/15 hover:bg-[#120c7a]/25 text-[#120c7a] rounded-xl text-[11px] font-black transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye size={12} /> Verify
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* ═══ Activity Review Modal ═══ */}
@@ -1748,6 +2397,399 @@ export default function HODDashboard() {
             </div>
           </div>
         )}
+
+        {/* ═══ Batch Attendance Report ═══ */}
+        <div className="mt-8 bg-white rounded-[2rem] border border-zinc-200 shadow-md overflow-hidden transition-all duration-300 hover:shadow-lg mb-8">
+          <div className="bg-gradient-to-r from-blue-800 via-blue-900 to-indigo-950 px-5 md:px-7 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                <CalendarCheck2 size={18} className="text-white" />
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-base leading-tight">Batch Attendance Report Generator</h2>
+                <p className="text-blue-200 text-[10px] font-bold uppercase tracking-widest">Department-level Student Analytics</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Row 1 */}
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Batch</label>
+                <select 
+                  value={reportBatch} 
+                  onChange={(e) => { setReportBatch(e.target.value); setReportSection(""); setSelectedReportSubjects([]); setGeneratedReport(null); }}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer"
+                >
+                  <option value="">-- Choose Batch --</option>
+                  {availableReportBatches.map(b => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Academic Year</label>
+                <select 
+                  value={reportAcademicYear} 
+                  onChange={(e) => { setReportAcademicYear(e.target.value); setReportSemester(""); setSelectedReportSubjects([]); setGeneratedReport(null); }}
+                  disabled={!reportBatch}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <option value="">-- Choose AY --</option>
+                  {availableReportAcademicYears.map(ay => (
+                    <option key={ay} value={ay}>{ay}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Semester</label>
+                <select 
+                  value={reportSemester} 
+                  onChange={(e) => { setReportSemester(e.target.value); setSelectedReportSubjects([]); setGeneratedReport(null); }}
+                  disabled={!reportAcademicYear}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <option value="">-- Choose Semester --</option>
+                  {availableReportSemesters.map(sem => (
+                    <option key={sem} value={sem}>Semester {sem}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Section (Optional)</label>
+                <select 
+                  value={reportSection} 
+                  onChange={(e) => { setReportSection(e.target.value); setGeneratedReport(null); }}
+                  disabled={!reportBatch}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <option value="">All Sections</option>
+                  {availableReportSections.map(sec => (
+                    <option key={sec} value={sec}>{sec}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Row 2 */}
+              <div ref={subjectDropdownRef} className="relative bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205 col-span-1 sm:col-span-2">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Subjects</label>
+                <div 
+                  onClick={() => {
+                    if (reportSemester) {
+                      setShowSubjectDropdown(!showSubjectDropdown);
+                    }
+                  }}
+                  className={`w-full text-xs font-bold text-zinc-700 cursor-pointer flex items-center justify-between min-h-[1.25rem] ${!reportSemester ? "opacity-40 cursor-not-allowed" : ""}`}
+                >
+                  <span className="truncate">
+                    {selectedReportSubjects.length === 0 
+                      ? "Overall (All Subjects)" 
+                      : `${selectedReportSubjects.length} Subject(s) Selected`}
+                  </span>
+                  <ChevronDown size={14} className="text-zinc-500 shrink-0" />
+                </div>
+
+                {showSubjectDropdown && reportSemester && (
+                  <div className="absolute right-0 left-0 mt-2 bg-white border border-zinc-200 rounded-2xl shadow-xl z-[150] max-h-60 overflow-y-auto p-2 space-y-1">
+                    <label className="flex items-center gap-2.5 p-2.5 hover:bg-zinc-50 rounded-xl cursor-pointer text-xs font-bold text-zinc-700">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedReportSubjects.length === 0} 
+                        onChange={() => { setSelectedReportSubjects([]); setShowSubjectDropdown(false); setGeneratedReport(null); }}
+                        className="rounded text-[#120c7a] focus:ring-[#120c7a] w-4 h-4 cursor-pointer"
+                      />
+                      <span>Overall (All Subjects)</span>
+                    </label>
+                    <div className="border-t border-zinc-100 my-1"></div>
+                    {availableReportSubjects.map(sub => {
+                      const isChecked = selectedReportSubjects.includes(sub.code);
+                      return (
+                        <label key={sub.code} className="flex items-center gap-2.5 p-2.5 hover:bg-zinc-50 rounded-xl cursor-pointer text-xs font-bold text-zinc-700">
+                          <input 
+                            type="checkbox" 
+                            checked={isChecked} 
+                            onChange={() => {
+                              setGeneratedReport(null);
+                              if (isChecked) {
+                                setSelectedReportSubjects(prev => prev.filter(c => c !== sub.code));
+                              } else {
+                                setSelectedReportSubjects(prev => [...prev, sub.code]);
+                              }
+                            }}
+                            className="rounded text-[#120c7a] focus:ring-[#120c7a] w-4 h-4 cursor-pointer"
+                          />
+                          <span className="truncate">{sub.code} - {sub.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">From Date</label>
+                <input 
+                  type="date" 
+                  value={reportFromDate} 
+                  min={reportDateRange.min || undefined}
+                  max={reportDateRange.max || undefined}
+                  onChange={(e) => { setReportFromDate(e.target.value); setGeneratedReport(null); }}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none [color-scheme:light]"
+                />
+              </div>
+
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
+                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">To Date</label>
+                <input 
+                  type="date" 
+                  value={reportToDate} 
+                  min={reportDateRange.min || undefined}
+                  max={reportDateRange.max || undefined}
+                  onChange={(e) => { setReportToDate(e.target.value); setGeneratedReport(null); }}
+                  className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none [color-scheme:light]"
+                />
+              </div>
+            </div>
+
+            {reportDateRange.min && reportDateRange.max && (
+              <div className="px-4 py-3 rounded-2xl bg-blue-50 border border-blue-100 text-[11px] font-semibold text-blue-700 flex items-center gap-2 flex-wrap">
+                <CalendarCheck2 size={14} className="text-blue-500" />
+                <span>Academic semester range: <strong>{reportDateRange.min}</strong> to <strong>{reportDateRange.max}</strong>. Report dates must fall within this range.</span>
+                {reportDatesOutsideSemester && (
+                  <span className="ml-auto inline-flex items-center gap-1 text-rose-600 bg-rose-100/60 px-2.5 py-0.5 rounded-full border border-rose-200/50 text-[10px] font-bold">
+                    <AlertCircle size={12} /> Outside Semester Range
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 border-t border-zinc-100 pt-4">
+              <button
+                onClick={handleGenerateBatchReport}
+                disabled={generatingReport || !reportBatch}
+                className="px-6 py-3 bg-[#120c7a] hover:bg-[#0f0a66] text-white text-xs font-extrabold rounded-2xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-98"
+              >
+                {generatingReport ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Analyzing database records...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} />
+                    <span>Generate Report</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Generated Report Preview */}
+            {generatedReport && (
+              <div className="mt-8 border-t border-zinc-200 pt-6 space-y-6">
+                
+                {/* Visual Analytics Dashboard */}
+                {generatedReport.students.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Total Students</span>
+                        <div className="p-1.5 bg-blue-100 text-blue-700 rounded-lg"><Users size={14} /></div>
+                      </div>
+                      <p className="text-2xl font-black text-zinc-800">{generatedReport.students.length}</p>
+                    </div>
+
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Classes Tracked</span>
+                        <div className="p-1.5 bg-sky-100 text-sky-700 rounded-lg"><Clock size={14} /></div>
+                      </div>
+                      <p className="text-2xl font-black text-zinc-800">{generatedReport.periods.length}</p>
+                    </div>
+
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Class Average</span>
+                        <div className={`p-1.5 rounded-lg ${parseFloat(averageAttendance) >= 75 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}><TrendingUp size={14} /></div>
+                      </div>
+                      <p className={`text-2xl font-black ${parseFloat(averageAttendance) >= 75 ? "text-emerald-600" : "text-rose-600"}`}>{averageAttendance}%</p>
+                    </div>
+
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Defaulters (&lt;75%)</span>
+                        <div className={`p-1.5 rounded-lg ${countBelow75 > 0 ? "bg-rose-100 text-rose-700" : "bg-zinc-100 text-zinc-400"}`}><AlertTriangle size={14} /></div>
+                      </div>
+                      <p className={`text-2xl font-black ${countBelow75 > 0 ? "text-rose-600" : "text-zinc-600"}`}>{countBelow75}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Progress bar indicator */}
+                {generatedReport.students.length > 0 && (
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-xs font-bold text-zinc-500 uppercase">Batch Average Attendance Progress</span>
+                      <span className="text-xs font-black text-indigo-700">{averageAttendance}%</span>
+                    </div>
+                    <div className="w-full bg-zinc-200 rounded-full h-3 overflow-hidden shadow-inner">
+                      <div 
+                        className={`h-full rounded-full bg-gradient-to-r ${parseFloat(averageAttendance) >= 75 ? "from-emerald-400 to-teal-500" : "from-rose-400 to-amber-500"}`}
+                        style={{ width: `${averageAttendance}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center flex-wrap gap-4 border-t border-zinc-200 pt-6">
+                  <div>
+                    <h3 className="text-sm font-black text-zinc-800">
+                      Report Preview: {generatedReport.batch} ({generatedReport.section})
+                    </h3>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">
+                      Range: {generatedReport.fromDate} to {generatedReport.toDate} &middot; {generatedReport.groupedPeriods ? generatedReport.groupedPeriods.length : 0} Days · {generatedReport.periods.length} Periods Found
+                      {generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 && (
+                        <span className="text-indigo-600 font-extrabold"> &middot; Subjects: {generatedReport.selectedSubjects.join(", ")}</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleExportCSV}
+                      className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.02] active:scale-98"
+                    >
+                      <FileSpreadsheet size={14} />
+                      <span>Export CSV</span>
+                    </button>
+                    <button
+                      onClick={handleExportPDF}
+                      className="px-4 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.02] active:scale-98"
+                    >
+                      <Download size={14} />
+                      <span>Export PDF</span>
+                    </button>
+                  </div>
+                </div>
+
+                {generatedReport.periods.length === 0 ? (
+                  <div className="p-8 text-center bg-zinc-50 border border-zinc-100 rounded-2xl">
+                    <AlertTriangle className="mx-auto text-amber-500 mb-2" size={24} />
+                    <h4 className="text-xs font-bold text-zinc-700">No periods found</h4>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">No attendance was marked for this batch in the selected date range.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Premium Search / Table filter input */}
+                    <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 focus-within:border-[#120c7a] focus-within:ring-2 focus-within:ring-[#120c7a]/10 transition-all max-w-md shadow-sm">
+                      <Search size={16} className="text-zinc-400" />
+                      <input 
+                        value={reportSearchQuery} 
+                        onChange={(e) => setReportSearchQuery(e.target.value)}
+                        className="w-full bg-transparent text-xs font-semibold outline-none placeholder:text-zinc-400 text-zinc-700"
+                        placeholder="Search student by name or register number..." 
+                      />
+                      {reportSearchQuery && (
+                        <button onClick={() => setReportSearchQuery("")} className="p-0.5 rounded-full hover:bg-zinc-200 transition-colors">
+                          <X size={14} className="text-zinc-400" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="overflow-x-auto border border-zinc-200 rounded-2xl shadow-inner bg-zinc-50 max-h-[450px]">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <>
+                          <thead className="bg-zinc-100 border-b border-zinc-200 sticky top-0 z-10">
+                            <tr>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider min-w-[100px]">Reg No</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider min-w-[150px]">Student Name</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center w-12">Sec</th>
+                              {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => (
+                                <th key={date} colSpan={periods.length} className={`px-1.5 py-2.5 text-[9px] font-extrabold uppercase text-center border-l-[3px] border-[#120c7a]/60 ${gi % 2 === 1 ? "bg-amber-50/80 text-amber-800" : "bg-sky-50/80 text-sky-800"}`} title={date}>
+                                  {date.slice(5).replace('-', '/')}
+                                </th>
+                              ))}
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Total</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">P</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">OD</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">A</th>
+                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Pct</th>
+                            </tr>
+                              <tr className="border-b border-zinc-200 bg-zinc-50/50">
+                                <th className="bg-transparent" colSpan={3}></th>
+                                {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
+                                  const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
+                                  const info = generatedReport.periodInfo?.[p];
+                                  return (
+                                    <th key={p} className={`px-1.5 py-1.5 text-[9px] font-extrabold text-zinc-500 uppercase text-center border-l border-zinc-250/60 ${gi % 2 === 1 ? "bg-amber-50/30" : "bg-sky-50/20"}`} title={p}>
+                                      <span className="block">P{pNum}</span>
+                                      {info && <span className="block text-[8px] text-[#120c7a] font-black mt-0.5 normal-case tracking-normal">({info})</span>}
+                                    </th>
+                                  );
+                                }))}
+                                <th className="bg-transparent" colSpan={5}></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200 bg-white">
+                              {filteredReportStudents.length === 0 ? (
+                                <tr>
+                                  <td colSpan={8 + generatedReport.periods.length} className="px-6 py-10 text-center text-xs text-zinc-400 italic font-medium">
+                                    No students match your search query.
+                                  </td>
+                                </tr>
+                              ) : (
+                                filteredReportStudents.map((student) => (
+                                  <tr key={student.reg} className="hover:bg-zinc-50/50 transition-colors">
+                                    <td className="px-3 py-2.5 text-xs font-semibold text-zinc-700">{student.reg}</td>
+                                    <td className="px-3 py-2.5 text-xs font-bold text-zinc-800">{student.name}</td>
+                                    <td className="px-3 py-2.5 text-xs text-zinc-500 text-center">{student.section.replace('Sec-', '')}</td>
+                                    {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
+                                      const val = student.dailyRecords[p];
+                                      let cellBg = "";
+                                      let cellText = "";
+                                      if (val === 'P') { cellBg = "bg-emerald-50 text-emerald-700 border-emerald-100"; cellText = "P"; }
+                                      else if (val === 'A') { cellBg = "bg-rose-50 text-rose-700 border-rose-100"; cellText = "A"; }
+                                      else if (val === 'OD') { cellBg = "bg-blue-50 text-blue-700 border-blue-100"; cellText = "OD"; }
+                                      else { cellBg = "text-zinc-300"; cellText = "—"; }
+
+                                      const isGroupStart = p === periods[0];
+                                      const groupBgClass = gi % 2 === 1
+                                        ? "bg-amber-50/50"
+                                        : "bg-sky-50/40";
+                                      const borderClass = isGroupStart && gi > 0
+                                        ? "border-l-[3px] border-l-[#120c7a]/60"
+                                        : "border-l border-l-zinc-200/50";
+
+                                      return (
+                                        <td key={p} className={`px-1 py-1.5 text-center ${groupBgClass} ${borderClass}`}>
+                                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${cellBg} shadow-sm`}>
+                                            {cellText}
+                                          </span>
+                                        </td>
+                                      );
+                                    }))}
+                                    <td className="px-3 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{student.total}</td>
+                                    <td className="px-3 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{student.attended}</td>
+                                    <td className="px-3 py-2.5 text-xs font-bold text-blue-600 text-center border-l border-zinc-200 bg-zinc-50">{student.od}</td>
+                                    <td className="px-3 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{student.absent}</td>
+                                    <td className={`px-3 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(student.percentage) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
+                                      {student.percentage}%
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </>
+                        </table>
+                      </div>
+                    </div>
+)}
+                </div>
+              )}
+            </div>
+          </div>
 
         {/* ═══ Attendance Overview ═══ */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
@@ -1958,6 +3000,51 @@ export default function HODDashboard() {
             </div>
             <div className="px-5 py-3 border-t border-zinc-100 text-right">
               <button onClick={() => setDetailModal({ open: false, title: '', students: [] })} className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-xs font-bold text-zinc-700 rounded-xl transition">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Preview Modal */}
+      {showReportPdfPreview && reportPdfUrl && (
+        <div className="fixed inset-0 bg-black/60 z-[250] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="bg-white px-6 py-4 border-b border-zinc-200 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-100 p-2.5 rounded-xl text-blue-600">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-zinc-900 leading-tight">Batch Attendance Report PDF Preview</h3>
+                  <p className="text-xs text-zinc-500">{reportPdfFilename}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (reportPdfDoc) {
+                      reportPdfDoc.save(reportPdfFilename);
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95 cursor-pointer"
+                >
+                  <Download size={16} /> Download PDF
+                </button>
+                <button
+                  onClick={() => {
+                    setShowReportPdfPreview(false);
+                    URL.revokeObjectURL(reportPdfUrl);
+                    setReportPdfUrl("");
+                    setReportPdfDoc(null);
+                  }}
+                  className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-xl transition-all cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-zinc-100 p-4 overflow-hidden">
+              <iframe src={reportPdfUrl} className="w-full h-full rounded-2xl border border-zinc-200 shadow-inner" title="PDF Preview" />
             </div>
           </div>
         </div>

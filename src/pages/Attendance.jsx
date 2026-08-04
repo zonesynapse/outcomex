@@ -1013,7 +1013,7 @@ export default function Attendance() {
       margin: { left: 14, right: 14 },
     });
 
-    doc.output('dataurlnewwindow');
+    doc.save(`Attendance_Report_${batchLabel || "Report"}_${subjectCode || "Subject"}.pdf`);
   };
 
   const filteredStudents = students.filter(s =>

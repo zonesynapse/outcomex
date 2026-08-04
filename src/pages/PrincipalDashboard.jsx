@@ -1186,17 +1186,17 @@ export default function PrincipalDashboard() {
                               {app.department || app.department2 || app.department3 || "-"}
                             </span>
                           </td>
-                           <td className="px-5 py-4 text-sm text-zinc-600">{formatDate(app.enquiryDate || app.createdAt)}</td>
-                           <td className="px-5 py-4">
-                             <span className="inline-flex px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
-                               {app.seatCategory || "-"}
-                             </span>
-                           </td>
-                           <td className="px-5 py-4">
-                             <span className="inline-flex px-2 py-0.5 bg-purple-50 text-purple-700 rounded-lg text-[10px] font-bold border border-purple-100">
-                               {app.studentCategory || "-"}
-                             </span>
-                           </td>
+                            <td className="px-5 py-4">
+                              <span className="inline-flex px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
+                                {app.quotaAskedFor || app.seatCategory || "-"}
+                              </span>
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className="inline-flex px-2 py-0.5 bg-purple-50 text-purple-700 rounded-lg text-[10px] font-bold border border-purple-100">
+                                {app.studentCategory || "-"}
+                              </span>
+                            </td>
+                            <td className="px-5 py-4 text-sm text-zinc-600">{formatDate(app.enquiryDate || app.createdAt)}</td>
                           <td className="px-5 py-4">
                             <div className="flex items-center justify-center gap-1.5">
                               <button onClick={(e) => { e.stopPropagation(); handleApprove(app); }}

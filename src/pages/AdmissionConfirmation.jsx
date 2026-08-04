@@ -55,6 +55,7 @@ export default function AdmissionConfirmation() {
   const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0, approved: 0 });
   const [searchResults, setSearchResults] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const { departments: allDeptMap } = useDepartments();
   const PAGE_SIZE = 20;
 
@@ -109,14 +110,14 @@ export default function AdmissionConfirmation() {
       })
       .catch((err) => console.error("Error fetching enquiry:", err))
       .finally(() => setLoading(false));
-  }, [enquiryId]);
+  }, [enquiryId, refreshTrigger]);
 
   useEffect(() => {
     if (enquiryId) return;
-    goToPage(1);
+    goToPage(currentPage);
     getEnquiriesCount().then((count) => setTotalCount(count)).catch(() => {});
     getEnquiriesStats().then(setStats).catch(() => {});
-  }, [enquiryId]);
+  }, [enquiryId, refreshTrigger]);
 
   useEffect(() => {
     if (!searchTerm.trim()) {
@@ -140,7 +141,7 @@ export default function AdmissionConfirmation() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, refreshTrigger]);
 
   const programmeOptions = useMemo(() => {
     return Object.keys(allDeptMap || {}).sort();
@@ -214,6 +215,7 @@ export default function AdmissionConfirmation() {
       });
       showToast("Application updated successfully");
       closeEditModal();
+      setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error("Edit save error:", error);
       showToast("Failed to update application", "error");

@@ -49,7 +49,8 @@ import {
   Download,
   Plus,
   Megaphone,
-  UserCheck
+  UserCheck,
+  Loader2
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -242,6 +243,8 @@ export default function Layout({ children, title }) {
   const { departments: allDepartments } = useDepartments();
   const profileRef = useRef(null);
   const fileInputRef = useRef(null);
+  const photoFileRef = useRef(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedModules, setExpandedModules] = useState({});
@@ -448,8 +451,8 @@ export default function Layout({ children, title }) {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 102400) { // limit 100KB for base64 storage
-        alert("Signature image must be less than 100KB");
+      if (file.size > 51200) { // limit 50KB for base64 storage
+        alert("Signature image must be less than 50KB");
         return;
       }
       const reader = new FileReader();
@@ -458,6 +461,34 @@ export default function Layout({ children, title }) {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 20480) { alert("Profile photo must be less than 20KB"); e.target.value = ""; return; }
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const dataUrl = reader.result;
+      setPhotoUploading(true);
+      try {
+        const path = userStoragePath(user.uid, "profile_photos", `photo_${user.uid}.jpg`);
+        const url = await uploadBase64(path, dataUrl);
+        const oldPhoto = userData?.photoURL;
+        if (oldPhoto && oldPhoto.startsWith("https://firebasestorage") && oldPhoto !== url) {
+          await deleteByUrl(oldPhoto).catch(() => {});
+        }
+        await setDoc(doc(db, "users", user.uid), { photoURL: url }, { merge: true });
+        setUserData(prev => ({ ...prev, photoURL: url }));
+        alert("Profile photo updated!");
+      } catch (error) {
+        console.error("Profile Photo Upload Error:", error);
+        alert("Failed to upload profile photo");
+      } finally {
+        setPhotoUploading(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const menuItems = [];
@@ -622,9 +653,13 @@ export default function Layout({ children, title }) {
             onClick={() => setIsProfileOpen(!isProfileOpen)}
             className="profile-trigger"
           >
-            <span className="profile-initials">
-              {userData?.facultyName ? userData.facultyName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'U'}
-            </span>
+            {userData?.photoURL ? (
+              <img src={userData.photoURL} alt="Profile" className="w-full h-full object-cover" />
+            ) : (
+              <span className="profile-initials">
+                {userData?.facultyName ? userData.facultyName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'U'}
+              </span>
+            )}
           </button>
           
           {isProfileOpen && (
@@ -632,10 +667,26 @@ export default function Layout({ children, title }) {
               {/* Header */}
               <div className="bg-gradient-to-br from-[#120c7a] to-blue-800 p-6 text-white">
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30 shadow-lg">
-                    <span className="text-2xl font-bold">
-                      {userData?.facultyName ? userData.facultyName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'U'}
-                    </span>
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center border border-white/30 shadow-lg overflow-hidden">
+                      {userData?.photoURL ? (
+                        <img src={userData.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-2xl font-bold">
+                          {userData?.facultyName ? userData.facultyName.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'U'}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => photoFileRef.current?.click()}
+                      disabled={photoUploading}
+                      className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white text-[#120c7a] flex items-center justify-center shadow-md border border-zinc-200 hover:bg-zinc-50 transition-all disabled:opacity-50"
+                      title="Upload Profile Photo (max 20KB)"
+                    >
+                      {photoUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    </button>
+                    <input type="file" accept="image/*" className="hidden" ref={photoFileRef} onChange={handlePhotoUpload} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-lg font-bold truncate leading-tight">
@@ -750,7 +801,7 @@ export default function Layout({ children, title }) {
                           </div>
                         )}
                       </div>
-                      <p className="text-[8px] text-zinc-400 text-center italic">Max size: 100KB, PNG with transparent background recommended</p>
+                      <p className="text-[8px] text-zinc-400 text-center italic">Max size: 50KB, PNG with transparent background recommended</p>
 
                       <button 
                         onClick={handleUpdateProfile}

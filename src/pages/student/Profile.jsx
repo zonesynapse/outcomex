@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
-import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X, ChevronDown, ChevronRight, Save, Phone, MapPin, BookOpen, Users, Heart, Award, Globe, Hash } from "lucide-react";
+import { doc, getDoc, getDocs, collection, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
+import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X, ChevronDown, ChevronRight, Save, Phone, MapPin, BookOpen, Users, Heart, Award, Globe, Hash, Camera } from "lucide-react";
 import { formatProgDisplay, sanitizeKey } from "../../lib/utils";
 import { getSeatConfigurationsRealtime } from "../../services/seatService";
 import { uploadBase64, userStoragePath, deleteByUrl } from "../../utils/fileUpload";
@@ -128,6 +128,9 @@ export default function StudentProfile() {
   const [editSig, setEditSig] = useState(false);
   const [sigUrl, setSigUrl] = useState("");
   const fileRef = useRef(null);
+  const photoFileRef = useRef(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [studentDocId, setStudentDocId] = useState("");
   const [regNo, setRegNo] = useState("");
   const [formData, setFormData] = useState({});
@@ -183,6 +186,20 @@ export default function StudentProfile() {
               const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
               if (idxSnap.exists()) {
                 sDocId = idxSnap.data().studentDocId || '';
+              }
+
+              // Fallback: scan students collection to find the doc containing this student
+              if (!sDocId) {
+                try {
+                  const studentsSnap = await getDocs(collection(db, 'students'));
+                  for (const d of studentsSnap.docs) {
+                    const sData = d.data();
+                    if (sData._order?.includes(reg) || sData[reg]) {
+                      sDocId = d.id;
+                      break;
+                    }
+                  }
+                } catch (_) {}
               }
             }
             setStudentDocId(sDocId);
@@ -252,7 +269,7 @@ export default function StudentProfile() {
   const handleSigUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 102400) { showToast("Max 100KB", "error"); return; }
+    if (file.size > 51200) { showToast("Max 50KB", "error"); return; }
     const reader = new FileReader();
     reader.onloadend = () => setSigUrl(reader.result);
     reader.readAsDataURL(file);
@@ -274,6 +291,37 @@ export default function StudentProfile() {
     setUserData(prev => ({ ...prev, signatureUrl: urlToSave }));
     setEditSig(false);
     showToast("Signature saved");
+  };
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 20480) { showToast("Photo must be under 20KB", "error"); e.target.value = ""; return; }
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const dataUrl = reader.result;
+      setPhotoPreview(dataUrl);
+      setPhotoUploading(true);
+      try {
+        const storagePath = userStoragePath(auth.currentUser.uid, 'profile_photos', 'profile.jpg');
+        const url = await uploadBase64(storagePath, dataUrl);
+        const oldPhoto = userData?.photoURL;
+        if (oldPhoto && oldPhoto.startsWith('http') && oldPhoto !== url) {
+          await deleteByUrl(oldPhoto).catch(() => {});
+        }
+        await setDoc(doc(db, "users", auth.currentUser.uid), { photoURL: url }, { merge: true });
+        setUserData(prev => ({ ...prev, photoURL: url }));
+        setPhotoPreview("");
+        showToast("Profile photo updated!");
+      } catch (err) {
+        console.error("Photo upload error:", err);
+        setPhotoPreview("");
+        showToast("Failed to upload photo", "error");
+      } finally {
+        setPhotoUploading(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleFieldChange = (key, value) => {
@@ -394,11 +442,15 @@ export default function StudentProfile() {
 
   const canEdit = userData.profileEditAccess === true;
 
+  const sectionFromDoc = (studentDocId.split('_').find(p => p.startsWith('Sec-')) || '').replace('Sec-', '');
+  const sectionDisplay = userData.section || sectionFromDoc || '';
+
   const infoRows = [
     { label: "Register Number", value: userData.regNo, icon: GraduationCap },
     { label: "Student Name", value: userData.studentName, icon: User },
     { label: "Programme", value: formatProgDisplay(userData.programme), icon: GraduationCap },
     { label: "Department", value: displayDept(userData.department), icon: GraduationCap },
+    { label: "Section", value: sectionDisplay, icon: Users },
     { label: "Batch", value: userData.batch, icon: Calendar },
     { label: "Email", value: userData.email, icon: Mail },
   ];
@@ -490,10 +542,28 @@ export default function StudentProfile() {
 
       <div className="bg-gradient-to-r from-[#120c7a] to-[#0e095e] rounded-2xl p-5 md:p-8 text-white mb-6 shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30">
-            <span className="text-2xl font-bold">
-              {userData.studentName?.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) || 'S'}
-            </span>
+          <div className="relative">
+            <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center border border-white/30 overflow-hidden">
+              {(photoPreview || userData.photoURL) ? (
+                <img src={photoPreview || userData.photoURL} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl font-bold">
+                  {userData.studentName?.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) || 'S'}
+                </span>
+              )}
+            </div>
+            <>
+              <button
+                type="button"
+                onClick={() => photoFileRef.current?.click()}
+                disabled={photoUploading}
+                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white text-[#120c7a] flex items-center justify-center shadow-md border border-zinc-200 hover:bg-zinc-50 transition-all disabled:opacity-50"
+                title="Upload Profile Photo (max 20KB)"
+              >
+                {photoUploading ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+              </button>
+              <input type="file" accept="image/*" className="hidden" ref={photoFileRef} onChange={handlePhotoChange} />
+            </>
           </div>
           <div className="flex-1">
             <h1 className="text-2xl font-bold">{userData.studentName}</h1>
@@ -543,7 +613,7 @@ export default function StudentProfile() {
                   </div>
                 )}
               </div>
-              <p className="text-[10px] text-zinc-400 italic">Max 100KB, PNG with transparent background</p>
+              <p className="text-[10px] text-zinc-400 italic">Max 50KB, PNG with transparent background</p>
               <div className="flex gap-2">
                 <button onClick={handleSaveSig} className="flex-1 py-2 bg-[#120c7a] text-white text-xs font-bold rounded-lg hover:bg-[#0e095e] transition-colors flex items-center justify-center gap-1">
                   <Check size={14} /> Save

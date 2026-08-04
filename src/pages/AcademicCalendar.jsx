@@ -43,6 +43,7 @@ export default function AcademicCalendar() {
   const [showSemesterForm, setShowSemesterForm] = useState(false);
   const [editingSemesterId, setEditingSemesterId] = useState(null);
   const [semesterForm, setSemesterForm] = useState({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' });
+  const [existingBatches, setExistingBatches] = useState([]);
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { batchRegulations } = useRegulations();
 
@@ -128,7 +129,40 @@ export default function AcademicCalendar() {
       setSemesterConfigs(configs);
     });
 
-    return () => { unsubDoc(); unsubEvents(); unsubCia(); unsubSem(); };
+    // Fetch unique batches in approved_admissions and students
+    let approvedBatches = new Set();
+    let studentBatches = new Set();
+
+    const combine = () => {
+      const merged = [...new Set([...approvedBatches, ...studentBatches])].sort((a, b) => b.localeCompare(a));
+      setExistingBatches(merged);
+    };
+
+    const unsubApproved = onSnapshot(collection(db, 'approved_admissions'), (snap) => {
+      approvedBatches = new Set();
+      snap.forEach(docSnap => {
+        const docId = docSnap.id;
+        const batchMatch = docId.match(/(\d{4}-\d{4})/);
+        if (batchMatch) {
+          approvedBatches.add(batchMatch[1]);
+        }
+      });
+      combine();
+    });
+
+    const unsubStudents = onSnapshot(collection(db, 'students'), (snap) => {
+      studentBatches = new Set();
+      snap.forEach(docSnap => {
+        const docId = docSnap.id;
+        const batchMatch = docId.match(/(\d{4}-\d{4})/);
+        if (batchMatch) {
+          studentBatches.add(batchMatch[1]);
+        }
+      });
+      combine();
+    });
+
+    return () => { unsubDoc(); unsubEvents(); unsubCia(); unsubSem(); unsubApproved(); unsubStudents(); };
   }, []);
 
   useEffect(() => {
@@ -165,15 +199,22 @@ export default function AcademicCalendar() {
   const availableBatches = useMemo(() => {
     if (!semesterForm.programme) return [];
     const progKey = formatProgrammeKey(semesterForm.programme);
-    // Try batchRegulations first — batches actually configured for this programme
+    
+    // Get all candidate batches for the programme
+    let candidateBatches = [];
     const mappedBatches = batchRegulations[progKey];
     if (mappedBatches && Object.keys(mappedBatches).length > 0) {
-      return Object.keys(mappedBatches).sort((a, b) => b.localeCompare(a));
+      candidateBatches = Object.keys(mappedBatches);
+    } else {
+      const duration = durations[progKey] || 4;
+      candidateBatches = getRecentBatches(duration);
     }
-    // Fall back to duration-based generation
-    const duration = durations[progKey] || 4;
-    return getRecentBatches(duration);
-  }, [semesterForm.programme, batchRegulations, durations]);
+
+    // Intersect with existingBatches in the system
+    return candidateBatches
+      .filter(b => existingBatches.includes(b))
+      .sort((a, b) => b.localeCompare(a));
+  }, [semesterForm.programme, batchRegulations, durations, existingBatches]);
 
   const isMaster = userEmail === 'cselab2022@gmail.com';
   const isAdmin = userRole === 'Admin' || isMaster;
@@ -830,14 +871,16 @@ export default function AcademicCalendar() {
                               setNewEvent(prev => ({
                                 ...prev, 
                                 ciaId: id, 
-                                title: config ? `${config.examName} (${config.program})` : prev.title
+                                title: config 
+                                  ? (config.program ? `${config.examName} (${config.program})` : `${config.examName} (${config.regulation})`)
+                                  : prev.title
                               }));
                             }}
                             className="w-full bg-blue-50 border-none rounded-2xl px-4 py-3 font-bold text-blue-700 focus:ring-2 focus:ring-blue-500 outline-none"
                           >
                             <option value="">-- Select CIA --</option>
                             {ciaConfigs.map(c => (
-                              <option key={c.id} value={c.id}>{c.examName} - {c.program} ({c.regulation})</option>
+                              <option key={c.id} value={c.id}>{c.examName} {c.program ? `- ${c.program}` : ""} ({c.regulation})</option>
                             ))}
                           </select>
                         </div>

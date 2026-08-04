@@ -10,7 +10,7 @@ import {
 import {
   User, Calendar, AlertTriangle, TrendingUp, Phone, MessageSquare,
   CheckCircle2, Clock, Award, Activity, Target, Briefcase, GraduationCap, BrainCircuit, Star,
-  Shield, X, Mail, ChevronRight, ShieldCheck, HeartPulse
+  Shield, X, Mail, ChevronRight, ShieldCheck, HeartPulse, Loader2
 } from "lucide-react";
 
 const SGI_WEIGHTS = {
