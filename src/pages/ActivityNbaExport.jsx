@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, onSnapshot, query } from "firebase/firestore";
 import { Download, Filter, Loader2, Globe, FileText, Award } from "lucide-react";
 import Layout from "../components/Layout";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
@@ -31,9 +31,17 @@ export default function ActivityNbaExport() {
     let list1 = [];
     let list2 = [];
 
+    const getMillis = (dateObj) => {
+      if (!dateObj) return 0;
+      if (typeof dateObj.toMillis === 'function') return dateObj.toMillis();
+      if (typeof dateObj.toDate === 'function') return dateObj.toDate().getTime();
+      if (dateObj.seconds) return dateObj.seconds * 1000;
+      const parsed = Date.parse(dateObj);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     const q1 = query(
-      collection(db, "activity_entries"),
-      orderBy("createdAt", "desc")
+      collection(db, "activity_entries")
     );
     const unsub1 = onSnapshot(q1, (snapshot) => {
       list1 = [];
@@ -41,16 +49,13 @@ export default function ActivityNbaExport() {
         list1.push({ id: d.id, ...d.data() });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading activity_entries:", err));
 
     const q2 = query(
-      collection(db, "step_activities"),
-      orderBy("createdAt", "desc")
+      collection(db, "step_activities")
     );
     const unsub2 = onSnapshot(q2, (snapshot) => {
       list2 = [];
@@ -76,9 +81,7 @@ export default function ActivityNbaExport() {
         });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading step_activities:", err));
@@ -125,17 +128,17 @@ export default function ActivityNbaExport() {
   };
 
   if (loading) {
-    return <Layout title="NBA Data Export"><div className="flex items-center justify-center p-12"><Loader2 className="animate-spin" size={32} /></div></Layout>;
+    return <Layout title="Activity NBA Export"><div className="flex items-center justify-center p-12"><Loader2 className="animate-spin" size={32} /></div></Layout>;
   }
 
   return (
-    <Layout title="NBA Data Export">
+    <Layout title="Activity NBA Export">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-800 via-emerald-900 to-teal-950 rounded-2xl p-6 text-white">
           <div className="flex items-center gap-3 mb-2">
             <Globe size={24} />
-            <h1 className="text-xl font-black">NBA / NAAC Data Export</h1>
+            <h1 className="text-xl font-black">Activity NBA Export</h1>
           </div>
           <p className="text-sm text-emerald-200">Criterion-wise approved activity data for NBA/NAAC compliance</p>
         </div>

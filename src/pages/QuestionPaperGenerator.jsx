@@ -145,14 +145,20 @@ export default function QuestionPaperGenerator() {
       editor.on('instanceReady', function () {
         try {
           editor.setData(qbQuestion || qbEditorData || '');
-          try { editor.focus(); } catch { /* ignore focus errors */ }
+        } catch { /* ignore */ }
+      });
+      editor.on('change', function () {
+        try {
+          const data = editor.getData();
+          setQbQuestion(data);
+          setQbEditorData(data);
         } catch { /* ignore */ }
       });
       handleCkImageUpload(editor);
     } catch (e) {
       console.error('initInlineQbEditor', e);
     }
-  }, [qbQuestion, qbEditorData]);
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
@@ -190,6 +196,17 @@ export default function QuestionPaperGenerator() {
     const maxNum = qpQuestions.reduce((max, q) => { const m = String(q?.qno || '').match(/\d+/); return m ? Math.max(max, parseInt(m[0], 10)) : max; }, 0);
     setQbQNo(String(maxNum + 1));
   }, [qpQuestions, qbAvailableQNos, isEditingQbRef]); // Add qbAvailableQNos to dependencies
+
+  // Clear CKEditor & reset question text state whenever qbQNo changes (unless in edit mode)
+  useEffect(() => {
+    if (isEditingQbRef.current) return;
+    setQbQuestion('');
+    setQbEditorData('');
+    try {
+      const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+      if (inst && typeof inst.setData === 'function') inst.setData('');
+    } catch (_err) { /* ignore */ }
+  }, [qbQNo]);
 
   // Added Effect: Sync qbMarks with partsConfig when qbQNo changes
   useEffect(() => {
@@ -2323,7 +2340,7 @@ export default function QuestionPaperGenerator() {
 
   const getQuestionByQNo = (questions, qnoExpected) => {
     const normalize = (s) => {
-      const raw = String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\((a|b)\)$/i, '$1');
+      const raw = String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
       const m = raw.match(/^(\d+)([a-z])?$/i);
       return m ? `${m[1]}${m[2] || ''}` : raw;
     };
@@ -2894,19 +2911,19 @@ export default function QuestionPaperGenerator() {
 
           const texts = Array.from(cells).map(c => c.textContent.trim());
 
-          // Match digits or digits+(a), digits+(b) etc.
+          // Match digits or digits+(a), digits+(b) etc. specifically from first cell (Q. No. column)
           let rowQ = '';
-          for (let i = 0; i < texts.length; i++) {
-            const m = texts[i].match(/^(\d+)\s*(?:\(?([ab])\)?)?/i);
-            if (m) {
-              rowQ = m[2] ? `${m[1]}(${m[2]})` : `${m[1]}`;
-              break;
-            }
-          }
+          const firstCellText = (texts[0] || '').trim();
 
-          // Skip separator rows like '(Or)'
+          // Skip separator rows like '(Or)' or empty first cell rows
           const isOrSeparator = texts.some(t => t.toLowerCase() === '(or)');
-          if (isOrSeparator && !rowQ) return;
+          if (isOrSeparator) return;
+
+          const cleanCellText = firstCellText.replace(/\s+/g, '');
+          const m = cleanCellText.match(/^(\d+)(?:\(?([a-zA-Z])\)?)?$/i) || firstCellText.match(/^(\d+)\s*(?:\(?([a-zA-Z])\)?)?$/i);
+          if (m && m[1]) {
+            rowQ = m[2] ? `${m[1]}(${m[2].toLowerCase()})` : `${m[1]}`;
+          }
 
           if (rowQ) {
             currentQno = rowQ;
@@ -2948,39 +2965,47 @@ export default function QuestionPaperGenerator() {
             if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
           }
 
-          // If CO or PI missing, peek at next row (often PI or continuation appears on next TR)
+          // If CO or PI missing, peek at next row only if it's a continuation row (not an (Or) row or next question row)
           if ((!co || !pi) && row.nextElementSibling) {
-            const nextCells = row.nextElementSibling.querySelectorAll('td');
-            if (nextCells && nextCells.length > 0) {
-              if (!co && coIndex >= 0 && nextCells.length > coIndex) {
-                const nextCo = getCellValue(nextCells[coIndex]);
-                if (/^CO\d+/i.test(nextCo)) co = nextCo;
-              }
-              if (!pi && piIndex >= 0 && nextCells.length > piIndex) {
-                const nextPi = getCellValue(nextCells[piIndex]);
-                if (nextPi && nextPi.trim() !== '' && !/^select\s*pi$/i.test(nextPi)) pi = nextPi;
-              }
+            const nextRowText = row.nextElementSibling.textContent.trim().toLowerCase();
+            const nextFirstCell = row.nextElementSibling.querySelector('td')?.textContent.trim() || '';
+            const isNextRowOr = nextRowText.includes('(or)');
+            const hasNextRowQNo = /^\d+/.test(nextFirstCell);
 
-              for (let i = 0; i < nextCells.length; i++) {
-                const val = getCellValue(nextCells[i]);
-                if (!co && /^CO\d+/i.test(val)) co = val;
-                if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
-                if (co && pi) break;
+            if (!isNextRowOr && !hasNextRowQNo) {
+              const nextCells = row.nextElementSibling.querySelectorAll('td');
+              if (nextCells && nextCells.length > 0) {
+                if (!co && coIndex >= 0 && nextCells.length > coIndex) {
+                  const nextCo = getCellValue(nextCells[coIndex]);
+                  if (/^CO\d+/i.test(nextCo)) co = nextCo;
+                }
+                if (!pi && piIndex >= 0 && nextCells.length > piIndex) {
+                  const nextPi = getCellValue(nextCells[piIndex]);
+                  if (nextPi && nextPi.trim() !== '' && !/^select\s*pi$/i.test(nextPi)) pi = nextPi;
+                }
+
+                for (let i = 0; i < nextCells.length; i++) {
+                  const val = getCellValue(nextCells[i]);
+                  if (!co && /^CO\d+/i.test(val)) co = val;
+                  if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
+                  if (co && pi) break;
+                }
               }
             }
           }
 
           // Basic validation
-          const qKey = rowQ || currentQno || '';
+          const qKey = rowQ || '';
+          const displayQKey = qKey.replace(/^(\d+)([a-zA-Z])$/, '$1($2)');
           if (qKey) {
             if (!questionText || questionText.toLowerCase().includes('enter your question here') || questionText.trim() === '') {
-              invalidEntries.push(`Question ${qKey} text is empty`);
+              invalidEntries.push(`Question ${displayQKey} text is empty`);
             }
             if (!co || co.trim() === '' || co.toUpperCase() === 'CO') {
-              invalidEntries.push(`CO for Question ${qKey} is empty`);
+              invalidEntries.push(`CO for Question ${displayQKey} is empty`);
             }
             if (!pi || pi.trim() === '' || pi.toUpperCase() === 'PI' || /^select\s*pi$/i.test(pi)) {
-              invalidEntries.push(`PI for Question ${qKey} is empty`);
+              invalidEntries.push(`PI for Question ${displayQKey} is empty`);
             }
           }
 
@@ -3023,29 +3048,36 @@ export default function QuestionPaperGenerator() {
         for (let j = 0; j < part.numQuestions; j++) {
           if (part.isEitherOr) {
             const qnoA = `${payloadQuestionCounter}(a)`;
+            const qnoAAlt = `${payloadQuestionCounter}a`;
             const qnoB = `${payloadQuestionCounter}(b)`;
+            const qnoBAlt = `${payloadQuestionCounter}b`;
+
+            const dataA = extractedData[qnoA] || extractedData[qnoAAlt] || {};
+            const dataB = extractedData[qnoB] || extractedData[qnoBAlt] || {};
+
             qs.push({
               qno: qnoA, sub: "a", either_or: true, marks: part.marksPerQuestion,
-              question: extractedData[qnoA]?.question || "",
-              co: extractedData[qnoA]?.co || "",
-              kl: extractedData[qnoA]?.kl || "",
-              pi: (extractedData[qnoA]?.pi && extractedData[qnoA].pi.toUpperCase() !== 'PI') ? extractedData[qnoA].pi : ""
+              question: dataA.question || "",
+              co: dataA.co || "",
+              kl: dataA.kl || "",
+              pi: (dataA.pi && dataA.pi.toUpperCase() !== 'PI') ? dataA.pi : ""
             });
             qs.push({
               qno: qnoB, sub: "b", either_or: true, marks: part.marksPerQuestion,
-              question: extractedData[qnoB]?.question || "",
-              co: extractedData[qnoB]?.co || "",
-              kl: extractedData[qnoB]?.kl || "",
-              pi: (extractedData[qnoB]?.pi && extractedData[qnoB].pi.toUpperCase() !== 'PI') ? extractedData[qnoB].pi : ""
+              question: dataB.question || "",
+              co: dataB.co || "",
+              kl: dataB.kl || "",
+              pi: (dataB.pi && dataB.pi.toUpperCase() !== 'PI') ? dataB.pi : ""
             });
           } else {
             const qno = `${payloadQuestionCounter}`;
+            const dataQ = extractedData[qno] || {};
             qs.push({
               qno: qno, either_or: false, marks: part.marksPerQuestion,
-              question: extractedData[qno]?.question || "",
-              co: extractedData[qno]?.co || "",
-              kl: extractedData[qno]?.kl || "",
-              pi: (extractedData[qno]?.pi && extractedData[qno].pi.toUpperCase() !== 'PI') ? extractedData[qno].pi : ""
+              question: dataQ.question || "",
+              co: dataQ.co || "",
+              kl: dataQ.kl || "",
+              pi: (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI') ? dataQ.pi : ""
             });
           }
           payloadQuestionCounter++;
@@ -3095,7 +3127,7 @@ export default function QuestionPaperGenerator() {
       section: section || '',
       qp_set: qpSet,
       parts: partsForPayload,
-      assignment_config: (assessmentType === 'Assignment' || assessmentType === 'Indirect') ? assignmentConfig : [],
+      assignment_config: (isAssignmentOrProject || assessmentType === 'Indirect') ? assignmentConfig : [],
       assessment_type: assessmentType,
       qpaper_name: exam === 'custom' ? examDisplay : exam,
       exam_name: examDisplay,
@@ -4410,14 +4442,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                     <div className="relative">
                       <select
                         value={qbQNo}
-                        onChange={e => {
-                          setQbQNo(e.target.value);
-                          // Reset editor content when manually switching question numbers
-                          try {
-                            const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
-                            if (inst && typeof inst.setData === 'function') inst.setData('');
-                          } catch (_err) { /* ignore */ }
-                        }}
+                        onChange={e => setQbQNo(e.target.value)}
                         className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                       >
                         {qbAvailableQNos && qbAvailableQNos.length > 0 ? (

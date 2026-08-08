@@ -500,36 +500,102 @@ Return an exhaustive list of all plausible mappings.`;
       const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}${sectionSuffix}`;
       const mappingRef = doc(db, 'mapping_summary', mappingDocId);
 
-      const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
-      const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
-      const courseRef = doc(db, 'courses', flatCourseKey);
-      const overallCourseRef = doc(db, 'courses', flatOverallKey);
+      // Helper function to query Course Bank documents across all key format variations
+      const fetchFromCourseBank = async () => {
+        try {
+          const progKey = formatProgrammeKey(programme);
+          const normProg = sharedSanitizeKey(programme);
+          const normDept = sharedSanitizeKey(department);
+          const normReg = sharedSanitizeKey(regulation);
+          const normSub = sharedSanitizeKey(subject);
 
-      setLoading(true);
+          // All possible doc ID keys used by CourseBank in Firestore
+          const candidateKeys = [
+            `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`,
+            `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`,
+            `${normProg}_${normDept}_${normReg}_${normSub}`,
+            `${normProg}_Overall_${normReg}_${normSub}`,
+            `${normProg}_${normDept}_${normSub}`,
+            `${normProg}_Overall_${normSub}`,
+            `${normProg}_${sanitizeKey(department)}_${normSub}`,
+            `${normProg}_${department}_${normSub}`
+          ];
+
+          for (const key of candidateKeys) {
+            const snap = await getDoc(doc(db, 'courses', key));
+            if (snap.exists()) {
+              const data = snap.data();
+              if (data?.co && Array.isArray(data.co) && data.co.length > 0) {
+                return data;
+              }
+              if (data?.code || data?.programme) {
+                return data;
+              }
+            }
+          }
+
+          // Fallback: Query collection or scan RTDB-migrated structure in courses collection
+          const coursesSnap = await getDocs(collection(db, 'courses'));
+          let matchedCourse = null;
+
+          coursesSnap.forEach(d => {
+            const docData = d.data();
+            const hasDirectFields = docData?.code || docData?.programme;
+
+            const extractSubCode = (str) => {
+              if (!str) return '';
+              const s = String(str).trim();
+              const parts = s.split(/[-_ ]/);
+              return parts[0] ? sharedSanitizeKey(parts[0]) : sharedSanitizeKey(s);
+            };
+
+            const targetCode = extractSubCode(subject);
+
+            if (hasDirectFields) {
+              const docSub = sharedSanitizeKey(docData.code);
+              const docSubCode = extractSubCode(docData.code);
+              const matchesSub = docSub === normSub || docSubCode === targetCode || docData.code === subject;
+              if (matchesSub) {
+                // Prefer document that actually has CO array entries
+                if (docData.co && Array.isArray(docData.co) && docData.co.length > 0) {
+                  matchedCourse = docData;
+                } else if (!matchedCourse) {
+                  matchedCourse = docData;
+                }
+              }
+            } else {
+              // RTDB nested structure: { dept: { reg: { code: { ... } } } }
+              Object.values(docData || {}).forEach(deptObj => {
+                if (!deptObj || typeof deptObj !== 'object') return;
+                Object.values(deptObj).forEach(regObj => {
+                  if (!regObj || typeof regObj !== 'object') return;
+                  Object.entries(regObj).forEach(([cCode, courseObj]) => {
+                    if (!courseObj || typeof courseObj !== 'object') return;
+                    const cSub = sharedSanitizeKey(cCode);
+                    const cSubCode = extractSubCode(cCode);
+                    if (cSub === normSub || cSubCode === targetCode || cCode === subject || sharedSanitizeKey(courseObj.code) === normSub) {
+                      if (courseObj.co && Array.isArray(courseObj.co) && courseObj.co.length > 0) {
+                        matchedCourse = courseObj;
+                      } else if (!matchedCourse) {
+                        matchedCourse = courseObj;
+                      }
+                    }
+                  });
+                });
+              });
+            }
+          });
+
+          return matchedCourse;
+        } catch (e) {
+          console.error("fetchFromCourseBank error:", e);
+          return null;
+        }
+      };
 
       const checkCourseBank = async () => {
-        try {
-          const snap = await getDoc(courseRef);
-          if (snap.exists()) {
-            setIsCourseBankSubject(true);
-            return;
-          }
-          const overallSnap = await getDoc(overallCourseRef);
-          if (overallSnap.exists()) {
-            setIsCourseBankSubject(true);
-            return;
-          }
-          // Also try CourseBank's 3-part key format: progKey_deptKey_subjectCode (uses shared sanitizeKey that replaces spaces)
-          const bankCourseKey = `${sharedSanitizeKey(programme)}_${sharedSanitizeKey(department)}_${sharedSanitizeKey(subject)}`;
-          const bankSnap = await getDoc(doc(db, 'courses', bankCourseKey));
-          if (bankSnap.exists()) {
-            setIsCourseBankSubject(true);
-          } else {
-            setIsCourseBankSubject(false);
-          }
-        } catch (e) {
-          setIsCourseBankSubject(false);
-        }
+        const bankData = await fetchFromCourseBank();
+        setIsCourseBankSubject(!!bankData);
       };
 
       checkCourseBank();
@@ -537,8 +603,9 @@ Return an exhaustive list of all plausible mappings.`;
       // Fetch COs
       unsubCo = onSnapshot(coRef, async (snapshot) => {
         const data = snapshot.data();
+        let loadedCOs = [];
         if (data) {
-          const loadedCOs = Object.entries(data)
+          loadedCOs = Object.entries(data)
             .filter(([code]) => code.startsWith('CO'))
             .map(([code, val]) => {
               if (typeof val === 'object' && val !== null) {
@@ -556,48 +623,34 @@ Return an exhaustive list of all plausible mappings.`;
               const numB = parseInt(String(b.code || "").replace(/\D/g, "")) || 0;
               return numA - numB;
             });
-          setCoData(loadedCOs.length > 0 ? loadedCOs : [{ code: "CO1", description: "", domain: "", level: "" }]);
-        } else {
-          // Fallback to Course Bank data if document not found in course_outcomes
-          try {
-            const progKey = formatProgrammeKey(programme);
-            const flatCourseKey = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
-            const flatOverallKey = `${progKey}_Overall_${sanitizeKey(regulation)}_${sanitizeKey(subject)}`;
-            // CourseBank 3-part key format (no regulation in key, uses shared sanitizeKey that replaces spaces)
-            const bankCourseKey = `${sharedSanitizeKey(programme)}_${sharedSanitizeKey(department)}_${sharedSanitizeKey(subject)}`;
-            
-            let bankSnap = await getDoc(doc(db, 'courses', flatCourseKey));
-            if (!bankSnap.exists()) {
-              bankSnap = await getDoc(doc(db, 'courses', flatOverallKey));
-            }
-            if (!bankSnap.exists()) {
-              bankSnap = await getDoc(doc(db, 'courses', bankCourseKey));
-            }
-
-            if (bankSnap.exists()) {
-              const bankData = bankSnap.data();
-              if (bankData.co && Array.isArray(bankData.co)) {
-                const bankCOs = bankData.co.map(c => ({
-                  code: c.id,
-                  description: c.description || "",
-                  domain: c.domain || "",
-                  level: c.level || ""
-                })).sort((a, b) => {
-                  const numA = parseInt(String(a.code || "").replace(/\D/g, "")) || 0;
-                  const numB = parseInt(String(b.code || "").replace(/\D/g, "")) || 0;
-                  return numA - numB;
-                });
-                if (bankCOs.length > 0) {
-                  setCoData(bankCOs);
-                  return;
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Course bank fallback fetch error:", e);
-          }
-          setCoData([{ code: "CO1", description: "", domain: "", level: "" }]);
         }
+
+        // If the course_outcomes doc exists but has no CO keys (empty/partial doc),
+        // fall back to Course Bank data so COs entered there are still shown.
+        if (loadedCOs.length > 0) {
+          setCoData(loadedCOs);
+          return;
+        }
+
+        // Fallback to Course Bank data if document not found or has no COs in course_outcomes
+        const bankData = await fetchFromCourseBank();
+        if (bankData && bankData.co && Array.isArray(bankData.co)) {
+          const bankCOs = bankData.co.map(c => ({
+            code: c.id,
+            description: c.description || "",
+            domain: c.domain || "",
+            level: c.level || ""
+          })).sort((a, b) => {
+            const numA = parseInt(String(a.code || "").replace(/\D/g, "")) || 0;
+            const numB = parseInt(String(b.code || "").replace(/\D/g, "")) || 0;
+            return numA - numB;
+          });
+          if (bankCOs.length > 0) {
+            setCoData(bankCOs);
+            return;
+          }
+        }
+        setCoData([{ code: "CO1", description: "", domain: "", level: "" }]);
       });
 
       // Fetch PO/PSO
@@ -695,9 +748,9 @@ Return an exhaustive list of all plausible mappings.`;
     const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`;
     const coDict = {};
     coData.forEach(co => {
-      if (co.description.trim()) {
+      if (co.code) {
         coDict[co.code] = {
-          description: co.description,
+          description: co.description || "",
           domain: co.domain || "",
           level: co.level || ""
         };

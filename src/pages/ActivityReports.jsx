@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot, query, orderBy, doc, getDoc, where } from "firebase/firestore";
+import { collection, onSnapshot, query, doc, getDoc, where } from "firebase/firestore";
 import { 
   FileText, Download, Filter, Loader2, Calendar, BarChart3, 
   Users, Award, Pencil, Printer, X, Eye, CheckCircle2 
@@ -17,6 +17,8 @@ const getCategoryFromCode = (code) => {
   if (code.startsWith("C")) return "faculty";
   return "student";
 };
+
+const normalizeDept = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 export default function ActivityReports() {
   const navigate = useNavigate();
@@ -85,8 +87,8 @@ export default function ActivityReports() {
     const userDept = currentUserData?.department || currentUserData?.assignedDepartment || currentUserData?.departmentName || currentUserData?.dept || currentUserData?.deptName || currentUserData?.facultyDepartment || currentUserData?.departmentCode || "";
     
     return approvedReports.filter(rep => {
-      if (userRole === "HOD" && userDept && rep.department !== userDept) return false;
-      if (selectedDept && rep.department !== selectedDept) return false;
+      if (userRole === "HOD" && userDept && normalizeDept(rep.department) !== normalizeDept(userDept)) return false;
+      if (selectedDept && normalizeDept(rep.department) !== normalizeDept(selectedDept)) return false;
       if (selectedMonth && parseInt(rep.month) !== parseInt(selectedMonth)) return false;
       if (selectedYear && rep.year !== selectedYear) return false;
       return true;
@@ -114,9 +116,17 @@ export default function ActivityReports() {
     let list1 = [];
     let list2 = [];
 
+    const getMillis = (dateObj) => {
+      if (!dateObj) return 0;
+      if (typeof dateObj.toMillis === 'function') return dateObj.toMillis();
+      if (typeof dateObj.toDate === 'function') return dateObj.toDate().getTime();
+      if (dateObj.seconds) return dateObj.seconds * 1000;
+      const parsed = Date.parse(dateObj);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     const q1 = query(
-      collection(db, "activity_entries"),
-      orderBy("createdAt", "desc")
+      collection(db, "activity_entries")
     );
     const unsub1 = onSnapshot(q1, (snapshot) => {
       list1 = [];
@@ -124,16 +134,13 @@ export default function ActivityReports() {
         list1.push({ id: d.id, ...d.data() });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading activity_entries:", err));
 
     const q2 = query(
-      collection(db, "step_activities"),
-      orderBy("createdAt", "desc")
+      collection(db, "step_activities")
     );
     const unsub2 = onSnapshot(q2, (snapshot) => {
       list2 = [];
@@ -159,9 +166,7 @@ export default function ActivityReports() {
         });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading step_activities:", err));

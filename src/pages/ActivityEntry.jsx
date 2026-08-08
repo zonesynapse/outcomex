@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, addDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, addDoc, getDocs, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { 
   Award, Clock, Eye, Download, Check, X, Search, Filter, Users, Loader2,
   Settings, Plus, Trash2, Save, BookOpen, ListTodo, Target, ChevronRight, Info,
@@ -29,6 +29,7 @@ const getCategoryFromCode = (code) => {
 export default function ActivityEntry() {
   const { code, id } = useParams(); // e.g., "A5" or "A5/edit/docId"
   const navigate = useNavigate();
+  const isFacultyActivity = getCategoryFromCode(code) === "faculty";
   
   const [currentUserData, setCurrentUserData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -50,10 +51,21 @@ export default function ActivityEntry() {
     if (!formData.programme) return [];
     const allDepts = (PROGRAMME_DEPARTMENTS[formatProgrammeKey(formData.programme)] || []).sort();
     if (!id && currentUserData?.department) {
-      return allDepts.filter(d => d === currentUserData.department);
+      const norm = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const matched = allDepts.filter(d => norm(d) === norm(currentUserData.department));
+      if (matched.length > 0) return matched;
     }
     return allDepts;
   }, [formData.programme, PROGRAMME_DEPARTMENTS, id, currentUserData?.department]);
+  // Sync department value to config format once options load (avoids select mismatch)
+  useEffect(() => {
+    if (!currentUserData?.department || !formData.programme || id) return;
+    const norm = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const match = departmentOptions.find(d => norm(d) === norm(currentUserData.department));
+    if (match && match !== formData.department) {
+      setFormData(prev => ({ ...prev, department: match }));
+    }
+  }, [departmentOptions, currentUserData?.department, formData.programme, formData.department, id]);
   const activeBatchesList = useMemo(() => {
     if (!formData.programme) return [];
     const progKey = formatProgrammeKey(formData.programme);
@@ -123,7 +135,7 @@ export default function ActivityEntry() {
           if (snap.exists()) {
             const data = snap.data();
             setCurrentUserData(data);
-            // Pre-fill form with user data
+            // Pre-fill form with user data (normalize department to config format if possible)
             setFormData(prev => ({
               ...prev,
               department: data.department || "",
@@ -312,6 +324,10 @@ export default function ActivityEntry() {
       });
     }
     
+    // Validate required basic info fields
+    if (!formData.programme) newErrors.programme = "Programme is required";
+    if (!formData.department) newErrors.department = "Department is required";
+    
     // Check evidence files for required activities
     if (activityConfig?.evidenceRequired && uploadedFiles.length === 0) {
       newErrors.evidence = "At least one evidence file is required";
@@ -400,13 +416,39 @@ export default function ActivityEntry() {
       }
 
       const evidenceFiles = await uploadEvidenceFiles();
+      
+      // Student activities go to the assigned mentor for first-level approval
+      let initialStatus = "Pending";
+      let mentorUid = "";
+      let mentorName = "";
+      const isStudentActivity = getCategoryFromCode(code) === "student";
+      const isStudentRole = currentUserData?.role === "Student";
+      if (isStudentActivity && isStudentRole && currentUserData?.regNo) {
+        try {
+          const allocSnap = await getDocs(collection(db, "mentor_allocations"));
+          allocSnap.forEach(docSnap => {
+            const studs = docSnap.data().students || {};
+            const info = studs[currentUserData.regNo];
+            if (info && info.mentorUid) {
+              mentorUid = info.mentorUid;
+              mentorName = info.mentorName || "";
+            }
+          });
+        } catch (err) {
+          console.error("Error looking up mentor allocation:", err);
+        }
+        if (mentorUid) initialStatus = "Mentor_Pending";
+      }
+
       const dataToSave = {
         ...formData,
         month,
         activityCode: code,
         activityName: activityConfig.name,
         category: getCategoryFromCode(code),
-        status: "Pending",
+        status: initialStatus,
+        mentorUid,
+        mentorName,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         submittedBy: currentUserData?.facultyName || currentUserData?.studentName || currentUserData?.displayName,
@@ -424,8 +466,22 @@ export default function ActivityEntry() {
         docRef = await addDoc(collection(db, "activity_entries"), dataToSave);
       }
       
-      // Create notification for HOD
-      if (currentUserData?.department) {
+      // Create notification for mentor (student activities) or HOD
+      if (mentorUid) {
+        await addDoc(collection(db, "notifications"), {
+          type: "activity_submitted",
+          activityId: docRef.id || draftId,
+          activityCode: code,
+          activityName: activityConfig.name,
+          department: currentUserData.department,
+          submittedBy: currentUserData.facultyName || currentUserData.studentName || currentUserData.displayName,
+          submittedById: auth.currentUser?.uid,
+          targetUid: mentorUid,
+          targetName: mentorName,
+          createdAt: serverTimestamp(),
+          read: false
+        });
+      } else if (currentUserData?.department) {
         await addDoc(collection(db, "notifications"), {
           type: "activity_submitted",
           activityId: docRef.id || draftId,
@@ -440,8 +496,8 @@ export default function ActivityEntry() {
       }
       
       setSubmitted(true);
-      alert("Activity saved successfully!");
-      navigate("/activities");
+      alert(mentorUid ? "Activity submitted for mentor approval!" : "Activity saved successfully!");
+      navigate(`/activities?tab=${getCategoryFromCode(code)}`);
     } catch (err) {
       console.error("Error saving:", err);
       alert("Failed to save. Please try again.");
@@ -461,7 +517,7 @@ export default function ActivityEntry() {
 
   if (loading) {
     return (
-      <Layout title="New Activity Entry">
+      <Layout title="Activity Entry">
         <div className="min-h-[60vh] flex items-center justify-center">
           <Loader2 className="animate-spin text-[#120c7a]" size={40} />
         </div>
@@ -471,7 +527,7 @@ export default function ActivityEntry() {
 
   if (!activityConfig) {
     return (
-      <Layout title="New Activity Entry">
+      <Layout title="Activity Entry">
         <div className="max-w-md mx-auto my-12 bg-white rounded-3xl border border-zinc-100 p-8 shadow-sm text-center">
           <AlertTriangle className="text-amber-500 mx-auto mb-4" size={48} />
           <h2 className="text-lg font-black text-zinc-800">Activity Not Found</h2>
@@ -518,7 +574,7 @@ export default function ActivityEntry() {
             <CheckCircle2 size={20} className="text-emerald-600" />
             <div>
               <p className="text-sm font-bold text-emerald-800">Submitted Successfully!</p>
-              <p className="text-xs text-emerald-600">Your activity has been submitted for HOD approval. You'll be notified once reviewed.</p>
+              <p className="text-xs text-emerald-600">Your activity has been submitted for review. You'll be notified once approved.</p>
             </div>
             <button onClick={() => navigate("/activities")} className="ml-auto px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700">
               View All Activities
@@ -545,9 +601,10 @@ export default function ActivityEntry() {
                 >
                   <option value="">Select Programme</option>
                   {Object.keys(PROGRAMME_DEPARTMENTS).sort().map(p => (
-                    <option key={p} value={formatProgDisplay(p)}>{formatProgDisplay(p)}</option>
+                    <option key={p} value={p}>{formatProgDisplay(p)}</option>
                   ))}
                 </select>
+                {errors.programme && <p className="text-[10px] text-red-500 mt-1">{errors.programme}</p>}
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department <span className="text-red-500">*</span></label>
@@ -565,60 +622,77 @@ export default function ActivityEntry() {
                 </select>
                 {errors.department && <p className="text-[10px] text-red-500 mt-1">{errors.department}</p>}
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Batch <span className="text-red-500">*</span></label>
-                <select
-                  value={formData.batch}
-                  onChange={e => handleInputChange('batch', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  disabled={!formData.programme}
-                  required
-                >
-                  <option value="">{formData.programme ? "Select Batch" : "Select Programme first"}</option>
-                  {activeBatchesList.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-                {errors.batch && <p className="text-[10px] text-red-500 mt-1">{errors.batch}</p>}
-              </div>
+              {!isFacultyActivity && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Batch <span className="text-red-500">*</span></label>
+                  <select
+                    value={formData.batch}
+                    onChange={e => handleInputChange('batch', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    disabled={!formData.programme}
+                    required
+                  >
+                    <option value="">{formData.programme ? "Select Batch" : "Select Programme first"}</option>
+                    {activeBatchesList.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                  {errors.batch && <p className="text-[10px] text-red-500 mt-1">{errors.batch}</p>}
+                </div>
+              )}
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Academic Year <span className="text-red-500">*</span></label>
-                <select
-                  value={formData.academicYear}
-                  onChange={e => handleInputChange('academicYear', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  disabled={!formData.batch}
-                  required
-                >
-                  <option value="">{formData.batch ? "Select Academic Year" : "Select Batch first"}</option>
-                  {formData.batch && getAcademicYears(formData.batch).map(ay => (
-                    <option key={ay} value={ay}>{ay}</option>
-                  ))}
-                </select>
+                {isFacultyActivity ? (
+                  <input
+                    type="text"
+                    value={formData.academicYear || ""}
+                    onChange={e => handleInputChange('academicYear', e.target.value)}
+                    placeholder="e.g. 2024-2025"
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    required
+                  />
+                ) : (
+                  <select
+                    value={formData.academicYear}
+                    onChange={e => handleInputChange('academicYear', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    disabled={!formData.batch}
+                    required
+                  >
+                    <option value="">{formData.batch ? "Select Academic Year" : "Select Batch first"}</option>
+                    {formData.batch && getAcademicYears(formData.batch).map(ay => (
+                      <option key={ay} value={ay}>{ay}</option>
+                    ))}
+                  </select>
+                )}
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Semester <span className="text-red-500">*</span></label>
-                <select
-                  value={formData.semester}
-                  onChange={e => handleInputChange('semester', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  disabled={!formData.batch || !formData.academicYear || semesterOptions.length === 0}
-                  required
-                >
-                  <option value="">{!formData.batch || !formData.academicYear ? "Select Batch & Academic Year first" : "Select Semester"}</option>
-                  {semesterOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Section</label>
-                <select
-                  value={formData.section}
-                  onChange={e => handleInputChange('section', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  disabled={!formData.programme || !formData.department || !formData.batch || availableSections.length === 0}
-                >
-                  <option value="">{availableSections.length === 0 && formData.programme && formData.department && formData.batch ? "No sections configured" : "Select Section"}</option>
-                  {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
+              {!isFacultyActivity && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Semester <span className="text-red-500">*</span></label>
+                  <select
+                    value={formData.semester}
+                    onChange={e => handleInputChange('semester', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    disabled={!formData.batch || !formData.academicYear || semesterOptions.length === 0}
+                    required
+                  >
+                    <option value="">{!formData.batch || !formData.academicYear ? "Select Batch & Academic Year first" : "Select Semester"}</option>
+                    {semesterOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              )}
+              {!isFacultyActivity && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Section</label>
+                  <select
+                    value={formData.section}
+                    onChange={e => handleInputChange('section', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    disabled={!formData.programme || !formData.department || !formData.batch || availableSections.length === 0}
+                  >
+                    <option value="">{availableSections.length === 0 && formData.programme && formData.department && formData.batch ? "No sections configured" : "Select Section"}</option>
+                    {availableSections.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Date <span className="text-red-500">*</span></label>
                 <input

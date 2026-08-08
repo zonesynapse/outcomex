@@ -39,7 +39,7 @@ export default function ActivityPicker() {
   }, [groupedActivities, searchQuery]);
 
   return (
-    <Layout title="New Activity">
+    <Layout title="Activity Picker">
       <div className="p-4 md:p-8 max-w-6xl mx-auto">
         {/* Search */}
         <div className="relative mb-8">

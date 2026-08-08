@@ -512,7 +512,12 @@ export default function CoPoMapping() {
       const allCoKeysSet = new Set();
       directChildren.forEach(child => {
         Object.keys(child.data.co_max_marks || {}).forEach(k => {
-          allCoKeysSet.add(k);
+          allCoKeysSet.add(k.toUpperCase());
+        });
+        Object.values(child.data.students || {}).forEach(marks => {
+          Object.keys(marks || {}).forEach(k => {
+            if (/^CO\d+/i.test(k)) allCoKeysSet.add(k.toUpperCase());
+          });
         });
       });
 
@@ -528,24 +533,35 @@ export default function CoPoMapping() {
         let totalMaxMark = 0;
 
         directChildren.forEach(child => {
-          const childMax = Number(child.data.co_max_marks?.[co] || 0);
+          const cmm = child.data.co_max_marks || {};
+          const childMaxKey = Object.keys(cmm).find(k => k.toUpperCase() === co) || co;
+          const childMax = Number(cmm[childMaxKey] || 0);
           totalMaxMark += childMax;
           Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
-            const mark = Number(marks?.[co] || 0);
+            const markKey = Object.keys(marks || {}).find(k => k.toUpperCase() === co);
+            const mark = Number((markKey ? marks[markKey] : marks?.[co]) || 0);
             mergedStudentMarks[studentId] = (mergedStudentMarks[studentId] || 0) + mark;
           });
         });
+
+        // If co_max_marks has 0 for this CO but students have marks, derive max from data
+        if (totalMaxMark === 0) {
+          const maxMark = Math.max(0, ...Object.values(mergedStudentMarks));
+          if (maxMark > 0) totalMaxMark = maxMark;
+        }
 
         let countGreaterEqual = 0;
         let countLess = 0;
         const totalStudents = Object.keys(mergedStudentMarks).length;
 
         Object.values(mergedStudentMarks).forEach(total => {
-          const markPct = totalMaxMark > 0 ? (total / totalMaxMark) * 100 : 0;
-          if (markPct >= Number(mappingCutoff || 0)) {
-            countGreaterEqual++;
-          } else {
-            countLess++;
+          if (totalMaxMark > 0) {
+            const markPct = (total / totalMaxMark) * 100;
+            if (markPct >= Number(mappingCutoff || 0)) {
+              countGreaterEqual++;
+            } else {
+              countLess++;
+            }
           }
         });
 
@@ -570,7 +586,7 @@ export default function CoPoMapping() {
       const pctIndirectTotal = (diSplit.indirect || 0) / 100;
 
       coKeysLocal.forEach(co => {
-        const directLevel = attainmentStats[co]?.attainmentLevel || attainmentStats[String(co).toUpperCase()]?.attainmentLevel || 0;
+        const directLevel = attainmentStats[co]?.attainmentLevel || 0;
 
         let indirectTotalVal = 0;
         let totalIndirectSubmissions = 0;
@@ -674,8 +690,10 @@ export default function CoPoMapping() {
     const poAvgNum = nonZeroContrib.length > 0 ? (nonZeroContrib.reduce((a, b) => a + b, 0) / nonZeroContrib.length) : 0;
     const hasFirstAverage = mappingAvgNum > 0;
     const hasSecondAverage = nonZeroContrib.length > 0;
-    const poAvgStr = hasSecondAverage ? poAvgNum.toFixed(2) : '';
-    const poAvgDisplay = hasFirstAverage && !hasSecondAverage ? 'Questions are not taken' : poAvgStr;
+    const hasAnyMappedCo = markedCounts.some(mc => mc > 0);
+    const mappedCoHasData = coCodes.some((co, idx) => markedCounts[idx] > 0 && finalOverallAtt && finalOverallAtt[co] !== undefined);
+    const poAvgStr = hasSecondAverage ? poAvgNum.toFixed(2) : (hasAnyMappedCo ? '0.00' : '');
+    const poAvgDisplay = hasFirstAverage && !mappedCoHasData ? 'Questions are not taken' : poAvgStr;
 
     // Determine attainment status: compare rounded averages (2 decimals)
     let statusElem = null;
@@ -789,7 +807,7 @@ export default function CoPoMapping() {
 
         {/* PO Attainment (computed from CO final attainment and mapping grades) */}
         {contributions.map((c, i) => (
-          <td key={`attainment-${coCodes[i]}`} className="px-4 py-2 border border-slate-500 text-center bg-[#ffe599]">{c > 0 ? c.toFixed(2) : ''}</td>
+          <td key={`attainment-${coCodes[i]}`} className="px-4 py-2 border border-slate-500 text-center bg-[#ffe599]">{markedCounts[i] > 0 ? c.toFixed(2) : ''}</td>
         ))}
 
         {/* Final Average (average of CO contributions for this PO) */}

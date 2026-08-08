@@ -370,3 +370,49 @@
   - Added `sourceDocId: docSnap.id` to each student object during list building (tracks which `students` doc the student came from)
   - In `openProfile`, added fallback after `student_index` fails: reads `_student_data[reg]` directly from `students/{sourceDocId}` with real-time listener
   - Existing `_profile_data` fallback kept as last-resort
+
+### 38. Activity module — programme/department format mismatches + silent query failures
+- **Problem**: Faculty activities saved via ActivityEntry didn't show in ActivityList/ActivityApproval (all tabs = 0). Two root causes:
+  1. **Programme format mismatch**: `users.programme` stores the raw key (`B_E`) but ActivityEntry previously saved the display format (`B.E.`) — faculty filter never matched. Fixed by storing raw keys in the programme `<select>` (`value={p}`).
+  2. **Department format mismatch**: `step_activities` stores underscored dept (`B_E_ Bio Medical Engineering`) while `activity_entries`/`users` use dots (`B.E. Bio Medical Engineering`).
+  3. **Firestore `orderBy` silent failure**: `ActivityEntry.jsx` writes `createdAt: serverTimestamp()` (Timestamp) but `StepPoints.jsx` writes `createdAt: new Date().toISOString()` (string). Any doc with mixed/missing `createdAt` types makes `orderBy("createdAt","desc")` fail the ENTIRE query — only the console error handler fires, so lists stay empty.
+  4. **`localeCompare` crash**: Sorting with `dateB.localeCompare(dateA)` throws `TypeError` on Firestore Timestamp objects, crashing the onSnapshot callback before `setActivities` runs.
+- **Fixes**:
+  - Added shared normalizers: `normalizeDept = (d) => (d||'').replace(/[._]/g,'').replace(/\s+/g,' ').trim().toLowerCase()` and `normalizeProg = (p) => (p||'').replace(/[._\s]/g,'').trim().toLowerCase()` in ActivityList.jsx, ActivityApproval.jsx, ActivityReports.jsx.
+  - `matchesDept`/`matchesProg` are resilient to missing fields (`!act.department ||`, `!act.programme ||`) so blank fields never filter everything out.
+  - ActivityEntry.jsx: programme select stores raw keys; new effect syncs `formData.department` to config format; `validateForm()` requires programme + department; programme error display added.
+  - ActivityApproval.jsx: `deptOptions` adds `userDept` first and dedupes by `normalizeDept` (fixes blank dropdown).
+  - **ActivityList.jsx, ActivityReports.jsx, ActivityNbaExport.jsx**: removed `orderBy("createdAt","desc")` from both `activity_entries` and `step_activities` queries — sort purely client-side with a `getMillis()` helper that handles Timestamps (`.toMillis()`/`.toDate()`), `{seconds}` objects, and ISO strings. Removed unused `orderBy` imports.
+- **createdAt formats**: `activity_entries` → `serverTimestamp()` (Timestamp, ActivityEntry.jsx); `step_activities` → `new Date().toISOString()` (string, StepPoints.jsx:433,526).
+- Build passes.
+
+### 39. Activity module — "SUBMITTED BY" column showing N/A
+- **Problem**: "Submitted By" column in ActivityList.jsx / ActivityApproval.jsx showed "N/A" (or empty) for entries created via ActivityEntry.jsx.
+- **Root cause**: ActivityEntry.jsx stores the submitter's name ONLY in the top-level `submittedBy` field (lines 380, 428), never in `facultyName`/`studentName`. But ActivityList.jsx (line 1233) and ActivityApproval.jsx (line 624) rendered the column with `act.studentName || act.facultyName || "N/A"` — so docs from `activity_entries` (no `studentName`/`facultyName` top-level) fell through to "N/A". STEP docs from StepPoints.jsx DO have `studentName`, so they showed fine.
+- **Fix**: Added `act.submittedBy` to the fallback chain everywhere the submitter name is displayed/searched/exported:
+  - ActivityList.jsx: main table (line 1233), monthly dept report table (line 935), CSV exports (lines 487, 594, 682), search filter (line 343).
+  - ActivityApproval.jsx: approvals table (line 624), activity report table (line 957), review modal header (line 1697), 7× faculty-report table cells (`act.facultyName || "-"` → `act.facultyName || act.submittedBy || "-"`), search filter (line 179).
+- Display chain is now: `act.studentName || act.facultyName || act.submittedBy || "N/A"`.
+- Build passes.
+
+### 40. Activity evidence files — image/PDF preview in verification modal
+- **Problem**: Attached evidence files (PDFs, PNGs) in the "ATTACHED FILES INFO" section of the activity review/verification modal showed only a filename badge with no preview — users had no way to see the content without downloading.
+- **Fix**: Replaced the flat badge list with card-style previews for each file:
+  - **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`): Shows an `<img>` thumbnail (`max-h-48`, `object-contain`) with click-to-open-in-new-tab.
+  - **PDFs**: Shows an `<iframe>` preview (`h-72`) rendering the PDF inline.
+  - **Other files**: Shows a file icon badge (unchanged).
+  - Each card has a header bar with file-type badge (IMG/PDF/other icon), filename, and size. Falls back to "File not available for preview" when no `url` exists.
+- **Applied to**: `ActivityList.jsx`, `ActivityApproval.jsx`, `HODDashboard.jsx` (all three review/verification modals).
+- **File structure**: `evidenceFiles` array stores `{ name, size, type, url }` objects (ActivityEntry.jsx:340-354). `url` is a Firebase Storage download URL.
+- Build passes.
+
+### 41. Mentor-first approval flow for student activities
+- **Goal**: When a student submits a student activity (code starting with "A"), it goes to their assigned mentor first — only after the mentor approves does it appear in ActivityList.jsx's review/approval queue.
+- **ActivityEntry.jsx `handleSave`**: For Student role + student-category activities + `currentUserData.regNo`, queries `mentor_allocations` collection and matches `students[regNo]`; when a mentor is found sets `status: "Mentor_Pending"` and stores `mentorUid`/`mentorName`. Notification is sent with `targetUid: mentorUid`/`targetName: mentorName` (instead of department/HOD). Alert text: "Activity submitted for mentor approval!". If no mentor assigned, falls back to old flow (`status: "Pending"` + department notification) — backward compatible.
+- **MentorMeetings.jsx**: New "Activities" tab (icon Award). Real-time `onSnapshot` on `activity_entries` filtered to `data.mentorUid === user.uid && (data.activityCode||'').startsWith('A')`, sorted client-side by `getMillis`. Status chips (`Mentor_Pending` default, `Pending`, `Approved`, `Returned`, `Rejected`, all) + search. Actions:
+  - `approveActivity()` → sets `status: "Pending"`, `mentorApproved: true`, `mentorUid`, `mentorName`, `mentorReviewedAt`, `mentorComment`, `updatedAt`. Toast "now forwarded for departmental review".
+  - `rejectActivity(status)` → `"Rejected"` or `"Returned"`; rejected requires a comment.
+  - Review modal shows student notes, evidence file previews (img thumbnail / PDF iframe pattern), comment box, and Approve / Return for Correction / Reject buttons (only for `Mentor_Pending` status).
+- **ActivityList.jsx**: `filteredActivities` excludes `(act.status || "Draft") === "Mentor_Pending"` — mentor-pending activities are invisible there until mentor approves. The approvals tab already only shows `status === "Pending"`, so mentor-approved entries appear automatically.
+- **Status lifecycle**: `Mentor_Pending` (student submit w/ mentor) → mentor approves → `Pending` (ActivityList approvals queue; `handleApprove` forwards to `HOD_Pending`) or `Returned`/`Rejected` (visible back to student).
+- Build passes.

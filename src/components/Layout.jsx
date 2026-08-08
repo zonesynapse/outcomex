@@ -125,11 +125,11 @@ const allPossibleItems = [
   { id: "mentor-reports", icon: BarChart3, label: "Mentor Reports & SGI", path: "/mentor/reports" },
 
   // Activity Module
-  { id: "activity-list", icon: LayoutDashboard, label: "Activity Dashboard", path: "/activities" },
-  { id: "activity-approval", icon: CheckCircle2, label: "Activity Approvals", path: "/activities/approval" },
-  { id: "activity-new", icon: Plus, label: "New Activity", path: "/activities/new" },
+  { id: "activity-list", icon: LayoutDashboard, label: "Activity List", path: "/activities" },
+  { id: "activity-approval", icon: CheckCircle2, label: "Activity Approval", path: "/activities/approval" },
+  { id: "activity-new", icon: Plus, label: "Activity Picker", path: "/activities/new" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
-  { id: "activity-nba-export", icon: Download, label: "NBA Data Export", path: "/activities/nba-export" },
+  { id: "activity-nba-export", icon: Download, label: "Activity NBA Export", path: "/activities/nba-export" },
 
   // Circular Module
   { id: "circulars", icon: Megaphone, label: "Circulars", path: "/circulars" },

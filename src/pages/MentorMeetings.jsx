@@ -22,6 +22,7 @@ const TABS = [
   { id: "meetings", label: "Meetings", icon: Calendar },
   { id: "observations", label: "Observations", icon: AlertTriangle },
   { id: "parent", label: "Parent Interactions", icon: Phone },
+  { id: "activities", label: "Activities", icon: Award },
   { id: "students", label: "My Students", icon: Users },
 ];
 
@@ -203,6 +204,12 @@ export default function MentorMeetings() {
   const [meetings, setMeetings] = useState([]);
   const [observations, setObservations] = useState([]);
   const [parentInteractions, setParentInteractions] = useState([]);
+  const [mentorActivities, setMentorActivities] = useState([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(true);
+  const [reviewActivity, setReviewActivity] = useState(null);
+  const [actComment, setActComment] = useState("");
+  const [actingOnActivity, setActingOnActivity] = useState(false);
+  const [activityFilter, setActivityFilter] = useState("all");
  
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -544,6 +551,100 @@ export default function MentorMeetings() {
     return () => unsub();
   }, [user]);
 
+  // Student activity entries assigned to this mentor (student activities)
+  useEffect(() => {
+    if (!user) { setMentorActivities([]); setActivitiesLoading(false); return; }
+    setActivitiesLoading(true);
+    const unsub = onSnapshot(collection(db, "activity_entries"), (snap) => {
+      const list = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.mentorUid === user.uid && (data.activityCode || '').startsWith('A')) {
+          list.push({ id: d.id, ...data });
+        }
+      });
+      const getMillis = (d) => {
+        if (!d) return 0;
+        if (typeof d.toMillis === 'function') return d.toMillis();
+        if (typeof d.toDate === 'function') return d.toDate().getTime();
+        if (d.seconds) return d.seconds * 1000;
+        const p = Date.parse(d);
+        return isNaN(p) ? 0 : p;
+      };
+      list.sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt));
+      setMentorActivities(list);
+      setActivitiesLoading(false);
+    }, (err) => {
+      console.error("Error loading mentor activities:", err);
+      setActivitiesLoading(false);
+    });
+    return () => unsub();
+  }, [user]);
+
+  const approveActivity = async () => {
+    if (!reviewActivity) return;
+    setActingOnActivity(true);
+    try {
+      await updateDoc(doc(db, "activity_entries", reviewActivity.id), {
+        status: "Pending",
+        mentorApproved: true,
+        mentorUid: user.uid,
+        mentorName: userData.facultyName || userData.name || "",
+        mentorReviewedAt: new Date().toISOString(),
+        mentorComment: actComment || "",
+        updatedAt: new Date().toISOString()
+      });
+      showToast("Activity approved — now forwarded for departmental review");
+      setReviewActivity(null);
+      setActComment("");
+    } catch (err) {
+      showToast("Failed: " + err.message, "error");
+    } finally {
+      setActingOnActivity(false);
+    }
+  };
+
+  const rejectActivity = async (status = "Rejected") => {
+    if (!reviewActivity) return;
+    if (!actComment.trim() && status === "Rejected") {
+      showToast("Please provide a reason for rejection", "error");
+      return;
+    }
+    setActingOnActivity(true);
+    try {
+      await updateDoc(doc(db, "activity_entries", reviewActivity.id), {
+        status,
+        mentorApproved: false,
+        mentorUid: user.uid,
+        mentorName: userData.facultyName || userData.name || "",
+        mentorReviewedAt: new Date().toISOString(),
+        mentorComment: actComment || "",
+        updatedAt: new Date().toISOString()
+      });
+      showToast(status === "Rejected" ? "Activity rejected" : "Activity returned to student");
+      setReviewActivity(null);
+      setActComment("");
+    } catch (err) {
+      showToast("Failed: " + err.message, "error");
+    } finally {
+      setActingOnActivity(false);
+    }
+  };
+
+  const filteredMentorActivities = useMemo(() => {
+    const list = mentorActivities.filter(a => {
+      if (activityFilter === "all") return true;
+      return (a.status || "Draft") === activityFilter;
+    });
+    if (!searchTerm.trim()) return list;
+    const term = searchTerm.toLowerCase();
+    return list.filter(a =>
+      (a.submittedBy || "").toLowerCase().includes(term) ||
+      (a.activityName || a.title || "").toLowerCase().includes(term) ||
+      (a.activityCode || "").toLowerCase().includes(term)
+    );
+  }, [mentorActivities, activityFilter, searchTerm]);
+
   const getEmptyForm = () => {
     if (activeTab === "meetings") return { type: "individual", studentReg: "", date: new Date().toISOString().split('T')[0], topic: "", notes: "", actionItems: "", status: "planned" };
     if (activeTab === "observations") return { studentReg: "", category: "academic", severity: "green", date: new Date().toISOString().split('T')[0], notes: "" };
@@ -662,7 +763,7 @@ export default function MentorMeetings() {
               className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-[#120c7a] outline-none transition-all text-sm font-medium shadow-sm"
             />
           </div>
-          {activeTab !== "students" && (
+          {activeTab !== "students" && activeTab !== "activities" && (
             <button onClick={() => handleOpenForm()}
               className="flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#0e0960] shadow-lg shadow-[#120c7a]/25 whitespace-nowrap shrink-0">
               <Plus className="h-4 w-4" /> New Entry
@@ -757,6 +858,78 @@ export default function MentorMeetings() {
                   )}
                 </tbody>
               </table>
+            )}
+          </div>
+        ) : activeTab === "activities" ? (
+          <div className="p-4 md:p-6">
+            {activitiesLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="animate-spin text-[#120c7a]" size={28} />
+                <span className="text-sm font-semibold text-zinc-400">Loading student activities...</span>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest mr-1">Status:</span>
+                  {["Mentor_Pending", "Pending", "HOD_Pending", "Approved", "Returned", "Rejected", "all"].map(s => (
+                    <button key={s} onClick={() => setActivityFilter(activityFilter === s ? "" : s)}
+                      className={`text-xs px-3 py-1.5 rounded-xl font-semibold border transition-all ${activityFilter === s ? 'bg-[#120c7a] text-white border-[#120c7a] shadow-sm' : 'bg-white text-zinc-600 border-zinc-200 hover:border-[#120c7a] hover:text-[#120c7a]'}`}>
+                      {s === "all" ? "All" : s.replace("_", " ")}
+                    </button>
+                  ))}
+                </div>
+                {filteredMentorActivities.length === 0 ? (
+                  <div className="py-16 text-center text-zinc-400 font-medium">No activities found for the selected filter.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Submitted By</th>
+                          <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Activity</th>
+                          <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                          <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Points</th>
+                          <th className="text-left px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Status</th>
+                          <th className="text-center px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-widest">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMentorActivities.map(act => {
+                          const status = act.status || "Draft";
+                          return (
+                            <tr key={act.id} className="border-t border-slate-100 hover:bg-blue-50/30 transition-colors">
+                              <td className="px-4 py-2.5">
+                                <span className="font-semibold text-zinc-800 text-xs">{act.submittedBy || act.studentName || "—"}</span>
+                                {act.regNo && <span className="block font-mono text-[10px] text-zinc-400">{act.regNo}</span>}
+                              </td>
+                              <td className="px-4 py-2.5 text-xs">
+                                <div className="font-semibold text-[#120c7a]">{act.activityCode}</div>
+                                <div className="text-zinc-600">{act.activityName || act.title || "—"}</div>
+                              </td>
+                              <td className="px-4 py-2.5 text-xs whitespace-nowrap">{act.date || act.fromDate || "—"}</td>
+                              <td className="px-4 py-2.5 text-xs font-bold">{act.points || act.totalPoints || "—"}</td>
+                              <td className="px-4 py-2.5">
+                                <span className={`text-[10px] px-2.5 py-1 rounded-lg font-semibold ${status === "Mentor_Pending" ? "bg-amber-100 text-amber-700" : status === "Pending" ? "bg-blue-100 text-blue-700" : status === "HOD_Pending" ? "bg-violet-100 text-violet-700" : status === "Approved" ? "bg-emerald-100 text-emerald-700" : status === "Rejected" ? "bg-red-100 text-red-700" : status === "Returned" ? "bg-orange-100 text-orange-700" : "bg-zinc-100 text-zinc-600"}`}>
+                                  {status.replace("_", " ")}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-center">
+                                <button
+                                  onClick={() => { setReviewActivity(act); setActComment(""); }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#120c7a]/10 text-[#120c7a] text-xs font-bold rounded-lg hover:bg-[#120c7a]/20 transition-all"
+                                >
+                                  <Eye size={12} />
+                                  {status === "Mentor_Pending" ? "Review" : "View"}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </div>
         ) : (
@@ -1163,6 +1336,122 @@ export default function MentorMeetings() {
                   })}
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Activity Review Modal */}
+      {reviewActivity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-slate-100 sticky top-0 bg-white z-10 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Review Student Activity</h3>
+                <p className="text-xs text-zinc-400 font-medium">{reviewActivity.activityCode} • {reviewActivity.activityName || reviewActivity.title}</p>
+              </div>
+              <button onClick={() => setReviewActivity(null)} className="p-1.5 hover:bg-slate-100 rounded-lg cursor-pointer">
+                <X size={18} className="text-zinc-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Submitted By</span>
+                  <span className="font-semibold text-slate-800">{reviewActivity.submittedBy || reviewActivity.studentName || "—"}</span>
+                  {reviewActivity.regNo && <span className="block font-mono text-[10px] text-zinc-400">{reviewActivity.regNo}</span>}
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Date</span>
+                  <span className="font-semibold text-slate-800">{reviewActivity.date || reviewActivity.fromDate || "—"}</span>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Points</span>
+                  <span className="font-semibold text-slate-800">{reviewActivity.points || reviewActivity.totalPoints || "—"}</span>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Department / Batch</span>
+                  <span className="font-semibold text-slate-800">{reviewActivity.department || "—"} / {reviewActivity.batch || "—"}</span>
+                </div>
+              </div>
+
+              {reviewActivity.comments && (
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs">
+                  <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest block mb-1">Student Notes</span>
+                  <p className="text-blue-800 font-medium whitespace-pre-line">{reviewActivity.comments}</p>
+                </div>
+              )}
+
+              {Array.isArray(reviewActivity.evidenceFiles) && reviewActivity.evidenceFiles.length > 0 && (
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">Attached Evidence</span>
+                  <div className="space-y-2">
+                    {reviewActivity.evidenceFiles.map((file, fIdx) => {
+                      const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name) || (file.type && file.type.startsWith('image/'));
+                      const isPDF = /\.pdf$/i.test(file.name) || (file.type && file.type === 'application/pdf');
+                      return (
+                        <div key={fIdx} className="rounded-xl border border-slate-200 overflow-hidden">
+                          <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${isPDF ? 'bg-red-100 text-red-600' : isImage ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                              {isPDF ? 'PDF' : isImage ? 'IMG' : 'FILE'}
+                            </span>
+                            <span className="text-xs font-semibold text-zinc-700 truncate flex-1">{file.name}</span>
+                            {file.url && (
+                              <a href={file.url} target="_blank" rel="noreferrer" className="text-[10px] text-[#120c7a] font-bold shrink-0">Open</a>
+                            )}
+                          </div>
+                          {file.url && isImage && (
+                            <div className="bg-slate-50 p-2 flex justify-center">
+                              <img src={file.url} alt={file.name} className="max-h-48 max-w-full object-contain rounded-lg" referrerPolicy="no-referrer" />
+                            </div>
+                          )}
+                          {file.url && isPDF && (
+                            <iframe src={file.url} title={file.name} className="w-full h-64 border-0" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                  {reviewActivity.status === "Mentor_Pending" ? "Comment (optional for approval)" : "Comment"}
+                </label>
+                <textarea
+                  rows={2}
+                  value={actComment}
+                  onChange={e => setActComment(e.target.value)}
+                  placeholder="Feedback for the student..."
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-[#120c7a]/20"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2 justify-end pt-2 border-t border-slate-100">
+                {(reviewActivity.status === "Mentor_Pending") && (
+                  <>
+                    <button onClick={() => rejectActivity("Rejected")} disabled={actingOnActivity}
+                      className="px-4 py-2 bg-red-50 text-red-600 text-xs font-bold rounded-lg hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50">
+                      Reject
+                    </button>
+                    <button onClick={() => rejectActivity("Returned")} disabled={actingOnActivity}
+                      className="px-4 py-2 bg-orange-50 text-orange-600 text-xs font-bold rounded-lg hover:bg-orange-100 transition-all cursor-pointer disabled:opacity-50">
+                      Return for Correction
+                    </button>
+                    <button onClick={approveActivity} disabled={actingOnActivity}
+                      className="px-4 py-2 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 transition-all cursor-pointer disabled:opacity-50">
+                      {actingOnActivity ? <Loader2 className="inline h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="inline h-3.5 w-3.5" />} Approve
+                    </button>
+                  </>
+                )}
+                {(reviewActivity.status !== "Mentor_Pending") && (
+                  <button onClick={() => setReviewActivity(null)}
+                    className="px-4 py-2 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200 transition-all cursor-pointer">
+                    Close
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -1141,6 +1141,10 @@ export default function Attendance() {
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
       setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
+      
+      // Clear period selection and reset state for next attendance entry
+      setPeriod("");
+      setPeriods([]);
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
   };
@@ -1324,7 +1328,18 @@ export default function Attendance() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5 pt-5 border-t border-slate-100">
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-blue-600 uppercase tracking-widest px-0.5">Date</label>
-              <input type="date" value={attendanceDate} onChange={e => setAttendanceDate(e.target.value)}
+              <input type="date" value={attendanceDate} onChange={e => {
+                setAttendanceDate(e.target.value);
+                setPeriod("");
+                setPeriods([]);
+                setCurrentRecordData(null);
+                setTopicTaught("");
+                setTeachingAid("");
+                setTeachingMethodology("");
+                setIsEventAttendance(false);
+                setEventName("");
+                setPeriodConflict(null);
+              }}
                 min={dateRangeInfo.minDate ? dateRangeInfo.minDate.toISOString().split('T')[0] : undefined}
                 max={new Date().toISOString().split('T')[0]}
                 className={`w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none focus:ring-2 transition-all ${

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, onSnapshot, query, where, orderBy, doc, getDoc, setDoc, getDocs } from "firebase/firestore";
+import { collection, onSnapshot, query, where, doc, getDoc, setDoc, getDocs } from "firebase/firestore";
 import { useLocation } from "react-router-dom";
 import { 
   Award, Clock, Eye, Download, Check, X, Search, Filter, Users, Loader2,
@@ -17,6 +17,8 @@ import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry
 import { getAcademicYears, formatProgDisplay, formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
 
 const STATUS_OPTIONS = ["Pending", "Approved", "Returned", "Rejected", "Draft"];
+const normalizeDept = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+const normalizeProg = (p) => (p || '').replace(/[._\s]/g, '').trim().toLowerCase();
 
 const getCategoryFromCode = (code) => {
   if (code.startsWith("A")) return "student";
@@ -117,25 +119,30 @@ export default function ActivityList() {
     let list2 = [];
 
     const q1 = query(
-      collection(db, "activity_entries"),
-      orderBy("createdAt", "desc")
+      collection(db, "activity_entries")
     );
+    const getMillis = (dateObj) => {
+      if (!dateObj) return 0;
+      if (typeof dateObj.toMillis === 'function') return dateObj.toMillis();
+      if (typeof dateObj.toDate === 'function') return dateObj.toDate().getTime();
+      if (dateObj.seconds) return dateObj.seconds * 1000;
+      const parsed = Date.parse(dateObj);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     const unsub1 = onSnapshot(q1, (snapshot) => {
       list1 = [];
       snapshot.forEach((d) => {
         list1.push({ id: d.id, ...d.data() });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading activity_entries:", err));
 
     const q2 = query(
-      collection(db, "step_activities"),
-      orderBy("createdAt", "desc")
+      collection(db, "step_activities")
     );
     const unsub2 = onSnapshot(q2, (snapshot) => {
       list2 = [];
@@ -161,9 +168,7 @@ export default function ActivityList() {
         });
       });
       const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
+        return getMillis(b.createdAt) - getMillis(a.createdAt);
       });
       setActivities(combined);
     }, (err) => console.error("Error loading step_activities:", err));
@@ -274,7 +279,7 @@ export default function ActivityList() {
     if (!cfg || !cfg.numSections) {
       const entry = Object.values(sectionConfigs).find(v =>
         v.batch === selectedBatch &&
-        v.department === selectedDept &&
+        normalizeDept(v.department) === normalizeDept(selectedDept) &&
         (v.programme === selectedProg || formatProgrammeKey(v.programme) === progKey)
       );
       if (entry) {
@@ -302,6 +307,8 @@ export default function ActivityList() {
   // Filtered activities
   const filteredActivities = useMemo(() => {
     return activities.filter((act) => {
+      // Student activities pending mentor review are not visible here until mentor approves
+      if ((act.status || "Draft") === "Mentor_Pending") return false;
       const category = getCategoryFromCode(act.activityCode || "");
 
       if (activeTab === "approvals") {
@@ -318,11 +325,16 @@ export default function ActivityList() {
         if (category !== activeTab) return false;
       }
 
+      // Filter by user role ownership (Faculty/Student only see their own submissions in category tabs)
+      if (currentUserData?.role === "Faculty" && activeTab !== "approvals" && activeTab !== "reports" && activeTab !== "nba-export") {
+        if (act.submittedById && act.submittedById !== auth.currentUser?.uid) return false;
+      }
+
       const status = act.status || "Draft";
       const matchesStatus = !selectedStatus || status === selectedStatus;
       const matchesBatch = !selectedBatch || act.batch === selectedBatch;
-      const matchesDept = !selectedDept || act.department === selectedDept;
-      const matchesProg = !selectedProg || act.programme === selectedProg;
+      const matchesDept = !selectedDept || !act.department || normalizeDept(act.department) === normalizeDept(selectedDept);
+      const matchesProg = !selectedProg || !act.programme || normalizeProg(act.programme) === normalizeProg(selectedProg);
       const matchesSection = !selectedSection || act.section === selectedSection;
       const matchesActivityCode = !selectedActivityCode || act.activityCode === selectedActivityCode;
       const matchesAcademicYear = !selectedAcademicYear || act.academicYear === selectedAcademicYear;
@@ -330,13 +342,14 @@ export default function ActivityList() {
       const matchesSearch = !searchQuery.trim() || 
         (act.studentName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.facultyName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.submittedBy || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.regNo || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.activityName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.title || "").toLowerCase().includes(searchQuery.toLowerCase());
 
       return matchesStatus && matchesBatch && matchesDept && matchesProg && matchesSection && matchesActivityCode && matchesAcademicYear && matchesSearch;
     });
-  }, [activities, activeTab, selectedStatus, selectedBatch, selectedDept, selectedProg, selectedSection, selectedActivityCode, selectedAcademicYear, searchQuery]);
+  }, [activities, activeTab, selectedStatus, selectedBatch, selectedDept, selectedProg, selectedSection, selectedActivityCode, selectedAcademicYear, searchQuery, currentUserData]);
 
   const groupedByMonth = useMemo(() => {
     const groups = {};
@@ -474,7 +487,7 @@ export default function ActivityList() {
       const row = [
         act.activityCode || "",
         act.activityName || act.title || "",
-        act.studentName || act.facultyName || "",
+        act.studentName || act.facultyName || act.submittedBy || "",
         act.department || "",
         act.batch || "",
         act.section || "",
@@ -523,7 +536,7 @@ export default function ActivityList() {
 
   const monthlyDeptFiltered = useMemo(() => {
     return monthlyActivities.filter(a => {
-      const matchesDept = !selectedDept || a.department === selectedDept;
+      const matchesDept = !selectedDept || normalizeDept(a.department) === normalizeDept(selectedDept);
       const matchesBatch = !selectedBatch || a.batch === selectedBatch;
       const matchesSection = !selectedSection || a.section === selectedSection;
       const matchesActivityCode = !selectedActivityCode || a.activityCode === selectedActivityCode;
@@ -603,7 +616,7 @@ export default function ActivityList() {
       if (nbaDateFrom && dateStr && dateStr < nbaDateFrom) return false;
       if (nbaDateTo && dateStr && dateStr > nbaDateTo) return false;
       if (nbaCategory && getCategoryFromCode(a.activityCode || '') !== nbaCategory) return false;
-      if (selectedDept && a.department !== selectedDept) return false;
+      if (selectedDept && normalizeDept(a.department) !== normalizeDept(selectedDept)) return false;
       if (selectedBatch && a.batch !== selectedBatch) return false;
       if (selectedSection && a.section !== selectedSection) return false;
       return true;
@@ -669,7 +682,7 @@ export default function ActivityList() {
         const reg = ACTIVITY_REGISTRY.find(r => r.code === a.activityCode);
         csv += [
           a.activityCode, a.activityName || a.title || '',
-          getCategoryFromCode(a.activityCode || ''), a.studentName || a.facultyName || '',
+        getCategoryFromCode(a.activityCode || ''), a.studentName || a.facultyName || a.submittedBy || '',
           a.department || '', a.batch || '', a.section || '',
           a.date || a.fromDate || '', a.points || a.totalPoints || '',
           reg?.nbaCriterion || '', reg?.naacCriterion || '', reg?.nirfParameter || ''
@@ -687,7 +700,7 @@ export default function ActivityList() {
 
   if (loading) {
     return (
-      <Layout title="Activity Management">
+      <Layout title="Activity List">
         <div className="min-h-[60vh] flex items-center justify-center">
           <Loader2 className="animate-spin text-[#120c7a]" size={40} />
         </div>
@@ -705,7 +718,7 @@ export default function ActivityList() {
   const CategoryIcon = viewConfig.icon ? eval(viewConfig.icon) : GraduationCap;
 
   return (
-    <Layout title="Activity Management">
+    <Layout title="Activity List">
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
         {/* Header */}
         <div className="bg-gradient-to-r from-[#120c7a] to-[#0e0a5c] rounded-3xl p-6 md:p-8 text-white mb-8 shadow-xl flex flex-wrap items-center justify-between gap-6">
@@ -922,7 +935,7 @@ export default function ActivityList() {
                       {monthlyDeptFiltered.map(a => (
                         <tr key={a.id} className="hover:bg-zinc-50/50 transition-colors">
                           <td className="p-4">
-                            <p className="font-bold text-zinc-800">{a.studentName || a.facultyName || 'N/A'}</p>
+                            <p className="font-bold text-zinc-800">{a.studentName || a.facultyName || a.submittedBy || 'N/A'}</p>
                             <p className="text-[10px] text-zinc-400 font-bold">{a.regNo || a.facultyId || ''}</p>
                           </td>
                           <td className="p-4">
@@ -1220,7 +1233,7 @@ export default function ActivityList() {
                         return (
                           <tr key={act.id} className="hover:bg-zinc-50/50 transition-colors">
                             <td className="p-4">
-                              <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+                              <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || act.submittedBy || "N/A"}</p>
                               <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-bold mt-0.5 uppercase">
                                 <span>{act.regNo || act.facultyId || ""}</span>
                                 {act.regNo && act.facultyId && <span>•</span>}
@@ -1384,18 +1397,60 @@ export default function ActivityList() {
                   if (key === "evidenceFiles") {
                     if (Array.isArray(value) && value.length > 0) {
                       return (
-                        <div key={key} className="space-y-1.5 w-full">
+                        <div key={key} className="space-y-2 w-full">
                           <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
                             Attached Files Info
                           </span>
-                          <div className="flex flex-wrap gap-2">
-                            {value.map((file, fIdx) => (
-                              <div key={fIdx} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] font-medium text-zinc-600 shadow-sm">
-                                <FileText size={12} className="text-blue-500" />
-                                <span>{file.name}</span>
-                                <span className="text-[9px] text-zinc-400">({(file.size / 1024).toFixed(1)} KB)</span>
-                              </div>
-                            ))}
+                          <div className="flex flex-col gap-3">
+                            {value.map((file, fIdx) => {
+                              const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name) || (file.type && file.type.startsWith('image/'));
+                              const isPDF = /\.pdf$/i.test(file.name) || (file.type && file.type === 'application/pdf');
+                              const hasUrl = !!file.url;
+                              return (
+                                <div key={fIdx} className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
+                                  <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-100">
+                                    {isImage ? (
+                                      <div className="w-6 h-6 rounded bg-purple-50 flex items-center justify-center shrink-0">
+                                        <span className="text-[8px] font-bold text-purple-600">IMG</span>
+                                      </div>
+                                    ) : isPDF ? (
+                                      <div className="w-6 h-6 rounded bg-red-50 flex items-center justify-center shrink-0">
+                                        <span className="text-[8px] font-bold text-red-600">PDF</span>
+                                      </div>
+                                    ) : (
+                                      <FileText size={14} className="text-blue-500 shrink-0" />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <span className="text-[11px] font-semibold text-zinc-700 block truncate">{file.name}</span>
+                                      <span className="text-[9px] text-zinc-400">{(file.size / 1024).toFixed(1)} KB</span>
+                                    </div>
+                                  </div>
+                                  {hasUrl && isImage && (
+                                    <div className="p-2 bg-zinc-50 flex items-center justify-center">
+                                      <img
+                                        src={file.url}
+                                        alt={file.name}
+                                        className="max-h-48 max-w-full object-contain rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                                        referrerPolicy="no-referrer"
+                                        onClick={() => window.open(file.url, '_blank')}
+                                      />
+                                    </div>
+                                  )}
+                                  {hasUrl && isPDF && (
+                                    <div className="bg-zinc-50">
+                                      <iframe
+                                        src={file.url}
+                                        className="w-full h-72 rounded-b-lg border-0"
+                                        title={file.name}
+                                      />
+                                    </div>
+                                  )}
+                                  {!hasUrl && (
+                                    <div className="px-3 py-2 bg-zinc-50 text-[9px] text-zinc-400 italic">File not available for preview</div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );

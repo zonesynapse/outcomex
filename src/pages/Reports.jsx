@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, query, where } from "firebase/firestore";
@@ -182,26 +182,77 @@ export default function Reports() {
   const studentsRef = useRef(students);
   useEffect(() => { studentsRef.current = students; }, [students]);
 
+  // Fetch course type for a subject by trying every known doc key format,
+  // then falling back to a field query on the `code` field.
+  const fetchCourseType = useCallback(async (subject) => {
+    if (!subject || !programme || !department) return '';
+    const progKey = formatProgrammeKey(programme);
+    const deptKey = sanitizeKey(department);
+    const deptKeyStrict = sanitizeKeyStrict(department);
+    const regulation = batch ? getRegulationForBatch(progKey, batch) : '';
+    const regKey = regulation ? sanitizeKey(regulation) : '';
+    const subjectKey = sanitizeKey(subject);
+
+    const tryGet = async (key) => {
+      const snap = await getDoc(doc(db, 'courses', key));
+      return snap.exists() ? (snap.data().type || '') : '';
+    };
+
+    const keyVariants = [];
+    if (regKey) keyVariants.push(`${progKey}_${deptKey}_${regKey}_${subjectKey}`);
+    if (regKey && deptKeyStrict !== deptKey) keyVariants.push(`${progKey}_${deptKeyStrict}_${regKey}_${subjectKey}`);
+    keyVariants.push(`${progKey}_${deptKey}_${subject}`);
+    if (deptKeyStrict !== deptKey) keyVariants.push(`${progKey}_${deptKeyStrict}_${subject}`);
+    keyVariants.push(`${progKey}_Overall_${subject}`);
+    if (regKey) keyVariants.push(`${progKey}_Overall_${regKey}_${subject}`);
+    keyVariants.push(`${progKey}_${deptKey}_${subjectKey}`);
+    if (regKey) keyVariants.push(`${progKey}_${deptKey}_${regKey}_${subject}`);
+
+    const uniqueVariants = [...new Set(keyVariants)];
+    for (const key of uniqueVariants) {
+      const type = await tryGet(key);
+      if (type) return type;
+    }
+
+    // Fallback: field query on `code` — covers any doc key format not guessed above
+    const normProg = (v) => String(v ?? '').replace(/[.#$[\]/ ]/g, '_');
+    try {
+      const qSnap = await getDocs(query(collection(db, 'courses'), where('code', '==', subject)));
+      let best = '';
+      let bestScore = -1;
+      qSnap.forEach(d => {
+        const data = d.data();
+        if (normProg(data.programme || '') !== progKey) return;
+        const deptNorm = normProg(data.department || '');
+        let score = 0;
+        if (deptNorm === deptKey) score = 3;
+        else if (deptNorm === 'Overall') score = 2;
+        else if (regKey && normProg(data.regulation || '') === regKey) score = 1;
+        if (score > bestScore) {
+          bestScore = score;
+          best = data.type || '';
+        }
+      });
+      return best;
+    } catch (e) {
+      console.error("Course type query failed:", e);
+      return '';
+    }
+  }, [programme, department, batch, getRegulationForBatch]);
+
   // Fetch course type for selected internal subject
   useEffect(() => {
     if (!internalSubject || !programme || !department) {
       setInternalSubjectCourseType("");
       return;
     }
-    const progKey = formatProgrammeKey(programme);
-    const deptKey = sanitizeKey(department);
-    const deptKeyStrict = sanitizeKeyStrict(department);
+    let cancelled = false;
     (async () => {
-      let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${internalSubject}`));
-      if (!snap.exists() && deptKeyStrict !== deptKey) {
-        snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKeyStrict}_${internalSubject}`));
-      }
-      if (!snap.exists()) {
-        snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${internalSubject}`));
-      }
-      setInternalSubjectCourseType(snap.exists() ? (snap.data().type || '') : '');
+      const type = await fetchCourseType(internalSubject);
+      if (!cancelled) setInternalSubjectCourseType(type);
     })();
-  }, [internalSubject, programme, department]);
+    return () => { cancelled = true; };
+  }, [internalSubject, programme, department, batch, getRegulationForBatch, fetchCourseType]);
 
   // Fetch course type for consolidation subject
   useEffect(() => {
@@ -209,20 +260,13 @@ export default function Reports() {
       setExtraSubjectCourseType("");
       return;
     }
-    const progKey = formatProgrammeKey(programme);
-    const deptKey = sanitizeKey(department);
-    const deptKeyStrict = sanitizeKeyStrict(department);
+    let cancelled = false;
     (async () => {
-      let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${extraSubject}`));
-      if (!snap.exists() && deptKeyStrict !== deptKey) {
-        snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKeyStrict}_${extraSubject}`));
-      }
-      if (!snap.exists()) {
-        snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${extraSubject}`));
-      }
-      setExtraSubjectCourseType(snap.exists() ? (snap.data().type || '') : '');
+      const type = await fetchCourseType(extraSubject);
+      if (!cancelled) setExtraSubjectCourseType(type);
     })();
-  }, [extraSubject, programme, department]);
+    return () => { cancelled = true; };
+  }, [extraSubject, programme, department, batch, getRegulationForBatch, fetchCourseType]);
 
   useEffect(() => {
     if (module !== 'internal' || !selectedInternalExam || !programme || !department || !batch || !academicYear || !semester || !internalSubject || selectedInternalExam === '__overall__') {
@@ -564,6 +608,17 @@ export default function Reports() {
     );
   }, [ciaConfigs, programme, department]);
 
+  // Expected exams limited to the subject's course type (via cia_configs.courseTypes field)
+  const consolidationExpectedExams = useMemo(() => {
+    const subject = module === 'internal' ? internalSubject : extraSubject;
+    const courseType = module === 'internal' ? internalSubjectCourseType : extraSubjectCourseType;
+    if (!subject || !courseType || !programme || !department) return expectedExams;
+    return expectedExams.filter(ex => {
+      const ct = ex.courseTypes || [];
+      return ct.includes(courseType);
+    });
+  }, [expectedExams, internalSubject, extraSubject, internalSubjectCourseType, extraSubjectCourseType, programme, department, module]);
+
   const filteredInternalExams = useMemo(() => {
     if (!programme || !department) return [];
     const exams = expectedExams.filter(ex => !ex.isUniversity && enteredInternalExamIds.includes(ex.id));
@@ -593,37 +648,41 @@ export default function Reports() {
   }, [module, internalSubject, extraSubject, programme, batch, semester, syllabusData, internalSubjectCourseType, extraSubjectCourseType, courseWeightageData, getRegulationForBatch]);
 
   const allExamsCompleted = useMemo(() => {
-    if (expectedExams.length === 0) return false;
+    if (consolidationExpectedExams.length === 0) return false;
     // Exclude indirect assessments from the mandatory check
-    const mandatoryExams = expectedExams.filter(ex => !ex.isIndirectAssessment);
+    const mandatoryExams = consolidationExpectedExams.filter(ex => !ex.isIndirectAssessment);
 
     if (mandatoryExams.length === 0) return false;
 
     return mandatoryExams.every(examConfig => {
       return consolidationChildren.some(child => {
-        return child.label === examConfig.examName ||
+        const matchesExam = child.label === examConfig.examName ||
           child.key === examConfig.id ||
-          child.data._meta?.exam === examConfig.id ||
-          child.data._meta?.qpaper_name === examConfig.id ||
-          child.data._meta?.exam === examConfig.examName;
+          child.data?._meta?.exam === examConfig.id ||
+          child.data?._meta?.qpaper_name === examConfig.id ||
+          child.data?._meta?.exam === examConfig.examName;
+        const hasMarks = child.data?.students && Object.keys(child.data.students).length > 0;
+        return matchesExam && hasMarks;
       });
     });
-  }, [expectedExams, consolidationChildren]);
+  }, [consolidationExpectedExams, consolidationChildren]);
 
   const missingMandatoryExams = useMemo(() => {
-    if (!expectedExams.length) return [];
-    const mandatoryExams = expectedExams.filter(ex => !ex.isIndirectAssessment);
+    if (!consolidationExpectedExams.length) return [];
+    const mandatoryExams = consolidationExpectedExams.filter(ex => !ex.isIndirectAssessment);
     return mandatoryExams.filter(examConfig => {
-      const isPresent = consolidationChildren.some(child => {
-        return child.label === examConfig.examName ||
+      const isPresentAndEntered = consolidationChildren.some(child => {
+        const matchesExam = child.label === examConfig.examName ||
           child.key === examConfig.id ||
-          child.data._meta?.exam === examConfig.id ||
-          child.data._meta?.qpaper_name === examConfig.id ||
-          child.data._meta?.exam === examConfig.examName;
+          child.data?._meta?.exam === examConfig.id ||
+          child.data?._meta?.qpaper_name === examConfig.id ||
+          child.data?._meta?.exam === examConfig.examName;
+        const hasMarks = child.data?.students && Object.keys(child.data.students).length > 0;
+        return matchesExam && hasMarks;
       });
-      return !isPresent;
+      return !isPresentAndEntered;
     });
-  }, [expectedExams, consolidationChildren]);
+  }, [consolidationExpectedExams, consolidationChildren]);
 
   const getAcademicYears = () => {
     if (!batch) return [];
@@ -840,7 +899,7 @@ export default function Reports() {
   </table>
 
   <div style="margin-top: 20px;">
-    ${qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' ? `
+    ${(qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' || qp.assessment_type === 'Indirect') && (qp.assignment_config && qp.assignment_config.length > 0) ? `
       <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
         <thead>
           <tr style="background: #f9f9f9;">
@@ -949,36 +1008,48 @@ export default function Reports() {
           raw = raw.replace(/\(?[ab]\)/gi, '');
           return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
         };
-        if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project') {
-          (qp.assignment_config || []).forEach((q) => {
-            (q.mappings || []).forEach(m => {
-              const co = String(m?.co || '').trim();
-              if (!co || !co.toUpperCase().startsWith('CO')) return;
-              const mapMarks = parseInt(m?.marks, 10) || 0;
-              activeCOs.add(co);
-              coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
-            });
+        if (qp.co_weightage && Object.keys(qp.co_weightage).length > 0) {
+          Object.entries(qp.co_weightage).forEach(([coKey, wVal]) => {
+            if (coKey && coKey.toUpperCase().startsWith('CO') && Number(wVal) > 0) {
+              activeCOs.add(coKey);
+              coWeightage[coKey] = Number(wVal);
+            }
           });
-        } else {
-          const groups = {};
-          (qp.parts || []).forEach((part) => {
-            (part?.questions || []).forEach((q) => {
-              const co = String(q?.co || '').trim();
-              const marks = parseInt(q?.marks, 10) || 0;
-              if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
-              const base = getBaseQno(q?.qno);
-              if (!base) return;
-              activeCOs.add(co);
-              if (!groups[base]) groups[base] = { marks, cos: new Set() };
-              if (marks > 0) groups[base].marks = marks;
-              groups[base].cos.add(co);
+        }
+
+        if (activeCOs.size === 0) {
+          if (qp.assignment_config && qp.assignment_config.length > 0) {
+            (qp.assignment_config || []).forEach((q) => {
+              (q.mappings || []).forEach(m => {
+                const co = String(m?.co || '').trim();
+                if (!co || !co.toUpperCase().startsWith('CO')) return;
+                const mapMarks = parseInt(m?.marks, 10) || 0;
+                activeCOs.add(co);
+                coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
+              });
             });
-          });
-          Object.values(groups).forEach((group) => {
-            group.cos.forEach((co) => {
-              coWeightage[co] = (coWeightage[co] || 0) + group.marks;
+          }
+          if (activeCOs.size === 0) {
+            const groups = {};
+            (qp.parts || []).forEach((part) => {
+              (part?.questions || []).forEach((q) => {
+                const co = String(q?.co || '').trim();
+                const marks = parseInt(q?.marks, 10) || 0;
+                if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
+                const base = getBaseQno(q?.qno);
+                if (!base) return;
+                activeCOs.add(co);
+                if (!groups[base]) groups[base] = { marks, cos: new Set() };
+                if (marks > 0) groups[base].marks = marks;
+                groups[base].cos.add(co);
+              });
             });
-          });
+            Object.values(groups).forEach((group) => {
+              group.cos.forEach((co) => {
+                coWeightage[co] = (coWeightage[co] || 0) + group.marks;
+              });
+            });
+          }
         }
         const sorted = Array.from(activeCOs).sort((a, b) => {
           const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
@@ -2505,7 +2576,7 @@ export default function Reports() {
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
-                {!allExamsCompleted && expectedExams.length > 0 && (
+                {!allExamsCompleted && consolidationExpectedExams.length > 0 && (
                   <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                     Final attainment is not available because mark entry is not completed for this subject.
                     {missingMandatoryExams.length > 0 && (

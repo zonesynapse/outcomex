@@ -25,7 +25,7 @@ export default function ActivityApproval() {
   const [selectedSection, setSelectedSection] = useState("");
   const [selectedActivityCode, setSelectedActivityCode] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [selectedYear, setSelectedYear] = useState("");
 
   const [reviewActivity, setReviewActivity] = useState(null);
   const [previewMode, setPreviewMode] = useState(false);
@@ -50,8 +50,8 @@ export default function ActivityApproval() {
             setUserRole(ud.role || "");
             const dept = ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "";
             setUserDept(dept);
-            // Auto-filter by HOD's department
-            if (ud.role === "HOD" && dept) {
+            // Auto-filter by HOD's department if present
+            if ((ud.role === "HOD" || ud.role === "hod") && dept) {
               setSelectedDept(dept);
             }
           }
@@ -131,40 +131,76 @@ export default function ActivityApproval() {
     return () => unsub();
   }, [selectedDept, selectedMonth, selectedYear]);
 
+  // Helper to normalize department names for comparison across different storage formats
+  const normalizeDept = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const normalizeProg = (p) => (p || '').replace(/[._\s]/g, '').trim().toLowerCase();
+
   // Derive dropdown options dynamically
-  const deptOptions = useMemo(() => [...new Set(activities.map(a => a.department).filter(Boolean))].sort(), [activities]);
+  const deptOptions = useMemo(() => {
+    const map = new Map();
+    const add = (d) => {
+      if (!d) return;
+      const key = normalizeDept(d);
+      if (!map.has(key)) map.set(key, d);
+    };
+    add(userDept);
+    activities.forEach(a => add(a.department));
+    return [...map.values()].sort();
+  }, [activities, userDept]);
   const batchOptions = useMemo(() => [...new Set(activities.map(a => a.batch).filter(Boolean))].sort(), [activities]);
   const programmeOptions = useMemo(() => [...new Set(activities.map(a => a.programme).filter(Boolean))].sort(), [activities]);
   const sectionOptions = useMemo(() => [...new Set(activities.map(a => a.section).filter(Boolean))].sort(), [activities]);
   const activityCodeOptions = useMemo(() => [...new Set(activities.map(a => a.activityCode).filter(Boolean))].sort(), [activities]);
 
+  // Helper to extract Date object safely from activity
+  const getActivityDate = (act) => {
+    const raw = act.date || act.fromDate || act.createdAt;
+    if (!raw) return null;
+    if (typeof raw.toDate === 'function') return raw.toDate();
+    if (raw.seconds) return new Date(raw.seconds * 1000);
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
   // Filtered Approved Activities
   const filteredActivities = useMemo(() => {
     return activities.filter((act) => {
-      if (userRole === "HOD" && userDept && act.department !== userDept) return false;
-      if (selectedDept && act.department !== selectedDept) return false;
+      const isHodRole = userRole === "HOD" || userRole === "hod";
+      if (isHodRole && userDept && act.department && normalizeDept(act.department) !== normalizeDept(userDept)) return false;
+      if (selectedDept && act.department && normalizeDept(act.department) !== normalizeDept(selectedDept)) return false;
 
       const matchesBatch = !selectedBatch || act.batch === selectedBatch;
-      const matchesProg = !selectedProg || act.programme === selectedProg;
+      const matchesProg = !selectedProg || normalizeProg(act.programme) === normalizeProg(selectedProg);
       const matchesSection = !selectedSection || act.section === selectedSection;
       const matchesActivityCode = !selectedActivityCode || act.activityCode === selectedActivityCode;
 
       const matchesSearch = !searchQuery.trim() || 
         (act.studentName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.facultyName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (act.submittedBy || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.regNo || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.activityName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (act.title || "").toLowerCase().includes(searchQuery.toLowerCase());
 
+      const actDate = getActivityDate(act);
+
       if (selectedMonth) {
-        const dateVal = act.date || act.fromDate || "";
-        const m = dateVal.split("-")[1];
-        if (m && parseInt(m) !== parseInt(selectedMonth)) return false;
+        if (actDate) {
+          if ((actDate.getMonth() + 1) !== parseInt(selectedMonth)) return false;
+        } else {
+          const dateVal = act.date || act.fromDate || "";
+          const m = dateVal.split("-")[1];
+          if (m && parseInt(m) !== parseInt(selectedMonth)) return false;
+        }
       }
       if (selectedYear) {
-        const dateVal = act.date || act.fromDate || "";
-        const y = dateVal.split("-")[0];
-        if (y && y !== selectedYear) return false;
+        if (actDate) {
+          if (actDate.getFullYear().toString() !== selectedYear) return false;
+        } else {
+          const dateVal = act.date || act.fromDate || "";
+          const y = dateVal.split("-")[0];
+          if (y && y !== selectedYear) return false;
+        }
       }
 
       return matchesBatch && matchesProg && matchesSection && matchesActivityCode && matchesSearch;
@@ -320,7 +356,7 @@ export default function ActivityApproval() {
   };
 
   return (
-    <Layout>
+    <Layout title="Activity Approval">
       <style>{`
         @media print {
           /* Hide default browser headers/footers */
@@ -447,7 +483,7 @@ export default function ActivityApproval() {
                     <CheckCircle2 size={12} className="text-emerald-400" />
                     Verified Accomplishments
                   </div>
-                  <h1 className="text-3xl font-black tracking-tight md:text-4xl">Approved Activity Registry</h1>
+                  <h1 className="text-3xl font-black tracking-tight md:text-4xl">Activity Approval</h1>
                   <p className="text-sm text-blue-200 font-medium max-w-xl">
                     Comprehensive log of all approved student and faculty activities verified by HOD, segmented month-wise.
                   </p>
@@ -586,7 +622,7 @@ export default function ActivityApproval() {
                             return (
                               <tr key={act.id} className="hover:bg-zinc-50/50 transition-colors">
                                 <td className="p-4">
-                                  <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || "N/A"}</p>
+                                  <p className="font-bold text-zinc-800">{act.studentName || act.facultyName || act.submittedBy || "N/A"}</p>
                                   <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{act.regNo || act.facultyId || ""}</p>
                                 </td>
                                 <td className="p-4">
@@ -919,7 +955,7 @@ export default function ActivityApproval() {
                             <tr key={act.id} className="text-center">
                               <td className="border border-zinc-900 p-2">{index + 1}</td>
                               <td className="border border-zinc-900 p-2 font-bold text-left whitespace-pre-line">
-                                {act.studentName || act.studentNames || act.facultyName || "-"}
+                                {act.studentName || act.studentNames || act.facultyName || act.submittedBy || "-"}
                               </td>
                               <td className="border border-zinc-900 p-2">{act.yearSem || act.sem || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.organizedBy || act.venue || "-"}</td>
@@ -1326,7 +1362,7 @@ export default function ActivityApproval() {
                         <tbody>
                           {partC_Phd.map((act) => (
                             <tr key={act.id} className="text-center">
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.universityName || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.phdTopic || "-"}</td>
                               <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "-"}</td>
@@ -1359,7 +1395,7 @@ export default function ActivityApproval() {
                         <tbody>
                           {partC_Publications.map((act) => (
                             <tr key={act.id} className="text-center">
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.paperTitle || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.journalName || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.issn || "-"}</td>
@@ -1392,7 +1428,7 @@ export default function ActivityApproval() {
                         <tbody>
                           {partC_Attended.map((act) => (
                             <tr key={act.id} className="text-center">
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.programName || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.organizedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
@@ -1425,7 +1461,7 @@ export default function ActivityApproval() {
                         <tbody>
                           {partC_Organized.map((act) => (
                             <tr key={act.id} className="text-center">
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.programName || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.resourcePerson || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.participantsCount || "-"}</td>
@@ -1463,7 +1499,7 @@ export default function ActivityApproval() {
                           {partC_Online.map((act, index) => (
                             <tr key={act.id} className="text-center">
                               <td className="border border-zinc-900 p-2">{index + 1}</td>
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.courseName || act.title || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.platform || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.weeks || "-"}</td>
@@ -1573,7 +1609,7 @@ export default function ActivityApproval() {
                           {partC_Contributions.map((act, index) => (
                             <tr key={act.id} className="text-center">
                               <td className="border border-zinc-900 p-2">{index + 1}</td>
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.title || act.role || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.hostInstitution || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
@@ -1609,7 +1645,7 @@ export default function ActivityApproval() {
                           {partC_Achievements.map((act, index) => (
                             <tr key={act.id} className="text-center">
                               <td className="border border-zinc-900 p-2">{index + 1}</td>
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.awardName || act.title || "-"}</td>
                               <td className="border border-zinc-900 p-2 text-left">{act.awardingBody || "-"}</td>
                               <td className="border border-zinc-900 p-2">{act.date || "-"}</td>
@@ -1659,7 +1695,7 @@ export default function ActivityApproval() {
                     Approved Activity Details
                   </h4>
                   <p className="text-base font-bold truncate mt-0.5">
-                    {reviewActivity.studentName || reviewActivity.facultyName} 
+                    {reviewActivity.studentName || reviewActivity.facultyName || reviewActivity.submittedBy} 
                     ({reviewActivity.regNo || reviewActivity.facultyId || "N/A"})
                   </p>
                 </div>
@@ -1748,18 +1784,60 @@ export default function ActivityApproval() {
                   if (key === "evidenceFiles") {
                     if (Array.isArray(value) && value.length > 0) {
                       return (
-                        <div key={key} className="space-y-1.5 w-full">
+                        <div key={key} className="space-y-2 w-full">
                           <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
                             Attached Files Info
                           </span>
-                          <div className="flex flex-wrap gap-2">
-                            {value.map((file, fIdx) => (
-                              <div key={fIdx} className="flex items-center gap-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] font-medium text-zinc-600 shadow-sm">
-                                <FileText size={12} className="text-blue-500" />
-                                <span>{file.name}</span>
-                                <span className="text-[9px] text-zinc-400">({(file.size / 1024).toFixed(1)} KB)</span>
-                              </div>
-                            ))}
+                          <div className="flex flex-col gap-3">
+                            {value.map((file, fIdx) => {
+                              const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name) || (file.type && file.type.startsWith('image/'));
+                              const isPDF = /\.pdf$/i.test(file.name) || (file.type && file.type === 'application/pdf');
+                              const hasUrl = !!file.url;
+                              return (
+                                <div key={fIdx} className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
+                                  <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-100">
+                                    {isImage ? (
+                                      <div className="w-6 h-6 rounded bg-purple-50 flex items-center justify-center shrink-0">
+                                        <span className="text-[8px] font-bold text-purple-600">IMG</span>
+                                      </div>
+                                    ) : isPDF ? (
+                                      <div className="w-6 h-6 rounded bg-red-50 flex items-center justify-center shrink-0">
+                                        <span className="text-[8px] font-bold text-red-600">PDF</span>
+                                      </div>
+                                    ) : (
+                                      <FileText size={14} className="text-blue-500 shrink-0" />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <span className="text-[11px] font-semibold text-zinc-700 block truncate">{file.name}</span>
+                                      <span className="text-[9px] text-zinc-400">{(file.size / 1024).toFixed(1)} KB</span>
+                                    </div>
+                                  </div>
+                                  {hasUrl && isImage && (
+                                    <div className="p-2 bg-zinc-50 flex items-center justify-center">
+                                      <img
+                                        src={file.url}
+                                        alt={file.name}
+                                        className="max-h-48 max-w-full object-contain rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                                        referrerPolicy="no-referrer"
+                                        onClick={() => window.open(file.url, '_blank')}
+                                      />
+                                    </div>
+                                  )}
+                                  {hasUrl && isPDF && (
+                                    <div className="bg-zinc-50">
+                                      <iframe
+                                        src={file.url}
+                                        className="w-full h-72 rounded-b-lg border-0"
+                                        title={file.name}
+                                      />
+                                    </div>
+                                  )}
+                                  {!hasUrl && (
+                                    <div className="px-3 py-2 bg-zinc-50 text-[9px] text-zinc-400 italic">File not available for preview</div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );

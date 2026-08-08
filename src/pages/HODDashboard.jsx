@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, getDoc, onSnapshot, setDoc, query, where } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
-  Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight, ChevronDown,
+  Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
   Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
   Download, FileSpreadsheet
@@ -29,6 +29,14 @@ const formatDateKey = (date) => {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+};
+
+const subjectStatPct = (st) => {
+  const t = st?.total || 0;
+  const od = st?.od || 0;
+  const a = st?.attended || 0;
+  const active = t - od;
+  return active > 0 ? ((a / active) * 100).toFixed(1) : "0.0";
 };
 
 const colorMap = {
@@ -132,8 +140,7 @@ export default function HODDashboard() {
   const [reportAcademicYear, setReportAcademicYear] = useState("");
   const [reportSemester, setReportSemester] = useState("");
   const [selectedReportSubjects, setSelectedReportSubjects] = useState([]);
-  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
-  const subjectDropdownRef = useRef(null);
+  const [pendingAttendanceModal, setPendingAttendanceModal] = useState({ open: false, items: [] });
 
   const averageAttendance = useMemo(() => {
     if (!generatedReport || generatedReport.students.length === 0) return "0.0";
@@ -194,6 +201,91 @@ export default function HODDashboard() {
         if (selectedReportSubjects.length > 0 && !selectedReportSubjects.includes(item.subjectCode)) return false;
         return true;
       });
+
+      // ─── CHECK PENDING ATTENDANCE IN DATE RANGE ───
+      const pendingList = [];
+      const isSubjectSpecific = selectedReportSubjects.length > 0;
+      const dayScheduleMap = timetableAllocation[reportBatch] || {};
+
+      // Loop through all dates in the requested range [reportFromDate -> reportToDate]
+      const curDate = new Date(reportFromDate + 'T00:00:00');
+      const endDateObj = new Date(reportToDate + 'T00:00:00');
+
+      while (curDate <= endDateObj) {
+        const dStr = formatDateKey(curDate);
+        const dayName = curDate.toLocaleDateString('en-US', { weekday: 'long' });
+        const isSunday = curDate.getDay() === 0;
+        const isHoliday = academicEvents[dStr]?.some(e => e.type === 'Holiday');
+
+        if (!isSunday && !isHoliday) {
+          const rawDaySchedule = dayScheduleMap[dayName];
+          if (rawDaySchedule) {
+            // Expand continuous period spans (e.g. "P1: EE3403|2") into individual periods
+            const expandedDaySchedule = {};
+            Object.entries(rawDaySchedule).forEach(([pStart, rawEntries]) => {
+              const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
+              entries.forEach(entry => {
+                const parts = String(entry || '').split('|');
+                const code = parts[0].trim();
+                const span = parseInt(parts[1], 10) || 1;
+                if (!code) return;
+                for (let p = parseInt(pStart), endP = p + span; p < endP; p++) {
+                  const pStr = String(p);
+                  if (!expandedDaySchedule[pStr]) expandedDaySchedule[pStr] = [];
+                  if (!expandedDaySchedule[pStr].includes(code)) expandedDaySchedule[pStr].push(code);
+                }
+              });
+            });
+
+            // Check each scheduled period for this day
+            Object.entries(expandedDaySchedule).forEach(([periodNum, codes]) => {
+              codes.forEach(code => {
+                // If specific subjects are selected, only check for those subjects
+                if (isSubjectSpecific && !selectedReportSubjects.map(s => s.toLowerCase()).includes(code.toLowerCase())) {
+                  return;
+                }
+
+                // Find matching subject assignment item
+                const targetItem = batchItems.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
+                const recordKey = `${dStr}_P${periodNum}`;
+
+                let hasRecord = false;
+
+                if (targetItem && targetItem.attRecords?.[recordKey]) {
+                  hasRecord = true;
+                } else {
+                  // Check if substitute / alternate subject marked attendance for this period
+                  const substituteRecord = batchItems.some(i => i.attRecords?.[recordKey]);
+                  if (substituteRecord) {
+                    hasRecord = true;
+                  }
+                }
+
+                if (!hasRecord) {
+                  const subjObj = targetItem || batchItems.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
+                  const subjectName = subjObj?.subjectName || subjectNamesMap[code] || code;
+                  const facultyName = subjObj?.facultyName || "Not Assigned";
+                  pendingList.push({
+                    date: dStr,
+                    day: dayName,
+                    period: periodNum,
+                    subjectCode: code,
+                    subjectName: subjectName,
+                    facultyName: facultyName
+                  });
+                }
+              });
+            });
+          }
+        }
+        curDate.setDate(curDate.getDate() + 1);
+      }
+
+      if (pendingList.length > 0) {
+        setGeneratingReport(false);
+        setPendingAttendanceModal({ open: true, items: pendingList });
+        return;
+      }
 
       const recordsMap = {};
       const periodInfoMap = {};
@@ -351,15 +443,24 @@ export default function HODDashboard() {
   const handleExportCSV = () => {
     if (!generatedReport) return;
     const { periods, students, batch, section, fromDate, toDate } = generatedReport;
-    
+    const selectedSubjects = generatedReport.selectedSubjects || [];
+
+    const subjHeaders = selectedSubjects.length > 0
+      ? selectedSubjects.flatMap(code => [`${code} Total`, `${code} Present`, `${code} Absent`, `${code} %`])
+      : [];
+
     let headers, rows;
     headers = ["Register No", "Student Name", "Section", ...periods.map(p => {
       const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
       const info = generatedReport.periodInfo?.[p];
       return info ? `P${pNum} (${info})` : `P${pNum}`;
-    }), "Total Classes", "Present", "OD", "Absent", "Percentage (%)"];
+    }), "Total Classes", "Present", "OD", "Absent", "Percentage (%)", ...subjHeaders];
     rows = students.map(s => {
       const dailyVals = periods.map(p => s.dailyRecords[p]);
+      const subjVals = selectedSubjects.flatMap(code => {
+        const st = s.subjectStats?.[code] || { attended: 0, absent: 0, od: 0, total: 0 };
+        return [st.total, st.attended, st.absent, subjectStatPct(st)];
+      });
       return [
         s.reg,
         s.name,
@@ -369,7 +470,8 @@ export default function HODDashboard() {
         s.attended,
         s.od,
         s.absent,
-        s.percentage
+        s.percentage,
+        ...subjVals
       ];
     });
 
@@ -429,57 +531,110 @@ export default function HODDashboard() {
 
     let yPos = drawHeader(true);
 
-    // ── Overall Attendance Summary Table ──
-    const summaryHeaders = ['Reg No', 'Student Name', 'Sec', 'Total', 'Present', 'OD', 'Absent', '%'];
-    const summaryRows = students.map(s => [
-      s.reg,
-      s.name,
-      s.section.replace('Sec-', ''),
-      s.total,
-      s.attended,
-      s.od,
-      s.absent,
-      s.percentage + '%'
-    ]);
-    const colStyles = {
-      0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
-      1: { halign: 'left', fontStyle: 'bold' },
-      2: { cellWidth: 10 },
-      3: { cellWidth: 14 },
-      4: { cellWidth: 15 },
-      5: { cellWidth: 12 },
-      6: { cellWidth: 15 },
-      7: { fontStyle: 'bold', cellWidth: 15 }
-    };
+    const selectedSubjects = generatedReport.selectedSubjects || [];
 
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'bold');
-    doc.text('Overall Attendance Summary', marginL, yPos);
-    yPos += 4;
+    // ── Overall Attendance Summary Table (only in Overall mode) ──
+    if (selectedSubjects.length === 0) {
+      const summaryHeaders = ['Reg No', 'Student Name', 'Sec', 'Total', 'Present', 'OD', 'Absent', '%'];
+      const summaryRows = students.map(s => [
+        s.reg,
+        s.name,
+        s.section.replace('Sec-', ''),
+        s.total,
+        s.attended,
+        s.od,
+        s.absent,
+        s.percentage + '%'
+      ]);
+      const colStyles = {
+        0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
+        1: { halign: 'left', fontStyle: 'bold' },
+        2: { cellWidth: 10 },
+        3: { cellWidth: 14 },
+        4: { cellWidth: 15 },
+        5: { cellWidth: 12 },
+        6: { cellWidth: 15 },
+        7: { fontStyle: 'bold', cellWidth: 15 }
+      };
 
-    autoTable(doc, {
-      head: [summaryHeaders],
-      body: summaryRows,
-      startY: yPos,
-      margin: { left: marginL, right: marginR },
-      theme: 'grid',
-      styles: { fontSize: 7, cellPadding: 1.5, halign: 'center' },
-      columnStyles: colStyles,
-      headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold' },
-      didParseCell: (data) => {
-        const pctColIndex = summaryHeaders.length - 1;
-        if (data.section === 'body' && data.column.index === pctColIndex) {
-          const val = parseFloat(data.cell.raw);
-          if (val < 75) {
-            data.cell.styles.textColor = [200, 30, 30];
-          } else {
-            data.cell.styles.textColor = [16, 128, 80];
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Overall Attendance Summary', marginL, yPos);
+      yPos += 4;
+
+      autoTable(doc, {
+        head: [summaryHeaders],
+        body: summaryRows,
+        startY: yPos,
+        margin: { left: marginL, right: marginR },
+        theme: 'grid',
+        styles: { fontSize: 7, cellPadding: 1.5, halign: 'center' },
+        columnStyles: colStyles,
+        headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold' },
+        didParseCell: (data) => {
+          const pctColIndex = summaryHeaders.length - 1;
+          if (data.section === 'body' && data.column.index === pctColIndex) {
+            const val = parseFloat(data.cell.raw);
+            if (val < 75) {
+              data.cell.styles.textColor = [200, 30, 30];
+            } else {
+              data.cell.styles.textColor = [16, 128, 80];
+            }
           }
         }
-      }
-    });
+      });
 
-    yPos = doc.lastAutoTable.finalY + 8;
+      yPos = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ── Subject-wise Attendance Summary Table (when specific subjects selected) ──
+    if (selectedSubjects.length > 0) {
+      if (yPos + 25 > pageH) {
+        doc.addPage();
+        yPos = drawHeader(false);
+      }
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Subject-wise Attendance Summary', marginL, yPos);
+      yPos += 4;
+
+      const subjHeaders = ['Reg No', 'Student Name', ...selectedSubjects.flatMap(code => [`${code} Total`, `${code} P`, `${code} A`, `${code} %`])];
+      const subjRows = students.map(s => [
+        s.reg,
+        s.name,
+        ...selectedSubjects.flatMap(code => {
+          const st = s.subjectStats?.[code] || { attended: 0, absent: 0, od: 0, total: 0 };
+          return [st.total, st.attended, st.absent, subjectStatPct(st) + '%'];
+        })
+      ]);
+
+      autoTable(doc, {
+        head: [subjHeaders],
+        body: subjRows,
+        startY: yPos,
+        margin: { left: marginL, right: marginR },
+        theme: 'grid',
+        styles: { fontSize: 7, cellPadding: 1.5, halign: 'center' },
+        columnStyles: {
+          0: { halign: 'left', fontStyle: 'bold', cellWidth: 24 },
+          1: { halign: 'left', fontStyle: 'bold' },
+        },
+        headStyles: { fillColor: [18, 12, 122], textColor: 255, fontStyle: 'bold' },
+        didParseCell: (data) => {
+          const { section, column } = data;
+          if (section === 'body' && column.index >= 2) {
+            const colInGroup = (column.index - 2) % 4;
+            if (colInGroup === 3) {
+              const val = parseFloat(data.cell.raw);
+              data.cell.styles.textColor = val < 75 ? [200, 30, 30] : [16, 128, 80];
+              data.cell.styles.fontStyle = 'bold';
+            }
+          }
+        }
+      });
+
+      yPos = doc.lastAutoTable.finalY + 8;
+    }
 
     // Show daily period breakdown (filtered to the selected subjects' periods)
     if (groupedPeriods.length > 0) {
@@ -1567,16 +1722,6 @@ export default function HODDashboard() {
     return [...sections].sort();
   }, [reportBatch, sectionStudents]);
 
-  useEffect(() => {
-    const handleOutsideClick = (e) => {
-      if (subjectDropdownRef.current && !subjectDropdownRef.current.contains(e.target)) {
-        setShowSubjectDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, []);
-
   const reportBatchItems = useMemo(() => resolvedAttendanceOverview[reportBatch] || [], [resolvedAttendanceOverview, reportBatch]);
 
   // Compute the semester number for a SPECIFIC batch from its semester_config,
@@ -2300,18 +2445,60 @@ export default function HODDashboard() {
                     if (key === "evidenceFiles") {
                       if (Array.isArray(value) && value.length > 0) {
                         return (
-                          <div key={key} className="space-y-1.5 w-full">
+                          <div key={key} className="space-y-2 w-full">
                             <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
                               Attached Files Info
                             </span>
-                            <div className="flex flex-wrap gap-2">
-                              {value.map((file, fIdx) => (
-                                <div key={fIdx} className="flex items-center gap-1.5 bg-white border border-zinc-200 rounded-lg text-[10px] font-medium text-zinc-600 shadow-sm">
-                                  <FileText size={12} className="text-blue-500" />
-                                  <span>{file.name}</span>
-                                  <span className="text-[9px] text-zinc-400">({(file.size / 1024).toFixed(1)} KB)</span>
-                                </div>
-                              ))}
+                            <div className="flex flex-col gap-3">
+                              {value.map((file, fIdx) => {
+                                const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name) || (file.type && file.type.startsWith('image/'));
+                                const isPDF = /\.pdf$/i.test(file.name) || (file.type && file.type === 'application/pdf');
+                                const hasUrl = !!file.url;
+                                return (
+                                  <div key={fIdx} className="rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 border-b border-zinc-100">
+                                      {isImage ? (
+                                        <div className="w-6 h-6 rounded bg-purple-50 flex items-center justify-center shrink-0">
+                                          <span className="text-[8px] font-bold text-purple-600">IMG</span>
+                                        </div>
+                                      ) : isPDF ? (
+                                        <div className="w-6 h-6 rounded bg-red-50 flex items-center justify-center shrink-0">
+                                          <span className="text-[8px] font-bold text-red-600">PDF</span>
+                                        </div>
+                                      ) : (
+                                        <FileText size={14} className="text-blue-500 shrink-0" />
+                                      )}
+                                      <div className="flex-1 min-w-0">
+                                        <span className="text-[11px] font-semibold text-zinc-700 block truncate">{file.name}</span>
+                                        <span className="text-[9px] text-zinc-400">{(file.size / 1024).toFixed(1)} KB</span>
+                                      </div>
+                                    </div>
+                                    {hasUrl && isImage && (
+                                      <div className="p-2 bg-zinc-50 flex items-center justify-center">
+                                        <img
+                                          src={file.url}
+                                          alt={file.name}
+                                          className="max-h-48 max-w-full object-contain rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                                          referrerPolicy="no-referrer"
+                                          onClick={() => window.open(file.url, '_blank')}
+                                        />
+                                      </div>
+                                    )}
+                                    {hasUrl && isPDF && (
+                                      <div className="bg-zinc-50">
+                                        <iframe
+                                          src={file.url}
+                                          className="w-full h-72 rounded-b-lg border-0"
+                                          title={file.name}
+                                        />
+                                      </div>
+                                    )}
+                                    {!hasUrl && (
+                                      <div className="px-3 py-2 bg-zinc-50 text-[9px] text-zinc-400 italic">File not available for preview</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -2475,59 +2662,65 @@ export default function HODDashboard() {
               </div>
 
               {/* Row 2 */}
-              <div ref={subjectDropdownRef} className="relative bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205 col-span-1 sm:col-span-2">
-                <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Subjects</label>
-                <div 
-                  onClick={() => {
-                    if (reportSemester) {
-                      setShowSubjectDropdown(!showSubjectDropdown);
+              <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205 col-span-1 sm:col-span-2">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block">Select Subjects</label>
+                  {selectedReportSubjects.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedReportSubjects([]); setGeneratedReport(null); }}
+                      className="text-[10px] font-bold text-red-500 hover:underline"
+                    >
+                      Overall (All Subjects)
+                    </button>
+                  )}
+                </div>
+                <select
+                  value=""
+                  disabled={!reportSemester}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val && !selectedReportSubjects.includes(val)) {
+                      setSelectedReportSubjects(prev => [...prev, val]);
+                      setGeneratedReport(null);
                     }
                   }}
-                  className={`w-full text-xs font-bold text-zinc-700 cursor-pointer flex items-center justify-between min-h-[1.25rem] ${!reportSemester ? "opacity-40 cursor-not-allowed" : ""}`}
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 pr-8 text-xs font-bold text-zinc-700 outline-none focus:ring-2 focus:ring-[#120c7a]/20 transition-all appearance-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  <span className="truncate">
-                    {selectedReportSubjects.length === 0 
-                      ? "Overall (All Subjects)" 
-                      : `${selectedReportSubjects.length} Subject(s) Selected`}
-                  </span>
-                  <ChevronDown size={14} className="text-zinc-500 shrink-0" />
+                  <option value="">-- Add Subject --</option>
+                  {availableReportSubjects.map(sub => (
+                    <option key={sub.code} value={sub.code} disabled={selectedReportSubjects.includes(sub.code)}>
+                      {sub.code} - {sub.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {selectedReportSubjects.length === 0 ? (
+                    <span className="px-2.5 py-1 bg-white text-zinc-400 text-[10px] font-bold rounded-full border border-zinc-200 uppercase tracking-tighter">
+                      Overall (All Subjects)
+                    </span>
+                  ) : (
+                    selectedReportSubjects.map(code => (
+                      <span
+                        key={code}
+                        title={availableReportSubjects.find(s => s.code === code)?.name || code}
+                        className="px-2.5 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded-full flex items-center gap-1 border border-blue-100 uppercase tracking-tighter"
+                      >
+                        {code}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReportSubjects(prev => prev.filter(c => c !== code));
+                            setGeneratedReport(null);
+                          }}
+                          className="hover:text-red-500 transition-colors"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))
+                  )}
                 </div>
-
-                {showSubjectDropdown && reportSemester && (
-                  <div className="absolute right-0 left-0 mt-2 bg-white border border-zinc-200 rounded-2xl shadow-xl z-[150] max-h-60 overflow-y-auto p-2 space-y-1">
-                    <label className="flex items-center gap-2.5 p-2.5 hover:bg-zinc-50 rounded-xl cursor-pointer text-xs font-bold text-zinc-700">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedReportSubjects.length === 0} 
-                        onChange={() => { setSelectedReportSubjects([]); setShowSubjectDropdown(false); setGeneratedReport(null); }}
-                        className="rounded text-[#120c7a] focus:ring-[#120c7a] w-4 h-4 cursor-pointer"
-                      />
-                      <span>Overall (All Subjects)</span>
-                    </label>
-                    <div className="border-t border-zinc-100 my-1"></div>
-                    {availableReportSubjects.map(sub => {
-                      const isChecked = selectedReportSubjects.includes(sub.code);
-                      return (
-                        <label key={sub.code} className="flex items-center gap-2.5 p-2.5 hover:bg-zinc-50 rounded-xl cursor-pointer text-xs font-bold text-zinc-700">
-                          <input 
-                            type="checkbox" 
-                            checked={isChecked} 
-                            onChange={() => {
-                              setGeneratedReport(null);
-                              if (isChecked) {
-                                setSelectedReportSubjects(prev => prev.filter(c => c !== sub.code));
-                              } else {
-                                setSelectedReportSubjects(prev => [...prev, sub.code]);
-                              }
-                            }}
-                            className="rounded text-[#120c7a] focus:ring-[#120c7a] w-4 h-4 cursor-pointer"
-                          />
-                          <span className="truncate">{sub.code} - {sub.name}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
@@ -2711,11 +2904,21 @@ export default function HODDashboard() {
                                   {date.slice(5).replace('-', '/')}
                                 </th>
                               ))}
-                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Total</th>
-                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">P</th>
-                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">OD</th>
-                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">A</th>
-                              <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Pct</th>
+                              {generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? (
+                                generatedReport.selectedSubjects.map(code => (
+                                  <th key={`sh_${code}`} colSpan={4} className={`px-1.5 py-2.5 text-[9px] font-extrabold uppercase text-center border-l-[3px] border-[#120c7a]/60 bg-indigo-50/80 text-indigo-700`} title={code}>
+                                    {code}
+                                  </th>
+                                ))
+                              ) : (
+                                <>
+                                  <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Total</th>
+                                  <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">P</th>
+                                  <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">OD</th>
+                                  <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-200 min-w-[50px] bg-zinc-150">A</th>
+                                  <th className="px-3 py-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center border-l border-zinc-300 min-w-[60px] bg-zinc-150">Pct</th>
+                                </>
+                              )}
                             </tr>
                               <tr className="border-b border-zinc-200 bg-zinc-50/50">
                                 <th className="bg-transparent" colSpan={3}></th>
@@ -2729,13 +2932,13 @@ export default function HODDashboard() {
                                     </th>
                                   );
                                 }))}
-                                <th className="bg-transparent" colSpan={5}></th>
+                                <th className="bg-transparent" colSpan={generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5}></th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-200 bg-white">
                               {filteredReportStudents.length === 0 ? (
                                 <tr>
-                                  <td colSpan={8 + generatedReport.periods.length} className="px-6 py-10 text-center text-xs text-zinc-400 italic font-medium">
+                                  <td colSpan={3 + generatedReport.periods.length + (generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5)} className="px-6 py-10 text-center text-xs text-zinc-400 italic font-medium">
                                     No students match your search query.
                                   </td>
                                 </tr>
@@ -2770,13 +2973,32 @@ export default function HODDashboard() {
                                         </td>
                                       );
                                     }))}
-                                    <td className="px-3 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{student.total}</td>
-                                    <td className="px-3 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{student.attended}</td>
-                                    <td className="px-3 py-2.5 text-xs font-bold text-blue-600 text-center border-l border-zinc-200 bg-zinc-50">{student.od}</td>
-                                    <td className="px-3 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{student.absent}</td>
-                                    <td className={`px-3 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(student.percentage) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
-                                      {student.percentage}%
-                                    </td>
+                                    {generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? (
+                                      generatedReport.selectedSubjects.map(code => {
+                                        const st = student.subjectStats?.[code] || { attended: 0, absent: 0, od: 0, total: 0 };
+                                        const spct = subjectStatPct(st);
+                                        return (
+                                          <Fragment key={`sc_${student.reg}_${code}`}>
+                                            <td className="px-2 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{st.total}</td>
+                                            <td className="px-2 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{st.attended}</td>
+                                            <td className="px-2 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{st.absent}</td>
+                                            <td className={`px-2 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(spct) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
+                                              {spct}%
+                                            </td>
+                                          </Fragment>
+                                        );
+                                      })
+                                    ) : (
+                                      <>
+                                        <td className="px-3 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{student.total}</td>
+                                        <td className="px-3 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{student.attended}</td>
+                                        <td className="px-3 py-2.5 text-xs font-bold text-blue-600 text-center border-l border-zinc-200 bg-zinc-50">{student.od}</td>
+                                        <td className="px-3 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{student.absent}</td>
+                                        <td className={`px-3 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(student.percentage) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
+                                          {student.percentage}%
+                                        </td>
+                                      </>
+                                    )}
                                   </tr>
                                 ))
                               )}
@@ -3365,6 +3587,82 @@ export default function HODDashboard() {
                   Send for Recorrection
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Pending Attendance Warning Modal for Report Generator */}
+      {pendingAttendanceModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[220] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPendingAttendanceModal({ open: false, items: [] })}>
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden border border-rose-100" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-rose-700 via-red-800 to-rose-950 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-2xl backdrop-blur-sm text-white">
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-base leading-tight">Pending Attendance Found</h3>
+                  <p className="text-rose-200 text-[11px] font-semibold">Report generation blocked until attendance is completed for these periods</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+              <div className="p-3.5 bg-rose-50 border border-rose-200/80 rounded-2xl text-xs font-semibold text-rose-800 flex items-center gap-2.5">
+                <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                <span>There are <strong>{pendingAttendanceModal.items.length} pending period(s)</strong> in the selected date range ({reportFromDate} to {reportToDate}). Please complete these attendance entries first.</span>
+              </div>
+
+              <div className="border border-zinc-200 rounded-2xl overflow-hidden shadow-sm">
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-zinc-100/80 sticky top-0 border-b border-zinc-200 text-[10px] font-black text-zinc-500 uppercase tracking-wider">
+                      <tr>
+                        <th className="py-2.5 px-3">Date & Day</th>
+                        <th className="py-2.5 px-3">Period</th>
+                        <th className="py-2.5 px-3">Subject</th>
+                        <th className="py-2.5 px-3">Faculty</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-150 font-medium text-zinc-700">
+                      {pendingAttendanceModal.items.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-zinc-50 transition-colors">
+                          <td className="py-2.5 px-3 font-semibold text-zinc-900">
+                            {item.date}
+                            <span className="block text-[10px] text-zinc-400 font-normal">{item.day}</span>
+                          </td>
+                          <td className="py-2.5 px-3 font-bold text-blue-700">
+                            Period {item.period}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="font-bold text-zinc-800">{item.subjectCode}</span>
+                            <span className="block text-[10px] text-zinc-500 font-normal line-clamp-1">{item.subjectName}</span>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-amber-700">
+                            {item.facultyName}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-200 flex justify-between items-center">
+              <span className="text-xs font-medium text-zinc-500">Total Pending: <strong>{pendingAttendanceModal.items.length}</strong></span>
+              <button
+                onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
+                className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-900 text-white text-xs font-bold rounded-xl transition active:scale-95"
+              >
+                Understood & Close
+              </button>
             </div>
           </div>
         </div>

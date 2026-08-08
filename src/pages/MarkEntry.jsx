@@ -1233,24 +1233,34 @@ export default function MarkEntry() {
         });
         coMaxMarks = derived;
       } else {
-        // Regular internal exams: derive max marks from qpParts structure
-        const derived = {};
-        qpParts.forEach(part => {
-          const marks = Number(part.marks_per_question || 0);
-          if (marks <= 0) return;
-          const groups = {};
-          (part.questions || []).forEach(q => {
-            const base = String(q.qno).replace(/\(?[ab]\)?$/i, '').trim();
-            if (!groups[base]) groups[base] = new Set();
-            if (q.co) groups[base].add(String(q.co).trim().toUpperCase());
+        // Regular internal exams: prefer the QP's explicit CO weightage (summary table).
+        // The per-question `co` field in parts may be incomplete/empty for some questions,
+        // which silently zeroes out max marks for those COs. co_weightage covers every CO.
+        const weightage = qpMeta?.co_weightage || {};
+        const weightageKeys = Object.keys(weightage).filter(k => Number(weightage[k]) > 0);
+        if (weightageKeys.length > 0) {
+          weightageKeys.forEach(co => {
+            coMaxMarks[String(co).trim().toUpperCase()] = Number(weightage[co]) || 0;
           });
-          Object.values(groups).forEach(coSet => {
-            coSet.forEach(co => {
-              derived[co] = (derived[co] || 0) + marks;
+        } else {
+          const derived = {};
+          qpParts.forEach(part => {
+            const marks = Number(part.marks_per_question || 0);
+            if (marks <= 0) return;
+            const groups = {};
+            (part.questions || []).forEach(q => {
+              const base = String(q.qno).replace(/\(?[ab]\)?$/i, '').trim();
+              if (!groups[base]) groups[base] = new Set();
+              if (q.co) groups[base].add(String(q.co).trim().toUpperCase());
+            });
+            Object.values(groups).forEach(coSet => {
+              coSet.forEach(co => {
+                derived[co] = (derived[co] || 0) + marks;
+              });
             });
           });
-        });
-        coMaxMarks = derived;
+          coMaxMarks = derived;
+        }
       }
 
       ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { if (!(co in coMaxMarks)) coMaxMarks[co] = 0; });

@@ -264,15 +264,18 @@ export default function PoAttainment() {
         const regKey = sanitizeKey(regulation);
         const batchKey = sanitizeKey(batch);
 
-        // Fetch PO/PSO configuration
-        const poConfigRef = doc(db, "po_configuration", `${progKey}_${deptKey}_${regKey}`);
+        // Fetch PO/PSO configuration (same source as POConfiguration save + CoPoMapping read)
+        const poPsoConfigKey = `${progKey}_${regKey}__${deptKey}`;
+        const poConfigRef = doc(db, "po_pso", poPsoConfigKey);
         const poConfigSnap = await getDoc(poConfigRef);
         const poConfig = poConfigSnap.data() || {};
-        
+
         const posSet = new Set();
         const psosSet = new Set();
-        if (poConfig.pos) poConfig.pos.forEach(po => po.code && posSet.add(po.code));
-        if (poConfig.psos) poConfig.psos.forEach(pso => pso.code && psosSet.add(pso.code));
+        const poCount = (poConfig.po_statements || []).length;
+        (poConfig.po_statements || []).forEach((po, idx) => posSet.add(`PO${idx + 1}`));
+        // PSO keys in mapping_summary use the offset scheme (PSO{poCount+idx+1}) — matches COConfiguration save + CoPoMapping read
+        (poConfig.pso_statements || []).forEach((pso, idx) => psosSet.add(`PSO${poCount + idx + 1}`));
         
         const summaryRef = collection(db, `mapping_summary`);
         const summarySnap = await getDocs(summaryRef);
@@ -289,10 +292,13 @@ export default function PoAttainment() {
             // When section is empty, include all matching docs (section-suffixed or not)
             summariesMap[key] = summaryData;
             if (summaryData.summary) {
-              Object.keys(summaryData.summary).forEach(outcomeCode => {
-                if (outcomeCode.startsWith('PO')) posSet.add(outcomeCode);
-                if (outcomeCode.startsWith('PSO')) psosSet.add(outcomeCode);
-              });
+              // Fallback only when no po_pso config exists (backward compatibility)
+              if (posSet.size === 0 && psosSet.size === 0) {
+                Object.keys(summaryData.summary).forEach(outcomeCode => {
+                  if (outcomeCode.startsWith('PO')) posSet.add(outcomeCode);
+                  if (outcomeCode.startsWith('PSO')) psosSet.add(outcomeCode);
+                });
+              }
             }
           }
         });
@@ -303,15 +309,10 @@ export default function PoAttainment() {
         setPoList(sortedPos);
         setPsoList(sortedPsos);
 
-        // Fetch Attainment Configuration from po_pso
-        const compositeKey = `${progKey}_${regKey}__${deptKey}`;
-        const poPsoConfigRef = doc(db, "po_pso", compositeKey);
-        const poPsoConfigSnap = await getDoc(poPsoConfigRef);
-        const poPsoConfig = poPsoConfigSnap.data() || {};
-        
-        const dWeight = parseFloat(poPsoConfig.direct_weight) || 80;
-        const iWeight = parseFloat(poPsoConfig.indirect_weight) || 20;
-        const survs = poPsoConfig.surveys || [];
+        // Attainment weights come from the same po_pso doc fetched above
+        const dWeight = parseFloat(poConfig.direct_weight) || 80;
+        const iWeight = parseFloat(poConfig.indirect_weight) || 20;
+        const survs = poConfig.surveys || [];
         setAttainmentConfig({ directWeight: dWeight, indirectWeight: iWeight, surveys: survs });
 
         // Fetch existing survey scores
@@ -473,35 +474,69 @@ export default function PoAttainment() {
                      return tb - ta;
                    });
                    const internalChildren = children.filter(c => !c.isUniversity && !c.isIndirect);
-                   const chosen = internalChildren[0] || children[0];
-                   if (!chosen) return;
+                   const directChildren = internalChildren.length > 0 ? internalChildren : children;
+                   if (directChildren.length === 0) return;
 
-                   const studentTotals = Object.values(chosen.data.students || {});
-                   const maxMarks = chosen.data.co_max_marks || {};
-                   const coKeys = Object.keys(maxMarks).sort();
+                   const allCoKeysSet = new Set();
+                   directChildren.forEach(child => {
+                     Object.keys(child.data.co_max_marks || {}).forEach(k => allCoKeysSet.add(k.toUpperCase()));
+                     Object.values(child.data.students || {}).forEach(marks => {
+                       Object.keys(marks || {}).forEach(k => {
+                         if (/^CO\d+/i.test(k)) allCoKeysSet.add(k.toUpperCase());
+                       });
+                     });
+                   });
+                   const coKeys = Array.from(allCoKeysSet).sort((a, b) => {
+                     const na = Number(a.replace(/[^0-9]/g, '')) || 0;
+                     const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
+                     return na - nb;
+                   });
+
+                   const mergedStudentMarks = {};
+                   const mergedMaxMarks = {};
+                   directChildren.forEach(child => {
+                     Object.entries(child.data.co_max_marks || {}).forEach(([co, max]) => {
+                       const coKey = co.toUpperCase();
+                       mergedMaxMarks[coKey] = (mergedMaxMarks[coKey] || 0) + Number(max || 0);
+                     });
+                     Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
+                       if (!mergedStudentMarks[studentId]) mergedStudentMarks[studentId] = {};
+                       Object.entries(marks || {}).forEach(([co, mark]) => {
+                         const coKey = co.toUpperCase();
+                         mergedStudentMarks[studentId][coKey] = (mergedStudentMarks[studentId][coKey] || 0) + Number(mark || 0);
+                       });
+                     });
+                   });
+
                    const coAttLevels = {};
+                   const cutoff = summaryData.cutoff !== undefined && summaryData.cutoff !== "" ? Number(summaryData.cutoff) : 50;
 
-                   coKeys.forEach(co => {
-                     let countGE = 0;
-                     let countLess = 0;
-                     const cutoff = summaryData.cutoff !== undefined && summaryData.cutoff !== "" ? Number(summaryData.cutoff) : 50;
-                     studentTotals.forEach(s => {
-                       const rawVal = s[co] ?? s[co.toLowerCase()] ?? s[co.toUpperCase()];
-                       if (rawVal !== undefined && rawVal !== null) {
-                         const mVal = Number(rawVal);
-                         const max = maxMarks[co] ?? maxMarks[co.toLowerCase()] ?? maxMarks[co.toUpperCase()] ?? Number.MAX_VALUE;
-                         if (max > 0) {
-                           const perc = (mVal / max) * 100;
-                           if (perc >= cutoff) {
-                             countGE++;
-                           } else {
-                             countLess++;
-                           }
+                    coKeys.forEach(co => {
+                      const coKey = co.toUpperCase();
+                      let totalMaxMark = mergedMaxMarks[coKey] || 0;
+                      let countGE = 0;
+                      let countLess = 0;
+
+                      // If co_max_marks has 0 for this CO but students have marks, derive max from data
+                      if (totalMaxMark === 0) {
+                        const maxMark = Math.max(0, ...Object.values(mergedStudentMarks).map(m => Number(m[coKey] || 0)));
+                        if (maxMark > 0) totalMaxMark = maxMark;
+                      }
+
+                      Object.values(mergedStudentMarks).forEach(studentMarks => {
+                        const mark = studentMarks[coKey] || 0;
+                        if (totalMaxMark > 0) {
+                         const perc = (mark / totalMaxMark) * 100;
+                         if (perc >= cutoff) {
+                           countGE++;
+                         } else {
+                           countLess++;
                          }
                        }
                      });
-                     const totalValid = countGE + countLess;
-                     const percentage = totalValid > 0 ? (countGE / totalValid) * 100 : 0;
+
+                     const totalStudents = Object.keys(mergedStudentMarks).length;
+                     const percentage = totalStudents > 0 ? (countGE / totalStudents) * 100 : 0;
                      const thresholdsToUse = summaryData.thresholds && summaryData.thresholds.length > 0 ? summaryData.thresholds : [
                        { level: 3, min: 71, max: 100 },
                        { level: 2, min: 61, max: 70 },

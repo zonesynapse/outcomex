@@ -8,7 +8,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     examDisplay = configObj?.examName || qp.qpaper_name;
   }
 
-  const isAssignment = qp.assessment_type === 'Assignment';
+  const isAssignment = qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' || qp.assessment_type === 'Indirect';
 
   const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
   const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
@@ -41,7 +41,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
 </table>
 <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #000;" border="1">
   <tr>
-    <td style="padding: 6px;"><strong>${isAssignment ? 'Assignment' : 'Internal Assessment Test'}</strong></td>
+    <td style="padding: 6px;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : qp.assessment_type === 'Practical' ? 'Practical' : qp.assessment_type === 'Indirect' ? 'Indirect Assessment' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
     <td colspan="3" style="padding: 6px;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
     <td style="padding: 6px;"><strong>Academic Year</strong></td>
     <td style="padding: 6px;">${qp.academic_year}</td>
@@ -233,7 +233,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
   const activeCOs = new Set();
   const coWeightage = {};
 
-  if (qp.assessment_type === 'Assignment') {
+  if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' || qp.assessment_type === 'Indirect') {
     (qp.assignment_config || []).forEach((q) => {
       (q.mappings || []).forEach(m => {
         const co = String(m?.co || '').trim();
