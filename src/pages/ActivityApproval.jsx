@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { ACTIVITY_REGISTRY } from "../data/activityRegistry";
-import { formatProgDisplay, formatBatchDisplay, sanitizeKey } from "../lib/utils";
+import { formatProgDisplay, formatBatchDisplay, sanitizeKey, formatDepartmentDisplay } from "../lib/utils";
 export default function ActivityApproval() {
   const [currentUserData, setCurrentUserData] = useState(null);
   const [userRole, setUserRole] = useState("");
@@ -258,34 +258,80 @@ export default function ActivityApproval() {
     return urls;
   };
 
+  // Helper to expand multi-row form entries (e.g. C5 online courses, C2/C3/C8 multi-row forms)
+  const expandActivityRows = (activities) => {
+    const result = [];
+    (activities || []).forEach((act) => {
+      if (act.formData && Array.isArray(act.formData) && act.formData.length > 0) {
+        act.formData.forEach((row, idx) => {
+          if (typeof row === "object" && row !== null) {
+            result.push({
+              ...act,
+              ...row,
+              id: `${act.id}_row_${idx}`,
+              facultyName: row.facultyName || act.facultyName || act.submittedBy || "-",
+              studentName: row.studentName || act.studentName || act.submittedBy || "-",
+              courseName: row.courseName || row.courseTitle || row.title || row.nameOfCourse || row.name || act.courseName || act.courseTitle || act.title,
+              platform: row.platform || row.university || row.organisation || row.platformUniversity || act.platform || act.university,
+              weeks: row.weeks || row.durationWeeks || row.duration || act.weeks || act.duration,
+              startDate: row.startDate || row.fromDate || act.startDate || act.fromDate,
+              endDate: row.endDate || row.toDate || act.endDate || act.toDate,
+              grade: row.grade !== undefined && row.grade !== "" ? row.grade : (row.score !== undefined ? row.score : act.grade),
+              status: row.status || act.status,
+              relevance: row.relevance || act.relevance,
+            });
+          }
+        });
+      } else if (act.formData && typeof act.formData === "object" && !Array.isArray(act.formData)) {
+        result.push({
+          ...act,
+          ...act.formData,
+          facultyName: act.formData.facultyName || act.facultyName || act.submittedBy || "-",
+          studentName: act.formData.studentName || act.studentName || act.submittedBy || "-",
+          courseName: act.formData.courseName || act.formData.courseTitle || act.formData.title || act.formData.nameOfCourse || act.formData.name || act.courseName || act.courseTitle || act.title,
+          platform: act.formData.platform || act.formData.university || act.formData.organisation || act.platform || act.university,
+          weeks: act.formData.weeks || act.formData.durationWeeks || act.formData.duration || act.weeks || act.duration,
+          startDate: act.formData.startDate || act.formData.fromDate || act.startDate || act.fromDate,
+          endDate: act.formData.endDate || act.formData.toDate || act.endDate || act.toDate,
+          grade: act.formData.grade !== undefined && act.formData.grade !== "" ? act.formData.grade : (act.formData.score !== undefined ? act.formData.score : act.grade),
+          status: act.formData.status || act.status,
+          relevance: act.formData.relevance || act.relevance,
+        });
+      } else {
+        result.push(act);
+      }
+    });
+    return result;
+  };
+
   // Sections for A4 compiled document report
-  const partA_GuestLectures = useMemo(() => filteredActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry")), [filteredActivities]);
-  const partA_Association = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "leadership"), [filteredActivities]);
-  const partA_Internships = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship"))), [filteredActivities]);
-  const partA_OnlineCourses = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "onlineCourse"), [filteredActivities]);
-  const partA_PaperPresentations = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present")))), [filteredActivities]);
-  const partA_Publications = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ")))), [filteredActivities]);
-  const partA_Conferences = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "technical"), [filteredActivities]);
-  const partA_ExtraCurricular = useMemo(() => filteredActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social")), [filteredActivities]);
-  const partA_Placements = useMemo(() => filteredActivities.filter(a => a.isStep && a.category === "placement"), [filteredActivities]);
+  const partA_GuestLectures = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry"))), [filteredActivities]);
+  const partA_Association = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && a.category === "leadership")), [filteredActivities]);
+  const partA_Internships = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship")))), [filteredActivities]);
+  const partA_OnlineCourses = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && a.category === "onlineCourse")), [filteredActivities]);
+  const partA_PaperPresentations = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present"))))), [filteredActivities]);
+  const partA_Publications = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ"))))), [filteredActivities]);
+  const partA_Conferences = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && a.category === "technical")), [filteredActivities]);
+  const partA_ExtraCurricular = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social"))), [filteredActivities]);
+  const partA_Placements = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.isStep && a.category === "placement")), [filteredActivities]);
 
-  const partB_Meetings = useMemo(() => filteredActivities.filter(a => a.activityCode === "B1"), [filteredActivities]);
-  const partB_Advisory = useMemo(() => filteredActivities.filter(a => a.activityCode === "B2"), [filteredActivities]);
-  const partB_Purchases = useMemo(() => filteredActivities.filter(a => a.activityCode === "B3"), [filteredActivities]);
-  const partB_Mous = useMemo(() => filteredActivities.filter(a => a.activityCode === "B4"), [filteredActivities]);
-  const partB_Parents = useMemo(() => filteredActivities.filter(a => a.activityCode === "B5"), [filteredActivities]);
-  const partB_Audits = useMemo(() => filteredActivities.filter(a => a.activityCode === "B7"), [filteredActivities]);
-  const partB_Newsletters = useMemo(() => filteredActivities.filter(a => a.activityCode === "B8"), [filteredActivities]);
+  const partB_Meetings = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B1")), [filteredActivities]);
+  const partB_Advisory = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B2")), [filteredActivities]);
+  const partB_Purchases = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B3")), [filteredActivities]);
+  const partB_Mous = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B4")), [filteredActivities]);
+  const partB_Parents = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B5")), [filteredActivities]);
+  const partB_Audits = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B7")), [filteredActivities]);
+  const partB_Newsletters = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "B8")), [filteredActivities]);
 
-  const partC_Phd = useMemo(() => filteredActivities.filter(a => a.activityCode === "C1"), [filteredActivities]);
-  const partC_Publications = useMemo(() => filteredActivities.filter(a => a.activityCode === "C2"), [filteredActivities]);
-  const partC_Attended = useMemo(() => filteredActivities.filter(a => a.activityCode === "C3"), [filteredActivities]);
-  const partC_Organized = useMemo(() => filteredActivities.filter(a => a.activityCode === "C4"), [filteredActivities]);
-  const partC_Online = useMemo(() => filteredActivities.filter(a => a.activityCode === "C5"), [filteredActivities]);
-  const partC_Funding = useMemo(() => filteredActivities.filter(a => a.activityCode === "C6"), [filteredActivities]);
-  const partC_Patents = useMemo(() => filteredActivities.filter(a => a.activityCode === "C7"), [filteredActivities]);
-  const partC_Contributions = useMemo(() => filteredActivities.filter(a => a.activityCode === "C8"), [filteredActivities]);
-  const partC_Achievements = useMemo(() => filteredActivities.filter(a => a.activityCode === "C9"), [filteredActivities]);
+  const partC_Phd = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C1")), [filteredActivities]);
+  const partC_Publications = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C2")), [filteredActivities]);
+  const partC_Attended = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C3")), [filteredActivities]);
+  const partC_Organized = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C4")), [filteredActivities]);
+  const partC_Online = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C5")), [filteredActivities]);
+  const partC_Funding = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C6")), [filteredActivities]);
+  const partC_Patents = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C7")), [filteredActivities]);
+  const partC_Contributions = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C8")), [filteredActivities]);
+  const partC_Achievements = useMemo(() => expandActivityRows(filteredActivities.filter(a => a.activityCode === "C9")), [filteredActivities]);
 
   const allReportImages = useMemo(() => {
     const imagesList = [];
@@ -626,7 +672,7 @@ export default function ActivityApproval() {
                                   <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{act.regNo || act.facultyId || ""}</p>
                                 </td>
                                 <td className="p-4">
-                                  <p className="font-bold text-zinc-700">{act.department}</p>
+                                  <p className="font-bold text-zinc-700">{formatDepartmentDisplay(act.department, act.programme)}</p>
                                   <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
                                 </td>
                                 <td className="p-4 max-w-xs md:max-w-sm">
@@ -1499,12 +1545,12 @@ export default function ActivityApproval() {
                           {partC_Online.map((act, index) => (
                             <tr key={act.id} className="text-center">
                               <td className="border border-zinc-900 p-2">{index + 1}</td>
-                              <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || "-"}</td>
-                              <td className="border border-zinc-900 p-2 text-left">{act.courseName || act.title || "-"}</td>
-                              <td className="border border-zinc-900 p-2 text-left">{act.platform || "-"}</td>
-                              <td className="border border-zinc-900 p-2">{act.weeks || "-"}</td>
-                              <td className="border border-zinc-900 p-2">{act.startDate && act.endDate ? `${act.startDate} to ${act.endDate}` : act.date || "-"}</td>
-                              <td className="border border-zinc-900 p-2">{act.grade || "-"}</td>
+                               <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || act.submittedBy || act.name || "-"}</td>
+                              <td className="border border-zinc-900 p-2 text-left">{act.courseName || act.courseTitle || act.title || act.activityName || "-"}</td>
+                              <td className="border border-zinc-900 p-2 text-left">{act.platform || act.university || act.organization || "-"}</td>
+                              <td className="border border-zinc-900 p-2">{act.weeks || act.durationWeeks || act.duration || "-"}</td>
+                              <td className="border border-zinc-900 p-2">{act.startDate && act.endDate ? `${act.startDate} to ${act.endDate}` : act.dates || act.date || act.fromDate || "-"}</td>
+                              <td className="border border-zinc-900 p-2">{act.grade || act.score || act.scoreGrade || "-"}</td>
                               <td className="border border-zinc-900 p-2 font-bold uppercase">{act.status || "Completed"}</td>
                             </tr>
                           ))}
@@ -1726,7 +1772,7 @@ export default function ActivityApproval() {
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                  <span className="text-sm font-bold text-zinc-800">{reviewActivity.department} / {reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
+                  <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme)} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>

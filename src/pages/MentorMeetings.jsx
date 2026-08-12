@@ -5,7 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatBatchDisplay, getAcademicYears, sanitizeKey } from "../lib/utils";
+import { formatProgDisplay, formatBatchDisplay, getAcademicYears, sanitizeKey, formatDepartmentDisplay } from "../lib/utils";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 import {
   listenMentorMeetings, addMentorMeeting, updateMentorMeeting, deleteMentorMeeting,
@@ -1371,7 +1371,7 @@ export default function MentorMeetings() {
                 </div>
                 <div className="bg-slate-50 rounded-lg p-3">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Department / Batch</span>
-                  <span className="font-semibold text-slate-800">{reviewActivity.department || "—"} / {reviewActivity.batch || "—"}</span>
+                  <span className="font-semibold text-slate-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme) || "—"} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch || "—"}</span>
                 </div>
               </div>
 

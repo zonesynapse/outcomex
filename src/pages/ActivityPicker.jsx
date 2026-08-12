@@ -1,6 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Award, GraduationCap, Building2, User, Search, ChevronRight } from "lucide-react";
+import { Award, GraduationCap, Building2, User, Search, ChevronRight, Sliders } from "lucide-react";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 import Layout from "../components/Layout";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
 
@@ -14,22 +16,43 @@ const CATEGORY_ORDER = ["department", "faculty"];
 export default function ActivityPicker() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
+  const [customActivities, setCustomActivities] = useState({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "custom_activities"), (snap) => {
+      const map = {};
+      snap.forEach(d => {
+        map[d.id] = { code: d.id, ...d.data() };
+      });
+      setCustomActivities(map);
+    });
+    return () => unsub();
+  }, []);
+
+  const allActivitiesList = useMemo(() => {
+    const map = new Map();
+    ACTIVITY_REGISTRY.forEach(a => map.set(a.code, { ...a }));
+    Object.values(customActivities).forEach(a => map.set(a.code, { ...a }));
+    return Array.from(map.values());
+  }, [customActivities]);
 
   const groupedActivities = useMemo(() => {
     const groups = {};
     CATEGORY_ORDER.forEach(cat => groups[cat] = []);
-    ACTIVITY_REGISTRY.forEach(a => {
-      if (groups[a.category]) groups[a.category].push(a);
+    allActivitiesList.forEach(a => {
+      const cat = a.category || "department";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(a);
     });
     return groups;
-  }, []);
+  }, [allActivitiesList]);
 
   const filteredGroups = useMemo(() => {
     if (!searchQuery.trim()) return groupedActivities;
     const q = searchQuery.toLowerCase();
     const result = {};
     CATEGORY_ORDER.forEach(cat => {
-      result[cat] = groupedActivities[cat].filter(a =>
+      result[cat] = (groupedActivities[cat] || []).filter(a =>
         a.code.toLowerCase().includes(q) ||
         a.name.toLowerCase().includes(q) ||
         a.description?.toLowerCase().includes(q)

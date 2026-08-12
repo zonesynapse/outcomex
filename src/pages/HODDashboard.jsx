@@ -17,7 +17,7 @@ import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords } from "../lib/utils";
 
 function bsKey(key) {
   if (!key) return "";
@@ -1259,7 +1259,7 @@ export default function HODDashboard() {
         try {
           const attSnap = await getDoc(doc(db, "attendance", attDocId));
           if (attSnap.exists()) {
-            attRecords = attSnap.data()?.records || {};
+            attRecords = getAttendanceRecords(attSnap.data());
           }
         } catch { /* skip */ }
         return { ...a, attRecords, facultyUid: a.uid, attDocId };
@@ -2385,10 +2385,10 @@ export default function HODDashboard() {
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Points Claimed</span>
                     <span className="text-sm font-extrabold text-[#120c7a]">{reviewActivity.points || reviewActivity.totalPoints || "-"} Pts</span>
                   </div>
-                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
-                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                    <span className="text-sm font-bold text-zinc-800">{reviewActivity.department} / {reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
-                  </div>
+                    <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
+                      <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme)} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
+                    </div>
                   <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>
                     <span className="text-xs font-semibold text-zinc-700">

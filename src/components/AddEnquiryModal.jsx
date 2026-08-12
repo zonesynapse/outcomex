@@ -17,7 +17,7 @@ import { getScholarshipsRealtime } from "../services/scholarshipService";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { useRegulations } from "../hooks/useRegulations";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, formatProgDisplay } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, formatProgDisplay, formatDepartmentDisplay } from "../lib/utils";
 import { uploadBase64, deleteByUrl, userStoragePath } from "../utils/fileUpload";
 
 const STATUS_OPTIONS = ["Enquiry", "Application"];
@@ -44,14 +44,35 @@ const cleanDigits = (value, limit = 10) => String(value || "").replace(/\D/g, ""
 const normalizeText = (value) => String(value || "");
 
 const formatDateToDisplay = (isoDate) => {
-  if (!isoDate || !isoDate.includes('-')) return isoDate;
-  const [y, m, d] = isoDate.split('-');
-  return `${d}/${m}/${y}`;
+  if (!isoDate) return "";
+  
+  if (typeof isoDate === "number" || isoDate instanceof Date) {
+    const dObj = new Date(isoDate);
+    if (!isNaN(dObj.getTime())) {
+      const day = String(dObj.getDate()).padStart(2, "0");
+      const month = String(dObj.getMonth() + 1).padStart(2, "0");
+      const year = dObj.getFullYear();
+      return `${day}/${month}/${year}`;
+    }
+  }
+
+  const str = String(isoDate).trim();
+  if (str.includes("-")) {
+    const parts = str.split("T")[0].split("-");
+    if (parts.length === 3) {
+      const [y, m, d] = parts;
+      return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
+    }
+  }
+
+  return str;
 };
 
 const formatDisplayToISO = (displayDate) => {
-  if (!displayDate || !displayDate.includes('/')) return displayDate;
-  const [d, m, y] = displayDate.split('/');
+  if (!displayDate) return "";
+  const str = String(displayDate).trim();
+  if (!str.includes('/')) return str;
+  const [d, m, y] = str.split('/');
   return `${y}-${m}-${d}`;
 };
 
@@ -211,11 +232,11 @@ export default function AddEnquiryModal({
       batch: initialValues?.batch ?? "",
       academicYear: initialValues?.academicYear ?? "",
       year: initialValues?.year ?? "",
-      mathsMark: initialValues?.mathsMark ?? "",
-      physicsMark: initialValues?.physicsMark ?? "",
-      chemistryMark: initialValues?.chemistryMark ?? "",
-      totalMarks: initialValues?.totalMarks ?? "",
-      cutoff: initialValues?.cutoff ?? "",
+      mathsMark: initialValues?.mathsMark ?? initialValues?.maths ?? initialValues?.math ?? initialValues?.hscMaths ?? initialValues?.mMark ?? "",
+      physicsMark: initialValues?.physicsMark ?? initialValues?.physics ?? initialValues?.hscPhysics ?? initialValues?.pMark ?? "",
+      chemistryMark: initialValues?.chemistryMark ?? initialValues?.chemistry ?? initialValues?.hscChemistry ?? initialValues?.cMark ?? "",
+      totalMarks: initialValues?.totalMarks ?? initialValues?.total ?? initialValues?.totalMark ?? initialValues?.hscTotal ?? "",
+      cutoff: initialValues?.cutoff ?? initialValues?.cutoffMark ?? initialValues?.cutoffMarks ?? "",
       eligibility: initialValues?.eligibility ?? "",
       quotaAskedFor: initialValues?.quotaAskedFor ?? "",
       reference: initialValues?.reference ?? "",
@@ -936,213 +957,755 @@ export default function AddEnquiryModal({
   };
 
   const exportPdf = (enq) => {
-    const row = (label, key, value) => {
-      const display = value === null || value === undefined ? "" : String(value);
-      return `
-        <tr>
-          <td style="padding:8px;border:1px solid #ddd;width:35%;font-weight:600">${label}</td>
-          <td style="padding:8px;border:1px solid #ddd">${display}</td>
-        </tr>
-      `;
-    };
+    const v = (val) => (val !== null && val !== undefined && String(val).trim() !== "" ? String(val).trim() : "-");
 
     const documentTitle = (enq.status === "Application" || enq.status === "Admission")
-      ? `Admission Application - ${enq.applicationNo || "N/A"}`
-      : `Admission Enquiry - ${enq.enquiryId || ""}`;
+      ? `Admission Application - ${enq.applicationNo || enq.enquiryId || "N/A"}`
+      : `Admission Enquiry - ${enq.enquiryId || enq.applicationNo || ""}`;
 
-    const generateHtml = (logoDataUrl) => {
-      const logoImg = logoDataUrl || "";
-      return `<!doctype html>
+      // Document upload detection helper - strictly checks uploaded document attachments
+      const isDocUploaded = (itemKey) => {
+        const docs = enq.documents || {};
+        const isFilePresent = (val) => {
+          if (!val) return false;
+          if (typeof val === "object") return Boolean(val.url || val.name || val.base64);
+          if (typeof val === "string") return val.trim().length > 0 && !val.includes("N/A");
+          return false;
+        };
+
+        switch (itemKey) {
+          case 'tenth':
+            return isFilePresent(docs.tenthMarkSheet) || isFilePresent(docs['10thMarkSheet']);
+          case 'eleventh':
+            return isFilePresent(docs.eleventhMarkSheet) || isFilePresent(docs['11thMarkSheet']);
+          case 'twelfth':
+            return isFilePresent(docs.twelfthMarkSheet) || isFilePresent(docs['12thMarkSheet']);
+          case 'diplomaSem':
+            return isFilePresent(docs.diplomaSemesterMarkSheets) || isFilePresent(docs.diplomaMarkSheet);
+          case 'diplomaCons':
+            return isFilePresent(docs.diplomaConsolidatedMarkSheet);
+          case 'diplomaProv':
+            return isFilePresent(docs.diplomaProvisionalCertificate);
+          case 'diplomaCert':
+            return isFilePresent(docs.diplomaCertificate);
+          case 'ugSem':
+            return isFilePresent(docs.ugSemesterMarkSheets);
+          case 'ugCons':
+            return isFilePresent(docs.ugConsolidatedMarkSheet);
+          case 'ugProv':
+            return isFilePresent(docs.ugProvisionalCertificate);
+          case 'ugDegree':
+            return isFilePresent(docs.ugDegreeCertificate);
+          case 'community':
+            return isFilePresent(docs.communityCertificate);
+          case 'income':
+            return isFilePresent(docs.incomeCertificate);
+          case 'nativity':
+            return isFilePresent(docs.nativityCertificate);
+          case 'transfer':
+            return isFilePresent(docs.transferCertificate);
+          case 'migration':
+            return isFilePresent(docs.migrationCertificate);
+          case 'equivalency':
+            return isFilePresent(docs.equivalencyCertificate);
+          case 'photo':
+            return isFilePresent(docs.photo) || isFilePresent(docs.passportPhoto);
+          case 'firstGrad':
+            return isFilePresent(docs.firstGraduateCertificate);
+          case 'jointDecl':
+            return isFilePresent(docs.jointDeclarationForm) || isFilePresent(docs.jointDeclarationFormFG);
+          case 'aadhar':
+            return isFilePresent(docs.aadharCopy) || isFilePresent(docs.aadhaarCopy);
+          default:
+            return false;
+        }
+      };
+
+      const checklistItems = [
+        { no: 1, name: "10th Mark Sheet", key: "tenth" },
+        { no: 2, name: "11th Mark Sheet", key: "eleventh" },
+        { no: 3, name: "12th Mark Sheet", key: "twelfth" },
+        { no: 4, name: "Diploma Semester Mark Sheets", key: "diplomaSem" },
+        { no: 5, name: "Diploma Consolidated Mark Sheet", key: "diplomaCons" },
+        { no: 6, name: "Diploma Provisional Certificate", key: "diplomaProv" },
+        { no: 7, name: "Diploma Certificate", key: "diplomaCert" },
+        { no: 8, name: "UG Semester Mark Sheets", key: "ugSem" },
+        { no: 9, name: "UG Consolidated Mark Sheet", key: "ugCons" },
+        { no: 10, name: "UG Provisional Certificate", key: "ugProv" },
+        { no: 11, name: "UG Degree Certificate", key: "ugDegree" },
+        { no: 12, name: "Community Certificate", key: "community" },
+        { no: 13, name: "Income Certificate", key: "income" },
+        { no: 14, name: "Nativity Certificate", key: "nativity" },
+        { no: 15, name: "Transfer Certificate", key: "transfer" },
+        { no: 16, name: "Migration Certificate", key: "migration" },
+        { no: 17, name: "Equivalency Certificate", key: "equivalency" },
+        { no: 18, name: "Passport Size Photograph", key: "photo" },
+        { no: 19, name: "First Graduate Certificate", key: "firstGrad" },
+        { no: 20, name: "Joint Declaration Form (FG)", key: "jointDecl" },
+        { no: 21, name: "Aadhaar Card Copy", key: "aadhar" }
+      ];
+
+      const totalSubmittedDocs = checklistItems.filter(item => isDocUploaded(item.key)).length;
+
+      const quotaVal = (enq.seatCategory || enq.quotaAskedFor || enq.quota || "").toLowerCase();
+      const isManagement = quotaVal.includes("management") || quotaVal.includes("mq");
+      const isGovernment = quotaVal.includes("government") || quotaVal.includes("gq");
+      const isScholarship = quotaVal.includes("scholarship");
+
+      const generateHtml = (logoDataUrl) => {
+        const logoImg = logoDataUrl || "/logo.png";
+        const studentNameDisplay = enq.studentName || [enq.firstName, enq.lastName].filter(Boolean).join(" ") || enq.name || "-";
+        const presentAddressDisplay = [enq.presentHouseNo, enq.presentStreet, enq.presentLocality, enq.presentCity].filter(Boolean).join(", ") || enq.presentAddress || enq.address || "-";
+        const permanentAddressDisplay = [enq.permanentCity, enq.permanentDistrict, enq.permanentState].filter(Boolean).join(", ") || enq.permanentAddress || "-";
+
+        const mathsVal = enq.mathsMark || enq.maths || enq.math || enq.hscMaths || enq.mMark || "";
+        const physicsVal = enq.physicsMark || enq.physics || enq.hscPhysics || enq.pMark || "";
+        const chemistryVal = enq.chemistryMark || enq.chemistry || enq.hscChemistry || enq.cMark || "";
+
+        const mNum = parseFloat(mathsVal) || 0;
+        const pNum = parseFloat(physicsVal) || 0;
+        const cNum = parseFloat(chemistryVal) || 0;
+
+        const calcTotal = (mNum || pNum || cNum) ? (mNum + pNum + cNum) : "";
+        const totalVal = enq.totalMarks || enq.totalMark || enq.total || enq.hscTotal || (calcTotal ? String(calcTotal) : "");
+
+        const calcCutoff = (mNum || pNum || cNum) ? (mNum + pNum / 2 + cNum / 2) : "";
+        const cutoffVal = enq.cutoff || enq.cutoffMark || enq.cutoffMarks || (calcCutoff ? String(Number(calcCutoff.toFixed(2))) : "");
+
+        return `<!doctype html>
       <html>
       <head>
         <meta charset="utf-8" />
         <title>${documentTitle}</title>
         <style>
-          *{margin:0;padding:0}
-          body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:10mm 10mm 5mm}
-          table{width:100%;border-collapse:collapse;margin-top:6px}
-          td{vertical-align:top}
-          .title{font-size:16px;font-weight:700;text-align:center;}
-          .header{text-align:center;}
-          .header img{max-width:150mm;max-height:20mm;object-fit:contain;}
+          @page { size: A4 portrait; margin: 0; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, Helvetica, sans-serif; color: #111; background: #fff; font-size: 9.5px; line-height: 1.25; }
+          .page { width: 210mm; height: 297mm; padding: 5mm 10mm 12mm 10mm; margin: 0 auto; position: relative; page-break-after: always; page-break-inside: avoid; background: #fff; overflow: hidden; }
+          .page:last-child { page-break-after: avoid; }
+          
+          /* Top Wave Header Banner */
+          .top-banner-bar { height: 10mm; background: #192a56; margin: -5mm -10mm 6mm -10mm; clip-path: ellipse(80% 100% at 50% 0%); }
+
+          .header-table { width: 100%; margin-bottom: 4px; border-collapse: collapse; }
+          .header-logo-cell { width: 62%; vertical-align: middle; }
+          .header-logo-cell img { max-height: 50px; max-width: 100%; object-fit: contain; }
+          
+          .header-appl-cell { width: 38%; vertical-align: middle; }
+          .appl-for-box { border: 1.5px solid #192a56; border-radius: 10px; background: #f0f4ff; padding: 5px 8px; text-align: center; }
+          .appl-for-box .title { font-size: 11px; font-weight: 800; color: #192a56; text-transform: uppercase; letter-spacing: 0.5px; }
+          .appl-for-box .subtitle { font-size: 9.5px; font-weight: bold; color: #192a56; margin-top: 2px; }
+
+          .capital-banner { background: #192a56; color: #fff; text-align: center; font-weight: bold; font-size: 9px; padding: 3.5px 0; border-radius: 8px; margin: 5px 0 6px 0; letter-spacing: 0.5px; }
+          .appl-no-row { display: flex; justify-content: flex-end; margin-bottom: 5px; }
+          .appl-no-box { border: 1.5px solid #192a56; padding: 3px 12px; font-weight: bold; font-size: 10px; color: #192a56; min-width: 220px; text-align: left; background: #fff; }
+
+          /* Main Table Styling */
+          table.form-table { width: 100%; border-collapse: collapse; margin-bottom: 5px; table-layout: fixed; }
+          table.form-table td, table.form-table th { border: 1px solid #333; padding: 3.5px 5px; vertical-align: middle; word-wrap: break-word; }
+          
+          .col-num { width: 24px; text-align: center; font-weight: bold; background: #f8f9fa; font-size: 9px; color: #192a56; }
+          .col-label { font-weight: bold; color: #222; width: 31%; font-size: 9px; }
+          .col-val-text { font-weight: 600; color: #1a237e; font-size: 9.5px; }
+
+          .photo-cell { width: 105px; padding: 2px !important; text-align: center; vertical-align: middle !important; background: #fff; }
+          .photo-inner-box { width: 100px; height: 118px; border: 1.5px solid #192a56; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 8px; color: #666; font-weight: bold; background: #fafafa; margin: 0 auto; overflow: hidden; }
+          .photo-inner-box img { width: 100%; height: 100%; object-fit: cover; }
+
+          /* Page Footer */
+          .page-footer { position: absolute; bottom: 4mm; left: 10mm; right: 10mm; height: 6mm; display: flex; align-items: center; justify-content: space-between; font-size: 8.5px; font-weight: bold; color: #444; border-top: 1px solid #ccc; padding-top: 3px; }
+          .page-number-circle { width: 19px; height: 19px; border-radius: 50%; background: #192a56; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 9.5px; }
+
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .page { page-break-after: always; page-break-inside: avoid; margin: 0; padding: 5mm 10mm 12mm 10mm; width: 210mm; height: 297mm; overflow: hidden; }
+          }
         </style>
       </head>
       <body>
-        ${logoImg ? `<div class="header"><img src="${logoImg}" alt="College Logo" /></div>` : ""}
-        <div class="title" style="margin-top:${logoImg ? "4px" : "0"}">${documentTitle}</div>
-        <table>
-          ${row("Application No.","applicationNo", enq.applicationNo)}
-          ${row("Title","title", enq.title)}
-          ${row("Gender","gender", enq.gender)}
-          ${row("Student Name","studentName", enq.studentName)}
-          ${row("Date of Birth","dateOfBirth", enq.dateOfBirth)}
-          ${row("Age","age", enq.age)}
-          ${row("Father / Guardian","fatherGuardianName", enq.fatherGuardianName)}
-          ${row("Mother's Name","motherName", enq.motherName)}
-          ${row("Guardian's Name","guardianName", enq.guardianName)}
-          ${row("Parent Occupation","parentOccupation", enq.parentOccupation)}
-          ${row("Mobile","mobile", enq.mobile)}
-          ${row("Parent Mobile","parentMobile", enq.parentMobile)}
-          ${row("Landline","landline", enq.landline)}
-          ${row("Parent WhatsApp No.","parentWhatsAppNo", enq.parentWhatsAppNo)}
-          ${row("Student WhatsApp No.","studentWhatsAppNo", enq.studentWhatsAppNo)}
-          ${row("Email ID","emailId", enq.emailId)}
-          ${row("Present House / Door No.","presentHouseNo", enq.presentHouseNo)}
-          ${row("Present Street","presentStreet", enq.presentStreet)}
-          ${row("Present Locality","presentLocality", enq.presentLocality)}
-          ${row("Present City","presentCity", enq.presentCity)}
-          ${row("Present District","presentDistrict", enq.presentDistrict)}
-          ${row("Present State","presentState", enq.presentState)}
-          ${row("Present Country","presentCountry", enq.presentCountry)}
-          ${row("Present Pincode","presentPincode", enq.presentPincode)}
-          ${row("Permanent City","permanentCity", enq.permanentCity)}
-          ${row("Permanent District","permanentDistrict", enq.permanentDistrict)}
-          ${row("Permanent State","permanentState", enq.permanentState)}
-          ${row("Permanent Country","permanentCountry", enq.permanentCountry)}
-          ${row("Permanent Pincode","permanentPincode", enq.permanentPincode)}
-          ${row("Department (Choice 1)","department", enq.department)}
-          ${row("Department (Choice 2)","department2", enq.department2)}
-          ${row("Department (Choice 3)","department3", enq.department3)}
-          ${row("Status","status", enq.status)}
-          ${row("Programme","programme", enq.programme)}
-          ${row("Batch","batch", enq.batch)}
-          ${row("Academic Year","academicYear", enq.academicYear)}
-          ${row("Student Category","studentCategory", enq.studentCategory)}
-          ${row("Seat Category","seatCategory", enq.seatCategory)}
-          ${row("Scholarship Details","scholarshipDetails", enq.scholarshipDetails)}
-          ${row("Religion","religion", enq.religion)}
-          ${row("Community","community", enq.community)}
-          ${row("Nationality","nationality", enq.nationality)}
-          ${row("Caste","caste", enq.caste)}
-          ${row("Mother Tongue","motherTongue", enq.motherTongue)}
-          ${row("Blood Group","bloodGroup", enq.bloodGroup)}
-          ${row("Marital Status","maritalStatus", enq.maritalStatus)}
-          ${row("Medium of Instruction","mediumOfInstruction", enq.mediumOfInstruction)}
-          ${row("Enquiry For","enquiryFor", enq.enquiryFor)}
-          ${row("Examination Passed / Appeared","examinationPassedAppeared", enq.examinationPassedAppeared)}
-          ${row("Enquiry Date","enquiryDate", enq.enquiryDate)}
-          ${row("Father Occupation Sector","fatherOccupationSector", enq.fatherOccupationSector)}
-          ${row("Father Organisation","fatherOrganisation", enq.fatherOrganisation)}
-          ${row("Father Designation","fatherDesignation", enq.fatherDesignation)}
-          ${row("Father Annual Income","fatherAnnualIncome", enq.fatherAnnualIncome)}
-          ${row("Mother Occupation Sector","motherOccupationSector", enq.motherOccupationSector)}
-          ${row("Mother Organisation","motherOrganisation", enq.motherOrganisation)}
-          ${row("Mother Designation","motherDesignation", enq.motherDesignation)}
-          ${row("Mother Annual Income","motherAnnualIncome", enq.motherAnnualIncome)}
-          ${row("Total Annual Income of Family","familyAnnualIncome", enq.familyAnnualIncome)}
-          ${row("Hosteller / Day Scholar","hostellerDayScholar", enq.hostellerDayScholar)}
-          ${row("Transport Required","transportRequired", enq.transportRequired)}
-          ${row("Route","transportRoute", enq.transportRoute)}
-          ${row("Stage","transportStage", enq.transportStage)}
-          ${row("EMIS / UMIS No.","emsUmsNo", enq.emsUmsNo)}
-          ${row("Aadhar No.","aadharNo", enq.aadharNo)}
-          ${row("Qualifying Exam Programme","qualifyingExamProgrammes", enq.qualifyingExamProgrammes)}
-          ${row("Institute","qualifyingExamInstitute", enq.qualifyingExamInstitute)}
-          ${row("Board / University","qualifyingExamBoardUniversity", enq.qualifyingExamBoardUniversity)}
-          ${row("Month & Year of Passing","qualifyingExamMonthYear", enq.qualifyingExamMonthYear)}
-          ${row("No. of Attempts","qualifyingExamAttempts", enq.qualifyingExamAttempts)}
-          ${row("% of Marks","qualifyingExamMarks", enq.qualifyingExamMarks)}
+
+        <!-- PAGE 1 -->
+        <div class="page">
+          <div class="top-banner-bar"></div>
           
-          ${enq.qualifyingExam10thInstitute || enq.qualifyingExam10thBoard || enq.qualifyingExam10thMonthYear || enq.qualifyingExam10thAttempts || enq.qualifyingExam10thMarks ? `
-          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">10th Std Details</td></tr>
-          ${row("Institute","qualifyingExam10thInstitute", enq.qualifyingExam10thInstitute)}
-          ${row("Board / University","qualifyingExam10thBoard", enq.qualifyingExam10thBoard)}
-          ${row("Month & Year of Passing","qualifyingExam10thMonthYear", enq.qualifyingExam10thMonthYear)}
-          ${row("No. of Attempts","qualifyingExam10thAttempts", enq.qualifyingExam10thAttempts)}
-          ${row("% of Marks","qualifyingExam10thMarks", enq.qualifyingExam10thMarks)}
-          ` : ""}
+          <table class="header-table">
+            <tr>
+              <td class="header-logo-cell">
+                ${logoImg ? `<img src="${logoImg}" alt="CKCET Logo" />` : ""}
+              </td>
+              <td class="header-appl-cell">
+                <div class="appl-for-box">
+                  <div class="title">APPLICATION FOR</div>
+                  <div class="subtitle">${v(enq.programme)} for the AY ${v(enq.academicYear)}</div>
+                </div>
+              </td>
+            </tr>
+          </table>
 
-          ${enq.qualifyingExam11thInstitute || enq.qualifyingExam11thBoard || enq.qualifyingExam11thMonthYear || enq.qualifyingExam11thAttempts || enq.qualifyingExam11thMarks ? `
-          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">11th Std Details</td></tr>
-          ${row("Institute","qualifyingExam11thInstitute", enq.qualifyingExam11thInstitute)}
-          ${row("Board / University","qualifyingExam11thBoard", enq.qualifyingExam11thBoard)}
-          ${row("Month & Year of Passing","qualifyingExam11thMonthYear", enq.qualifyingExam11thMonthYear)}
-          ${row("No. of Attempts","qualifyingExam11thAttempts", enq.qualifyingExam11thAttempts)}
-          ${row("% of Marks","qualifyingExam11thMarks", enq.qualifyingExam11thMarks)}
-          ` : ""}
+          <div class="capital-banner">(TO BE FILLED IN CAPITAL LETTERS)</div>
+          
+          <div class="appl-no-row">
+            <div class="appl-no-box">Appl.No. &nbsp;&nbsp;<span style="color:#000;font-size:11px;font-weight:bold">${v(enq.applicationNo || enq.enquiryId)}</span></div>
+          </div>
 
-          ${enq.qualifyingExam12thInstitute || enq.qualifyingExam12thBoard || enq.qualifyingExam12thMonthYear || enq.qualifyingExam12thAttempts || enq.qualifyingExam12thMarks ? `
-          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">12th Std Details</td></tr>
-          ${row("Institute","qualifyingExam12thInstitute", enq.qualifyingExam12thInstitute)}
-          ${row("Board / University","qualifyingExam12thBoard", enq.qualifyingExam12thBoard)}
-          ${row("Month & Year of Passing","qualifyingExam12thMonthYear", enq.qualifyingExam12thMonthYear)}
-          ${row("No. of Attempts","qualifyingExam12thAttempts", enq.qualifyingExam12thAttempts)}
-          ${row("% of Marks","qualifyingExam12thMarks", enq.qualifyingExam12thMarks)}
-          ` : ""}
+          <table class="form-table">
+            <tr>
+              <td class="col-num">1</td>
+              <td class="col-label">Title</td>
+              <td class="col-val-text">${v(enq.title)}</td>
+              <td rowspan="6" class="photo-cell">
+                <div class="photo-inner-box">
+                  ${enq.documents?.photo?.url ? `<img src="${enq.documents.photo.url}" alt="Student Photo" />` : "Affix Passport Size Photo"}
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">2</td>
+              <td class="col-label">Name of the Student <br/><span style="font-size:7.5px;font-weight:normal;color:#555">(As per SSLC mark sheet)</span></td>
+              <td class="col-val-text" style="font-size:10px;color:#000;font-weight:bold">${studentNameDisplay}</td>
+            </tr>
+            <tr>
+              <td class="col-num">3</td>
+              <td class="col-label">Aadhaar Number</td>
+              <td class="col-val-text">${v(enq.aadharNo || enq.aadhaarNo || enq.aadhar)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">4</td>
+              <td class="col-label">Date of Birth</td>
+              <td class="col-val-text">${v(formatDateToDisplay(enq.dateOfBirth))} ${enq.age ? `(Age: ${v(enq.age)})` : ''}</td>
+            </tr>
+            <tr>
+              <td class="col-num">5</td>
+              <td class="col-label">Gender</td>
+              <td class="col-val-text">${v(enq.gender)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">6</td>
+              <td class="col-label">Programme</td>
+              <td class="col-val-text">${v(enq.programme)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">7</td>
+              <td class="col-label">Branch Name <br/><span style="font-size:7.5px;font-weight:normal;color:#555">(In case of UG Admission)</span></td>
+              <td class="col-val-text" colspan="2">
+                Choice (1): <strong>${v(formatDepartmentDisplay(enq.department))}</strong> &nbsp;|&nbsp; 
+                (2): <strong>${v(formatDepartmentDisplay(enq.department2))}</strong> &nbsp;|&nbsp; 
+                (3): <strong>${v(formatDepartmentDisplay(enq.department3))}</strong>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">8</td>
+              <td class="col-label">Year of Admission</td>
+              <td class="col-val-text" colspan="2">${v(enq.academicYear || enq.batch)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">9</td>
+              <td class="col-label">Student Category</td>
+              <td class="col-val-text" colspan="2">${v(enq.studentCategory || enq.category || 'Regular')}</td>
+            </tr>
+            <tr>
+              <td class="col-num">10</td>
+              <td class="col-label">Year</td>
+              <td class="col-val-text" colspan="2">${v(enq.year || 'I Year')}</td>
+            </tr>
+            <tr>
+              <td class="col-num">11</td>
+              <td class="col-label">Seat Category / Scholarship Details</td>
+              <td class="col-val-text" colspan="2">
+                ${v(enq.seatCategory || enq.quotaAskedFor || enq.quota)} 
+                ${enq.scholarshipDetails || enq.scholarship ? ` | Scholarship: ${v(enq.scholarshipDetails || enq.scholarship)}` : ''}
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">12</td>
+              <td class="col-label">Nationality</td>
+              <td class="col-val-text" colspan="2">${v(enq.nationality || 'Indian')}</td>
+            </tr>
+            <tr>
+              <td class="col-num">13</td>
+              <td class="col-label">Religion</td>
+              <td class="col-val-text" colspan="2">${v(enq.religion)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">14</td>
+              <td class="col-label">Community</td>
+              <td class="col-val-text" colspan="2">${v(enq.community)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">15</td>
+              <td class="col-label">Caste</td>
+              <td class="col-val-text" colspan="2">${v(enq.caste)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">16</td>
+              <td class="col-label">Mother tongue</td>
+              <td class="col-val-text" colspan="2">${v(enq.motherTongue)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">17</td>
+              <td class="col-label">Blood group</td>
+              <td class="col-val-text" colspan="2">${v(enq.bloodGroup)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">18</td>
+              <td class="col-label">Personal Marks of Identification</td>
+              <td class="col-val-text" colspan="2">
+                1. ${v(enq.identificationMark1)} <br/>
+                2. ${v(enq.identificationMark2)}
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">19</td>
+              <td class="col-label">Medium of Instruction in the School or College last Studied</td>
+              <td class="col-val-text" colspan="2">${v(enq.mediumOfInstruction)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">20</td>
+              <td class="col-label">Marital Status</td>
+              <td class="col-val-text" colspan="2">${v(enq.maritalStatus)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">21</td>
+              <td class="col-label">Father's Name <br/><span style="font-size:7.5px;font-weight:normal;color:#555">(As per transfer certificate)</span></td>
+              <td class="col-val-text" colspan="2">${v(enq.fatherGuardianName || enq.fatherName)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">22</td>
+              <td class="col-label">Mother's Name</td>
+              <td class="col-val-text" colspan="2">${v(enq.motherName)}</td>
+            </tr>
+            <tr>
+              <td class="col-num">23</td>
+              <td class="col-label">Guardian's Name</td>
+              <td class="col-val-text" colspan="2">${v(enq.guardianName)}</td>
+            </tr>
+          </table>
 
-          ${enq.qualifyingExamDipDegInstitute || enq.qualifyingExamDipDegBoard || enq.qualifyingExamDipDegMonthYear || enq.qualifyingExamDipDegAttempts || enq.qualifyingExamDipDegMarks ? `
-          <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">Diploma / Degree Details</td></tr>
-          ${row("Institute","qualifyingExamDipDegInstitute", enq.qualifyingExamDipDegInstitute)}
-          ${row("Board / University","qualifyingExamDipDegBoard", enq.qualifyingExamDipDegBoard)}
-          ${row("Month & Year of Passing","qualifyingExamDipDegMonthYear", enq.qualifyingExamDipDegMonthYear)}
-          ${row("No. of Attempts","qualifyingExamDipDegAttempts", enq.qualifyingExamDipDegAttempts)}
-          ${row("% of Marks","qualifyingExamDipDegMarks", enq.qualifyingExamDipDegMarks)}
-          ` : ""}
+          <!-- Parent's Occupation Table on Page 1 -->
+          <table class="form-table">
+            <tr>
+              <td class="col-num" rowspan="7">24</td>
+              <td class="col-label" style="text-align:center;background:#f0f4ff">Parent's Occupation</td>
+              <td style="text-align:center;font-weight:bold;background:#f0f4ff;width:35%">Father</td>
+              <td style="text-align:center;font-weight:bold;background:#f0f4ff;width:35%">Mother</td>
+            </tr>
+            <tr>
+              <td class="col-label">Salaried / Self Employed</td>
+              <td class="col-val-text">${v(enq.parentOccupation)}</td>
+              <td class="col-val-text">${v(enq.motherOccupation)}</td>
+            </tr>
+            <tr>
+              <td class="col-label">Sector (Govt./Pvt.)</td>
+              <td class="col-val-text">${v(enq.fatherOccupationSector)}</td>
+              <td class="col-val-text">${v(enq.motherOccupationSector)}</td>
+            </tr>
+            <tr>
+              <td class="col-label">Organisation / Company</td>
+              <td class="col-val-text">${v(enq.fatherOrganisation)}</td>
+              <td class="col-val-text">${v(enq.motherOrganisation)}</td>
+            </tr>
+            <tr>
+              <td class="col-label">Designation</td>
+              <td class="col-val-text">${v(enq.fatherDesignation)}</td>
+              <td class="col-val-text">${v(enq.motherDesignation)}</td>
+            </tr>
+            <tr>
+              <td class="col-label">Annual Income</td>
+              <td class="col-val-text">${v(enq.fatherAnnualIncome)}</td>
+              <td class="col-val-text">${v(enq.motherAnnualIncome)}</td>
+            </tr>
+            <tr>
+              <td class="col-label">Total Annual Income of Family</td>
+              <td class="col-val-text" colspan="2" style="font-size:10px;color:#192a56"><strong>₹ ${v(enq.familyAnnualIncome)}</strong></td>
+            </tr>
+          </table>
 
-          ${row("Maths/P/C Mark","mathsMark", enq.mathsMark)}
-          ${row("Physics/Theory Mark","physicsMark", enq.physicsMark)}
-          ${row("Chemistry/Lab Mark","chemistryMark", enq.chemistryMark)}
-          ${row("Total Marks","totalMarks", enq.totalMarks)}
-          ${row("Cutoff","cutoff", enq.cutoff)}
-          ${(Array.isArray(enq.payments) ? enq.payments : []).map((p, i) => `
-            <tr><td colspan="2" style="background:#f4f4f5;font-weight:700;padding:6px 8px;border:1px solid #ddd">Payment ${i + 1}</td></tr>
-            ${row("Fee Category","feeCategory", p.feeCategory)}
-            ${row("Minimum Fee (₹)","feeAmount", p.feeAmount)}
-            ${row("Payment Date","paymentDate", formatDateToDisplay(p.paymentDate))}
-            ${row("Payment Mode","paymentMode", p.paymentMode === "pay_online" ? "Online (UTR: " + (p.upiNumber || "") + ")" : "Hand / Cash")}
-          `).join("")}
-          <tr>
-            <td style="padding:8px;border:1px solid #ddd;width:35%;font-weight:600">Documents</td>
-            <td style="padding:8px;border:1px solid #ddd">
-              ${(enq.documents && Object.keys(enq.documents).length > 0)
-                ? Object.entries(enq.documents).map(([key, doc]) => `<div style=\"margin-bottom:4px\"><strong>${key}</strong>: ${doc?.name || "Uploaded"}</div>`).join("")
-                : "No documents uploaded"}
-            </td>
-          </tr>
-        </table>
+          <div class="page-footer">
+            <div>Form No. AD01/Rev No 00 &nbsp;&nbsp;.</div>
+            <div>Effective Date: 01/08/2021</div>
+            <div>(P.T.O)</div>
+            <div class="page-number-circle">1</div>
+          </div>
+        </div>
+
+        <!-- PAGE 2 -->
+        <div class="page">
+          <div class="top-banner-bar"></div>
+          <div style="height: 2mm;"></div>
+
+          <table class="form-table">
+            <tr>
+              <td class="col-num" rowspan="7">25</td>
+              <td style="text-align:center;font-weight:bold;background:#192a56;color:#fff;width:48%">Present Address</td>
+              <td style="text-align:center;font-weight:bold;background:#192a56;color:#fff;width:48%">Permanent Address</td>
+            </tr>
+            <tr>
+              <td class="col-val-text" style="height:40px;vertical-align:top">${presentAddressDisplay}</td>
+              <td class="col-val-text" style="height:40px;vertical-align:top">${permanentAddressDisplay}</td>
+            </tr>
+            <tr>
+              <td>Pincode &nbsp;&nbsp;: <strong>${v(enq.presentPincode)}</strong></td>
+              <td>Pincode &nbsp;&nbsp;: <strong>${v(enq.permanentPincode)}</strong></td>
+            </tr>
+            <tr>
+              <td>District &nbsp;&nbsp;: <strong>${v(enq.presentDistrict)}</strong></td>
+              <td>District &nbsp;&nbsp;: <strong>${v(enq.permanentDistrict)}</strong></td>
+            </tr>
+            <tr>
+              <td>State &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <strong>${v(enq.presentState)}</strong></td>
+              <td>State &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <strong>${v(enq.permanentState)}</strong></td>
+            </tr>
+            <tr>
+              <td>Country &nbsp;: <strong>${v(enq.presentCountry || 'India')}</strong></td>
+              <td>Country &nbsp;: <strong>${v(enq.permanentCountry || 'India')}</strong></td>
+            </tr>
+            <tr>
+              <td>Location of Residence : <strong>${v(enq.locationOfResidence || 'Urban')}</strong></td>
+              <td>Location of Residence : <strong>${v(enq.locationOfResidence || 'Urban')}</strong></td>
+            </tr>
+          </table>
+
+          <table class="form-table">
+            <tr>
+              <td class="col-num">31</td>
+              <td class="col-label">Parent's Mobile No. (Father / Mother)</td>
+              <td class="col-val-text">(F) <strong>${v(enq.parentMobile)}</strong> &nbsp;&nbsp;&nbsp; (M) <strong>${v(enq.motherMobile)}</strong></td>
+            </tr>
+            <tr>
+              <td class="col-num">32</td>
+              <td class="col-label">Parent's WhatsApp No. (Father / Mother)</td>
+              <td class="col-val-text">(F) <strong>${v(enq.parentWhatsAppNo)}</strong></td>
+            </tr>
+            <tr>
+              <td class="col-num">33</td>
+              <td class="col-label">Student's Mobile No.</td>
+              <td class="col-val-text"><strong>${v(enq.mobile || enq.phone || enq.mobileNo)}</strong></td>
+            </tr>
+            <tr>
+              <td class="col-num">34</td>
+              <td class="col-label">Student's WhatsApp No.</td>
+              <td class="col-val-text"><strong>${v(enq.studentWhatsAppNo)}</strong></td>
+            </tr>
+            <tr>
+              <td class="col-num">35</td>
+              <td class="col-label">Email ID &nbsp;|&nbsp; Hosteller / Day scholar</td>
+              <td class="col-val-text">
+                Email: <strong>${v(enq.emailId || enq.email)}</strong> &nbsp;|&nbsp; 
+                Residence: <strong>${v(enq.hostellerDayScholar)}</strong>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">36</td>
+              <td class="col-label">Transport Facilities Required</td>
+              <td class="col-val-text">
+                Required: <strong>${v(enq.transportRequired || (enq.transportRoute ? 'YES' : 'NO'))}</strong> &nbsp;&nbsp;|&nbsp;&nbsp; 
+                Route: <strong>${v(enq.transportRoute)}</strong> &nbsp;&nbsp;|&nbsp;&nbsp; 
+                Stage: <strong>${v(enq.transportStage)}</strong>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-num">37</td>
+              <td class="col-label">EMIS / UMIS No.</td>
+              <td class="col-val-text"><strong>${v(enq.emsUmsNo || enq.emisNo || enq.umisNo || enq.emisUmisNo)}</strong></td>
+            </tr>
+          </table>
+
+          <table class="form-table">
+            <tr>
+              <td class="col-num" rowspan="6">38</td>
+              <td colspan="6" class="col-label" style="background:#f0f4ff">Details of Qualifying Examinations Passed:</td>
+            </tr>
+            <tr style="text-align:center;font-weight:bold;background:#f8f9fa">
+              <td style="width:18%">Programme</td>
+              <td style="width:30%">Institute</td>
+              <td style="width:20%">Board / University</td>
+              <td style="width:14%">Month & Year of Passing</td>
+              <td style="width:8%">No. of Attempts</td>
+              <td style="width:10%">% of Marks</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">10th Std</td>
+              <td class="col-val-text">${v(enq.qualifyingExam10thInstitute)}</td>
+              <td class="col-val-text">${v(enq.qualifyingExam10thBoard)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam10thMonthYear)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam10thAttempts)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam10thMarks)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">11th Std</td>
+              <td class="col-val-text">${v(enq.qualifyingExam11thInstitute)}</td>
+              <td class="col-val-text">${v(enq.qualifyingExam11thBoard)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam11thMonthYear)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam11thAttempts)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam11thMarks)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">12th Std</td>
+              <td class="col-val-text">${v(enq.qualifyingExam12thInstitute || enq.schoolCollege)}</td>
+              <td class="col-val-text">${v(enq.qualifyingExam12thBoard)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam12thMonthYear)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam12thAttempts)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExam12thMarks)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">Diploma / Degree</td>
+              <td class="col-val-text">${v(enq.qualifyingExamDipDegInstitute)}</td>
+              <td class="col-val-text">${v(enq.qualifyingExamDipDegBoard)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExamDipDegMonthYear)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExamDipDegAttempts)}</td>
+              <td class="col-val-text" style="text-align:center">${v(enq.qualifyingExamDipDegMarks)}</td>
+            </tr>
+          </table>
+
+          <div style="font-weight:bold;font-size:10px;color:#192a56;margin:6px 0 4px">39. Marks in Qualifying Examination for B.E / B.Tech</div>
+          <table class="form-table">
+            <tr style="text-align:center;font-weight:bold;background:#f8f9fa">
+              <td style="width:30%">Subject</td>
+              <td style="width:20%">Maximum Marks</td>
+              <td style="width:25%">Marks Obtained</td>
+              <td style="width:25%">Percentage of Marks</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">Maths</td>
+              <td style="text-align:center">100</td>
+              <td class="col-val-text" style="text-align:center"><strong>${v(mathsVal)}</strong></td>
+              <td class="col-val-text" style="text-align:center">${mathsVal ? v(mathsVal) + '%' : '-'}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">Physics</td>
+              <td style="text-align:center">100</td>
+              <td class="col-val-text" style="text-align:center"><strong>${v(physicsVal)}</strong></td>
+              <td class="col-val-text" style="text-align:center">${physicsVal ? v(physicsVal) + '%' : '-'}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">Chemistry</td>
+              <td style="text-align:center">100</td>
+              <td class="col-val-text" style="text-align:center"><strong>${v(chemistryVal)}</strong></td>
+              <td class="col-val-text" style="text-align:center">${chemistryVal ? v(chemistryVal) + '%' : '-'}</td>
+            </tr>
+            <tr style="background:#f0f4ff">
+              <td style="font-weight:bold;color:#192a56">Total Marks & Cutoff</td>
+              <td style="text-align:center;font-weight:bold">300</td>
+              <td class="col-val-text" style="text-align:center;font-size:10px;color:#192a56"><strong>Total: ${v(totalVal)}</strong></td>
+              <td class="col-val-text" style="text-align:center;font-size:10px;color:#192a56"><strong>Cutoff: ${v(cutoffVal)}</strong></td>
+            </tr>
+          </table>
+
+          ${(Array.isArray(enq.payments) && enq.payments.length > 0) ? `
+          <table class="form-table">
+            <tr style="background:#f0f4ff;font-weight:bold;text-align:center">
+              <td>#</td>
+              <td>Fee Category</td>
+              <td>Amount (₹)</td>
+              <td>Payment Date</td>
+              <td>Payment Mode</td>
+            </tr>
+            ${enq.payments.map((p, i) => `
+              <tr>
+                <td style="text-align:center;font-weight:bold">${i + 1}</td>
+                <td class="col-val-text">${v(p.feeCategory)}</td>
+                <td class="col-val-text" style="text-align:right"><strong>₹ ${v(p.feeAmount)}</strong></td>
+                <td class="col-val-text" style="text-align:center">${v(formatDateToDisplay(p.paymentDate))}</td>
+                <td class="col-val-text">${p.paymentMode === "pay_online" ? "Online (UTR: " + v(p.upiNumber) + ")" : "Hand / Cash"}</td>
+              </tr>
+            `).join("")}
+          </table>
+          ` : ''}
+
+          <!-- Signatures Section -->
+          <div style="margin-top: 18px; display: flex; justify-content: space-between; padding: 0 15px; font-weight: bold; font-size: 9px; color: #222;">
+            <div style="text-align: center; width: 42%;">
+              <div style="height: 25px;"></div>
+              <div style="border-top: 1px dashed #444; padding-top: 3px;">Signature of the Parent / Guardian</div>
+            </div>
+            <div style="text-align: center; width: 42%;">
+              <div style="height: 25px;"></div>
+              <div style="border-top: 1px dashed #444; padding-top: 3px;">Signature of the Candidate</div>
+            </div>
+          </div>
+
+          <!-- Office Use Box -->
+          <div style="margin-top: 14px; border: 1.5px solid #192a56; border-radius: 4px; padding: 6px 10px; position: relative; background: #fafafa; height: 60px;">
+            <div style="position: absolute; top: -8px; left: 10px; background: #192a56; color: #fff; padding: 1px 8px; font-size: 8px; font-weight: bold; border-radius: 3px;">
+              FOR OFFICE USE
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:9px;color:#333">
+              <div>Admitted Department: <strong>${v(formatDepartmentDisplay(enq.department))}</strong></div>
+              <div>Quota: <strong>${v(enq.seatCategory || enq.quotaAskedFor)}</strong></div>
+              <div>Verification Status: <strong>Verified & Checked</strong></div>
+            </div>
+          </div>
+
+          <div class="page-footer">
+            <div>Form No. AD01/Rev No 00</div>
+            <div>Effective Date: 01/08/2021</div>
+            <div>(P.T.O)</div>
+            <div class="page-number-circle">2</div>
+          </div>
+        </div>
+
+        <!-- PAGE 3: CHECK LIST & OFFICE USE ONLY -->
+        <div class="page">
+          <div class="top-banner-bar"></div>
+          
+          <div style="text-align:center;margin-bottom:4px">
+            <span style="background:#192a56;color:#fff;font-weight:bold;font-size:11px;padding:3px 18px;border-radius:4px;letter-spacing:0.5px">CHECK LIST</span>
+            <div style="font-size:8px;font-style:italic;color:#444;margin-top:3px">(Please mark the relevant boxes against the items which are enclosed along with the application)</div>
+          </div>
+
+          <table class="form-table" style="margin-bottom:6px">
+            <thead>
+              <tr style="background:#f8f9fa;text-align:center;font-weight:bold;color:#192a56">
+                <th style="width:7%;padding:3px 2px">Sl.No.</th>
+                <th style="width:48%;text-align:left;padding:3px 6px">Item</th>
+                <th style="width:15%;padding:3px 2px">Original</th>
+                <th style="width:15%;padding:3px 2px">Photocopy</th>
+                <th style="width:15%;padding:3px 2px">Attested Copy</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${checklistItems.map(item => {
+                const uploaded = isDocUploaded(item.key);
+                return `
+                  <tr>
+                    <td style="text-align:center;font-weight:bold;font-size:8.5px">${item.no}</td>
+                    <td style="font-weight:600;color:#222;font-size:8.5px">${item.name}</td>
+                    <td style="text-align:center"></td>
+                    <td style="text-align:center;font-size:12px;font-weight:bold;color:#192a56">${uploaded ? "✓" : ""}</td>
+                    <td style="text-align:center"></td>
+                  </tr>
+                `;
+              }).join("")}
+              <tr style="background:#f0f4ff;font-weight:bold">
+                <td colspan="2" style="padding:4px 8px;color:#192a56">Total No. of Documents Submitted</td>
+                <td colspan="3" style="text-align:center;font-size:11px;color:#192a56"><strong>${totalSubmittedDocs}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="border-top:1px dashed #192a56;margin:8px 0 6px"></div>
+          
+          <div style="text-align:center;font-weight:bold;font-size:10px;color:#192a56;letter-spacing:0.5px;margin-bottom:4px">FOR OFFICE USE ONLY</div>
+
+          <div style="display:flex;align-items:center;gap:12px;font-size:9px;font-weight:bold;margin-bottom:6px">
+            <span>Quota :</span>
+            <span style="border:1px solid #333;padding:2px 8px;background:${isManagement ? '#f0f4ff' : '#fff'}">
+              Management [${isManagement ? '✓' : '&nbsp;&nbsp;'}]
+            </span>
+            <span style="border:1px solid #333;padding:2px 8px;background:${isGovernment ? '#f0f4ff' : '#fff'}">
+              Government [${isGovernment ? '✓' : '&nbsp;&nbsp;'}]
+            </span>
+            <span style="border:1px solid #333;padding:2px 8px;background:${isScholarship ? '#f0f4ff' : '#fff'}">
+              Scholarship [${isScholarship ? '✓' : '&nbsp;&nbsp;'}]
+            </span>
+          </div>
+
+          <table style="width:100%;font-size:8.5px;line-height:1.45;border-collapse:collapse">
+            <tr>
+              <td style="width:3%;font-weight:bold">1.</td>
+              <td style="width:28%;font-weight:bold">Qualifying Examination</td>
+              <td style="width:2%">:</td>
+              <td><strong>H.Sc. / Diploma / Degree</strong> (${v(enq.programme)})</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold;vertical-align:top">2.</td>
+              <td style="font-weight:bold;vertical-align:top">Marks Obtained</td>
+              <td style="vertical-align:top">:</td>
+              <td>
+                <table class="form-table" style="width:75%;margin:2px 0">
+                  <tr style="background:#f8f9fa;font-weight:bold;text-align:center">
+                    <td>Maths</td><td>Physics</td><td>Chemistry</td><td>Total</td>
+                  </tr>
+                  <tr style="text-align:center">
+                    <td>${v(mathsVal)}</td>
+                    <td>${v(physicsVal)}</td>
+                    <td>${v(chemistryVal)}</td>
+                    <td><strong>${v(totalVal)}</strong></td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">3.</td>
+              <td style="font-weight:bold">Diploma / Degree</td>
+              <td>:</td>
+              <td>${v(enq.qualifyingExamDipDegBoard)}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">4.</td>
+              <td style="font-weight:bold">Percentage of Marks</td>
+              <td>:</td>
+              <td>Cutoff: <strong>${v(cutoffVal)}</strong></td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">5.</td>
+              <td style="font-weight:bold">Status</td>
+              <td>:</td>
+              <td><strong>Admitted</strong> / Not Admitted</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">6.</td>
+              <td style="font-weight:bold">Branch Allotted</td>
+              <td>:</td>
+              <td style="color:#192a56;font-weight:bold">${v(formatDepartmentDisplay(enq.department))}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">7.</td>
+              <td style="font-weight:bold">Date of Admission</td>
+              <td>:</td>
+              <td>${v(formatDateToDisplay(enq.admissionDate || enq.createdAt || enq.date))}</td>
+            </tr>
+            <tr>
+              <td style="font-weight:bold">8.</td>
+              <td style="font-weight:bold">Remarks</td>
+              <td>:</td>
+              <td>${v(enq.remarks)}</td>
+            </tr>
+          </table>
+
+          <div style="margin-top:18px;display:flex;justify-content:space-between;padding:0 10px;font-size:9px;font-weight:bold;color:#222">
+            <div style="text-align:center;width:28%">
+              <div style="height:22px"></div>
+              <div style="border-top:1px dashed #444;padding-top:2px">VERIFIED BY</div>
+            </div>
+            <div style="text-align:center;width:34%">
+              <div style="height:22px"></div>
+              <div style="border-top:1px dashed #444;padding-top:2px">ADMINISTRATIVE OFFICER</div>
+            </div>
+            <div style="text-align:center;width:28%">
+              <div style="height:22px"></div>
+              <div style="border-top:1px dashed #444;padding-top:2px">PRINCIPAL</div>
+            </div>
+          </div>
+
+          <div class="page-footer">
+            <div>Form No. AD01/Rev No.00</div>
+            <div>Effective Date: 01/08/2021</div>
+            <div>(End of Document)</div>
+            <div class="page-number-circle">3</div>
+          </div>
+        </div>
+
       </body>
       </html>`;
     };
 
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const maxWidth = 600;
-      const maxHeight = 100;
-      let w = img.width;
-      let h = img.height;
-      const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
-      w = Math.round(w * ratio);
-      h = Math.round(h * ratio);
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
-      const logoDataUrl = canvas.toDataURL("image/png");
-
-      const html = generateHtml(logoDataUrl);
+    try {
+      const html = generateHtml("/logo.png");
       const win = window.open("", "_blank");
-      if (!win) return;
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => {
-        try { win.print(); } catch (e) { console.error(e); }
-      }, 200);
-    };
-    img.onerror = () => {
-      const html = generateHtml("");
-      const win = window.open("", "_blank");
-      if (!win) return;
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => {
-        try { win.print(); } catch (e) { console.error(e); }
-      }, 100);
-    };
-    img.src = '/logo.png';
+      if (win) {
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+        setTimeout(() => {
+          try { win.print(); } catch (e) { console.error("Print error:", e); }
+        }, 300);
+      } else {
+        alert("Popup blocked! Please allow popups for this site to export the PDF.");
+      }
+    } catch (err) {
+      console.error("Export PDF error:", err);
+    }
   };
 
   const disabledClass = readOnly ? "bg-zinc-50 text-zinc-500" : "bg-white";
@@ -1736,8 +2299,7 @@ export default function AddEnquiryModal({
             </div>
           </Section>
 
-          {form.examinationPassedAppeared === "+2" && (
-            <Section title="Marks and Cutoff" description="Enter subject marks and the cutoff is calculated automatically.">
+          <Section title="Marks and Cutoff" description="Enter subject marks and the cutoff is calculated automatically.">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <Field label="Maths/P/C" required={isCutoffRequired && mode !== "view"} error={errors.mathsMark} readOnly={readOnly}>
                 <input
@@ -1806,7 +2368,6 @@ export default function AddEnquiryModal({
               </Field>
             </div>
           </Section>
-          )}
 
           {(form.status === "Application" || form.status === "Admission") && (
             <Section title="Payment Details" description="Multiple fee payments.">

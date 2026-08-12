@@ -421,25 +421,37 @@ export async function getEnquiriesCount({ statusIn = null } = {}) {
 }
 
 export async function getEnquiriesStats() {
-  const baseRef = collection(db, ENQUIRY_ROOT);
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  try {
+    const baseRef = collection(db, ENQUIRY_ROOT);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
 
-  const [totalSnap, todaySnap, newSnap, appSnap, admSnap, approvedSnap] = await Promise.all([
-    getCountFromServer(baseRef),
-    getCountFromServer(query(baseRef, where("createdAt", ">=", todayStart.getTime()))),
-    getCountFromServer(query(baseRef, where("status", "==", "Enquiry"))),
-    getCountFromServer(query(baseRef, where("status", "==", "Application"))),
-    getCountFromServer(query(baseRef, where("status", "==", "Admission"))),
-    getCountFromServer(query(baseRef, where("status", "==", "Approved"))),
-  ]);
+    const [totalSnap, todaySnap, newSnap, appSnap, admSnap, approvedSnap] = await Promise.all([
+      getCountFromServer(baseRef),
+      getCountFromServer(query(baseRef, where("createdAt", ">=", todayStart.getTime()))),
+      getCountFromServer(query(baseRef, where("status", "==", "Enquiry"))),
+      getCountFromServer(query(baseRef, where("status", "==", "Application"))),
+      getCountFromServer(query(baseRef, where("status", "==", "Admission"))),
+      getCountFromServer(query(baseRef, where("status", "==", "Approved"))),
+    ]);
 
-  return {
-    total: totalSnap.data().count,
-    today: todaySnap.data().count,
-    new: newSnap.data().count,
-    application: appSnap.data().count,
-    admission: admSnap.data().count,
-    approved: approvedSnap.data().count,
-  };
+    return {
+      total: totalSnap.data().count,
+      today: todaySnap.data().count,
+      new: newSnap.data().count,
+      application: appSnap.data().count,
+      admission: admSnap.data().count,
+      approved: approvedSnap.data().count,
+    };
+  } catch (err) {
+    console.warn("Unable to fetch enquiry stats (offline or network connection issue):", err);
+    return {
+      total: 0,
+      today: 0,
+      new: 0,
+      application: 0,
+      admission: 0,
+      approved: 0,
+    };
+  }
 }

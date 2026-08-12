@@ -416,3 +416,206 @@
 - **ActivityList.jsx**: `filteredActivities` excludes `(act.status || "Draft") === "Mentor_Pending"` — mentor-pending activities are invisible there until mentor approves. The approvals tab already only shows `status === "Pending"`, so mentor-approved entries appear automatically.
 - **Status lifecycle**: `Mentor_Pending` (student submit w/ mentor) → mentor approves → `Pending` (ActivityList approvals queue; `handleApprove` forwards to `HOD_Pending`) or `Returned`/`Rejected` (visible back to student).
 - Build passes.
+
+### 42. Auto Timetable Generation & Non-OBE Subject Exclusion in IAScheduleCreation
+- **Subject Filtering for Selected Semester**: Connected `IAScheduleCreation.jsx` to load subjects for the chosen department, regulation, and semester directly from `syllabus_data` (saved via `Upload.jsx`).
+- **Non-OBE Subject Filter**: Strictly excludes any subject where `isNonOBE === true` (ticked as Non-OBE in Upload page) from appearing in `IAScheduleCreation.jsx` (`matchedSemList.filter(s => s.isNonOBE !== true)`).
+- **Flexible String Matching**: `cleanStr` normalizer resolves regulation strings (`AU - R2021` vs `AU-R2021` vs `R2021`) and department keys (`B.E. Computer Science and Engineering` vs `CSE`) dynamically.
+- **Target Exam Event Filtering & Deduplication**: Filters exam events by selected batch and deduplicates duplicate calendar events by title and date range.
+- Build passes.
+
+### 43. FacultyDashboard Timetable Group Consolidation & Timeslot Schedule Merging
+- **Problem**: `FacultyDashboard.jsx` displayed 3 separate timetable cards when classes followed the same timeslot schedule.
+- **Root Cause**:
+  1. Documents with section suffixes (`_Sec-A`) and legacy un-sectioned documents were creating duplicate groups.
+  2. `templateKey` generation relied on raw JSON object strings which differed across department documents despite identical period times.
+- **Fix**:
+  - `groupKey` in `FacultyDashboard.jsx` groups by `progKey`, `deptKey`, `batchKey`, `ayKey`, and `semKey` without section string separation.
+  - `templateKey` is normalized using calculated period times (`${periodsPerDay}|${workingDays}|${periodTimesStr}`), automatically merging all classes following the same timeslot schedule into a **single unified timetable grid**.
+- Build passes.
+
+### 44. Attendance Firestore Index Explosion Fix (`FirebaseError: too many index entries for entity`)
+- **Problem**: When marking attendance for a subject with many recorded periods (e.g., `UG_B_E_ Computer Science and Engineering_2023-2027_2026-2027_7_ICL_Sec-A`), Firestore failed with `FirebaseError: too many index entries for entity`.
+- **Root Cause**: Storing 100+ period objects inside a nested `records` Firestore map field caused Cloud Firestore to generate single-field indexes for every period key, nested property, and student ID array element, exceeding Firestore's hard limit of 40,000 index entries per document.
+- **Fix**:
+  - `Attendance.jsx` now writes attendance period records into `records_json` (as a single JSON stringified field) and issues `records: deleteField()` to delete the legacy 40,000+ indexed map entries.
+  - Added universal helper `getAttendanceRecords(attData)` in `src/lib/utils.js` that checks `records_json` first with fallback to `records` (backward compatible).
+  - Applied `getAttendanceRecords` across `Attendance.jsx`, `FacultyDashboard.jsx`, `HODDashboard.jsx`, `student/Attendance.jsx`, `student/Dashboard.jsx`.
+- Build passes.
+
+### 45. Clear Attendance Reference Ordering Fix in Attendance.jsx
+- **Problem**: Clicking "Clear P1" (or clearing any marked attendance period) threw a silent `ReferenceError: Cannot access 'updatedRecords' before initialization`.
+- **Root Cause**: `handleClearAttendance()` attempted to pass `JSON.stringify(updatedRecords)` to Firestore's `setDoc` before `updatedRecords` was defined on the subsequent line.
+- **Fix**: Reordered variable declaration in `handleClearAttendance()` so `const updatedRecords = { ...getAttendanceRecords(attendanceData) }; delete updatedRecords[recordKey];` runs BEFORE `setDoc()`.
+- Build passes.
+
+### 46. QuestionPaperGenerator LIT 102 Integrated Course Exam Filtering Fix
+- **Problem**: For Integrated / Theory with Laboratory courses like `EN25C02` (category `LIT 102`), written exams (`IA 1`, `IA 2`) were missing from the EXAM dropdown, while practical-only items (`Observation & Record`, `Model Practical`) were incorrectly shown under `Assessment Type: Exam`.
+- **Root Cause**:
+  1. `QuestionPaperGenerator.jsx` filtered `ciaConfigs` using exact string comparison `config.courseTypes.includes(courseType)` which failed when `courseType` differed in formatting (`LIT 102` vs `LIT102` vs `THEORY`).
+  2. If `courseType` wasn't present in the `courses` collection, it was left undefined without checking `syllabus_data`.
+  3. Integrated courses (`LIT 102` containing both Theory & Practical components) were not permitting written exams (`IA 1`, `IA 2`) when `Assessment Type` was `Exam`.
+- **Fix**:
+  - Added fallback lookup to `syllabus_data` in `fetchCourseDetails` to retrieve course category (`LIT 102`) if missing in `courses`.
+  - Added string normalization (`normClean`: strips spaces, hyphens, and converts to lowercase).
+  - Updated `filteredExams` matching logic to recognize `LIT 102` / integrated courses, allowing written tests (`IA 1`, `IA 2`, `End Semester Exam`) when `Assessment Type` is `Exam` and practicals (`Model Practical Exam`, `Observation & Record`) when `Assessment Type` is `Practical`.
+- Build passes.
+
+### 47. QuestionPaperGenerator Fully Dynamic Exam Dropdown from Firestore Data
+- **Problem**: Hardcoded or un-filtered practical exams (`Observation & Record`, `Model Practical`) were showing up under `Assessment Type: Exam`, while regulation-configured exams (`IA 1`, `IA 2`) were missing.
+- **Fix**:
+  - Added real-time listener to `course_type_weightage` collection in `QuestionPaperGenerator.jsx`.
+  - Rebuilt `filteredExams` calculation to dynamically extract configured exams from both `cia_configs` AND `course_type_weightage` for the selected regulation (`AU - R2025`) and category (`LIT 102`).
+  - Enforced strict classification: `Assessment Type: Exam` shows only written tests (`IA 1`, `IA 2`, `End Semester Exam`), while practical exams (`Model Practical Exam`, `Observation & Record`) are excluded from `Exam` and routed to `Assessment Type: Practical`.
+  - Zero hardcoded fallback exam names are injected.
+- Build passes.
+
+### 48. QuestionPaperGenerator Raw Firebase Push ID Filter & Exam Name Resolution
+- **Problem**: Raw Firestore Push IDs (e.g., `-OsVTJg9fa1aUZPP00PZ`, `-OsVTOrhx3_E1bPCSq_L`) were displayed in the EXAM dropdown option labels.
+- **Root Cause**: `cia_configs` documents created without explicit `config.examName` field fell back to `config.id` as the display text.
+- **Fix**:
+  - Added `isRawFirebaseId()` helper to detect and filter out raw Firestore push/doc IDs.
+  - Added multi-field resolution checking `config.examName || config.exam_name || config.title || config.name || config.exam || config.label || config.eventTitle || config.eventName`.
+  - Raw document IDs are never displayed in the UI dropdown options.
+- Build passes.
+
+### 49. FacultyDashboard Missed Attendance Semester Lookup Fix
+- **Problem**: Attendance marked for classes was still appearing in the "Missed Attendance" list on `FacultyDashboard.jsx`.
+- **Root Cause**: `FacultyDashboard.jsx` constructed attendance document IDs using full semester labels (`_${g.semester}_`, e.g., `_2nd Semester_`), whereas `Attendance.jsx` saves document IDs with numeric semester numbers (`_${semNum}_`, e.g., `_2_`).
+- **Fix**: Updated `FacultyDashboard.jsx` attendance document ID lookups (`exactIdNum`, `baseIdNum`, `groupPrefixNum`) to check numeric `semNum` as well as full `semester` label strings.
+- Build passes.
+
+### 50. FacultyDashboard Batch Attendance Fetch & Substitute Marked Badge Fix
+- **Problem**: Marked attendance still appeared under "Missed Attendance" in `FacultyDashboard.jsx`, and `Attendance.jsx` did not show "Already marked" or substitute faculty name when attendance was already taken.
+- **Root Cause**:
+  1. `fetchAttendance` in `FacultyDashboard.jsx` built batch prefixes using `_${g.semester}_` (`_7th Semester_`) instead of `_${semNum}_` (`_7_`), failing to fetch attendance documents saved by `Attendance.jsx`.
+  2. `Attendance.jsx` required `currentRecordData` to be set before evaluating `periods.some(...)` and always hardcoded the text `'Already marked'` without displaying substitute faculty names.
+- **Fix**:
+  - `FacultyDashboard.jsx`: Updated `batchPrefixes` in `fetchAttendance` to include both numeric `semNum` (`_7_`) and label string (`_7th Semester_`).
+  - `Attendance.jsx`: Simplified period marked check and added dynamic text `Marked by [Faculty Name]` when a period was marked by a substitute faculty.
+- Build passes.
+
+### 51. FacultyDashboard Section Fallback & Substitute Attendance Missed Clear Fix
+- **Problem**: Marked attendance (or substitute marked attendance) for sectioned classes (e.g. `Sec-A`) still appeared under "Missed Attendance" in `FacultyDashboard.jsx`.
+- **Root Cause**: `g.section` was undefined on group objects in `FacultyDashboard.jsx` (which store sections inside `g.sections: ["Sec-A"]`). The section filter fell back to `!g.section`, triggering `if (dId.includes('_Sec-')) continue;` which skipped all sectioned attendance documents.
+- **Fix**: Defined `currentSec = g.section || (g.sections && g.sections.length > 0 ? g.sections[0] : '')` and updated all section filters and doc ID lookups in `FacultyDashboard.jsx` to use `currentSec`. Sectioned attendance (direct or substitute) is now correctly matched and cleared from "Missed Attendance".
+- Build passes.
+
+### 52. QuestionPaperGenerator CO Dropdown Fallback Fix
+- **Problem**: The "MAPPED CO" dropdown in `QuestionPaperGenerator.jsx` was empty (showing only `Select CO`), blocking the faculty from selecting COs.
+- **Root Cause**:
+  1. `subjectCode` extraction failed when `subject` contained raw string text with dashes (e.g. `"IT3301 - DATA STRUCTURES"`), resulting in an invalid Firestore doc ID lookup `IT3301___DATA_STRUCTURES`.
+  2. If the `course_outcomes` document didn't exist or hadn't been configured in `COConfiguration` for a specific subject/academic year, `courseOutcomes` state remained an empty array `[]`.
+- **Fix**:
+  - `subjectCode` calculation now extracts clean code (e.g. `IT3301`) from formatted strings before constructing Firestore document keys.
+  - Added multi-level CO fallback logic: checks primary `course_outcomes` key -> checks alternative candidate keys -> checks `courses` collection (Course Bank) -> defaults to standard `[CO1, CO2, CO3, CO4, CO5]`.
+  - The MAPPED CO dropdown is guaranteed to never be empty.
+- Build passes.
+
+### 53. Activity Settings Page & Dynamic Field Customizer (`ActivitySettings.jsx`)
+- **Feature**: Created new `ActivitySettings.jsx` management page at `/activity-settings` allowing Admins, HODs, and COE users to dynamically create new Activity Types and customize fields per activity.
+- **Capabilities**:
+  - **Activity Types Management**: Create/Edit/Delete activity definitions (Code, Name, Category `department`/`faculty`, Part, Frequency, NBA/NAAC criteria, Description, `mandatory`, `evidenceRequired`, `approvalRequired`).
+  - **Dynamic Field Builder**: Interactive builder supporting 7 input types (`text`, `number`, `date`, `select`, `textarea`, `file`, `url`).
+  - **Mandatory Configuration**: Per-field checkbox toggle (`required: true/false`) to enforce mandatory input requirements per field.
+  - **Custom Options**: Option string editor for `select` dropdown types, file type restrictions & max file limits for `file` upload types.
+  - **Firestore Integration**: Real-time sync with `custom_activities` Firestore collection.
+- **Integration**:
+  - `ActivityPicker.jsx`: Dynamically merges custom activities from Firestore with preset activities and displays them cleanly.
+  - `ActivityEntry.jsx`: Loads custom field configurations from `custom_activities` doc and dynamically enforces validation rules.
+  - Navigation: Added `/activity-settings` to `App.tsx`, `Layout.jsx` sidebar (under Activity Module), and `AdminRoleConfig.jsx` (`ALL_PAGES`).
+- Build passes.
+
+### 54. Fixed Sidebar & Admin Role Config Permissions Visibility for Activity Settings
+- **Problem**: `ActivitySettings.jsx` page was not displaying in the Sidebar and under Page Permissions in `AdminRoleConfig.jsx`.
+- **Root Cause**:
+  1. `itemIds` array for `activity` and `config` modules in `Layout.jsx` did not include `"activity-settings"`, so the sidebar module grouping filtered it out.
+  2. `effectivePermissions` for `Admin` role required explicit permission fallbacks for newly created pages.
+- **Fix**:
+  1. Added `"activity-settings"` to `itemIds` of both `activity` and `config` modules in `Layout.jsx`.
+  2. Updated `effectivePermissions` in `Layout.jsx` to ensure `Admin` role automatically has `activity-settings` enabled.
+  3. Added `activity-settings` to `ALL_PAGES` under both `Activity` and `Configuration` modules in `AdminRoleConfig.jsx`.
+- Build passes.
+
+### 55. Fixed Attendance Report & Console Firestore Listen Stream Errors (`Attendance.jsx`)
+- **Problems**:
+  1. Some users/subjects could not generate or download Attendance Reports in `Attendance.jsx`.
+  2. Console printed error: `Fetch API cannot load https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?... due to access control checks`.
+- **Root Cause & Fixes**:
+  1. **Report Generation Failure**: `handleGenerateReport` read `attendanceData.records` directly instead of calling `getAttendanceRecords(attendanceData)`. Attendance documents saved with `records_json` / compressed format had `attendanceData.records` as `undefined`, causing `handleGenerateReport` to immediately return `null`. Updated `handleGenerateReport` to use `getAttendanceRecords(attendanceData)`.
+  2. **Console Firestore Listen Error**: `onSnapshot` listeners for `batch_sections`, `semester_config`, and `subject_assignments` lacked error handling callbacks. When network streams dropped or permissions re-evaluated, unhandled Listen channel errors were thrown. Added error callbacks `(error) => console.warn(...)` to all `onSnapshot` listeners.
+  3. **Section Student Lookup Fallback**: When fetching `students` and `course_enrolments` for a specific section, if section-suffixed keys (`${batch}_${prog}_${dept}_${sec}`) were missing, added fallbacks to base keys (`${batch}_${prog}_${dept}`).
+- Build passes.
+
+### 56. Automatic Reload & Data Loss Protection System
+- **Problem**: Users reported occasional automatic website reloads causing loss of typed data/progress while filling forms.
+- **Root Cause & Solution**:
+  1. **Unsaved Changes Protection**: Created `useUnsavedChanges` hook listening to browser `beforeunload` events to prompt users before reloading or closing dirty forms. Applied in `QuestionPaperGenerator.jsx`, `MarkEntry.jsx`, `ActivityEntry.jsx`, `ActivitySettings.jsx`, and `Attendance.jsx`.
+  2. **Local Form Auto-Save Hook**: Created `useFormDraft` hook for automatic background local storage preservation.
+  3. **ProtectedRoute Auth Resiliency**: Updated `ProtectedRoute.jsx` so transient user role fetch failures retain current user role instead of setting `userRole` to `null` and triggering redirects.
+- Build passes.
+
+### 57. Faculty Dashboard Draft Activities Integration (`FacultyDashboard.jsx`)
+- **Requirement**: Display saved Activity Drafts on `FacultyDashboard.jsx` with an Edit icon to resume data entry; automatically hide once submitted/saved.
+- **Implementation**:
+  - `FacultyDashboard.jsx`: Added real-time Firestore `onSnapshot` listener on `activity_entries` filtering by `submittedById === currentUid && status === "Draft"`.
+  - **Draft Activities Section**: Renders a dedicated card section showing Activity Code badge, Title/Topic, Category, Date/Month, and an **Edit/Resume Button (`Edit2` icon)**.
+  - **Resume Navigation**: Clicking the Edit button navigates to `/activities/${act.activityCode}/edit/${act.id}`, opening `ActivityEntry.jsx` with all previously saved form inputs and uploaded evidence files pre-populated.
+  - **Auto-removal**: Submitting the draft updates `status` to `"Pending"` / `"Approved"`, which automatically removes it from the Draft Activities section on `FacultyDashboard.jsx`.
+- Build passes.
+
+### 58. Attendance Page Instant Subject Dropdown Loading (`Attendance.jsx`)
+- **Problem**: Subjects in `Attendance.jsx` subject dropdown sometimes failed to show or took several seconds to load.
+- **Root Cause**:
+  1. `setSubjects` was placed AFTER `await fetchAllCourseNamesMap()`, blocking subject options rendering until network calls to `courses` collection completed.
+  2. Strict `semesterConfigs` date matching could produce 0 items if semester dates expired or mismatched slightly, leaving the subject dropdown completely empty.
+- **Fix**:
+  1. **Instant 0ms Rendering**: Synchronously populates `subjects` with subject codes (`setSubjects(buildItems(null))`) immediately upon receiving `subject_assignments` snapshot.
+  2. **Background Label Enrichment**: `fetchAllCourseNamesMap()` runs asynchronously in a non-blocking `try...catch` block to enrich option labels once available.
+  3. **Safety Fallback**: If active semester date filtering yields 0 subjects, falls back to all assigned contexts for that department/faculty so the subject dropdown is **NEVER EMPTY**.
+- Build passes.
+
+### 59. Course Name Lookup Expansion for Attendance & Dropdowns (`courseUtils.js`)
+- **Problem**: Subject dropdown in `Attendance.jsx` showed only subject codes (e.g. `MC005 (Sec-A)`, `EE25C04 (Sec-A)`) without full subject names.
+- **Root Cause**: `fetchAllCourseNamesMap()` in `courseUtils.js` only fetched from `syllabus_data` and `courses` collections. Courses saved in `course_outcomes` and `course_bank` collections (or saved with uppercase/alternative code keys) were not indexed.
+- **Fix**:
+  1. Updated `fetchAllCourseNamesMap()` to fetch and index course names from `course_outcomes` (checking `course_name`, `courseTitle`, `title`, `name`) and `course_bank`.
+  2. Added uppercase/trimmed fallback key indexing so codes like `mc005`, `MC005`, `EE25C04` match regardless of casing.
+  3. Updated `getCourseName()` to test uppercase variants (`cleanCodeUpper`).
+- Build passes.
+
+### 60. Comprehensive Course Name Extraction & 0ms Memory Caching (`courseUtils.js` & `Attendance.jsx`)
+- **Problem**: Subject dropdown in `Attendance.jsx` continued to show codes only (e.g., `MC005 (Sec-A)`) because `extractAndSave` missed property names like `subjectCode`, `subjectName`, `courseCode`, `courseName`, `title`, and `cachedNamesMap` was absent.
+- **Fix**:
+  1. Created `extractAndSave` utility in `courseUtils.js` that extracts course codes and names from any subject array/object (`semesters`, `courses`, `subjects`) across `syllabus_data`, `courses`, `course_outcomes`, and `course_bank`.
+  2. Indexing: Always indexes `map[cleanCode]` and `map[cleanCodeUpper]` unconditionally so exact code lookups like `MC005` or `EE25C04` match 100% reliably.
+  3. Added in-memory `cachedNamesMap` in `courseUtils.js` so subsequent course name lookups execute in 0ms without re-querying Firestore.
+  4. Updated `Attendance.jsx` to await `fetchAllCourseNamesMap()` before rendering options so full subject names render on initial dropdown load.
+- Build passes.
+
+### 61. Synchronous 0ms Subject Dropdown Rendering (`Attendance.jsx`)
+- **Problem**: In `Attendance.jsx`, awaiting `fetchAllCourseNamesMap()` synchronously inside `onSnapshot` blocked `setSubjects` until all Firestore network requests finished, causing the Subject Dropdown to display only `Select Subject` (empty options) while loading.
+- **Fix**:
+  1. Synchronous Immediate Populate: `setSubjects(buildItems(null))` is called immediately in 0ms so assigned subject options (`MC005 (Sec-A)`, `EE25C04 (Sec-A)`) display on the UI instantly.
+  2. Non-blocking Async Enrichment: `fetchAllCourseNamesMap().then(...)` runs in the background to update option labels to full subject names (`MC005 - Environmental Science (Sec-A)`) as soon as course name data arrives.
+- Build passes.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

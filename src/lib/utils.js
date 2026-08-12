@@ -30,6 +30,33 @@ export function formatProgDisplay(prog) {
   return prog;
 }
 
+export function formatDepartmentDisplay(dept, prog) {
+  if (!dept) return prog ? formatProgDisplay(prog) : "";
+  let str = String(dept).trim();
+  
+  if (str.startsWith("B_E_")) {
+    str = "B.E. " + str.slice(4);
+  } else if (str.startsWith("B_Tech_")) {
+    str = "B.Tech. " + str.slice(7);
+  } else if (str.startsWith("M_E_")) {
+    str = "M.E. " + str.slice(4);
+  } else if (str.startsWith("M_Tech_")) {
+    str = "M.Tech. " + str.slice(7);
+  }
+
+  str = str.replace(/_/g, ' ');
+  str = str.replace(/\s+/g, ' ').trim();
+  
+  if (prog && !str.toLowerCase().startsWith("b.e") && !str.toLowerCase().startsWith("b.tech") && !str.toLowerCase().startsWith("m.e") && !str.toLowerCase().startsWith("m.tech")) {
+    const formattedProg = formatProgDisplay(prog);
+    if (formattedProg && !str.startsWith(formattedProg)) {
+      str = `${formattedProg} ${str}`;
+    }
+  }
+
+  return str;
+}
+
 export function getOrdinal(n) {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
@@ -126,4 +153,18 @@ export function parseStudentDocId(id, availableProgrammes = []) {
     section
   };
 }
+
+export function getAttendanceRecords(attData) {
+  if (!attData) return {};
+  if (attData.records_json) {
+    try {
+      return typeof attData.records_json === 'string' ? JSON.parse(attData.records_json) : attData.records_json;
+    } catch (e) {
+      console.warn("Failed to parse records_json:", e);
+    }
+  }
+  if (attData.records && typeof attData.records === 'object') return attData.records;
+  return {};
+}
+
 

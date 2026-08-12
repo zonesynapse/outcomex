@@ -12,6 +12,7 @@ import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
 import { useSemesterType } from '../hooks/useSemesterType';
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from '../lib/utils';
+import useUnsavedChanges from '../hooks/useUnsavedChanges';
 
 function deriveSemesterNumber(semStr) {
   if (!semStr) return '';
@@ -95,15 +96,40 @@ export default function QuestionPaperGenerator() {
   const [showQbEditor, setShowQbEditor] = useState(true);
   const [qbEditorData, setQbEditorData] = useState('');
 
+  // Protect against accidental reloads or navigation when building question paper
+  const isQpDirty = useMemo(() => {
+    return qpQuestions.length > 0 || (assignmentConfig && assignmentConfig.length > 0) || !!qbQuestion.trim();
+  }, [qpQuestions, assignmentConfig, qbQuestion]);
+  useUnsavedChanges(isQpDirty);
+
   // Derive subject code from JSON subject state for Firestore paths
   const subjectCode = useMemo(() => {
     if (!subject) return '';
-    try { const p = JSON.parse(subject); return p.code || ''; } catch { return subject; }
+    let rawCode = '';
+    try {
+      const p = JSON.parse(subject);
+      rawCode = p.code || p.subject_code || p.id || '';
+    } catch {
+      rawCode = subject;
+    }
+    if (rawCode && typeof rawCode === 'string') {
+      if (rawCode.includes('-')) return rawCode.split('-')[0].trim();
+      if (rawCode.includes('(')) return rawCode.split('(')[0].trim();
+      return rawCode.trim();
+    }
+    return String(rawCode).trim();
   }, [subject]);
 
   const getSubjectCodeFrom = useCallback((subj) => {
     if (!subj) return '';
-    try { const p = JSON.parse(subj); return p.code || ''; } catch { return subj; }
+    let rawCode = '';
+    try { const p = JSON.parse(subj); rawCode = p.code || p.subject_code || p.id || ''; } catch { rawCode = subj; }
+    if (rawCode && typeof rawCode === 'string') {
+      if (rawCode.includes('-')) return rawCode.split('-')[0].trim();
+      if (rawCode.includes('(')) return rawCode.split('(')[0].trim();
+      return rawCode.trim();
+    }
+    return String(rawCode).trim();
   }, []);
 
   const handleCkImageUpload = (editor) => {
@@ -417,6 +443,7 @@ export default function QuestionPaperGenerator() {
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
 
   const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
+  const [courseWeightageData, setCourseWeightageData] = useState({});
   const [aiUnitConstraints, setAiUnitConstraints] = useState('');
   const [aiIncludeImages, setAiIncludeImages] = useState(false);
 
@@ -527,6 +554,17 @@ export default function QuestionPaperGenerator() {
     return () => unsubscribe();
   }, []);
 
+  // Fetch course_type_weightage for regulation-based dynamic exam categories
+  useEffect(() => {
+    const wRef = collection(db, 'course_type_weightage');
+    const unsub = onSnapshot(wRef, (snap) => {
+      const data = {};
+      snap.forEach(doc => { data[doc.id] = doc.data(); });
+      setCourseWeightageData(data);
+    });
+    return () => unsub();
+  }, []);
+
   // Load Bloom's taxonomy domains for KL Domain dropdown
   useEffect(() => {
     const bloomsRef = collection(db, 'blooms_taxonomy'); // Firestore collection reference
@@ -575,44 +613,250 @@ export default function QuestionPaperGenerator() {
           snap = await getDoc(courseRef);
         }
         if (snap.exists()) courseData = snap.data();
+
+        // Fallback: check syllabus_data if type/category is missing in courseData
+        if (!courseData || !courseData.type) {
+          try {
+            const sylRef = doc(db, 'syllabus_data', `${progKey}_${deptKey}_${regKey}`);
+            let sylSnap = await getDoc(sylRef);
+            if (!sylSnap.exists() && deptKeyStrict !== deptKey) {
+              sylSnap = await getDoc(doc(db, 'syllabus_data', `${progKey}_${deptKeyStrict}_${regKey}`));
+            }
+            if (sylSnap.exists()) {
+              const sData = sylSnap.data() || {};
+              const semNumStr = String(deriveSemesterNumber(selectedSemester));
+              const semList = sData.semesters?.[semNumStr] || sData.semesters?.[Number(semNumStr)] || [];
+              const subObj = semList.find(s => s && sanitizeKey(s.code) === subjectKey);
+              if (subObj) {
+                const derivedType = subObj.category || subObj.type || subObj.courseType;
+                if (derivedType) {
+                  courseData = { ...(courseData || {}), type: derivedType };
+                }
+              }
+            }
+          } catch (err) {
+            console.warn("Fallback syllabus_data fetch error:", err);
+          }
+        }
       } catch (error) { console.error("Error fetching course details for AI:", error); }
       setSubjectCourseDetails(courseData);
     };
     fetchCourseDetails();
-  }, [program, department, batch, subject, getRegulationForBatch]);
+  }, [program, department, batch, subject, getRegulationForBatch, selectedSemester]);
 
   const filteredExams = useMemo(() => {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
 
     const semNum = deriveSemesterNumber(selectedSemester);
-    const courseType = subjectCourseDetails?.type;
+    const courseType = subjectCourseDetails?.type || subjectCourseDetails?.category;
     const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
     const norm = (v) => String(v || '').trim().toLowerCase();
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
     const selectedProg = norm(formatProgrammeKey(program));
     const selectedDept = norm(department);
     const selectedBatch = norm(batch);
     const selectedAy = norm(academicYear);
     const selectedReg = norm(regulation);
+    const cleanCourseType = normClean(courseType);
 
-    const filtered = ciaConfigs.filter(config =>
-      // Accept both programme-bound configs and regulation-level global configs.
-      (!norm(config.program) || norm(formatProgrammeKey(config.program)) === selectedProg) &&
-      (!norm(config.department) || norm(config.department) === selectedDept) &&
-      (!norm(config.batch) || norm(config.batch) === selectedBatch) &&
-      (!norm(config.academicYear) || norm(config.academicYear) === selectedAy) &&
-      (!config.semester || String(config.semester) === semNum) &&
-      (!norm(config.regulation) || norm(config.regulation) === selectedReg) &&
-      (assessmentType === 'Assignment' ? config.isAssignment : assessmentType === 'Project' ? config.isProject : assessmentType === 'Practical' ? config.isPractical : assessmentType === 'Indirect' ? config.isIndirectAssessment : !config.isAssignment && !config.isProject && !config.isPractical && !config.isIndirectAssessment) &&
-      (!courseType || (config.courseTypes && config.courseTypes.includes(courseType)))
-    );
-    const seen = new Set();
-    return filtered.filter(config => {
-      const name = config.examName || config.id;
-      if (seen.has(name)) return false;
-      seen.add(name);
-      return true;
+    const examList = [];
+    const seenNames = new Set();
+
+    const isRawFirebaseId = (str) => {
+      if (!str) return true;
+      const s = String(str).trim();
+      if (s.startsWith('-') && s.length > 10) return true;
+      if (/^[A-Za-z0-9_-]{18,}$/.test(s) && !s.includes(' ')) return true;
+      return false;
+    };
+
+    const addExam = (id, rawName, type) => {
+      let name = '';
+      if (typeof rawName === 'object' && rawName !== null) {
+        name = rawName.examName || rawName.exam_name || rawName.title || rawName.name || rawName.exam || rawName.label || '';
+      } else {
+        name = String(rawName || '').trim();
+      }
+
+      if (!name || isRawFirebaseId(name)) return;
+      const cleanName = normClean(name);
+      if (!cleanName) return;
+      // Dedup key: strip common exam-type suffixes so "Model Practical" and "Model Practical Exam" merge
+      const dedupKey = cleanName.replace(/(exam|examination|test|assessment|evaluation|lab|internal|external)$/g, '').trim();
+      if (seenNames.has(cleanName) || (dedupKey !== cleanName && seenNames.has(dedupKey))) return;
+      seenNames.add(cleanName);
+      if (dedupKey !== cleanName) seenNames.add(dedupKey);
+      examList.push({ id: id || name, examName: name, type });
+    };
+
+    // Pre-compute regWeightage for disabled exam lookup
+    const regSanitized = sanitizeKey(regulation);
+    const regCleanNorm = normClean(regulation);
+    let regWeightage = courseWeightageData[regSanitized];
+    if (!regWeightage) {
+      const matchKey = Object.keys(courseWeightageData).find(k => normClean(k) === regCleanNorm || normClean(k).includes(regCleanNorm) || regCleanNorm.includes(normClean(k)));
+      if (matchKey) regWeightage = courseWeightageData[matchKey];
+    }
+
+    // Build set of disabled exam IDs/names from _category_config (consider_for_internal === false)
+    const ciaConfigById = new Map();
+    ciaConfigs.forEach(c => ciaConfigById.set(c.id, c));
+    const disabledExamIds = new Set();
+    const disabledExamNames = new Set();
+    // Robustly find the weightage category for this subject, trying multiple naming variants
+    const findCategoryData = (reg) => {
+      if (!reg || !courseType) return null;
+      const cands = [courseType, cleanCourseType];
+      ciaConfigs.forEach(c => {
+        if (Array.isArray(c.courseTypes)) c.courseTypes.forEach(ct => cands.push(String(ct).trim()));
+      });
+      for (const cand of cands) {
+        if (cand && reg[cand]) return reg[cand];
+      }
+      for (const cand of cands) {
+        if (!cand) continue;
+        const kc = normClean(cand);
+        const key = Object.keys(reg).find(k => !k.startsWith('_') && normClean(k) === kc);
+        if (key) return reg[key];
+      }
+      const fuzzyKey = Object.keys(reg).find(k => {
+        if (k.startsWith('_')) return false;
+        const kn = normClean(k);
+        return cleanCourseType && (kn.includes(cleanCourseType) || cleanCourseType.includes(kn));
+      });
+      if (fuzzyKey) return reg[fuzzyKey];
+      return null;
+    };
+    const catDataForLookup = regWeightage ? findCategoryData(regWeightage) : null;
+    if (catDataForLookup && catDataForLookup._category_config) {
+      Object.values(catDataForLookup._category_config).forEach(cfg => {
+        if (cfg && cfg.consider_for_internal === false && cfg.exam_weightage) {
+          Object.keys(cfg.exam_weightage).forEach(id => {
+            disabledExamIds.add(id);
+            const resolvedCfg = ciaConfigById.get(id);
+            if (resolvedCfg) {
+              const rn = resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName;
+              if (rn) disabledExamNames.add(normClean(rn));
+            }
+          });
+        }
+      });
+    }
+
+    // 1. Process ciaConfigs from Firestore
+    ciaConfigs.forEach(config => {
+      const resolvedName = config.examName || config.exam_name || config.title || config.name || config.exam || config.label || config.eventTitle || config.eventName;
+      if (!resolvedName || isRawFirebaseId(resolvedName)) return;
+
+      if (norm(config.program) && norm(formatProgrammeKey(config.program)) !== selectedProg) return;
+      if (norm(config.department) && norm(config.department) !== selectedDept) return;
+      if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
+      if (norm(config.academicYear) && norm(config.academicYear) !== selectedAy) return;
+      if (config.semester && String(config.semester) !== semNum) return;
+      if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
+
+      const examNameClean = normClean(resolvedName);
+      const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('model') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
+
+      // Assessment Type Filter
+      if (assessmentType === 'Assignment') {
+        if (!config.isAssignment) return;
+      } else if (assessmentType === 'Project') {
+        if (!config.isProject) return;
+      } else if (assessmentType === 'Practical') {
+        if (!config.isPractical && !isPracticalExam) return;
+      } else if (assessmentType === 'Indirect') {
+        if (!config.isIndirectAssessment) return;
+      } else {
+        // Exam type (Written tests like IA 1, IA 2, End Semester Exam)
+        if (config.isAssignment || config.isProject || config.isIndirectAssessment || isPracticalExam) return;
+      }
+
+      // Course Type / Category Filter (lenient matching — subject and config may name the type differently, e.g. LIT 102 vs LIT102 vs Theory with Laboratory)
+      if (cleanCourseType && config.courseTypes && Array.isArray(config.courseTypes) && config.courseTypes.length > 0) {
+        const cleanConfigTypes = config.courseTypes.map(ct => normClean(ct));
+        const directMatch = cleanConfigTypes.some(ct => ct === cleanCourseType || ct.includes(cleanCourseType) || cleanCourseType.includes(ct));
+
+        if (!directMatch) {
+          const subjectIsIntegrated = cleanCourseType.includes('lit102') || cleanCourseType.includes('lit101') || cleanCourseType.includes('integrated');
+          const configIsIntegrated = cleanConfigTypes.some(ct => ct.includes('lit102') || ct.includes('lit101') || ct.includes('integrated'));
+          const configIsTheoryOrLab = cleanConfigTypes.some(ct => ct.includes('theory') || ct.includes('lab'));
+          if (subjectIsIntegrated || configIsIntegrated || (configIsTheoryOrLab && (assessmentType === 'Exam' || assessmentType === 'Practical'))) {
+            const isWrittenExam = examNameClean.includes('ia') || 
+                                  examNameClean.includes('internal') || 
+                                  examNameClean.includes('endsem') || 
+                                  examNameClean.includes('written') ||
+                                  cleanConfigTypes.some(ct => ct.includes('theory') || ct.includes('written') || ct.includes('lit101') || ct.includes('lit102'));
+            if (assessmentType === 'Exam' && !isWrittenExam) return;
+            if (assessmentType === 'Practical' && !isPracticalExam) return;
+          } else {
+            return;
+          }
+        }
+      }
+
+      // Skip exams from disabled categories (consider_for_internal === false in course_type_weightage)
+      // Check by config ID and by resolved exam name (handles duplicate configs with different doc IDs)
+      if (disabledExamIds.has(config.id)) return;
+      if (disabledExamNames.has(normClean(resolvedName))) return;
+
+      addExam(config.id, resolvedName, 'cia_config');
     });
-  }, [ciaConfigs, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
+
+    // 2. Process course_type_weightage from Firestore for current regulation
+    // (authoritative — resolves exam_weightage doc ids to human-readable names, only from enabled categories)
+    if (regWeightage) {
+      const categoryData = findCategoryData(regWeightage);
+
+      if (categoryData && categoryData._category_config) {
+        Object.entries(categoryData._category_config).forEach(([cName, cConf]) => {
+          if (!cConf || cConf.consider_for_internal === false) return;
+          const groupClean = normClean(cName);
+
+          const isGroupPractical = groupClean.includes('practical') || groupClean.includes('observation') || groupClean.includes('lab');
+          const isGroupAssignment = groupClean.includes('assignment');
+          const isGroupProject = groupClean.includes('project');
+          const isGroupIndirect = groupClean.includes('indirect') || groupClean.includes('survey');
+          const isGroupWritten = groupClean.includes('written') || groupClean.includes('theory') || groupClean.includes('test') || groupClean.includes('ese') || groupClean.includes('exam');
+
+          let allowGroup = false;
+          if (assessmentType === 'Assignment' && isGroupAssignment) allowGroup = true;
+          else if (assessmentType === 'Project' && isGroupProject) allowGroup = true;
+          else if (assessmentType === 'Practical' && isGroupPractical) allowGroup = true;
+          else if (assessmentType === 'Indirect' && isGroupIndirect) allowGroup = true;
+          else if (assessmentType === 'Exam' && (isGroupWritten || (!isGroupPractical && !isGroupAssignment && !isGroupProject && !isGroupIndirect))) allowGroup = true;
+
+          if (!allowGroup) return;
+          if (!cConf.exam_weightage || typeof cConf.exam_weightage !== 'object') return;
+
+          Object.keys(cConf.exam_weightage).forEach(id => {
+            const resolvedCfg = ciaConfigById.get(id);
+            if (resolvedCfg) {
+              const rn = resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName;
+              if (rn && !isRawFirebaseId(rn)) {
+                const rnClean = normClean(rn);
+                const examIsPractical = resolvedCfg.isPractical || rnClean.includes('practical') || rnClean.includes('model') || rnClean.includes('observation') || rnClean.includes('record') || rnClean.includes('lab');
+                if (assessmentType === 'Exam' && examIsPractical) return;
+                if (assessmentType === 'Practical' && !examIsPractical) return;
+                addExam(resolvedCfg.id, rn, 'weightage');
+              }
+            }
+          });
+        });
+      }
+    }
+
+    console.debug('[QPG] filteredExams', {
+      courseType, cleanCourseType, regulation,
+      regWeightageKeys: Object.keys(regWeightage || {}),
+      catDataFound: !!catDataForLookup,
+      disabledExamNames: Array.from(disabledExamNames),
+      examList: examList.map(e => e.examName),
+    });
+
+    return examList;
+  }, [ciaConfigs, courseWeightageData, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
 
   // Fetch ALL saved QPs for this subject and compute combined PO marks
   useEffect(() => {
@@ -1453,10 +1697,12 @@ export default function QuestionPaperGenerator() {
       setPoList(data.po_statements || []);
     });
 
-    const unsubscribeCO = onSnapshot(coRef, (snapshot) => { // Use onSnapshot for real-time updates
+    const unsubscribeCO = onSnapshot(coRef, async (snapshot) => { // Use onSnapshot for real-time updates
       const data = snapshot.data(); // Use .data() for Firestore documents
+      let loadedCOs = [];
       if (data) {
-        const loadedCOs = Object.entries(data)
+        loadedCOs = Object.entries(data)
+          .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
           .map(([code, val]) => ({
             code,
             description: typeof val === 'object' && val !== null ? val.description : val
@@ -1466,38 +1712,82 @@ export default function QuestionPaperGenerator() {
             const numB = parseInt(b.code.replace(/\D/g, '')) || 0;
             return numA - numB;
           });
-        setCourseOutcomes(loadedCOs);
-        if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
-          setNumParts(String(loadedCOs.length));
-        }
-      } else {
-        // Fallback: course_outcomes doc doesn't exist — try courses collection
-        setCourseOutcomes([]);
-        (async () => {
-          try {
-            const fallbackDeptKey = sanitizeKey(department);
-            const fallbackStrictDept = sanitizeKeyStrict(department);
-            const fallbackSubjKey = sanitizeKey(subjectCode);
-            let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackDeptKey}_${fallbackSubjKey}`));
-            if (!courseSnap.exists() && fallbackStrictDept !== fallbackDeptKey) {
-              courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackStrictDept}_${fallbackSubjKey}`));
-            }
-            if (!courseSnap.exists()) {
-              courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fallbackSubjKey}`));
-            }
-            if (courseSnap.exists()) {
-              const bankData = courseSnap.data();
-              if (bankData.co && Array.isArray(bankData.co)) {
-                const bankCOs = bankData.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => {
-                  const numA = parseInt(String(a.code || '').replace(/\D/g, '')) || 0;
-                  const numB = parseInt(String(b.code || '').replace(/\D/g, '')) || 0;
-                  return numA - numB;
-                });
-                if (bankCOs.length > 0) setCourseOutcomes(bankCOs);
+      }
+
+      if (loadedCOs.length === 0) {
+        // Fallback 1: Check alternative doc ID keys in course_outcomes collection
+        try {
+          const fallbackDeptKey = sanitizeKey(department);
+          const fallbackSubjKey = sanitizeKey(subjectCode);
+          const fallbackReg = sanitizeKey(regulation);
+          const fallbackAy = sanitizeKey(academicYear);
+
+          const altCoKeys = [
+            `${fallbackDeptKey}_${fallbackReg}_${fallbackSubjKey}`,
+            `${fallbackDeptKey}_${fallbackSubjKey}_${fallbackAy}`,
+            `${fallbackReg}_${fallbackSubjKey}`,
+            `${fallbackSubjKey}`
+          ];
+
+          for (const key of altCoKeys) {
+            const altSnap = await getDoc(doc(db, 'course_outcomes', key));
+            if (altSnap.exists()) {
+              const altData = altSnap.data();
+              if (altData) {
+                loadedCOs = Object.entries(altData)
+                  .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
+                  .map(([code, val]) => ({
+                    code,
+                    description: typeof val === 'object' && val !== null ? val.description : val
+                  }))
+                  .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+                if (loadedCOs.length > 0) break;
               }
             }
-          } catch (e) { console.error("Error fetching COs from course bank:", e); }
-        })();
+          }
+        } catch (e) { console.warn("Error fetching alt course_outcomes:", e); }
+      }
+
+      if (loadedCOs.length === 0) {
+        // Fallback 2: Check courses collection (Course Bank)
+        try {
+          const fallbackDeptKey = sanitizeKey(department);
+          const fallbackStrictDept = sanitizeKeyStrict(department);
+          const fallbackSubjKey = sanitizeKey(subjectCode);
+          let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackDeptKey}_${fallbackSubjKey}`));
+          if (!courseSnap.exists() && fallbackStrictDept !== fallbackDeptKey) {
+            courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackStrictDept}_${fallbackSubjKey}`));
+          }
+          if (!courseSnap.exists()) {
+            courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fallbackSubjKey}`));
+          }
+          if (courseSnap.exists()) {
+            const bankData = courseSnap.data();
+            if (bankData.co && Array.isArray(bankData.co)) {
+              loadedCOs = bankData.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => {
+                const numA = parseInt(String(a.code || '').replace(/\D/g, '')) || 0;
+                const numB = parseInt(String(b.code || '').replace(/\D/g, '')) || 0;
+                return numA - numB;
+              });
+            }
+          }
+        } catch (e) { console.error("Error fetching COs from course bank:", e); }
+      }
+
+      if (loadedCOs.length === 0) {
+        // Fallback 3: Provide standard CO1 - CO5 default so the faculty is NEVER blocked
+        loadedCOs = [
+          { code: 'CO1', description: 'CO1' },
+          { code: 'CO2', description: 'CO2' },
+          { code: 'CO3', description: 'CO3' },
+          { code: 'CO4', description: 'CO4' },
+          { code: 'CO5', description: 'CO5' }
+        ];
+      }
+
+      setCourseOutcomes(loadedCOs);
+      if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
+        setNumParts(String(loadedCOs.length));
       }
     });
 

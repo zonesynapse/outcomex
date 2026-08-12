@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
-import { sanitizeKey } from "../lib/utils";
+import { sanitizeKey, formatDepartmentDisplay, formatBatchDisplay } from "../lib/utils";
 
 const getCategoryFromCode = (code) => {
   if (code.startsWith("A")) return "student";
@@ -284,34 +284,80 @@ export default function ActivityReports() {
     });
   }, [activities, selectedDept, selectedMonth, selectedYear]);
 
+  // Helper to expand multi-row form entries (e.g. C5 online courses, C2/C3/C8 multi-row forms)
+  const expandActivityRows = (activities) => {
+    const result = [];
+    (activities || []).forEach((act) => {
+      if (act.formData && Array.isArray(act.formData) && act.formData.length > 0) {
+        act.formData.forEach((row, idx) => {
+          if (typeof row === "object" && row !== null) {
+            result.push({
+              ...act,
+              ...row,
+              id: `${act.id}_row_${idx}`,
+              facultyName: row.facultyName || act.facultyName || act.submittedBy || "-",
+              studentName: row.studentName || act.studentName || act.submittedBy || "-",
+              courseName: row.courseName || row.courseTitle || row.title || row.nameOfCourse || row.name || act.courseName || act.courseTitle || act.title,
+              platform: row.platform || row.university || row.organisation || row.platformUniversity || act.platform || act.university,
+              weeks: row.weeks || row.durationWeeks || row.duration || act.weeks || act.duration,
+              startDate: row.startDate || row.fromDate || act.startDate || act.fromDate,
+              endDate: row.endDate || row.toDate || act.endDate || act.toDate,
+              grade: row.grade !== undefined && row.grade !== "" ? row.grade : (row.score !== undefined ? row.score : act.grade),
+              status: row.status || act.status,
+              relevance: row.relevance || act.relevance,
+            });
+          }
+        });
+      } else if (act.formData && typeof act.formData === "object" && !Array.isArray(act.formData)) {
+        result.push({
+          ...act,
+          ...act.formData,
+          facultyName: act.formData.facultyName || act.facultyName || act.submittedBy || "-",
+          studentName: act.formData.studentName || act.studentName || act.submittedBy || "-",
+          courseName: act.formData.courseName || act.formData.courseTitle || act.formData.title || act.formData.nameOfCourse || act.formData.name || act.courseName || act.courseTitle || act.title,
+          platform: act.formData.platform || act.formData.university || act.formData.organisation || act.platform || act.university,
+          weeks: act.formData.weeks || act.formData.durationWeeks || act.formData.duration || act.weeks || act.duration,
+          startDate: act.formData.startDate || act.formData.fromDate || act.startDate || act.fromDate,
+          endDate: act.formData.endDate || act.formData.toDate || act.endDate || act.toDate,
+          grade: act.formData.grade !== undefined && act.formData.grade !== "" ? act.formData.grade : (act.formData.score !== undefined ? act.formData.score : act.grade),
+          status: act.formData.status || act.status,
+          relevance: act.formData.relevance || act.relevance,
+        });
+      } else {
+        result.push(act);
+      }
+    });
+    return result;
+  };
+
   // Section Filters for Monthly Report
-  const partA_GuestLectures = useMemo(() => reportActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry")), [reportActivities]);
-  const partA_Association = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "leadership"), [reportActivities]);
-  const partA_Internships = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship"))), [reportActivities]);
-  const partA_OnlineCourses = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "onlineCourse"), [reportActivities]);
-  const partA_PaperPresentations = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present")))), [reportActivities]);
-  const partA_Publications = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ")))), [reportActivities]);
-  const partA_Conferences = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "technical"), [reportActivities]);
-  const partA_ExtraCurricular = useMemo(() => reportActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social")), [reportActivities]);
-  const partA_Placements = useMemo(() => reportActivities.filter(a => a.isStep && a.category === "placement"), [reportActivities]);
+  const partA_GuestLectures = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B9" || (a.isStep && a.category === "industry"))), [reportActivities]);
+  const partA_Association = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && a.category === "leadership")), [reportActivities]);
+  const partA_Internships = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && (a.category === "industry" || (a.activityName || "").toLowerCase().includes("internship")))), [reportActivities]);
+  const partA_OnlineCourses = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && a.category === "onlineCourse")), [reportActivities]);
+  const partA_PaperPresentations = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("present") || (a.activityType || "").toLowerCase().includes("present"))))), [reportActivities]);
+  const partA_Publications = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && (a.category === "research" && ((a.activityName || "").toLowerCase().includes("publ") || (a.activityType || "").toLowerCase().includes("publ"))))), [reportActivities]);
+  const partA_Conferences = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && a.category === "technical")), [reportActivities]);
+  const partA_ExtraCurricular = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && (a.category === "sports" || a.category === "social"))), [reportActivities]);
+  const partA_Placements = useMemo(() => expandActivityRows(reportActivities.filter(a => a.isStep && a.category === "placement")), [reportActivities]);
 
-  const partB_Meetings = useMemo(() => reportActivities.filter(a => a.activityCode === "B1"), [reportActivities]);
-  const partB_Advisory = useMemo(() => reportActivities.filter(a => a.activityCode === "B2"), [reportActivities]);
-  const partB_Purchases = useMemo(() => reportActivities.filter(a => a.activityCode === "B3"), [reportActivities]);
-  const partB_Mous = useMemo(() => reportActivities.filter(a => a.activityCode === "B4"), [reportActivities]);
-  const partB_Parents = useMemo(() => reportActivities.filter(a => a.activityCode === "B5"), [reportActivities]);
-  const partB_Audits = useMemo(() => reportActivities.filter(a => a.activityCode === "B7"), [reportActivities]);
-  const partB_Newsletters = useMemo(() => reportActivities.filter(a => a.activityCode === "B8"), [reportActivities]);
+  const partB_Meetings = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B1")), [reportActivities]);
+  const partB_Advisory = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B2")), [reportActivities]);
+  const partB_Purchases = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B3")), [reportActivities]);
+  const partB_Mous = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B4")), [reportActivities]);
+  const partB_Parents = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B5")), [reportActivities]);
+  const partB_Audits = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B7")), [reportActivities]);
+  const partB_Newsletters = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B8")), [reportActivities]);
 
-  const partC_Phd = useMemo(() => reportActivities.filter(a => a.activityCode === "C1"), [reportActivities]);
-  const partC_Publications = useMemo(() => reportActivities.filter(a => a.activityCode === "C2"), [reportActivities]);
-  const partC_Attended = useMemo(() => reportActivities.filter(a => a.activityCode === "C3"), [reportActivities]);
-  const partC_Organized = useMemo(() => reportActivities.filter(a => a.activityCode === "C4"), [reportActivities]);
-  const partC_Online = useMemo(() => reportActivities.filter(a => a.activityCode === "C5"), [reportActivities]);
-  const partC_Funding = useMemo(() => reportActivities.filter(a => a.activityCode === "C6"), [reportActivities]);
-  const partC_Patents = useMemo(() => reportActivities.filter(a => a.activityCode === "C7"), [reportActivities]);
-  const partC_Contributions = useMemo(() => reportActivities.filter(a => a.activityCode === "C8"), [reportActivities]);
-  const partC_Achievements = useMemo(() => reportActivities.filter(a => a.activityCode === "C9"), [reportActivities]);
+  const partC_Phd = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C1")), [reportActivities]);
+  const partC_Publications = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C2")), [reportActivities]);
+  const partC_Attended = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C3")), [reportActivities]);
+  const partC_Organized = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C4")), [reportActivities]);
+  const partC_Online = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C5")), [reportActivities]);
+  const partC_Funding = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C6")), [reportActivities]);
+  const partC_Patents = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C7")), [reportActivities]);
+  const partC_Contributions = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C8")), [reportActivities]);
+  const partC_Achievements = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C9")), [reportActivities]);
 
   // All extracted report images
   const allReportImages = useMemo(() => {
@@ -1236,11 +1282,11 @@ export default function ActivityReports() {
                       <tbody>
                         {partC_Online.map((act) => (
                           <tr key={act.id}>
-                            <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || "-"}</td>
-                            <td className="border border-zinc-400 p-2 font-bold">{act.courseName || "-"}</td>
-                            <td className="border border-zinc-400 p-2">{act.platform || "-"}</td>
-                            <td className="border border-zinc-400 p-2 text-center">{act.weeks || "-"}</td>
-                            <td className="border border-zinc-400 p-2 text-center text-emerald-800 font-bold uppercase">{act.status || "-"}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.facultyName || act.submittedBy || act.name || "-"}</td>
+                            <td className="border border-zinc-400 p-2 font-bold">{act.courseName || act.courseTitle || act.title || act.activityName || "-"}</td>
+                            <td className="border border-zinc-400 p-2">{act.platform || act.university || act.organization || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center">{act.weeks || act.durationWeeks || act.duration || "-"}</td>
+                            <td className="border border-zinc-400 p-2 text-center text-emerald-800 font-bold uppercase">{act.status || "Completed"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1472,7 +1518,7 @@ export default function ActivityReports() {
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                  <span className="text-sm font-bold text-zinc-800">{detailActivity.department} / {detailActivity.batch} / {detailActivity.section || "Sec-A"}</span>
+                  <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(detailActivity.department, detailActivity.programme)} / {formatBatchDisplay(detailActivity.batch) || detailActivity.batch} / {detailActivity.section || "Sec-A"}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>

@@ -16,6 +16,7 @@ import { useBatches } from "../hooks/useBatches";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
 import { formatProgrammeKey, sanitizeKey, getAcademicYears, formatProgDisplay } from "../lib/utils";
 import { uploadFile, userStoragePath, deleteByUrl } from "../utils/fileUpload";
+import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 const BASIC_INFO_KEYS = new Set(["programme", "department", "batch", "academicYear", "semester", "section", "date", "submittedBy", "month"]);
 
@@ -44,6 +45,12 @@ export default function ActivityEntry() {
   const [draftId, setDraftId] = useState(null);
   const [sectionConfigs, setSectionConfigs] = useState({});
   const fileRef = useRef({});
+
+  // Warn on accidental reload/close while editing form
+  const isFormDirty = useMemo(() => {
+    return Object.keys(formData).some(k => !BASIC_INFO_KEYS.has(k) && !!formData[k]) || uploadedFiles.length > 0;
+  }, [formData, uploadedFiles]);
+  useUnsavedChanges(isFormDirty && !submitted);
 
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches } = useBatches(durations);
@@ -164,15 +171,26 @@ export default function ActivityEntry() {
     return () => unsub();
   }, []);
 
-  // Load activity configuration
+  // Load activity configuration (from custom_activities in Firestore first, fallback to ACTIVITY_REGISTRY)
   useEffect(() => {
-    if (code) {
-      const config = ACTIVITY_REGISTRY.find(a => a.code === code);
-      setActivityConfig(config);
-      if (config?.isMultiRow) {
-        setRows([{}]);
+    if (!code) return;
+    const fetchConfig = async () => {
+      try {
+        const customSnap = await getDoc(doc(db, "custom_activities", code));
+        if (customSnap.exists()) {
+          const config = { code, ...customSnap.data() };
+          setActivityConfig(config);
+          if (config?.isMultiRow) setRows([{}]);
+          return;
+        }
+      } catch (e) {
+        console.warn("Failed to load custom_activity doc:", e);
       }
-    }
+      const presetConfig = ACTIVITY_REGISTRY.find(a => a.code === code);
+      setActivityConfig(presetConfig || null);
+      if (presetConfig?.isMultiRow) setRows([{}]);
+    };
+    fetchConfig();
   }, [code]);
 
   // Load existing entry for editing

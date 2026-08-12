@@ -3,7 +3,7 @@ import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { formatProgDisplay } from "../../lib/utils";
+import { formatProgDisplay, getAttendanceRecords } from "../../lib/utils";
 import {
   GraduationCap, CheckCircle, BarChart3, Clock, Bell,
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
@@ -62,8 +62,8 @@ export default function StudentDashboard() {
           const id = docSnap.id;
           if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
           const data = docSnap.data();
-          const records = data?.records;
-          if (!records) return;
+          const records = getAttendanceRecords(data);
+          if (!Object.keys(records).length) return;
 
           const subjectCode = extractSubjectCode(id);
 

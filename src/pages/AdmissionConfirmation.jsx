@@ -179,10 +179,12 @@ export default function AdmissionConfirmation() {
   }, [allDeptMap]);
 
   const openViewModal = async (app) => {
+    if (!app) return;
+    const targetId = app?.enquiryId || app?.id || app?.docId || app?.applicationNo;
     setViewModal({ open: true, enquiry: app, loading: true });
-    if (app?.enquiryId) {
+    if (targetId) {
       try {
-        const fresh = await getEnquiryById(app.enquiryId);
+        const fresh = await getEnquiryById(targetId);
         setViewModal({ open: true, enquiry: fresh || app, loading: false });
         return;
       } catch (e) {
@@ -511,11 +513,14 @@ export default function AdmissionConfirmation() {
       ["Date", new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })],
       ["Application No", enquiry.applicationNo || "-"],
       ["Student Name", applicantName],
-      ["Father / Guardian", enquiry.fatherGuardianName || "-"],
+      ["Father / Guardian", enquiry.fatherGuardianName || enquiry.fatherName || enquiry.guardianName || "-"],
       ["Programme", programme || enquiry.programme || "-"],
       ["Choice 1 - Department", choice1Dept || "-"],
       ["Batch", enquiry.batch || "-"],
       ["Academic Year", enquiry.academicYear || "-"],
+      ["Seat Category", enquiry.seatCategory || enquiry.quotaAskedFor || enquiry.quota || "-"],
+      ["Student Category", enquiry.studentCategory || enquiry.category || "-"],
+      ["Scholarship Details", enquiry.scholarshipDetails || enquiry.scholarship || "-"],
     ];
 
     autoTable(doc, {
@@ -1174,9 +1179,10 @@ export default function AdmissionConfirmation() {
             <InfoRow label="Application No" value={enquiry.applicationNo} />
             <InfoRow label="Department Choices" value={[enquiry.department, enquiry.department2, enquiry.department3].filter(Boolean).join(" / ")} />
             <InfoRow label="Eligibility" value={enquiry.eligibility} />
-            <InfoRow label="Quota Asked For" value={enquiry.quotaAskedFor} />
-            <InfoRow label="Seat Category" value={enquiry.seatCategory} />
-            <InfoRow label="Student Category" value={enquiry.studentCategory} />
+            <InfoRow label="Quota Asked For" value={enquiry.quotaAskedFor || enquiry.seatCategory} />
+            <InfoRow label="Seat Category" value={enquiry.seatCategory || enquiry.quotaAskedFor || enquiry.quota} />
+            <InfoRow label="Student Category" value={enquiry.studentCategory || enquiry.category} />
+            <InfoRow label="Scholarship Details" value={enquiry.scholarshipDetails || enquiry.scholarship} />
             <InfoRow label="Status" value={enquiry.status} />
           </SectionCard>
 

@@ -11,6 +11,7 @@ import {
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
+import { getAttendanceRecords } from "../lib/utils";
 
 const progPrefixMap = [
   { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
@@ -152,6 +153,34 @@ export default function FacultyDashboard() {
   const [allStudentNames, setAllStudentNames] = useState({});
   const [codeOwners, setCodeOwners] = useState({});   // code → [uid, ...]
   const [facultyNames, setFacultyNames] = useState({}); // uid → display name
+  const [draftActivities, setDraftActivities] = useState([]);
+
+  // Fetch draft activities for current user
+  useEffect(() => {
+    if (!currentUid) return;
+    const entriesRef = collection(db, "activity_entries");
+    const unsub = onSnapshot(entriesRef, (snap) => {
+      const drafts = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.submittedById === currentUid && data.status === "Draft") {
+          drafts.push({
+            id: d.id,
+            ...data
+          });
+        }
+      });
+      drafts.sort((a, b) => {
+        const tA = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.date || a.createdAt || 0).getTime();
+        const tB = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.date || b.createdAt || 0).getTime();
+        return tB - tA;
+      });
+      setDraftActivities(drafts);
+    }, (err) => {
+      console.warn("[FacultyDashboard] Error fetching activity drafts:", err);
+    });
+    return () => unsub();
+  }, [currentUid]);
 
   const sanitizeKey = (key) => {
     if (!key) return '';
@@ -212,7 +241,17 @@ export default function FacultyDashboard() {
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
         const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
         try {
-          const snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
+          let snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
+          if (!snap.exists() && g.sections && g.sections.length > 0) {
+            for (const sec of g.sections) {
+              const secKey = `${compositeKey}_${sanitizeKey(sec)}`;
+              const secSnap = await getDoc(doc(db, 'timetable_allocations', secKey));
+              if (secSnap.exists()) {
+                snap = secSnap;
+                break;
+              }
+            }
+          }
           if (snap.exists()) {
             const data = snap.data();
             const filterByFacultySubjects = {};
@@ -308,10 +347,11 @@ export default function FacultyDashboard() {
       // not just the faculty's own subject codes — needed for substitute detection
       const batchPrefixes = [];
       for (const g of visibleGroups) {
-        const prefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-        if (!batchPrefixes.some(p => p === prefix)) {
-          batchPrefixes.push(prefix);
-        }
+        const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
+        const prefix1 = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
+        const prefix2 = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+        if (!batchPrefixes.includes(prefix1)) batchPrefixes.push(prefix1);
+        if (!batchPrefixes.includes(prefix2)) batchPrefixes.push(prefix2);
       }
       try {
         const [allSnap, enrolSnap] = await Promise.all([
@@ -475,8 +515,7 @@ export default function FacultyDashboard() {
           const codes = facultyData?.[currentUid];
           if (!Array.isArray(codes) || codes.length === 0) return;
 
-          const secPart = sectionExtracted ? `|||${sectionExtracted}` : '';
-          const groupKey = `${progKeyExtracted}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}${secPart}`;
+          const groupKey = `${progKeyExtracted}|||${deptKey}|||${batchKey}|||${ayKey}|||${semKey}`;
           if (!groups[groupKey]) {
             groups[groupKey] = {
               progKey: progKeyExtracted,
@@ -484,9 +523,13 @@ export default function FacultyDashboard() {
               batch: batchKey,
               academicYear: ayKey,
               semester: semKey,
-              section: sectionExtracted || '',
+              sections: [],
               codes: []
             };
+          }
+
+          if (sectionExtracted && !groups[groupKey].sections.includes(sectionExtracted)) {
+            groups[groupKey].sections.push(sectionExtracted);
           }
 
           codes.forEach((code) => {
@@ -766,30 +809,37 @@ export default function FacultyDashboard() {
             const parts = String(entry).split('|');
             const code = parts[0] || '';
             if (!code) return;
-            const sectionSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
-            const exactId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
-            const baseId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
-            const attData = facultyAttendanceData[exactId] || facultyAttendanceData[baseId];
+            const currentSec = g.section || (g.sections && g.sections.length > 0 ? g.sections[0] : '');
+            const sectionSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
+            const exactIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}${sectionSuffix}`;
+            const baseIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}`;
+            const exactIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
+            const baseIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
+
+            const attData = facultyAttendanceData[exactIdNum] || facultyAttendanceData[baseIdNum] || facultyAttendanceData[exactIdFull] || facultyAttendanceData[baseIdFull];
             const recordKey = `${dateStr}_P${period}`;
-            let rec = attData?.records?.[recordKey];
+            const recordsMap = getAttendanceRecords(attData);
+            let rec = recordsMap[recordKey];
             let recordFound = !!rec;
 
-            // 1. Direct record: if it exists but was marked by a substitute, attendance was done
-            if (rec && rec.markedBy && rec.markedBy !== currentUid) {
+            // 1. Direct record: if it exists (even if marked by substitute or self), attendance was done
+            if (rec) {
               recordFound = true;
-            } else if (!rec) {
-              // 2. No direct record — check if a substitute marked a different subject for same group/period
-              const groupPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-              const secSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+            } else {
+              // 2. No direct record — check if a substitute marked a different subject for same group/period/section
+              const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
+              const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+              const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
               for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
-                if (!aData?.records?.[recordKey]) continue;
-                if (!dId.startsWith(groupPrefix)) continue;
-                if (g.section) {
+                if (!getAttendanceRecords(aData)?.[recordKey]) continue;
+                const matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : null);
+                if (!matchedPrefix) continue;
+                if (currentSec) {
                   if (!dId.endsWith(secSuffix)) continue;
                 } else {
                   if (dId.includes('_Sec-')) continue;
                 }
-                let rest = dId.slice(groupPrefix.length);
+                let rest = dId.slice(matchedPrefix.length);
                 if (secSuffix && rest.endsWith(secSuffix)) rest = rest.slice(0, rest.length - secSuffix.length);
                 if (rest && rest !== code) {
                   recordFound = true;
@@ -856,15 +906,16 @@ export default function FacultyDashboard() {
       const lunchAfter = parseInt(tpl.lunchAfterPeriod, 10) || 0;
       const lunchDur = parseInt(tpl.lunchDuration, 10) || 0;
       const brks = Array.isArray(tpl.breaks) ? tpl.breaks : [];
-      const templateKey = [
-        tt.periodsPerDay, tt.workingDays, tpl.startTime || '',
-        JSON.stringify(tpl.periodDurations || {}),
-        lunchAfter, lunchDur, JSON.stringify(brks)
-      ].join('|');
-      const periodTimes = getPeriodTimes(tpl.startTime, tt.periodsPerDay, tpl.periodDurations, brks, lunchAfter, lunchDur);
+      const periodsPerDay = parseInt(tt.periodsPerDay, 10) || 0;
+      const workingDays = parseInt(tt.workingDays || tpl.workingDays || 5, 10) || 5;
+
+      const periodTimes = getPeriodTimes(tpl.startTime, periodsPerDay, tpl.periodDurations, brks, lunchAfter, lunchDur);
+      const periodTimesStr = periodTimes.map(pt => `${pt.start}-${pt.end}`).join(';');
+      const templateKey = `${periodsPerDay}|${workingDays}|${periodTimesStr}`;
+
       if (!groups[templateKey]) {
         const columns = [];
-        for (let i = 1; i <= parseInt(tt.periodsPerDay, 10); i++) {
+        for (let i = 1; i <= periodsPerDay; i++) {
           columns.push({ type: 'period', num: i });
           const brk = brks.find(b => parseInt(b.after, 10) === i);
           if (brk && parseInt(brk.duration, 10) > 0) {
@@ -875,14 +926,17 @@ export default function FacultyDashboard() {
           }
         }
         groups[templateKey] = {
-          periodsPerDay: tt.periodsPerDay, workingDays: tt.workingDays,
-          periodTimes, columns,
+          periodsPerDay,
+          workingDays,
+          periodTimes,
+          columns,
           entries: []
         };
       }
-      groups[templateKey].entries.push({ group: g, compositeKey, tt });
-      const feCount = Object.values(tt.facultyEntries || {}).reduce((s, d) => s + Object.keys(d).length, 0);
-      if (feCount === 0) console.warn(`TT for ${compositeKey}: codes=${g.codes}, SUBJ_ALLOC=${JSON.stringify(Object.keys(tt.subjectAllocation || {}))}`);
+
+      if (!groups[templateKey].entries.some(e => e.compositeKey === compositeKey)) {
+        groups[templateKey].entries.push({ group: g, compositeKey, tt });
+      }
     });
     return Object.values(groups);
   }, [timetableData, visibleGroups]);
@@ -909,13 +963,17 @@ export default function FacultyDashboard() {
         entries.forEach(entry => {
           const parts = String(entry).split('|');
           const code = parts[0] || '';
-          const sectionSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
-          const exactAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
-          const baseAttDocId = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
+          const currentSec = g.section || (g.sections && g.sections.length > 0 ? g.sections[0] : '');
+          const sectionSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
+          const exactAttDocIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}${sectionSuffix}`;
+          const baseAttDocIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}`;
+          const exactAttDocIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
+          const baseAttDocIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
 
-          const attData = facultyAttendanceData[exactAttDocId] || facultyAttendanceData[baseAttDocId];
+          const attData = facultyAttendanceData[exactAttDocIdNum] || facultyAttendanceData[baseAttDocIdNum] || facultyAttendanceData[exactAttDocIdFull] || facultyAttendanceData[baseAttDocIdFull];
           const recordKey = `${attendanceDate}_P${period}`;
-          let rec = attData?.records?.[recordKey];
+          const recordsMap = getAttendanceRecords(attData);
+          let rec = recordsMap[recordKey];
           let subFound = false;
           let subSubjectCode = '';
           let subFacultyName = '';
@@ -930,31 +988,33 @@ export default function FacultyDashboard() {
           } else {
             // 2. Scheduled subject has no record. Check if another subject was taught
             // to THIS EXACT group (programme, department, batch, academicYear, semester, section)
-            const groupPrefix = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-            const secSuffix = g.section ? `_${sanitizeKey(g.section)}` : '';
+            const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
+            const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
+            const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
 
             for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
-              if (!aData?.records?.[recordKey]) continue;
+              const aRecords = getAttendanceRecords(aData);
+              if (!aRecords?.[recordKey]) continue;
 
-              // Must belong to the exact same programme, department, batch, academicYear, semester
-              if (!dId.startsWith(groupPrefix)) continue;
+              const matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : null);
+              if (!matchedPrefix) continue;
 
               // Must match the exact section
-              if (g.section) {
+              if (currentSec) {
                 if (!dId.endsWith(secSuffix)) continue;
               } else {
                 if (dId.includes('_Sec-')) continue;
               }
 
               // Extract substitute subject code
-              let rest = dId.slice(groupPrefix.length);
+              let rest = dId.slice(matchedPrefix.length);
               if (secSuffix && rest.endsWith(secSuffix)) {
                 rest = rest.slice(0, rest.length - secSuffix.length);
               }
               const subCode = rest;
 
               if (subCode && subCode !== code) {
-                rec = aData.records[recordKey];
+                rec = aRecords[recordKey];
                 subFound = true;
                 subSubjectCode = subCode;
                 const markerUid = rec.markedBy;
@@ -1111,6 +1171,65 @@ export default function FacultyDashboard() {
             );
           })}
         </div>
+
+        {/* Draft Activities Section */}
+        {draftActivities.length > 0 && (
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-6 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-200/60">
+                  <Clock size={20} />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-zinc-900">Draft Activities</h2>
+                  <p className="text-xs text-zinc-400 font-medium">Activities saved as draft — click the edit icon to resume entry</p>
+                </div>
+              </div>
+              <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-extrabold border border-amber-200">
+                {draftActivities.length} Saved {draftActivities.length === 1 ? "Draft" : "Drafts"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {draftActivities.map((act) => (
+                <div 
+                  key={act.id} 
+                  className="bg-zinc-50/80 border border-zinc-200/80 rounded-2xl p-4 flex items-start justify-between gap-3 hover:border-indigo-300 hover:bg-white hover:shadow-md transition-all group"
+                >
+                  <div className="space-y-2 min-w-0 flex-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#120c7a] to-indigo-800 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm">
+                        {act.activityCode}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-zinc-900 truncate">
+                          {act.title || act.activityName || `Activity ${act.activityCode}`}
+                        </p>
+                        <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                          {act.category || "Activity"} • {act.date || act.month || "Draft"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {act.description && (
+                      <p className="text-[11px] text-zinc-500 line-clamp-1">{act.description}</p>
+                    )}
+                  </div>
+
+                  {/* Resume Edit Button */}
+                  <button
+                    onClick={() => navigate(`/activities/${act.activityCode}/edit/${act.id}`)}
+                    className="p-2.5 rounded-xl bg-indigo-50 text-[#120c7a] hover:bg-[#120c7a] hover:text-white transition-all shadow-sm shrink-0 flex items-center gap-1.5 font-extrabold text-xs cursor-pointer border border-indigo-200/60"
+                    title="Edit and Resume Activity Entry"
+                  >
+                    <Edit2 size={15} />
+                    <span className="hidden sm:inline">Resume</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Appraisal Validation Scorecard Widget */}
         {userAppraisal && (

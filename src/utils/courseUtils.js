@@ -3,12 +3,38 @@ import { collection, getDocs } from 'firebase/firestore';
 
 const sanitizeKey = (v) => String(v ?? '').trim().replace(/[.#$[\]/ ]/g, '_');
 
+let cachedNamesMap = null;
+
 /**
- * Fetches all course names from both `syllabus_data` and `courses` collections
+ * Fetches all course names from `syllabus_data`, `courses`, `course_outcomes`, and `course_bank`
  * and returns a department-aware lookup map.
  */
-export async function fetchAllCourseNamesMap() {
+export async function fetchAllCourseNamesMap(forceRefresh = false) {
+    if (cachedNamesMap && !forceRefresh) {
+        return cachedNamesMap;
+    }
     const map = {};
+
+    const extractAndSave = (item, pK, dK) => {
+        if (!item || typeof item !== 'object') return;
+        const cCode = String(item.code || item.subjectCode || item.courseCode || item.subject_code || item.id || '').trim();
+        const cName = String(item.name || item.subjectName || item.courseName || item.subject_name || item.title || item.courseTitle || '').trim();
+        if (cCode && cName) {
+            map[cCode] = cName;
+            map[cCode.toUpperCase()] = cName;
+            if (dK) {
+                const cleanD = sanitizeKey(dK);
+                map[`${cleanD}_${cCode}`] = cName;
+                map[`${cleanD}_${cCode.toUpperCase()}`] = cName;
+            }
+            if (pK && dK) {
+                const cleanP = sanitizeKey(pK);
+                const cleanD = sanitizeKey(dK);
+                map[`${cleanP}_${cleanD}_${cCode}`] = cName;
+                map[`${cleanP}_${cleanD}_${cCode.toUpperCase()}`] = cName;
+            }
+        }
+    };
 
     // 1. Fetch from syllabus_data
     try {
@@ -30,23 +56,15 @@ export async function fetchAllCourseNamesMap() {
             if (data?.semesters) {
                 Object.values(data.semesters).forEach(semList => {
                     if (Array.isArray(semList)) {
-                        semList.forEach(s => {
-                            if (s?.code && s?.name) {
-                                const cCode = String(s.code).trim();
-                                const cName = String(s.name).trim();
-                                if (progKey && deptKey) {
-                                    map[`${sanitizeKey(progKey)}_${sanitizeKey(deptKey)}_${cCode}`] = cName;
-                                }
-                                if (deptKey) {
-                                    map[`${sanitizeKey(deptKey)}_${cCode}`] = cName;
-                                    const shortDept = deptKey.includes('_') ? deptKey.split('_').pop() : deptKey;
-                                    if (shortDept) map[`${sanitizeKey(shortDept)}_${cCode}`] = cName;
-                                }
-                                if (!map[cCode]) map[cCode] = cName;
-                            }
-                        });
+                        semList.forEach(s => extractAndSave(s, progKey, deptKey));
                     }
                 });
+            }
+            if (data?.courses && Array.isArray(data.courses)) {
+                data.courses.forEach(s => extractAndSave(s, progKey, deptKey));
+            }
+            if (data?.subjects && Array.isArray(data.subjects)) {
+                data.subjects.forEach(s => extractAndSave(s, progKey, deptKey));
             }
         });
     } catch (e) {
@@ -58,25 +76,10 @@ export async function fetchAllCourseNamesMap() {
         const coursesSnap = await getDocs(collection(db, 'courses'));
         coursesSnap.forEach(d => {
             const docData = d.data();
-            const code = docData.code || (d.id.includes('_') ? d.id.split('_').pop() : '');
-            const name = docData.name;
-            const dept = docData.department ? sanitizeKey(docData.department) : '';
-            const prog = docData.programme ? sanitizeKey(docData.programme) : '';
-
-            if (code && name) {
-                const cCode = String(code).trim();
-                const cName = String(name).trim();
-                if (prog && dept) map[`${prog}_${dept}_${cCode}`] = cName;
-                if (dept) {
-                    map[`${dept}_${cCode}`] = cName;
-                    const shortDept = dept.includes('_') ? dept.split('_').pop() : dept;
-                    if (shortDept) map[`${shortDept}_${cCode}`] = cName;
-                }
-                if (!map[cCode]) map[cCode] = cName;
-            }
+            extractAndSave({ id: d.id, ...docData }, docData.programme, docData.department);
 
             // Extract from doc.id if formatted like B_Tech_CSE_GE301
-            if (d.id.includes('_') && name) {
+            if (d.id.includes('_')) {
                 const idParts = d.id.split('_');
                 const cCode = idParts.pop();
                 let progKey = idParts[0];
@@ -86,26 +89,21 @@ export async function fetchAllCourseNamesMap() {
                     deptStartIdx = 2;
                 }
                 let deptKey = idParts.slice(deptStartIdx).join('_');
-                if (deptKey) {
-                    deptKey = sanitizeKey(deptKey);
-                    map[`${sanitizeKey(progKey)}_${deptKey}_${cCode}`] = String(name).trim();
-                    map[`${deptKey}_${cCode}`] = String(name).trim();
+                const name = docData.name || docData.title || docData.course_name || docData.subject_name;
+                if (name) {
+                    extractAndSave({ code: cCode, name }, progKey, deptKey);
                 }
             }
 
-            // Handle nested RTDB structure { [dept]: { [reg]: { [code]: { name: "..." } } } }
+            // Handle nested structure { [dept]: { [reg]: { [code]: { name: "..." } } } }
             if (!docData.code && !docData.name) {
                 Object.entries(docData).forEach(([deptK, deptVal]) => {
                     if (deptVal && typeof deptVal === 'object') {
-                        const cleanDeptK = sanitizeKey(deptK);
                         Object.values(deptVal).forEach(regVal => {
                             if (regVal && typeof regVal === 'object') {
                                 Object.entries(regVal).forEach(([cCode, cData]) => {
-                                    if (cData && cData.name) {
-                                        const codeTrim = String(cCode).trim();
-                                        const nameTrim = String(cData.name).trim();
-                                        map[`${cleanDeptK}_${codeTrim}`] = nameTrim;
-                                        if (!map[codeTrim]) map[codeTrim] = nameTrim;
+                                    if (cData && typeof cData === 'object') {
+                                        extractAndSave({ code: cCode, ...cData }, '', deptK);
                                     }
                                 });
                             }
@@ -118,6 +116,29 @@ export async function fetchAllCourseNamesMap() {
         console.error('[courseUtils] Error fetching courses:', e);
     }
 
+    // 3. Fetch from course_outcomes collection
+    try {
+        const coSnap = await getDocs(collection(db, 'course_outcomes'));
+        coSnap.forEach(d => {
+            const data = d.data();
+            extractAndSave({ id: d.id, ...data }, data.programme, data.department);
+        });
+    } catch (e) {
+        console.error('[courseUtils] Error fetching course_outcomes:', e);
+    }
+
+    // 4. Fetch from course_bank collection
+    try {
+        const cbSnap = await getDocs(collection(db, 'course_bank'));
+        cbSnap.forEach(d => {
+            const data = d.data();
+            extractAndSave({ id: d.id, ...data }, data.programme, data.department);
+        });
+    } catch (e) {
+        console.error('[courseUtils] Error fetching course_bank:', e);
+    }
+
+    cachedNamesMap = map;
     return map;
 }
 
@@ -127,34 +148,26 @@ export async function fetchAllCourseNamesMap() {
 export function getCourseName(courseMap, code, deptKey, progKey) {
     if (!code || !courseMap) return '';
     const cleanCode = String(code).trim();
-    const cleanDept = deptKey ? sanitizeKey(deptKey) : '';
-    const shortDept = cleanDept.includes('_') ? cleanDept.split('_').pop() : cleanDept;
-    const cleanProg = progKey ? sanitizeKey(progKey) : '';
+    const cleanCodeUpper = cleanCode.toUpperCase();
 
-    // 1. Match prog + full dept + code
-    if (cleanProg && cleanDept && courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`]) {
-        return courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`];
-    }
-    // 2. Match prog + short dept + code
-    if (cleanProg && shortDept && courseMap[`${cleanProg}_${shortDept}_${cleanCode}`]) {
-        return courseMap[`${cleanProg}_${shortDept}_${cleanCode}`];
-    }
-    // 3. Match full dept + code
-    if (cleanDept && courseMap[`${cleanDept}_${cleanCode}`]) {
-        return courseMap[`${cleanDept}_${cleanCode}`];
-    }
-    // 4. Match short dept + code
-    if (shortDept && courseMap[`${shortDept}_${cleanCode}`]) {
-        return courseMap[`${shortDept}_${cleanCode}`];
-    }
-    // 5. Match prog + Overall + code
-    if (cleanProg && courseMap[`${cleanProg}_Overall_${cleanCode}`]) {
-        return courseMap[`${cleanProg}_Overall_${cleanCode}`];
-    }
-    // 6. Match plain code fallback
-    if (courseMap[cleanCode]) {
-        return courseMap[cleanCode];
-    }
+    // 1. Check exact code match first (most reliable!)
+    if (courseMap[cleanCode]) return courseMap[cleanCode];
+    if (courseMap[cleanCodeUpper]) return courseMap[cleanCodeUpper];
+
+    // 2. Check department-scoped keys
+    const cleanDept = deptKey ? sanitizeKey(deptKey) : '';
+    const cleanProg = progKey ? sanitizeKey(progKey) : '';
+    const deptNoProg = cleanDept.replace(/^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A|UG|PG)_/i, '');
+
+    if (cleanProg && cleanDept && courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`];
+    if (cleanProg && cleanDept && courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`];
+
+    if (cleanDept && courseMap[`${cleanDept}_${cleanCode}`]) return courseMap[`${cleanDept}_${cleanCode}`];
+    if (cleanDept && courseMap[`${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanDept}_${cleanCodeUpper}`];
+
+    if (deptNoProg && courseMap[`${deptNoProg}_${cleanCode}`]) return courseMap[`${deptNoProg}_${cleanCode}`];
+    if (deptNoProg && courseMap[`${deptNoProg}_${cleanCodeUpper}`]) return courseMap[`${deptNoProg}_${cleanCodeUpper}`];
 
     return '';
 }
+

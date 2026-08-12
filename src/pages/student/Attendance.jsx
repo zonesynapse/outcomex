@@ -3,6 +3,7 @@ import { db, auth } from "../../firebase";
 import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { CalendarCheck2, AlertCircle, Loader2, Check, X } from "lucide-react";
+import { getAttendanceRecords } from "../../lib/utils";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -119,8 +120,8 @@ export default function Attendance() {
           const id = docSnap.id;
           if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
           const data = docSnap.data();
-          const records = data?.records;
-          if (!records) return;
+          const records = getAttendanceRecords(data);
+          if (!Object.keys(records).length) return;
 
           const subjectCode = extractSubjectCode(id);
           subjectDocMap[id] = subjectCode;

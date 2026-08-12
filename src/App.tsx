@@ -84,6 +84,7 @@ import ActivityEntry from "./pages/ActivityEntry";
 import ActivityReports from "./pages/ActivityReports";
 import ActivityNbaExport from "./pages/ActivityNbaExport";
 import ActivityPicker from "./pages/ActivityPicker";
+import ActivitySettings from "./pages/ActivitySettings";
 import MentorAllocation from "./pages/MentorAllocation";
 import MentorMeetings from "./pages/MentorMeetings";
 import MentorReports from "./pages/MentorReports";
@@ -220,6 +221,8 @@ export default function App() {
         <Route path="/activities/approval" element={<ProtectedRoute><ActivityApproval /></ProtectedRoute>} />
         <Route path="/activities/reports" element={<ProtectedRoute><ActivityReports /></ProtectedRoute>} />
         <Route path="/activities/nba-export" element={<ProtectedRoute><ActivityNbaExport /></ProtectedRoute>} />
+        <Route path="/activities/settings" element={<ProtectedRoute><ActivitySettings /></ProtectedRoute>} />
+        <Route path="/activity-settings" element={<ProtectedRoute><ActivitySettings /></ProtectedRoute>} />
         <Route path="/activities/new" element={<ProtectedRoute><ActivityPicker /></ProtectedRoute>} />
         <Route path="/activities/:code/new" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />
         <Route path="/activities/:code/edit/:id" element={<ProtectedRoute><ActivityEntry /></ProtectedRoute>} />

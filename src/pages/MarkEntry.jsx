@@ -17,6 +17,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
+import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -138,6 +139,12 @@ export default function MarkEntry() {
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [gradeConfigs, setGradeConfigs] = useState([]); // Grades for current regulation
   const fileInputRef = useRef(null);
+
+  // Warn on accidental reload/close while editing marks
+  const isMarksDirty = useMemo(() => {
+    return Object.keys(marksData).length > 0;
+  }, [marksData]);
+  useUnsavedChanges(isMarksDirty);
 
   const handleDownloadTemplate = () => {
     if (!students.length) {

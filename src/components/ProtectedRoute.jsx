@@ -16,9 +16,12 @@ export default function ProtectedRoute({ children }) {
       if (currentUser) {
         try {
           const snap = await getDoc(doc(db, "users", currentUser.uid));
-          setUserRole(snap.exists() ? snap.data().role : null);
-        } catch {
-          setUserRole(null);
+          if (snap.exists()) {
+            setUserRole(snap.data().role || null);
+          }
+        } catch (e) {
+          console.warn("[ProtectedRoute] Error fetching user role:", e);
+          // Preserve existing role on transient network hiccup
         }
       } else {
         setUserRole(null);

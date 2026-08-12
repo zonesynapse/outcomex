@@ -130,6 +130,7 @@ const allPossibleItems = [
   { id: "activity-new", icon: Plus, label: "Activity Picker", path: "/activities/new" },
   { id: "activity-reports", icon: BarChart3, label: "Activity Reports", path: "/activities/reports" },
   { id: "activity-nba-export", icon: Download, label: "Activity NBA Export", path: "/activities/nba-export" },
+  { id: "activity-settings", icon: Settings2, label: "Activity Settings", path: "/activity-settings" },
 
   // Circular Module
   { id: "circulars", icon: Megaphone, label: "Circulars", path: "/circulars" },
@@ -176,7 +177,7 @@ const modules = [
     label: "Config",
     icon: Settings2,
     // itemIds: ["info-configuration", "regulation-formation", "admin-roles", "curriculum"]
-    itemIds: ["info-configuration", "timetable", "admin-roles", "curriculum", "step-settings"]
+    itemIds: ["info-configuration", "timetable", "admin-roles", "curriculum", "step-settings", "activity-settings"]
   },
   {
     id: "library",
@@ -206,7 +207,7 @@ const modules = [
     id: "activity",
     label: "Activity",
     icon: Award,
-    itemIds: ["step-points", "step-analytics", "activity-list", "activity-approval", "activity-new", "activity-reports", "activity-nba-export"]
+    itemIds: ["step-points", "step-analytics", "activity-list", "activity-approval", "activity-new", "activity-reports", "activity-nba-export", "activity-settings"]
   },
   {
     id: "mentoring",
@@ -502,6 +503,10 @@ export default function Layout({ children, title }) {
       return allPossibleItems.map(item => item.id);
     }
     if (rolePermissions === null) return null;
+    if (userRole === 'Admin') {
+      const adminPerms = new Set([...(rolePermissions || []), 'activity-settings']);
+      return Array.from(adminPerms);
+    }
     if (userRole === 'HOD' && hasAssignments) {
       const merged = new Set([...(rolePermissions || []), ...(facultyPermissions || [])]);
       return Array.from(merged);

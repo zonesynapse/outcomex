@@ -14,7 +14,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { ACTIVITY_REGISTRY, ACTIVITY_CATEGORIES } from "../data/activityRegistry";
-import { getAcademicYears, formatProgDisplay, formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { getAcademicYears, formatProgDisplay, formatBatchDisplay, formatProgrammeKey, sanitizeKey, formatDepartmentDisplay } from "../lib/utils";
 
 const STATUS_OPTIONS = ["Pending", "Approved", "Returned", "Rejected", "Draft"];
 const normalizeDept = (d) => (d || '').replace(/[._]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -1240,7 +1240,7 @@ export default function ActivityList() {
                               </div>
                             </td>
                             <td className="p-4">
-                              <p className="font-bold text-zinc-700">{act.department}</p>
+                              <p className="font-bold text-zinc-700">{formatDepartmentDisplay(act.department, act.programme)}</p>
                               <p className="text-[10px] text-zinc-400 font-bold uppercase">{act.batch} • {act.section || "Sec-A"}</p>
                             </td>
                             <td className="p-4 max-w-xs md:max-w-sm">
@@ -1337,7 +1337,7 @@ export default function ActivityList() {
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                  <span className="text-sm font-bold text-zinc-800">{reviewActivity.department} / {reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
+                  <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme)} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
                 </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>

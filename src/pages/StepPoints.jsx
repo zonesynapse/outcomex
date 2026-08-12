@@ -10,6 +10,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { STEP_CATEGORIES } from "./student/StepPoints";
+import { formatDepartmentDisplay } from "../lib/utils";
 
 function sanitizeKey(key) {
   if (!key) return "";
@@ -702,7 +703,7 @@ export default function StepPoints() {
                           <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-bold mt-0.5 uppercase">
                             <span>{def.regNo || def.admissionNo}</span>
                             <span>•</span>
-                            <span>{def.department} • {def.section || "Sec-A"}</span>
+                            <span>{formatDepartmentDisplay(def.department, def.programme)} • {def.section || "Sec-A"}</span>
                           </div>
                         </td>
                         <td className="p-4 font-bold text-zinc-700">Semester {def.deferralSemester}</td>
@@ -778,7 +779,7 @@ export default function StepPoints() {
                         <td className="p-4 font-bold text-zinc-800">{st.regNo}</td>
                         <td className="p-4">
                           <p className="font-bold text-zinc-800">{st.name}</p>
-                          <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{st.department} • {st.section}</p>
+                          <p className="text-[10px] text-zinc-400 font-bold uppercase mt-0.5">{formatDepartmentDisplay(st.department, st.programme)} • {st.section}</p>
                         </td>
                         <td className="p-4 text-center font-semibold text-zinc-700">{st.sem2Capped}</td>
                         <td className="p-4 text-center font-semibold text-zinc-700">{st.sem3Capped}</td>
@@ -842,7 +843,7 @@ export default function StepPoints() {
                             <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-bold mt-0.5 uppercase">
                               <span>{act.regNo}</span>
                               <span>•</span>
-                              <span>{act.department} • {act.section || "Sec-A"}</span>
+                              <span>{formatDepartmentDisplay(act.department, act.programme)} • {act.section || "Sec-A"}</span>
                             </div>
                           </td>
                           <td className="p-4 font-bold text-zinc-700">Sem {act.semester}</td>

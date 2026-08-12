@@ -24,7 +24,8 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords } from "../lib/utils";
+import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 // Sanitize key matching HODRoleConfig's local version
 function sanitizeKey(key) {
@@ -153,6 +154,12 @@ export default function Attendance() {
 
   // Cross-subject period conflict detection
   const [periodConflict, setPeriodConflict] = useState(null); // { subjectCode, markedBy }
+
+  // Warn on accidental reload/close while marking attendance
+  const isAttendanceDirty = useMemo(() => {
+    return students.some(s => !!s.status) || !!topicTaught.trim();
+  }, [students, topicTaught]);
+  useUnsavedChanges(isAttendanceDirty);
 
   // Report states
   const [showReport, setShowReport] = useState(false);
@@ -317,6 +324,8 @@ export default function Attendance() {
         configs[docSnap.id] = docSnap.data();
       });
       setSectionConfigs(configs);
+    }, (error) => {
+      console.warn('[Attendance] batch_sections listener error:', error);
     });
     return () => unsub();
   }, []);
@@ -326,6 +335,8 @@ export default function Attendance() {
       const configs = [];
       snap.forEach(d => { configs.push({ id: d.id, ...d.data() }); });
       setSemesterConfigs(configs);
+    }, (error) => {
+      console.warn('[Attendance] semester_config listener error:', error);
     });
     return () => unsub();
   }, []);
@@ -384,7 +395,7 @@ export default function Attendance() {
         });
       });
 
-      // Filter by active semester configs from AcademicCalendar (matches FacultyDashboard visibleGroups logic)
+      // Filter by active semester configs if available and non-empty
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const activeSemConfigs = semesterConfigs.filter(cfg => {
@@ -393,42 +404,65 @@ export default function Attendance() {
         const end = new Date(cfg.endDate + 'T00:00:00');
         return today >= start && today <= end;
       });
-      const filteredContexts = activeSemConfigs.length > 0 ? contexts.filter(ctx => {
-        return activeSemConfigs.some(cfg => {
-          const batches = Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch];
-          const batchMatch = batches.some(b => String(b) === String(ctx.batch));
-          if (!batchMatch) return false;
 
-          const semNumMatch = String(ctx.sem).match(/\d+/);
-          const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
-          if (isNaN(semNum)) return true;
+      let filteredContexts = contexts;
+      if (activeSemConfigs.length > 0) {
+        const matched = contexts.filter(ctx => {
+          return activeSemConfigs.some(cfg => {
+            const batches = Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch];
+            const batchMatch = batches.some(b => String(b) === String(ctx.batch));
+            if (!batchMatch) return false;
 
-          const isContextOdd = semNum % 2 !== 0;
-          const isConfigOdd = String(cfg.semesterType || 'Odd').toLowerCase() === 'odd';
-          return cfg.programme === ctx.progKey
-            && cfg.academicYear === ctx.ay
-            && isContextOdd === isConfigOdd;
+            const semNumMatch = String(ctx.sem).match(/\d+/);
+            const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
+            if (isNaN(semNum)) return true;
+
+            const isContextOdd = semNum % 2 !== 0;
+            const isConfigOdd = String(cfg.semesterType || 'Odd').toLowerCase() === 'odd';
+            return cfg.programme === ctx.progKey
+              && cfg.academicYear === ctx.ay
+              && isContextOdd === isConfigOdd;
+          });
         });
-      }) : contexts;
-
-      const namesMap = await fetchAllCourseNamesMap();
+        // Safety Fallback: Use matched active contexts if present, otherwise fall back to all contexts
+        if (matched.length > 0) {
+          filteredContexts = matched;
+        }
+      }
 
       setSubjectContexts(filteredContexts);
 
-      const uniqueSubjectAssignments = [];
-      const seenAssignments = new Set();
+      // Helper to build dropdown items synchronously or with course names map
+      const buildItems = (map) => {
+        const uniqueSubjectAssignments = [];
+        const seenAssignments = new Set();
+        filteredContexts.forEach(ctx => {
+          const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}-${ctx.section}`;
+          if (!seenAssignments.has(assignmentIdentifier)) {
+            const cName = map ? getCourseName(map, ctx.code, ctx.dept, ctx.progKey) : '';
+            uniqueSubjectAssignments.push({
+              value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section, dept: ctx.dept, progKey: ctx.progKey }),
+              text: cName ? `${ctx.code} - ${cName}${ctx.section ? ` (${ctx.section})` : ''}` : `${ctx.code}${ctx.section ? ` (${ctx.section})` : ''}`
+            });
+            seenAssignments.add(assignmentIdentifier);
+          }
+        });
+        return uniqueSubjectAssignments;
+      };
 
-      filteredContexts.forEach(ctx => {
-        const assignmentIdentifier = `${ctx.code}-${ctx.batch}-${ctx.ay}-${ctx.sem}-${ctx.section}`;
-        if (!seenAssignments.has(assignmentIdentifier)) {
-          uniqueSubjectAssignments.push({
-            value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section, dept: ctx.dept, progKey: ctx.progKey }),
-            text: `${ctx.code} - ${getCourseName(namesMap, ctx.code, ctx.dept, ctx.progKey) || ""}${ctx.section ? ` (${ctx.section})` : ''}`
-          });
-          seenAssignments.add(assignmentIdentifier);
-        }
-      });
-      setSubjects(uniqueSubjectAssignments);
+      // 1. Render IMMEDIATELY in 0ms with subject codes (no waiting!)
+      setSubjects(buildItems(null));
+
+      // 2. Fetch course names in background and enrich labels asynchronously
+      fetchAllCourseNamesMap()
+        .then(namesMap => {
+          setSubjects(buildItems(namesMap));
+        })
+        .catch(e => {
+          console.warn("[Attendance] Failed to fetch course names map:", e);
+        });
+    }, (error) => {
+      console.warn('[Attendance] subject_assignments listener error:', error);
     });
 
     return () => unsubscribe();
@@ -490,10 +524,11 @@ export default function Attendance() {
       const periodStartToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), start.getHours(), start.getMinutes(), 0);
       if (periodStartToday > now) locked.add(String(i));
     }
-    if (attendanceData?.records) {
+    const recordsObj = getAttendanceRecords(attendanceData);
+    if (Object.keys(recordsObj).length > 0) {
       const todayPrefix = `${attendanceDate}_P`;
       locked.forEach(pVal => {
-        if (attendanceData.records[`${todayPrefix}${pVal}`]) locked.delete(pVal);
+        if (recordsObj[`${todayPrefix}${pVal}`]) locked.delete(pVal);
       });
     }
     return locked;
@@ -595,10 +630,12 @@ export default function Attendance() {
 
     const fetchData = async () => {
       try {
-        const [attendanceSnap, studentSnap] = await Promise.all([
-          getDoc(doc(db, "attendance", attendanceDocId)),
-          getDoc(doc(db, "students", compositeKey))
-        ]);
+        const attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
+        let studentSnap = await getDoc(doc(db, "students", compositeKey));
+        if (!studentSnap.exists() && sectionSuffix) {
+          const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+          studentSnap = await getDoc(doc(db, "students", baseKey));
+        }
 
         const attData = attendanceSnap.data();
         let rawMaster = studentSnap.data() || {};
@@ -606,8 +643,12 @@ export default function Attendance() {
 
         // Filter to only enrolled students from course_enrolments
         try {
-          const enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
-          const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+          let enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}${sectionSuffix}`;
+          let enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
+          if (!enrolSnap.exists() && sectionSuffix) {
+            const baseEnrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
+            enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolDocId));
+          }
           if (enrolSnap.exists()) {
             const enrolledData = enrolSnap.data();
             const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k]));
@@ -627,10 +668,11 @@ export default function Attendance() {
         setMasterList(rawMaster);
         setStudents([]);
 
-        // Support both old format ({ _meta, students }) and new format ({ _meta, records })
+        // Support both old format ({ _meta, students }), map format ({ _meta, records }), and json format ({ _meta, records_json })
         let recordKeys = [];
-        if (attData?.records) {
-          recordKeys = Object.keys(attData.records).sort();
+        const recordsObj = getAttendanceRecords(attData);
+        if (Object.keys(recordsObj).length > 0) {
+          recordKeys = Object.keys(recordsObj).sort();
         } else if (attData?._meta?.date) {
           // Migrate old format: wrap into records
           recordKeys = [attData._meta.date];
@@ -676,7 +718,7 @@ export default function Attendance() {
 
     const firstPeriod = periods[0];
     const recordKey = `${attendanceDate}_P${firstPeriod}`;
-    const dateRecord = attendanceData?.records?.[recordKey] || null;
+    const dateRecord = getAttendanceRecords(attendanceData)?.[recordKey] || null;
     setCurrentRecordData(dateRecord);
 
     const isEvent = dateRecord?.isEvent || false;
@@ -775,7 +817,7 @@ export default function Attendance() {
 
         for (const d of snap.docs) {
           if (!d.id.startsWith(batchPrefix)) continue;
-          const rec = d.data()?.records?.[recordKey];
+          const rec = getAttendanceRecords(d.data())?.[recordKey];
           if (!rec) continue;
           // Extract subject code from doc ID
           let rest = d.id.slice(batchPrefix.length);
@@ -805,14 +847,15 @@ export default function Attendance() {
   }, [period, attendanceDate, batch, academicYear, semester, programme, department, subject, masterList]);
 
   const handleGenerateReport = () => {
-    if (!reportFromDate || !reportToDate || !attendanceData?.records) {
+    const allRecords = getAttendanceRecords(attendanceData);
+    if (!reportFromDate || !reportToDate || !Object.keys(allRecords).length) {
       setReportData(null);
       return;
     }
 
     const fromDate = reportFromDate;
     const toDate = reportToDate;
-    const allKeys = Object.keys(attendanceData.records).filter(k => {
+    const allKeys = Object.keys(allRecords).filter(k => {
       const datePart = k.includes('_P') ? k.slice(0, k.lastIndexOf('_P')) : k;
       return datePart >= fromDate && datePart <= toDate;
     }).sort();
@@ -827,7 +870,7 @@ export default function Attendance() {
     // Derive display labels for each key (date-only → plain, compound → "date (Period X)")
     const keyLabels = {};
     allKeys.forEach(k => {
-      const rec = attendanceData.records[k];
+      const rec = allRecords[k];
       const isEvent = rec?.isEvent;
       if (k.includes('_P')) {
         const idx = k.lastIndexOf('_P');
@@ -858,7 +901,7 @@ export default function Attendance() {
       let attended = 0, markedClasses = 0, odCount = 0;
       const dailyRecords = {};
       allKeys.forEach(key => {
-        const rec = attendanceData.records[key];
+        const rec = allRecords[key];
         const rawHours = rec?.students?.[reg];
         const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
         const storedStatus = rawHours !== undefined && typeof rawHours === 'object' ? rawHours.status : undefined;
@@ -896,7 +939,7 @@ export default function Attendance() {
       };
     });
 
-    const eventDates = new Set(allKeys.filter(k => attendanceData.records[k]?.isEvent));
+    const eventDates = new Set(allKeys.filter(k => allRecords[k]?.isEvent));
 
     if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
     else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
@@ -1108,7 +1151,7 @@ export default function Attendance() {
     }
 
     // Loop through all selected periods
-    const existingRecords = attendanceData?.records || {};
+    const existingRecords = getAttendanceRecords(attendanceData);
     let updatedRecords = { ...existingRecords };
     let nextTotal = isEventAttendance ? parseInt(totalConducted, 10) : parseInt(totalConducted, 10) + periods.length;
 
@@ -1134,13 +1177,14 @@ export default function Attendance() {
     try {
       await setDoc(doc(db, "attendance", attendanceDocId), {
         _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
-        records: updatedRecords
-      });
+        records_json: JSON.stringify(updatedRecords),
+        records: deleteField()
+      }, { merge: true });
       alert(`Attendance for ${attendanceDate} (Periods: ${periods.join(', ')}) saved successfully!`);
 
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
-      setAttendanceData(prev => ({ ...prev, records: updatedRecords, _meta: { totalHours: nextTotal } }));
+      setAttendanceData(prev => ({ ...prev, records_json: JSON.stringify(updatedRecords), records: updatedRecords, _meta: { totalHours: nextTotal } }));
       
       // Clear period selection and reset state for next attendance entry
       setPeriod("");
@@ -1162,13 +1206,15 @@ export default function Attendance() {
       const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
       const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
 
+      const updatedRecords = { ...getAttendanceRecords(attendanceData) };
+      delete updatedRecords[recordKey];
+
       await setDoc(doc(db, "attendance", attendanceDocId), {
-        records: { [recordKey]: deleteField() }
+        records_json: JSON.stringify(updatedRecords),
+        records: deleteField()
       }, { merge: true });
 
-      const updatedRecords = { ...(attendanceData?.records || {}) };
-      delete updatedRecords[recordKey];
-      setAttendanceData(prev => ({ ...prev, records: updatedRecords }));
+      setAttendanceData(prev => ({ ...prev, records_json: JSON.stringify(updatedRecords), records: updatedRecords }));
       setRecordDates(Object.keys(updatedRecords).sort());
       setCurrentRecordData(null);
       setTopicTaught("");
@@ -1204,9 +1250,10 @@ export default function Attendance() {
 
   // ─── cumulative attendance from all records ───
   const cumulativeAttended = useMemo(() => {
-    if (!attendanceData?.records) return {};
+    const recordsMap = getAttendanceRecords(attendanceData);
+    if (!Object.keys(recordsMap).length) return {};
     const counts = {};
-    Object.values(attendanceData.records).forEach(record => {
+    Object.values(recordsMap).forEach(record => {
       if (record.isEvent) return;
       Object.entries(record.students || {}).forEach(([reg, val]) => {
         const hours = typeof val === 'number' ? val : (val?.hours || 0);
@@ -1220,9 +1267,10 @@ export default function Attendance() {
 
   // ─── cumulative OD count ───
   const cumulativeOD = useMemo(() => {
-    if (!attendanceData?.records) return {};
+    const recordsMap = getAttendanceRecords(attendanceData);
+    if (!Object.keys(recordsMap).length) return {};
     const counts = {};
-    Object.values(attendanceData.records).forEach(record => {
+    Object.values(recordsMap).forEach(record => {
       if (record.isEvent) return;
       Object.entries(record.students || {}).forEach(([reg, val]) => {
         const status = typeof val === 'object' ? val?.status : '';
@@ -1234,8 +1282,9 @@ export default function Attendance() {
 
   // ─── non-event record count (excludes event attendance from total classes) ───
   const nonEventRecordCount = useMemo(() => {
-    if (!attendanceData?.records) return 0;
-    return Object.values(attendanceData.records).filter(r => !r.isEvent).length;
+    const recordsMap = getAttendanceRecords(attendanceData);
+    if (!Object.keys(recordsMap).length) return 0;
+    return Object.values(recordsMap).filter(r => !r.isEvent).length;
   }, [attendanceData]);
 
   // ─── derived stats ───
@@ -1391,12 +1440,25 @@ export default function Attendance() {
                     })}
                   </div>
                 )}
-                {periods.length > 0 && ((currentRecordData && periods.some(p => attendanceData?.records?.[`${attendanceDate}_P${p}`])) || (periodConflict && periods.includes(periodConflict.record ? Object.keys(periodConflict.record)[0].split('_P')[1] : ''))) ? (
-                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${(currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) || periodConflict
-                    ? 'bg-red-100 border-red-300 text-red-700'
-                    : 'bg-amber-100 border-amber-300 text-amber-700'
+                {periods.length > 0 && (periods.some(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]) || periodConflict) ? (
+                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                    periodConflict || (() => {
+                      const rec = periods.map(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]).find(Boolean) || currentRecordData;
+                      return rec?.markedBy && rec.markedBy !== currentUid;
+                    })()
+                      ? 'bg-red-100 border-red-300 text-red-700'
+                      : 'bg-amber-100 border-amber-300 text-amber-700'
                     }`}>
-                    {periodConflict ? `Already marked (${periodConflict.subjectCode})` : 'Already marked'}
+                    {periodConflict 
+                      ? `Already marked (${periodConflict.subjectCode})` 
+                      : (() => {
+                          const rec = periods.map(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]).find(Boolean) || currentRecordData;
+                          if (rec?.markedBy && rec.markedBy !== currentUid) {
+                            return `Marked by ${facultyNames[rec.markedBy] || rec.markedBy}`;
+                          }
+                          return 'Already marked';
+                        })()
+                    }
                   </span>
                 ) : null}
               </div>
@@ -1538,7 +1600,7 @@ export default function Attendance() {
               </button>
               {currentRecordData && periods.length > 0 && readOnlyRegs.size === 0 && periods.map(p => {
                   const recordKey = `${attendanceDate}_P${p}`;
-                  const hasRecord = attendanceData?.records?.[recordKey];
+                  const hasRecord = getAttendanceRecords(attendanceData)?.[recordKey];
                   return hasRecord ? (
                     <button key={p} onClick={() => handleClearAttendance(p)} disabled={saving}
                       className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
