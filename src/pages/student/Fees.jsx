@@ -8,7 +8,7 @@ import {
   ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
   Ban, ShieldAlert,
 } from "lucide-react";
-import { formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
+import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, sanitizeKey } from "../../lib/utils";
 
 const PAYMENT_STATUS = {
   PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
@@ -16,11 +16,37 @@ const PAYMENT_STATUS = {
   FAILED: { label: "Failed", color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
 };
 
+const buildAppPaymentsFromEnquiry = (d) => {
+  const data = d.data ? d.data() : d;
+  const id = d.id || "";
+  const out = [];
+  if (!Array.isArray(data.payments)) return out;
+  data.payments.forEach((p, i) => {
+    const amt = Number(p.feeAmount || 0);
+    if (!amt || amt <= 0) return;
+    const dateVal = p.paymentDate ? new Date(p.paymentDate) : (data.createdAt ? new Date(data.createdAt) : new Date(0));
+    out.push({
+      id: `app-${id}-${i}`,
+      status: "SUCCESS",
+      feeHead: p.feeCategory || "Application Fee",
+      amount: amt,
+      chargedAmount: amt,
+      createdAt: dateVal,
+      paymentMode: p.paymentMode || "cash",
+      orderId: `APP ${id}`,
+      upiNumber: p.upiNumber || "",
+      _source: "Application",
+    });
+  });
+  return out;
+};
+
 export default function Fees() {
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [feeConfigs, setFeeConfigs] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [appPayments, setAppPayments] = useState([]);
   const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0 });
   const [processing, setProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
@@ -267,6 +293,49 @@ export default function Fees() {
     };
   }, [studentData, seatCategory, studentStage, transportStages]);
 
+  // Load fee payments made during the admission application (from the enquiries doc)
+  useEffect(() => {
+    if (!studentData) {
+      setAppPayments([]);
+      return;
+    }
+    const reg = studentData.regNo || studentData.admissionNo || "";
+    if (!reg) {
+      setAppPayments([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const qApp = query(collection(db, "enquiries"), where("applicationNo", "==", reg));
+        const appSnap = await getDocs(qApp);
+        let docs = appSnap.docs;
+        if (docs.length === 0) {
+          const qId = query(collection(db, "enquiries"), where("enquiryId", "==", reg));
+          const idSnap = await getDocs(qId);
+          docs = idSnap.docs;
+        }
+        const collected = [];
+        const seen = new Set();
+        docs.forEach((d) => {
+          buildAppPaymentsFromEnquiry(d).forEach((p) => {
+            if (!seen.has(p.id)) {
+              seen.add(p.id);
+              collected.push(p);
+            }
+          });
+        });
+        if (cancelled) return;
+        setAppPayments(collected);
+      } catch (err) {
+        console.error("Failed to load application payments:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studentData]);
+
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 6000);
@@ -306,12 +375,43 @@ export default function Fees() {
   }, [feeConfigs]);
 
   const totalPaid = useMemo(() => {
-    return payments
+    return [...payments, ...appPayments]
       .filter((p) => p.status === "SUCCESS")
       .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-  }, [payments]);
+  }, [payments, appPayments]);
 
   const pending = Math.max(0, totalFee - totalPaid);
+
+  // Determine the FIRST academic year per fee head — application-time payments only reduce that year's head
+  const yearStart = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
+  const normHead = (s) => String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
+
+  // A config is the "first year" instance of its head when it's the only config for that head,
+  // or when all same-headed configs share the same year, or when it's the chronologically earliest year.
+  const isFirstYearConfig = (cfg) => {
+    const nh = normHead(cfg.head);
+    const siblings = feeConfigs.filter((c) => normHead(c.head) === nh);
+    if (siblings.length <= 1) return true;
+    const distinctYears = [...new Set(siblings.map((c) => String(c.academicYear || '').trim()))];
+    if (distinctYears.length <= 1) return true;
+    return yearStart(cfg.academicYear) === Math.min(...siblings.map((c) => yearStart(c.academicYear)));
+  };
+
+  const paidForHead = (cfg) => {
+    const nh = normHead(cfg.head);
+    // Portal payments count against every matching head
+    const portalPaid = payments
+      .filter((p) => p.status === "SUCCESS" && normHead(p.feeHead) === nh)
+      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+    // Application payments ONLY reduce the FIRST academic year's config for that head
+    if (isFirstYearConfig(cfg)) {
+      const appPaid = appPayments
+        .filter((p) => p.status === "SUCCESS" && normHead(p.feeHead) === nh)
+        .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+      return portalPaid + appPaid;
+    }
+    return portalPaid;
+  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
@@ -459,17 +559,12 @@ export default function Fees() {
                       let semPaid = 0;
                       semGroup.rows.forEach(r => {
                         semTotal += (Number(r.amount) || 0);
-                        const paidForThisHead = payments
-                          .filter((p) => p.status === "SUCCESS" && p.feeHead === r.head)
-                          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-                        semPaid += paidForThisHead;
+                        semPaid += paidForHead(r);
                       });
                       const semRemaining = Math.max(0, semTotal - semPaid);
 
                       const rows = semGroup.rows.map((cfg, idx) => {
-                        const paidForThisHead = payments
-                          .filter((p) => p.status === "SUCCESS" && p.feeHead === cfg.head)
-                          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+                        const paidForThisHead = paidForHead(cfg);
                         const remainingForThisHead = Math.max(0, Number(cfg.amount) - paidForThisHead);
                         const isFullyPaid = remainingForThisHead === 0;
                         const isPartiallyPaid = paidForThisHead > 0 && remainingForThisHead > 0;
@@ -574,7 +669,7 @@ export default function Fees() {
             <Receipt size={20} className="text-white" />
             <h2 className="text-white font-bold text-lg">Payment History</h2>
           </div>
-          {payments.length === 0 ? (
+          {payments.length === 0 && appPayments.length === 0 ? (
             <div className="py-12 text-center">
               <Receipt size={36} className="mx-auto text-slate-200 mb-2" />
               <p className="text-sm font-medium text-slate-400">No payments recorded.</p>
@@ -593,7 +688,13 @@ export default function Fees() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {payments.map((p, i) => {
+                  {[...payments, ...appPayments]
+                    .sort((a, b) => {
+                      const da = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
+                      const db2 = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
+                      return db2 - da;
+                    })
+                    .map((p, i) => {
                     const st = PAYMENT_STATUS[p.status] || PAYMENT_STATUS.PENDING;
                     return (
                       <tr key={p.id || i} className="hover:bg-slate-50 transition-colors">
@@ -605,6 +706,9 @@ export default function Fees() {
                           <span className="text-xs font-mono font-bold text-slate-700 block">{p.orderId || '-'}</span>
                           {p.gatewayResponse?.rrn && (
                             <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
+                          )}
+                          {p._source === "Application" && (
+                            <span className="text-[9px] font-bold text-blue-500">Application</span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-xs font-bold text-slate-600">{p.feeHead || '-'}</td>
@@ -839,7 +943,7 @@ export default function Fees() {
         const resolvedName = p.studentName || studentData?.name || auth.currentUser?.displayName || "Student";
         const resolvedEmail = p.studentEmail || studentData?.email || auth.currentUser?.email || "";
         const resolvedReg = studentData?.regNo || studentData?.admissionNo || "—";
-        const resolvedDept = studentData?.department ? `${formatProgrammeKey(studentData.programme)} - ${studentData.department}` : "—";
+        const resolvedDept = studentData?.department ? formatDepartmentDisplay(studentData.department, studentData.programme) : "—";
         const txId = p.gatewayResponse?.txnId || p.gatewayResponse?.epgTxnId || "—";
         const rrn = p.gatewayResponse?.rrn || "—";
         const authCode = p.gatewayResponse?.authCode || "—";

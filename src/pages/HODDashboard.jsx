@@ -2063,6 +2063,20 @@ export default function HODDashboard() {
     return d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   }, []);
 
+  // Typeset MathJax whenever the QP review modal opens (math equations stored as math-tex spans)
+  useEffect(() => {
+    if (!showQPModal || !(fullQPForModal || selectedQP)) return;
+    const timer = setTimeout(() => {
+      if (window.MathJax && window.MathJax.Hub) {
+        try {
+          const container = document.querySelector('.qp-print-wrapper');
+          window.MathJax.Hub.Queue(['Typeset', window.MathJax.Hub, container]);
+        } catch (e) { /* ignore */ }
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [showQPModal, fullQPForModal, selectedQP]);
+
   return (
     <Layout title="HOD Dashboard">
       {toast.show && (

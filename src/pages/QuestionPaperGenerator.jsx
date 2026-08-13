@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X } from 'lucide-react';
 import Layout from '../components/Layout';
+import MathTemplateToolbar from '../components/MathTemplateToolbar';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
 import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query } from 'firebase/firestore'; // Firestore imports
@@ -162,7 +163,8 @@ export default function QuestionPaperGenerator() {
       const editor = window.CKEDITOR.replace('qbEditor', {
         removePlugins: 'elementspath',
         resize_enabled: false,
-        extraPlugins: 'uploadimage',
+        extraPlugins: 'uploadimage,mathjax',
+        mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
         filebrowserUploadUrl: '',
         height: 200,
         contentsCss: [window.CKEDITOR.basePath + 'contents.css']
@@ -755,6 +757,13 @@ export default function QuestionPaperGenerator() {
       return false;
     };
 
+    const isActivityExamName = (configObj, nameClean) =>
+      (configObj && (configObj.isActivity || configObj.isGroupActivity)) ||
+      nameClean.includes('activity') ||
+      nameClean.includes('seminar') ||
+      nameClean.includes('group discussion') ||
+      nameClean.includes('value added');
+
     const addExam = (id, rawName, type) => {
       let name = '';
       if (typeof rawName === 'object' && rawName !== null) {
@@ -924,10 +933,12 @@ export default function QuestionPaperGenerator() {
         if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
 
         const examNameClean = normClean(resolvedName);
-        const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('model') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
+        const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
         const isAssignmentOrActivityExam = config.isAssignment || config.isActivity || examNameClean.includes('assignment') || examNameClean.includes('activity');
         const isProjectExam = config.isProject || examNameClean.includes('project');
         const isIndirectExam = config.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey');
+        // Treat 'model' as practical ONLY when the exam name clearly indicates a lab/practical exam
+        const isModelPracticalExam = examNameClean.includes('model') && (examNameClean.includes('practical') || examNameClean.includes('lab') || examNameClean.includes('record') || examNameClean.includes('observation'));
 
         // A. ASSESSMENT TYPE Filter
         if (assessmentType === 'Assignment' || assessmentType === 'Activity') {
@@ -935,32 +946,40 @@ export default function QuestionPaperGenerator() {
         } else if (assessmentType === 'Project') {
           if (!isProjectExam) return;
         } else if (assessmentType === 'Practical') {
-          if (!isPracticalExam) return;
+          if (!(isPracticalExam || isModelPracticalExam)) return;
         } else if (assessmentType === 'Indirect') {
           if (!isIndirectExam) return;
         } else {
           // AssessmentType === 'Exam'
           if (isAssignmentOrActivityExam || isProjectExam || isIndirectExam) return;
-          if (targetCourseTypeNorm === 'theory' && isPracticalExam) return;
-          if (targetCourseTypeNorm === 'practical' && !isPracticalExam) return;
+          if (targetCourseTypeNorm === 'theory' && (isPracticalExam || isModelPracticalExam)) return;
+          if (targetCourseTypeNorm === 'practical' && !(isPracticalExam || isModelPracticalExam)) return;
         }
 
-        // B. COURSE TYPE Filter
+        // B. COURSE TYPE Filter — ALWAYS enforce that the exam matches the selected subject's course type
+        let configCourseTypeNorms = [];
         if (config.courseTypes && Array.isArray(config.courseTypes) && config.courseTypes.length > 0) {
-          const configCourseTypesNorm = config.courseTypes.map(ct => getNormalizedCourseType(ct));
-          
-          const isMatch = configCourseTypesNorm.some(cNorm => {
-            if (cNorm === targetCourseTypeNorm) return true;
-            if (targetCourseTypeNorm === 'integrated') {
-              if (cNorm === 'integrated') return true;
-              if (assessmentType === 'Exam' && cNorm === 'theory') return true;
-              if (assessmentType === 'Practical' && cNorm === 'practical') return true;
-            }
-            return false;
-          });
-
-          if (!isMatch) return;
+          configCourseTypeNorms = config.courseTypes.map(ct => getNormalizedCourseType(ct));
+        } else {
+          // No explicit courseTypes metadata → infer from exam name / flags so unrelated
+          // course-type exams never leak into this subject's dropdown.
+          if (isPracticalExam || isModelPracticalExam) configCourseTypeNorms = ['practical'];
+          else if (isProjectExam) configCourseTypeNorms = ['project'];
+          else if (isActivityExamName(config, examNameClean)) configCourseTypeNorms = ['activity'];
+          else configCourseTypeNorms = ['theory', 'integrated'];
         }
+
+        const isCourseTypeMatch = configCourseTypeNorms.some(cNorm => {
+          if (cNorm === targetCourseTypeNorm) return true;
+          if (targetCourseTypeNorm === 'integrated') {
+            if (cNorm === 'integrated') return true;
+            if (assessmentType === 'Exam' && cNorm === 'theory') return true;
+            if (assessmentType === 'Practical' && cNorm === 'practical') return true;
+          }
+          return false;
+        });
+
+        if (!isCourseTypeMatch) return;
 
         // Skip disabled exams
         if (disabledExamIds.has(config.id)) return;
@@ -2414,7 +2433,8 @@ export default function QuestionPaperGenerator() {
           const editor = window.CKEDITOR.replace(editorId, {
             removePlugins: 'elementspath',
             resize_enabled: false,
-            extraPlugins: 'uploadimage',
+            extraPlugins: 'uploadimage,mathjax',
+            mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
             filebrowserUploadUrl: '',
             height: 200,
             contentsCss: [window.CKEDITOR.basePath + 'contents.css']
@@ -2467,13 +2487,14 @@ export default function QuestionPaperGenerator() {
         versionCheck: false,
         width: '210mm',
         height: '297mm',
-        extraPlugins: 'print,uploadimage',
+        extraPlugins: 'print,uploadimage,mathjax',
+        mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
         toolbar: [
           { name: 'document', items: ['Source', '-', 'Print'] },
           { name: 'clipboard', items: ['Undo', 'Redo'] },
           { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', '-', 'RemoveFormat'] },
           { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
-          { name: 'insert', items: ['Image', 'Table', 'HorizontalRule'] },
+          { name: 'insert', items: ['Image', 'Table', 'HorizontalRule', 'Mathjax'] },
           { name: 'styles', items: ['Format', 'FontSize'] },
           { name: 'colors', items: ['TextColor', 'BGColor'] },
           { name: 'tools', items: ['Maximize'] }
@@ -4646,7 +4667,10 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Question Content</label>
-                      <div id={`editorWrapper_${qIdx}`} className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm min-h-[150px]"></div>
+                      <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+                        <MathTemplateToolbar editorId={`assignmentEditor_${qIdx}`} />
+                        <div id={`editorWrapper_${qIdx}`} className="min-h-[150px]"></div>
+                      </div>
                     </div>
 
                     <div className="space-y-4 pt-4 border-t border-slate-200">
@@ -4841,6 +4865,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             {showQbEditor && (
               <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 w-full mb-8">
                 <div className="mb-4 bg-white rounded-xl overflow-hidden border border-slate-200">
+                  <MathTemplateToolbar editorId="qbEditor" />
                   <textarea id="qbEditor" ref={qbQuestionRef} style={{ width: '100%' }} />
                 </div>
               </div>
@@ -5055,6 +5080,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
         {showFinalPreview ? (
           <div className="bg-slate-50 border border-slate-200 rounded-[2rem] p-8 md:p-12 mb-8 overflow-auto flex justify-center">
             <div className="bg-white shadow-[0_0_50px_rgba(0,0,0,0.1)] rounded-sm overflow-hidden" style={{ width: '210mm', minHeight: '297mm' }}>
+              <MathTemplateToolbar editorId="questionEditor" />
               <textarea name="ckeditor" id="questionEditor" ref={editorRef}></textarea>
             </div>
           </div>

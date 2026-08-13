@@ -48,7 +48,6 @@ export default function AdmissionConfirmation() {
   const [programmeFilter, setProgrammeFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [editModal, setEditModal] = useState({ open: false, enquiry: null, saving: false });
-  const [viewModal, setViewModal] = useState({ open: false, enquiry: null, loading: false });
   const [pageCursors, setPageCursors] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -56,6 +55,7 @@ export default function AdmissionConfirmation() {
   const [stats, setStats] = useState({ total: 0, today: 0, new: 0, application: 0, admission: 0, approved: 0 });
   const [searchResults, setSearchResults] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("");
   const { departments: allDeptMap } = useDepartments();
   const PAGE_SIZE = 20;
 
@@ -168,9 +168,10 @@ export default function AdmissionConfirmation() {
         progDeptList.includes(app.department2) ||
         progDeptList.includes(app.department3);
       const matchesDepartment = !departmentFilter || [app.department, app.department2, app.department3].includes(departmentFilter);
-      return matchesProgramme && matchesDepartment;
+      const matchesStatus = !statusFilter || app.status === statusFilter;
+      return matchesProgramme && matchesDepartment && matchesStatus;
     });
-  }, [applications, searchResults, programmeFilter, departmentFilter, allDeptMap]);
+  }, [applications, searchResults, programmeFilter, departmentFilter, statusFilter, allDeptMap]);
 
   // stats now come from getEnquiriesStats (aggregation queries on the entire dataset)
 
@@ -178,24 +179,12 @@ export default function AdmissionConfirmation() {
     return Object.values(allDeptMap || {}).flat().sort((a, b) => a.localeCompare(b));
   }, [allDeptMap]);
 
-  const openViewModal = async (app) => {
+  const openViewModal = (app) => {
     if (!app) return;
     const targetId = app?.enquiryId || app?.id || app?.docId || app?.applicationNo;
-    setViewModal({ open: true, enquiry: app, loading: true });
     if (targetId) {
-      try {
-        const fresh = await getEnquiryById(targetId);
-        setViewModal({ open: true, enquiry: fresh || app, loading: false });
-        return;
-      } catch (e) {
-        console.error("Failed to fetch enquiry:", e);
-      }
+      navigate(`/admissions/confirm/${targetId}`);
     }
-    setViewModal({ open: true, enquiry: app, loading: false });
-  };
-
-  const closeViewModal = () => {
-    setViewModal({ open: false, enquiry: null, loading: false });
   };
 
   const openEditModal = (app) => {
@@ -228,6 +217,20 @@ export default function AdmissionConfirmation() {
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
+  };
+
+  const handleCardClick = (cardKey) => {
+    const statusMap = {
+      approved: "Approved",
+      application: "Application",
+      new: "Enquiry",
+    };
+    setStatusFilter(statusMap[cardKey] || "");
+    setSearchTerm("");
+    setProgrammeFilter("");
+    setDepartmentFilter("");
+    setCurrentPage(1);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleMoveToPrincipalDetail = async () => {
@@ -482,6 +485,122 @@ export default function AdmissionConfirmation() {
     return "";
   };
 
+  const generateAdmittedListPdf = async () => {
+    setReportGenerating(true);
+    try {
+      const allEnquiries = await getAllEnquiries();
+      let list = allEnquiries.filter((a) => a.status === "Approved");
+      if (programmeFilter) {
+        const progOfDept = (dept) => {
+          if (!dept || !allDeptMap) return "";
+          for (const [prog, depts] of Object.entries(allDeptMap)) {
+            if (depts.includes(dept)) return prog;
+          }
+          return "";
+        };
+        list = list.filter((a) => progOfDept(a.department) === programmeFilter);
+      }
+      if (departmentFilter) {
+        list = list.filter((a) => a.department === departmentFilter);
+      }
+      if (list.length === 0) {
+        showToast("No admitted students to export", "error");
+        setReportGenerating(false);
+        return;
+      }
+      const { default: jsPDF } = await import("jspdf");
+      const { default: autoTable } = await import("jspdf-autotable");
+      const doc = new jsPDF({ orientation: "portrait", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 14;
+
+      const logoImg = await new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = "/logo.png";
+      });
+      let yPos = 8;
+      if (logoImg) {
+        const logoWidth = pageWidth - margin * 2;
+        const logoHeight = (logoImg.height / logoImg.width) * logoWidth;
+        doc.addImage(logoImg, "PNG", margin, yPos, logoWidth, logoHeight);
+        yPos += logoHeight + 3;
+      }
+
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("ADMITTED STUDENTS LIST", pageWidth / 2, yPos, { align: "center" });
+      yPos += 5;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Generated: ${new Date().toLocaleDateString("en-IN")}  |  Total Admitted: ${list.length}`, pageWidth / 2, yPos, { align: "center" });
+      doc.setTextColor(0, 0, 0);
+      yPos += 4;
+
+      if (programmeFilter || departmentFilter) {
+        const filters = [];
+        if (programmeFilter) filters.push(`Programme: ${programmeFilter}`);
+        if (departmentFilter) filters.push(`Department: ${departmentFilter}`);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(`Filter: ${filters.join(" | ")}`, margin, yPos);
+        yPos += 5;
+      }
+
+      const rows = list.map((a, i) => [
+        i + 1,
+        a.applicationNo || a.enquiryId || "-",
+        [a.firstName, a.lastName].filter(Boolean).join(" ").trim() || a.studentName || "-",
+        a.department || "-",
+        a.community || "-",
+        a.seatCategory || a.quotaAskedFor || a.quota || "-",
+        a.studentCategory || a.category || "-",
+      ]);
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [["S.No", "Admission No", "Student Name", "Department", "Community", "Seat Cat.", "Student Cat."]],
+        body: rows,
+        styles: { fontSize: 7.5, cellPadding: 2, overflow: "linebreak", valign: "middle" },
+        headStyles: { fillColor: [18, 12, 122], textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, halign: "center", cellPadding: 2.5 },
+        columnStyles: {
+          0: { cellWidth: 10, halign: "center" },
+          1: { cellWidth: 24, halign: "center" },
+          2: { cellWidth: 46 },
+          3: { cellWidth: 49 },
+          4: { cellWidth: 16, halign: "center" },
+          5: { cellWidth: 15, halign: "center" },
+          6: { cellWidth: 20, halign: "center" },
+        },
+        margin: { left: margin, right: margin },
+        didDrawPage: (data) => {
+          doc.setFontSize(7);
+          doc.setTextColor(120, 120, 120);
+          doc.text(
+            `Page ${doc.internal.getNumberOfPages()}`,
+            pageWidth - margin,
+            pageHeight - 8,
+            { align: "right" }
+          );
+          doc.text("CKCET — Admitted Students List", margin, pageHeight - 8);
+          doc.setTextColor(0, 0, 0);
+        },
+      });
+
+      const blobUrl = doc.output("bloburl");
+      window.open(blobUrl, "_blank");
+      showToast("Admitted list PDF generated", "success");
+    } catch (err) {
+      console.error("Admitted list PDF error:", err);
+      showToast("Failed to generate PDF", "error");
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
   const generateReceipt = async () => {
     const { default: jsPDF } = await import("jspdf");
     const { default: autoTable } = await import("jspdf-autotable");
@@ -652,7 +771,7 @@ export default function AdmissionConfirmation() {
         <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
 
           <div className="mb-6">
-            <DashboardCards loading={appsLoading} stats={stats} cards={[
+            <DashboardCards loading={appsLoading} stats={stats} onCardClick={handleCardClick} cards={[
               { key: "total", label: "Total Enquiries", icon: Users, accent: "#120c7a" },
               { key: "today", label: "Today Enquiries", icon: Calendar, accent: "#120c7a" },
               { key: "new", label: "Enquiry", icon: Clock, accent: "#120c7a" },
@@ -725,9 +844,35 @@ export default function AdmissionConfirmation() {
                   <CreditCard size={16} />
                   Payment Report
                 </button>
+                <button
+                  type="button"
+                  onClick={generateAdmittedListPdf}
+                  disabled={!statusFilter || reportGenerating}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#120c7a] px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#0e0960] hover:shadow-md border border-[#120c7a] disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Export the currently filtered (Admitted) list as a PDF"
+                >
+                  <FileText size={16} />
+                  Export Admitted PDF
+                </button>
               </div>
             </div>
           </div>
+
+          {statusFilter && (
+            <div className="mb-4 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+              <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+              <span className="text-sm font-semibold text-emerald-800">
+                Showing: <span className="capitalize">{statusFilter.toLowerCase()}</span> students ({filteredApplications.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("")}
+                className="ml-auto inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-200 transition-colors cursor-pointer"
+              >
+                <X size={12} /> Clear filter
+              </button>
+            </div>
+          )}
 
           {appsLoading ? (
             <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
@@ -807,7 +952,7 @@ export default function AdmissionConfirmation() {
                   </thead>
                   <tbody>
                     {filteredApplications.map((app) => (
-                      <tr key={app.enquiryId} className="border-b border-zinc-100 transition-colors hover:bg-zinc-50/80">
+                      <tr key={app.enquiryId} onClick={() => openViewModal(app)} className="border-b border-zinc-100 transition-colors hover:bg-zinc-50/80 cursor-pointer">
                         <td className="px-4 py-4 text-sm font-semibold text-[#120c7a]">
                           {app.applicationNo || app.enquiryId}
                         </td>
@@ -830,7 +975,7 @@ export default function AdmissionConfirmation() {
                             {app.status === "Rejected" ? (
                               <button
                                 type="button"
-                                onClick={() => navigate(`/admissions/confirm/${app.enquiryId}`)}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/admissions/confirm/${app.enquiryId}`); }}
                                 className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-600 border border-red-200 hover:bg-red-100 transition-colors cursor-pointer"
                                 title="View rejection reason"
                               >
@@ -845,7 +990,7 @@ export default function AdmissionConfirmation() {
                             ) : app.status === "Admission" ? (
                               <button
                                 type="button"
-                                onClick={() => navigate(`/admissions/confirm/${app.enquiryId}`)}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/admissions/confirm/${app.enquiryId}`); }}
                                 className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
                                 title="Pending principal approval"
                               >
@@ -855,7 +1000,7 @@ export default function AdmissionConfirmation() {
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => navigate(`/admissions/confirm/${app.enquiryId}`)}
+                                onClick={(e) => { e.stopPropagation(); navigate(`/admissions/confirm/${app.enquiryId}`); }}
                                 className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-emerald-700"
                               >
                                 <Send size={10} />
@@ -868,7 +1013,7 @@ export default function AdmissionConfirmation() {
                           <div className="flex items-center justify-center gap-2">
                             <button
                               type="button"
-                              onClick={() => openViewModal(app)}
+                              onClick={(e) => { e.stopPropagation(); openViewModal(app); }}
                               className="inline-flex items-center justify-center rounded-xl border border-zinc-200 p-2 text-zinc-600 transition-all hover:border-[#120c7a] hover:text-[#120c7a] hover:bg-[#120c7a]/5"
                               title="View Details"
                             >
@@ -877,7 +1022,7 @@ export default function AdmissionConfirmation() {
                             {app?.status !== "Admission" && app?.status !== "Approved" && (
                               <button
                                 type="button"
-                                onClick={() => openEditModal(app)}
+                                onClick={(e) => { e.stopPropagation(); openEditModal(app); }}
                                 className="inline-flex items-center justify-center rounded-xl border border-zinc-200 p-2 text-zinc-600 transition-all hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50"
                                 title="Edit Application"
                               >
@@ -1008,16 +1153,6 @@ export default function AdmissionConfirmation() {
         saving={editModal.saving}
         onClose={closeEditModal}
         onSubmit={handleEditSave}
-      />
-
-      <AddEnquiryModal
-        open={viewModal.open}
-        mode="view"
-        initialValues={viewModal.enquiry}
-        departments={departmentList}
-        saving={false}
-        onClose={closeViewModal}
-        onSubmit={closeViewModal}
       />
     </>
     );
