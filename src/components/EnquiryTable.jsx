@@ -1,4 +1,4 @@
-import { Edit2, Eye, Trash2, CheckCircle2 } from "lucide-react";
+import { Edit2, Eye, Trash2 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 
 const formatCurrencyLikeNumber = (value) => {
@@ -56,7 +56,7 @@ function TableSkeleton() {
   );
 }
 
-export default function EnquiryTable({ enquiries = [], loading = false, onView, onEdit, onDelete, onMove }) {
+export default function EnquiryTable({ enquiries = [], loading = false, onView, onEdit, onDelete }) {
   if (loading) {
     return <TableSkeleton />;
   }
@@ -74,7 +74,6 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Department</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Status</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-left text-xs font-bold uppercase tracking-wide text-zinc-600">Date</th>
-              <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Application</th>
               <th className="border-b border-zinc-200 px-4 py-4 text-center text-xs font-bold uppercase tracking-wide text-zinc-600">Actions</th>
             </tr>
           </thead>
@@ -98,22 +97,6 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                   <StatusBadge status={enquiry.status} />
                 </td>
                 <td className="px-4 py-4 text-sm text-zinc-700">{formatDate(enquiry.enquiryDate || enquiry.createdAt)}</td>
-                <td className="px-4 py-4 text-center">
-                  {enquiry.status === "Admission" ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full px-2.5 py-1">
-                      <CheckCircle2 size={12} className="text-green-600" />
-                      Admitted
-                    </span>
-                  ) : enquiry.status === "Enquiry" ? (
-                    <button
-                      type="button"
-                      onClick={() => onMove?.(enquiry)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50/50 hover:bg-amber-100 hover:border-amber-300 text-amber-800 px-3 py-1.5 text-xs font-semibold shadow-sm transition-all"
-                    >
-                      Move
-                    </button>
-                  ) : null}
-                </td>
                 <td className="px-4 py-4">
                   <div className="flex items-center justify-center gap-2">
                     <button
@@ -124,14 +107,16 @@ export default function EnquiryTable({ enquiries = [], loading = false, onView, 
                     >
                       <Eye size={16} />
                     </button>
-                    <button
-                      type="button"
-                      title="Edit"
-                      onClick={() => onEdit?.(enquiry)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
-                    >
-                      <Edit2 size={16} />
-                    </button>
+                    {enquiry.status !== "Approved" && (
+                      <button
+                        type="button"
+                        title="Edit"
+                        onClick={() => onEdit?.(enquiry)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-[#120c7a] hover:text-[#120c7a]"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    )}
                     {enquiry.status !== "Application" && enquiry.status !== "Admission" && enquiry.status !== "Approved" && enquiry.status !== "Rejected" && (
                       <button
                         type="button"

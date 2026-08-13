@@ -600,6 +600,113 @@
   2. Non-blocking Async Enrichment: `fetchAllCourseNamesMap().then(...)` runs in the background to update option labels to full subject names (`MC005 - Environmental Science (Sec-A)`) as soon as course name data arrives.
 - Build passes.
 
+### 62. Strict Course Type & Assessment Type Exam Filtering (`QuestionPaperGenerator.jsx`)
+- **Problem**: Exams displayed in the Exam dropdown in `QuestionPaperGenerator.jsx` behaved inconsistently for different users and subjects because `courseType` was fetched late via asynchronous `courses` Firestore calls (leading to empty/unpopulated course types) and lenient fallback matching leaked unrelated exams.
+- **Fix**:
+  1. Instant Course Type Embedding: `fetchSubjects` embeds the subject's `category`/`type` directly inside the subject option value object (`JSON.stringify({ code, name, category })`).
+  2. `subjectCourseType` Memo: Immediately extracts `type` from the selected subject JSON (0ms delay) and falls back to `subjectCourseDetails`.
+  3. `getNormalizedCourseType`: Standardizes all course types to `theory`, `practical`, `integrated`, `project`, or `activity`.
+  4. Strict `filteredExams` Filtering:
+     - Enforces `assessmentType` matching (Exam -> written tests only, Assignment -> assignment configs only, Practical -> practical exams only, Project -> project configs only).
+     - Enforces `courseType` matching (Theory subjects show ONLY Theory exams; Lab subjects show ONLY Lab exams; Integrated subjects show Integrated/Theory/Lab exams matching assessmentType).
+     - Removed flawed bypass logic that previously leaked unrelated exams.
+- Build passes.
+
+### 63. Strict Weightage Exam Filtering by Assessment Type (`QuestionPaperGenerator.jsx`)
+- **Problem**: In `QuestionPaperGenerator.jsx`, when `ASSESSMENT TYPE` was `Exam`, non-exam weightage items like `Assignment 1` and `Assignment 2` appeared in the Exam dropdown list.
+- **Root Cause**: Section 2 of `filteredExams` (which maps regulation `course_type_weightage` category IDs) checked only `examIsPractical`, failing to check `examIsAssignment`, `examIsProject`, or `examIsIndirect`. Thus, assignment exam IDs in regulation weightage passed through and got added to the dropdown list.
+- **Fix**: Updated Section 2 of `filteredExams` to strictly validate `examIsAssignment`, `examIsProject`, `examIsPractical`, and `examIsIndirect` flags and exam name keywords against `assessmentType`. When `assessmentType === 'Exam'`, any exam flagged as assignment, project, practical, or indirect is strictly filtered out.
+- Build passes.
+
+### 64. Strict Course-Type Specific Category Lookup Alignment with Curriculum (`QuestionPaperGenerator.jsx` & `Curriculum.jsx`)
+- **Problem**: `findCategoryData` in `QuestionPaperGenerator.jsx` previously collected candidate course types from ALL `ciaConfigs` across the system, causing `regWeightage` lookup for a Theory subject to inspect `regWeightage["Laboratory"]` or other course types and pull unrelated exams into the dropdown.
+- **Root Cause**: `findCategoryData` iterated `ciaConfigs` and pushed all config `courseTypes` into candidate array `cands`, causing cross-course-type weightage category leaks.
+- **Fix**: Replaced candidate pushing in `findCategoryData` with strict matching against the selected subject's `subjectCourseType` and `targetCourseTypeNorm` (`theory`, `practical`, `integrated`, `project`, `activity`). `regWeightage` categories configured in `Curriculum.jsx` under `Theory` are queried ONLY for Theory courses; `Laboratory` categories ONLY for Laboratory courses, matching `Curriculum.jsx` 1-to-1.
+- Build passes.
+
+### 65. Automatic Laboratory & Practical Course Type Fallback Detection (`QuestionPaperGenerator.jsx`)
+- **Problem**: For Laboratory subjects like `ME3461 - THERMAL ENGINEERING LABORATORY`, if `category` or `type` fields were omitted or unpopulated in Firestore `syllabus_data` / `courses` docs, `subjectCourseType` defaulted to `Theory`, causing Theory written exams (`IA 1`, `IA 2`, `End Semester Exam`) to show in the dropdown.
+- **Root Cause**: Reliance on explicit `category`/`type` fields without analyzing the subject name when explicit fields were empty.
+- **Fix**:
+  1. Updated `subjectCourseType` memo with smart name fallback detection. If explicit Firestore type is empty, it inspects subject name (`ME3461 - THERMAL ENGINEERING LABORATORY`) for keywords like `LABORATORY`, `LAB`, `PRACTICAL`, `WORKSHOP`, `DRAWING` -> automatically returns `Laboratory`.
+  2. Updated `filteredExams` so when `targetCourseTypeNorm` is `practical`, Theory-only exams (`IA 1`, `IA 2`, `End Semester Exam`) are strictly excluded, and ONLY Laboratory / Practical exams configured in `Curriculum.jsx` under `Laboratory` (e.g. `Model Practical Exam`, `End Semester Practical Exam`) are shown.
+- Build passes.
+
+### 66. `course_bank` Integration & Mandatory Name-Based Type Override (`QuestionPaperGenerator.jsx`)
+- **Problem**: When a subject was saved as `Laboratory` in CO Configuration (`course_bank` collection), `fetchCourseDetails` in `QuestionPaperGenerator.jsx` did not inspect `course_bank`, while `fetchSubjects` stamped `category: 'Theory'` into the subject JSON string when `syllabus_data` lacked explicit type fields. This caused `explicitType = 'Theory'` to override `ME3461 - THERMAL ENGINEERING LABORATORY` and display Theory exams (`IA 1`, `IA 2`, `End Semester Exam`).
+- **Fix**:
+  1. Updated `fetchCourseDetails` to query `course_bank/${subjectKey}`, `course_bank/${deptKey}_${subjectKey}`, and `course_bank/${progKey}_${deptKey}_${subjectKey}` to load course category/type saved from CO Configuration.
+  2. Updated `fetchSubjects` to omit the hardcoded `'Theory'` fallback when serializing `s.category` into subject option value.
+  3. Priority Override: Updated `subjectCourseType` so that if subject name contains keywords indicating Laboratory (`LABORATORY`, `LAB`, `PRACTICAL`, `WORKSHOP`, `DRAWING`), it **MUST OVERRIDE** and return `Laboratory`, regardless of any stale `'Theory'` default in JSON string.
+- Build passes.
+
+### 67. Robust Missed Attendance Matching & Flexible Format Normalization (`FacultyDashboard.jsx`)
+- **Problem**: On `FacultyDashboard.jsx`, missed attendance tasks for un-marked dates were not showing up for some users/faculty.
+- **Root Cause**:
+  1. Strict String Equality in `semester_config` matching: `cfg.programme !== g.progKey` or `cfg.academicYear !== g.academicYear` failed for string format variations (e.g. `"2025-26"` vs `"2025-2026"`, `"B.E."` vs `"UG"` vs `"B_E"`). If `semester_config` failed to match, the calculation returned early and reported 0 missed attendance.
+  2. Fixed Document Key Assembly: `FacultyDashboard.jsx` constructed attendance document IDs without checking keys with the `att_` prefix (used by `Attendance.jsx`) or section-suffixed keys.
+- **Fix**:
+  1. Updated `visibleGroups` and `attendanceTasks` in `FacultyDashboard.jsx` to use normalized, fuzzy string matching (`normClean`) for Programme (`B.E.` / `UG` / `B_E`), Academic Year (`2025-26` / `2025-2026`), and Batch (`2024-28` / `2024-2028`).
+  2. Updated `attendanceTasks` to iterate and match `facultyAttendanceData` across all document key variations (including `att_` prefix and section suffixes) to accurately find marked/unmarked attendance records.
+- Build passes.
+
+### 68. Dynamic Time Pickers & Auto FN/AN Slot Calculation (`IAScheduleCreation.jsx`)
+- **Changes**:
+  1. Removed hardcoded pre-selected time strings (`FN (10:00 AM - 1:00 PM)`).
+  2. Added native clock `<input type="time">` controls for both **Start Time** and **End Time** per subject row.
+  3. Automatic FN/AN Slot Determination: If Start Time is < 12:00 PM, slot automatically calculates as **`FN`**; if >= 12:00 PM, slot automatically calculates as **`AN`**.
+  4. Display Badge: Rendered active `FN` / `AN` badge next to the time controls.
+  5. Automatic HOD Dashboard Redirect: Upon clicking "Forward to HOD" / "Submit to HOD", the schedule is saved to Firestore `exam_schedules` and `navigate("/hod-dashboard")` automatically redirects the user to `HODDashboard.jsx`.
+- Build passes.
+
+### 69. Strict Isolation for Activity & All Assessment Types (`QuestionPaperGenerator.jsx`)
+- **Problem**: When **Assessment Type** was set to `Activity`, exams like `Assignment 1` and `Assignment 2` appeared in the Exam dropdown even though Curriculum configured ONLY `Activity 1` / `Activity 2` under `ACTIVITY` for that course type (`LIT102`).
+- **Root Cause**: `assessmentType === 'Activity'` was missing from the `if-else` filter chain in `filteredExams`. It fell through to `else` (meant for `Exam` / written tests), causing non-activity `ciaConfigs` (`Assignment 1`, `Assignment 2`) to leak into the dropdown, while blocking legitimate `regWeightage` activity categories.
+- **Fix**:
+  1. Updated `ciaConfigs` filter in `filteredExams` to explicitly check `assessmentType === 'Activity'` and require `isActivityExam` (`config.isActivity` || name includes `'activity'`).
+  2. Updated `regWeightage` category matching to explicitly allow `isGroupActivity` when `assessmentType === 'Activity'`.
+  3. Updated `regWeightage` exam iteration to strictly enforce `examIsActivity` when `assessmentType === 'Activity'`.
+  4. Non-activity exams (`Assignment 1`, `Assignment 2`, `IA 1`, `IA 2`, `End Semester Exam`) are strictly excluded when `Assessment Type` is `Activity`.
+- Build passes.
+
+### 70. Curriculum Weightage Strict Enforcement (Suppression of Unconfigured `cia_configs`) (`QuestionPaperGenerator.jsx`)
+- **Problem**: In `QuestionPaperGenerator.jsx`, even when `Curriculum.jsx` (`course_type_weightage`) was configured for a regulation, unconfigured global exams (`Assignment 1`, `Assignment 2`) created in `cia_configs` were being unconditionally dumped into the Exam dropdown alongside Curriculum configured exams.
+- **Root Cause**: `filteredExams` ran Stage 1 (`ciaConfigs` loop) unconditionally before Stage 2 (`regWeightage` loop), causing unconfigured global exams to bypass Curriculum settings.
+- **Fix**: Re-structured `filteredExams` so that when `regWeightage` and `categoryData._category_config` exist for the selected regulation and course type, **ONLY exams explicitly configured under `_category_config` / `exam_weightage` in `Curriculum.jsx` are loaded**. Unconfigured raw `ciaConfigs` are strictly suppressed.
+- Build passes.
+
+### 71. Category Name Name-Based Resolution & Mutual Category Exclusion Matrix (`QuestionPaperGenerator.jsx`)
+- **Problem**: `Assignment 1` and `Assignment 2` were still appearing when `Assessment Type` was set to `Activity`.
+- **Root Cause**:
+  1. `ciaConfigById.get(id)` evaluated to `undefined` when `exam_weightage` keys stored direct exam name strings (e.g. `"Activity 2"`) instead of Firestore document IDs. This prevented `addedFromWeightage` from being set to `true`, which triggered the fallback raw `ciaConfigs` loop.
+  2. Lack of explicit cross-category mutual exclusion in exam filtering: `Assignment 1` passed because `isActivityExam` wasn't explicitly checking for `examIsAssignment` collision.
+- **Fix**:
+  1. Updated `regWeightage` exam resolution so `rn` falls back to `id` if `ciaConfigById.get(id)` is undefined.
+  2. Set `addedFromWeightage = true` as soon as `categoryData._category_config` exists for the regulation and course type.
+  3. Added strict mutual category exclusion matrix:
+     - When `Assessment Type` is `Activity`: any exam containing `assignment`, `project`, `practical`, `written`, `ia` in its name is **100% REJECTED**.
+     - When `Assessment Type` is `Assignment`: any exam containing `activity`, `project`, `practical`, `written`, `ia` in its name is **100% REJECTED**.
+- Build passes.
+
+### 72. Activity & Assignment Category Co-matching in Curriculum Weightage (`QuestionPaperGenerator.jsx`)
+- **Problem**: When selecting `Activity` in `QuestionPaperGenerator.jsx`, no exams were showing in the dropdown.
+- **Root Cause**: `Curriculum.jsx` maps `isAssignment` configs to category name `"Activity"` (or `"ACTIVITY"`). Under this category, exams like `Assignment 1`, `Assignment 2`, `Activity 1`, `Activity 2` are saved. In the previous strict exclusion, `assessmentType === 'Activity'` was explicitly rejecting `examIsAssignment` (which matched `Assignment 1` / `Assignment 2`), leaving zero matching exams when only assignment-named exams were configured under `Activity`.
+- **Fix**:
+  1. Updated `allowGroup` in `filteredExams` so `assessmentType === 'Activity'` and `assessmentType === 'Assignment'` both match `isGroupActivity` and `isGroupAssignment` categories.
+  2. Updated exam filtering so both `Activity` and `Assignment` assessment types accept all coursework exams configured under `ACTIVITY` / `ASSIGNMENT` in `Curriculum.jsx` (e.g. `Assignment 1`, `Assignment 2`, `Activity 1`, `Activity 2`), while strictly excluding written IA exams (`IA 1`, `IA 2`, `ESE`), practical lab exams, project exams, and indirect assessments.
+- Build passes.
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -199,7 +199,7 @@ export default function AdmissionConfirmation() {
   };
 
   const openEditModal = (app) => {
-    if (app?.status === "Admission") return;
+    if (app?.status === "Admission" || app?.status === "Approved") return;
     setEditModal({ open: true, enquiry: app, saving: false });
   };
 
@@ -874,19 +874,16 @@ export default function AdmissionConfirmation() {
                             >
                               <Eye size={16} />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(app)}
-                              disabled={app?.status === "Admission"}
-                              className={`inline-flex items-center justify-center rounded-xl border p-2 transition-all ${
-                                app?.status === "Admission"
-                                  ? "border-zinc-100 text-zinc-300 cursor-not-allowed"
-                                  : "border-zinc-200 text-zinc-600 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50"
-                              }`}
-                              title={app?.status === "Admission" ? "Cannot edit while pending principal approval" : "Edit Application"}
-                            >
-                              <Edit2 size={16} />
-                            </button>
+                            {app?.status !== "Admission" && app?.status !== "Approved" && (
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(app)}
+                                className="inline-flex items-center justify-center rounded-xl border border-zinc-200 p-2 text-zinc-600 transition-all hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50"
+                                title="Edit Application"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

@@ -443,6 +443,56 @@ export default function QuestionPaperGenerator() {
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
 
   const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
+
+  // Derives subject's course type (Theory, Laboratory, Theory Cum Lab, Project, Activity)
+  const subjectCourseType = useMemo(() => {
+    if (!subject && !subjectCourseDetails) return '';
+
+    let explicitType = '';
+    let nameStr = '';
+    let codeStr = '';
+
+    if (subject) {
+      try {
+        const p = typeof subject === 'string' && subject.startsWith('{')
+          ? JSON.parse(subject)
+          : (typeof subject === 'object' ? subject : {});
+        explicitType = p.category || p.type || p.courseType || p.course_type || p.subjectType || '';
+        nameStr = p.name || p.subjectName || p.courseName || p.title || p.text || '';
+        codeStr = p.code || p.subjectCode || p.courseCode || '';
+      } catch {
+        if (typeof subject === 'string') nameStr = subject;
+      }
+    }
+
+    if (!nameStr && typeof subject === 'string') nameStr = subject;
+    if (subjectCourseDetails) {
+      const detailsType = subjectCourseDetails.category || subjectCourseDetails.type || subjectCourseDetails.courseType || subjectCourseDetails.course_type || '';
+      if (detailsType) explicitType = detailsType;
+      if (!nameStr) nameStr = subjectCourseDetails.name || subjectCourseDetails.title || subjectCourseDetails.course_name || '';
+      if (!codeStr) codeStr = subjectCourseDetails.code || subjectCourseDetails.course_code || '';
+    }
+
+    const normName = String(nameStr || '').toUpperCase();
+    const isLabByName = normName.includes('LABORATORY') || normName.includes(' LAB') || normName.endsWith('LAB') || normName.includes('PRACTICAL') || normName.includes('WORKSHOP') || normName.includes('DRAWING');
+    const isIntegratedByName = normName.includes('THEORY CUM LAB') || normName.includes('INTEGRATED') || normName.includes('WITH LAB') || normName.includes('WITH LABORATORY');
+    const isProjectByName = normName.includes('PROJECT') || normName.includes('VIVA') || normName.includes('DISSERTATION') || normName.includes('THESIS');
+    const isActivityByName = normName.includes('ACTIVITY') || normName.includes('VALUE ADDED') || normName.includes('SEMINAR');
+
+    // 1. If subject name clearly indicates Lab/Project/Activity/Integrated, override default:
+    if (isIntegratedByName) return 'Theory Cum Lab';
+    if (isLabByName) return 'Laboratory';
+    if (isProjectByName) return 'Project Work';
+    if (isActivityByName) return 'Activity';
+
+    // 2. If explicit type from Firestore (courses/course_bank/syllabus_data) is present and valid:
+    if (explicitType && String(explicitType).trim()) {
+      return explicitType.trim();
+    }
+
+    return 'Theory';
+  }, [subject, subjectCourseDetails]);
+
   const [courseWeightageData, setCourseWeightageData] = useState({});
   const [aiUnitConstraints, setAiUnitConstraints] = useState('');
   const [aiIncludeImages, setAiIncludeImages] = useState(false);
@@ -614,8 +664,31 @@ export default function QuestionPaperGenerator() {
         }
         if (snap.exists()) courseData = snap.data();
 
-        // Fallback: check syllabus_data if type/category is missing in courseData
-        if (!courseData || !courseData.type) {
+        // Fallback 1: check course_bank if type/category is missing in courseData
+        if (!courseData || (!courseData.type && !courseData.category)) {
+          try {
+            let cbRef = doc(db, 'course_bank', subjectKey);
+            let cbSnap = await getDoc(cbRef);
+            if (!cbSnap.exists()) {
+              cbRef = doc(db, 'course_bank', `${deptKey}_${subjectKey}`);
+              cbSnap = await getDoc(cbRef);
+            }
+            if (!cbSnap.exists()) {
+              cbRef = doc(db, 'course_bank', `${progKey}_${deptKey}_${subjectKey}`);
+              cbSnap = await getDoc(cbRef);
+            }
+            if (cbSnap.exists()) {
+              const cbData = cbSnap.data();
+              const derivedType = cbData.category || cbData.type || cbData.courseType || cbData.course_type;
+              courseData = { ...(courseData || {}), ...cbData, type: derivedType };
+            }
+          } catch (cbErr) {
+            console.warn("course_bank fetch error:", cbErr);
+          }
+        }
+
+        // Fallback 2: check syllabus_data if type/category is still missing
+        if (!courseData || (!courseData.type && !courseData.category)) {
           try {
             const sylRef = doc(db, 'syllabus_data', `${progKey}_${deptKey}_${regKey}`);
             let sylSnap = await getDoc(sylRef);
@@ -648,7 +721,6 @@ export default function QuestionPaperGenerator() {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
 
     const semNum = deriveSemesterNumber(selectedSemester);
-    const courseType = subjectCourseDetails?.type || subjectCourseDetails?.category;
     const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
     const norm = (v) => String(v || '').trim().toLowerCase();
     const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -657,8 +729,20 @@ export default function QuestionPaperGenerator() {
     const selectedDept = norm(department);
     const selectedBatch = norm(batch);
     const selectedAy = norm(academicYear);
-    const selectedReg = norm(regulation);
-    const cleanCourseType = normClean(courseType);
+
+    // Normalize course types (Theory, Laboratory, Theory Cum Lab, Project, Activity)
+    const getNormalizedCourseType = (typeStr) => {
+      if (!typeStr) return 'theory';
+      const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (s.includes('lab') && s.includes('theory')) return 'integrated';
+      if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit101') || s.includes('lit102')) return 'integrated';
+      if (s.includes('practical') || s.includes('lab')) return 'practical';
+      if (s.includes('project')) return 'project';
+      if (s.includes('activity')) return 'activity';
+      return 'theory';
+    };
+
+    const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
 
     const examList = [];
     const seenNames = new Set();
@@ -682,7 +766,6 @@ export default function QuestionPaperGenerator() {
       if (!name || isRawFirebaseId(name)) return;
       const cleanName = normClean(name);
       if (!cleanName) return;
-      // Dedup key: strip common exam-type suffixes so "Model Practical" and "Model Practical Exam" merge
       const dedupKey = cleanName.replace(/(exam|examination|test|assessment|evaluation|lab|internal|external)$/g, '').trim();
       if (seenNames.has(cleanName) || (dedupKey !== cleanName && seenNames.has(dedupKey))) return;
       seenNames.add(cleanName);
@@ -699,35 +782,51 @@ export default function QuestionPaperGenerator() {
       if (matchKey) regWeightage = courseWeightageData[matchKey];
     }
 
-    // Build set of disabled exam IDs/names from _category_config (consider_for_internal === false)
     const ciaConfigById = new Map();
     ciaConfigs.forEach(c => ciaConfigById.set(c.id, c));
     const disabledExamIds = new Set();
     const disabledExamNames = new Set();
-    // Robustly find the weightage category for this subject, trying multiple naming variants
+
     const findCategoryData = (reg) => {
-      if (!reg || !courseType) return null;
-      const cands = [courseType, cleanCourseType];
-      ciaConfigs.forEach(c => {
-        if (Array.isArray(c.courseTypes)) c.courseTypes.forEach(ct => cands.push(String(ct).trim()));
-      });
-      for (const cand of cands) {
-        if (cand && reg[cand]) return reg[cand];
+      if (!reg || !subjectCourseType) return null;
+      
+      const cleanSubjType = normClean(subjectCourseType);
+
+      // 1. Direct exact key match (e.g. reg["Theory"] or reg["Laboratory"])
+      if (reg[subjectCourseType]) return reg[subjectCourseType];
+
+      // 2. Exact normalized key match against reg keys
+      const keys = Object.keys(reg).filter(k => !k.startsWith('_'));
+      if (cleanSubjType) {
+        const directKey = keys.find(k => normClean(k) === cleanSubjType);
+        if (directKey) return reg[directKey];
       }
-      for (const cand of cands) {
-        if (!cand) continue;
-        const kc = normClean(cand);
-        const key = Object.keys(reg).find(k => !k.startsWith('_') && normClean(k) === kc);
-        if (key) return reg[key];
-      }
-      const fuzzyKey = Object.keys(reg).find(k => {
-        if (k.startsWith('_')) return false;
+
+      // 3. Category match based on targetCourseTypeNorm (theory, practical, integrated, project, activity)
+      const catKey = keys.find(k => {
         const kn = normClean(k);
-        return cleanCourseType && (kn.includes(cleanCourseType) || cleanCourseType.includes(kn));
+        if (targetCourseTypeNorm === 'theory' && (kn === 'theory' || kn.includes('theory') || kn.includes('lecture'))) {
+          return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum');
+        }
+        if (targetCourseTypeNorm === 'practical' && (kn === 'laboratory' || kn === 'practical' || kn.includes('lab') || kn.includes('practical'))) {
+          return !kn.includes('theory');
+        }
+        if (targetCourseTypeNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || (kn.includes('theory') && kn.includes('lab')))) {
+          return true;
+        }
+        if (targetCourseTypeNorm === 'project' && (kn.includes('project') || kn.includes('viva'))) {
+          return true;
+        }
+        if (targetCourseTypeNorm === 'activity' && kn.includes('activity')) {
+          return true;
+        }
+        return false;
       });
-      if (fuzzyKey) return reg[fuzzyKey];
+
+      if (catKey) return reg[catKey];
       return null;
     };
+
     const catDataForLookup = regWeightage ? findCategoryData(regWeightage) : null;
     if (catDataForLookup && catDataForLookup._category_config) {
       Object.values(catDataForLookup._category_config).forEach(cfg => {
@@ -744,119 +843,135 @@ export default function QuestionPaperGenerator() {
       });
     }
 
-    // 1. Process ciaConfigs from Firestore
-    ciaConfigs.forEach(config => {
-      const resolvedName = config.examName || config.exam_name || config.title || config.name || config.exam || config.label || config.eventTitle || config.eventName;
-      if (!resolvedName || isRawFirebaseId(resolvedName)) return;
+    // 1. Process course_type_weightage from Firestore for current regulation (Curriculum configured exams)
+    let addedFromWeightage = false;
 
-      if (norm(config.program) && norm(formatProgrammeKey(config.program)) !== selectedProg) return;
-      if (norm(config.department) && norm(config.department) !== selectedDept) return;
-      if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
-      if (norm(config.academicYear) && norm(config.academicYear) !== selectedAy) return;
-      if (config.semester && String(config.semester) !== semNum) return;
-      if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
-
-      const examNameClean = normClean(resolvedName);
-      const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('model') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
-
-      // Assessment Type Filter
-      if (assessmentType === 'Assignment') {
-        if (!config.isAssignment) return;
-      } else if (assessmentType === 'Project') {
-        if (!config.isProject) return;
-      } else if (assessmentType === 'Practical') {
-        if (!config.isPractical && !isPracticalExam) return;
-      } else if (assessmentType === 'Indirect') {
-        if (!config.isIndirectAssessment) return;
-      } else {
-        // Exam type (Written tests like IA 1, IA 2, End Semester Exam)
-        if (config.isAssignment || config.isProject || config.isIndirectAssessment || isPracticalExam) return;
-      }
-
-      // Course Type / Category Filter (lenient matching — subject and config may name the type differently, e.g. LIT 102 vs LIT102 vs Theory with Laboratory)
-      if (cleanCourseType && config.courseTypes && Array.isArray(config.courseTypes) && config.courseTypes.length > 0) {
-        const cleanConfigTypes = config.courseTypes.map(ct => normClean(ct));
-        const directMatch = cleanConfigTypes.some(ct => ct === cleanCourseType || ct.includes(cleanCourseType) || cleanCourseType.includes(ct));
-
-        if (!directMatch) {
-          const subjectIsIntegrated = cleanCourseType.includes('lit102') || cleanCourseType.includes('lit101') || cleanCourseType.includes('integrated');
-          const configIsIntegrated = cleanConfigTypes.some(ct => ct.includes('lit102') || ct.includes('lit101') || ct.includes('integrated'));
-          const configIsTheoryOrLab = cleanConfigTypes.some(ct => ct.includes('theory') || ct.includes('lab'));
-          if (subjectIsIntegrated || configIsIntegrated || (configIsTheoryOrLab && (assessmentType === 'Exam' || assessmentType === 'Practical'))) {
-            const isWrittenExam = examNameClean.includes('ia') || 
-                                  examNameClean.includes('internal') || 
-                                  examNameClean.includes('endsem') || 
-                                  examNameClean.includes('written') ||
-                                  cleanConfigTypes.some(ct => ct.includes('theory') || ct.includes('written') || ct.includes('lit101') || ct.includes('lit102'));
-            if (assessmentType === 'Exam' && !isWrittenExam) return;
-            if (assessmentType === 'Practical' && !isPracticalExam) return;
-          } else {
-            return;
-          }
-        }
-      }
-
-      // Skip exams from disabled categories (consider_for_internal === false in course_type_weightage)
-      // Check by config ID and by resolved exam name (handles duplicate configs with different doc IDs)
-      if (disabledExamIds.has(config.id)) return;
-      if (disabledExamNames.has(normClean(resolvedName))) return;
-
-      addExam(config.id, resolvedName, 'cia_config');
-    });
-
-    // 2. Process course_type_weightage from Firestore for current regulation
-    // (authoritative — resolves exam_weightage doc ids to human-readable names, only from enabled categories)
     if (regWeightage) {
       const categoryData = findCategoryData(regWeightage);
 
       if (categoryData && categoryData._category_config) {
+        // If Curriculum weightage is configured for this regulation/course type, mark weightage active
+        addedFromWeightage = true;
+
         Object.entries(categoryData._category_config).forEach(([cName, cConf]) => {
           if (!cConf || cConf.consider_for_internal === false) return;
           const groupClean = normClean(cName);
 
           const isGroupPractical = groupClean.includes('practical') || groupClean.includes('observation') || groupClean.includes('lab');
           const isGroupAssignment = groupClean.includes('assignment');
+          const isGroupActivity = groupClean.includes('activity');
           const isGroupProject = groupClean.includes('project');
           const isGroupIndirect = groupClean.includes('indirect') || groupClean.includes('survey');
           const isGroupWritten = groupClean.includes('written') || groupClean.includes('theory') || groupClean.includes('test') || groupClean.includes('ese') || groupClean.includes('exam');
 
           let allowGroup = false;
-          if (assessmentType === 'Assignment' && isGroupAssignment) allowGroup = true;
+          if (assessmentType === 'Assignment' && (isGroupAssignment || isGroupActivity)) allowGroup = true;
+          else if (assessmentType === 'Activity' && (isGroupActivity || isGroupAssignment)) allowGroup = true;
           else if (assessmentType === 'Project' && isGroupProject) allowGroup = true;
           else if (assessmentType === 'Practical' && isGroupPractical) allowGroup = true;
           else if (assessmentType === 'Indirect' && isGroupIndirect) allowGroup = true;
-          else if (assessmentType === 'Exam' && (isGroupWritten || (!isGroupPractical && !isGroupAssignment && !isGroupProject && !isGroupIndirect))) allowGroup = true;
+          else if (assessmentType === 'Exam' && (isGroupWritten || (!isGroupPractical && !isGroupAssignment && !isGroupActivity && !isGroupProject && !isGroupIndirect))) allowGroup = true;
 
           if (!allowGroup) return;
           if (!cConf.exam_weightage || typeof cConf.exam_weightage !== 'object') return;
 
           Object.keys(cConf.exam_weightage).forEach(id => {
             const resolvedCfg = ciaConfigById.get(id);
-            if (resolvedCfg) {
-              const rn = resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName;
-              if (rn && !isRawFirebaseId(rn)) {
-                const rnClean = normClean(rn);
-                const examIsPractical = resolvedCfg.isPractical || rnClean.includes('practical') || rnClean.includes('model') || rnClean.includes('observation') || rnClean.includes('record') || rnClean.includes('lab');
-                if (assessmentType === 'Exam' && examIsPractical) return;
-                if (assessmentType === 'Practical' && !examIsPractical) return;
-                addExam(resolvedCfg.id, rn, 'weightage');
+            const rn = resolvedCfg
+              ? (resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName)
+              : id; // Fallback to id if id is the exam name itself
+
+            if (rn && !isRawFirebaseId(rn)) {
+              const rnClean = normClean(rn);
+              const examIsPractical = (resolvedCfg && resolvedCfg.isPractical) || rnClean.includes('practical') || rnClean.includes('model practical') || rnClean.includes('observation') || rnClean.includes('record') || rnClean.includes('lab');
+              const examIsAssignmentOrActivity = (resolvedCfg && (resolvedCfg.isAssignment || resolvedCfg.isActivity)) || rnClean.includes('assignment') || rnClean.includes('activity');
+              const examIsProject = (resolvedCfg && resolvedCfg.isProject) || rnClean.includes('project');
+              const examIsIndirect = (resolvedCfg && resolvedCfg.isIndirectAssessment) || rnClean.includes('indirect') || rnClean.includes('survey');
+
+              if (assessmentType === 'Assignment' || assessmentType === 'Activity') {
+                if (examIsProject || examIsIndirect || (targetCourseTypeNorm === 'theory' && examIsPractical)) return;
+              } else if (assessmentType === 'Project') {
+                if (!examIsProject) return;
+              } else if (assessmentType === 'Practical') {
+                if (!examIsPractical) return;
+              } else if (assessmentType === 'Indirect') {
+                if (!examIsIndirect) return;
+              } else {
+                // Exam type (IA 1, IA 2, Model Exam, End Semester Exam)
+                if (examIsAssignmentOrActivity || examIsProject || examIsIndirect) return;
+                if (targetCourseTypeNorm === 'theory' && examIsPractical) return;
+                if (targetCourseTypeNorm === 'practical' && !examIsPractical) return;
               }
+
+              addExam(resolvedCfg ? resolvedCfg.id : id, rn, 'weightage');
             }
           });
         });
       }
     }
 
-    console.debug('[QPG] filteredExams', {
-      courseType, cleanCourseType, regulation,
-      regWeightageKeys: Object.keys(regWeightage || {}),
-      catDataFound: !!catDataForLookup,
-      disabledExamNames: Array.from(disabledExamNames),
-      examList: examList.map(e => e.examName),
-    });
+    // 2. Fallback: Process raw ciaConfigs ONLY if regulation weightage is not configured for this regulation/course type
+    if (!addedFromWeightage) {
+      ciaConfigs.forEach(config => {
+        const resolvedName = config.examName || config.exam_name || config.title || config.name || config.exam || config.label || config.eventTitle || config.eventName;
+        if (!resolvedName || isRawFirebaseId(resolvedName)) return;
+
+        if (norm(config.program) && norm(formatProgrammeKey(config.program)) !== selectedProg) return;
+        if (norm(config.department) && norm(config.department) !== selectedDept) return;
+        if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
+        if (norm(config.academicYear) && norm(config.academicYear) !== selectedAy) return;
+        if (config.semester && String(config.semester) !== semNum) return;
+        if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
+
+        const examNameClean = normClean(resolvedName);
+        const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('model') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
+        const isAssignmentOrActivityExam = config.isAssignment || config.isActivity || examNameClean.includes('assignment') || examNameClean.includes('activity');
+        const isProjectExam = config.isProject || examNameClean.includes('project');
+        const isIndirectExam = config.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey');
+
+        // A. ASSESSMENT TYPE Filter
+        if (assessmentType === 'Assignment' || assessmentType === 'Activity') {
+          if (!isAssignmentOrActivityExam || isProjectExam || isIndirectExam) return;
+        } else if (assessmentType === 'Project') {
+          if (!isProjectExam) return;
+        } else if (assessmentType === 'Practical') {
+          if (!isPracticalExam) return;
+        } else if (assessmentType === 'Indirect') {
+          if (!isIndirectExam) return;
+        } else {
+          // AssessmentType === 'Exam'
+          if (isAssignmentOrActivityExam || isProjectExam || isIndirectExam) return;
+          if (targetCourseTypeNorm === 'theory' && isPracticalExam) return;
+          if (targetCourseTypeNorm === 'practical' && !isPracticalExam) return;
+        }
+
+        // B. COURSE TYPE Filter
+        if (config.courseTypes && Array.isArray(config.courseTypes) && config.courseTypes.length > 0) {
+          const configCourseTypesNorm = config.courseTypes.map(ct => getNormalizedCourseType(ct));
+          
+          const isMatch = configCourseTypesNorm.some(cNorm => {
+            if (cNorm === targetCourseTypeNorm) return true;
+            if (targetCourseTypeNorm === 'integrated') {
+              if (cNorm === 'integrated') return true;
+              if (assessmentType === 'Exam' && cNorm === 'theory') return true;
+              if (assessmentType === 'Practical' && cNorm === 'practical') return true;
+            }
+            return false;
+          });
+
+          if (!isMatch) return;
+        }
+
+        // Skip disabled exams
+        if (disabledExamIds.has(config.id)) return;
+        if (disabledExamNames.has(normClean(resolvedName))) return;
+
+        addExam(config.id, resolvedName, 'cia_config');
+      });
+    }
 
     return examList;
-  }, [ciaConfigs, courseWeightageData, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseDetails, subject, getRegulationForBatch]);
+  }, [ciaConfigs, courseWeightageData, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseType, subject, getRegulationForBatch]);
 
   // Fetch ALL saved QPs for this subject and compute combined PO marks
   useEffect(() => {
@@ -2155,7 +2270,12 @@ export default function QuestionPaperGenerator() {
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
             .map(s => ({
-              value: s.code,
+              code: s.code,
+              value: JSON.stringify({
+                code: s.code,
+                name: s.name,
+                category: s.category || s.type || s.courseType || 'Theory'
+              }),
               text: `${s.code} - ${s.name}`
             }));
         }
@@ -2179,10 +2299,12 @@ export default function QuestionPaperGenerator() {
         if (assignmentSnap.exists()) {
           const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
           const userAssignments = assignments[currentUser.uid] || [];
-          const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.value));
+          const filteredSubjects = (userRole === 'Admin' || userRole === 'Principal' || userAssignments.length === 0)
+            ? fetchedSubjects
+            : fetchedSubjects.filter(s => userAssignments.includes(s.code) || userAssignments.includes(s.value));
           setSubjects(filteredSubjects);
         } else {
-          setSubjects([]);
+          setSubjects(userRole === 'Admin' || userRole === 'Principal' ? fetchedSubjects : []);
         }
       } catch (error) {
         console.error("Error fetching subjects:", error);

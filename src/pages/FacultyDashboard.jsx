@@ -207,15 +207,38 @@ export default function FacultyDashboard() {
       }
       return assignedGroups;
     }
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
     return assignedGroups.filter(g =>
       activeSemesters.some(as => {
-        if (as.programme !== g.progKey) return false;
-        if (as.academicYear !== g.academicYear) return false;
+        // Programme check (flexible: UG, BE, B_E, B.E., B.Tech, etc.)
+        if (as.programme) {
+          const cfgProg = normClean(as.programme);
+          const groupProg = normClean(g.progKey);
+          const progMatch = cfgProg === groupProg || cfgProg.includes(groupProg) || groupProg.includes(cfgProg) ||
+            (cfgProg === 'ug' && (groupProg.includes('be') || groupProg.includes('btech'))) ||
+            (groupProg === 'ug' && (cfgProg.includes('be') || cfgProg.includes('btech')));
+          if (!progMatch) return false;
+        }
+
+        // Academic Year check (flexible: 2025-2026 vs 2025-26)
+        if (as.academicYear) {
+          const cfgAy = normClean(as.academicYear);
+          const groupAy = normClean(g.academicYear);
+          const ayMatch = cfgAy === groupAy || cfgAy.includes(groupAy) || groupAy.includes(cfgAy);
+          if (!ayMatch) return false;
+        }
+
+        // Batch check (flexible: 2024-2028 vs 2024-28 vs 24 Batch)
         const configBatches = Array.isArray(as.batch) ? as.batch : (as.batch ? [as.batch] : []);
-        const isBatchMatch = configBatches.some(b =>
-          String(b) === String(g.batch)
-        );
-        if (!isBatchMatch) return false;
+        if (configBatches.length > 0) {
+          const groupBatch = normClean(g.batch);
+          const batchMatch = configBatches.some(b => {
+            const cb = normClean(b);
+            return cb === groupBatch || cb.includes(groupBatch) || groupBatch.includes(cb);
+          });
+          if (!batchMatch) return false;
+        }
 
         const semNumMatch = String(g.semester).match(/\d+/);
         const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
@@ -742,15 +765,36 @@ export default function FacultyDashboard() {
     const tasks = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
     visibleGroups.forEach(g => {
-      // Find specific semester config for this group
+      // Find specific semester config for this group with flexible formatting match
       const as = semesterConfigs.find(cfg => {
-        if (cfg.programme !== g.progKey) return false;
-        if (cfg.academicYear !== g.academicYear) return false;
+        if (cfg.programme) {
+          const cfgProg = normClean(cfg.programme);
+          const groupProg = normClean(g.progKey);
+          const progMatch = cfgProg === groupProg || cfgProg.includes(groupProg) || groupProg.includes(cfgProg) ||
+            (cfgProg === 'ug' && (groupProg.includes('be') || groupProg.includes('btech'))) ||
+            (groupProg === 'ug' && (cfgProg.includes('be') || cfgProg.includes('btech')));
+          if (!progMatch) return false;
+        }
+
+        if (cfg.academicYear) {
+          const cfgAy = normClean(cfg.academicYear);
+          const groupAy = normClean(g.academicYear);
+          const ayMatch = cfgAy === groupAy || cfgAy.includes(groupAy) || groupAy.includes(cfgAy);
+          if (!ayMatch) return false;
+        }
+
         const configBatches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
-        const isBatchMatch = configBatches.some(b => String(b) === String(g.batch));
-        if (!isBatchMatch) return false;
+        if (configBatches.length > 0) {
+          const groupBatch = normClean(g.batch);
+          const batchMatch = configBatches.some(b => {
+            const cb = normClean(b);
+            return cb === groupBatch || cb.includes(groupBatch) || groupBatch.includes(cb);
+          });
+          if (!batchMatch) return false;
+        }
 
         const semNumMatch = String(g.semester).match(/\d+/);
         const semNum = semNumMatch ? parseInt(semNumMatch[0], 10) : NaN;
@@ -800,8 +844,20 @@ export default function FacultyDashboard() {
 
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
-        const ttKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
-        const tt = timetableData[ttKey];
+        
+        // Robust timetable lookup matching
+        let tt = null;
+        const cleanDept = normClean(g.department);
+        const cleanBatch = normClean(g.batch);
+        const cleanProg = normClean(g.progKey);
+        for (const [k, ttData] of Object.entries(timetableData || {})) {
+          const cleanK = normClean(k);
+          if ((cleanK.includes(cleanProg) || cleanProg.includes('ug')) && cleanK.includes(cleanDept) && cleanK.includes(cleanBatch) && cleanK.includes(String(semNum))) {
+            tt = ttData;
+            break;
+          }
+        }
+
         const daySchedule = tt?.facultyEntries?.[dayName] || {};
         
         Object.entries(daySchedule).forEach(([period, entries]) => {
@@ -810,15 +866,25 @@ export default function FacultyDashboard() {
             const code = parts[0] || '';
             if (!code) return;
             const currentSec = g.section || (g.sections && g.sections.length > 0 ? g.sections[0] : '');
-            const sectionSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
-            const exactIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}${sectionSuffix}`;
-            const baseIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}`;
-            const exactIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}${sectionSuffix}`;
-            const baseIdFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_${code}`;
 
-            const attData = facultyAttendanceData[exactIdNum] || facultyAttendanceData[baseIdNum] || facultyAttendanceData[exactIdFull] || facultyAttendanceData[baseIdFull];
+            // Robust Attendance Document Matcher across all attendance collections
+            const cleanCode = normClean(code);
+            const cleanSec = normClean(currentSec);
+
+            let recordsMap = {};
+            for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
+              const cleanDId = normClean(dId);
+              if (!cleanDId.includes(cleanCode)) continue;
+              if (cleanDept && !cleanDId.includes(cleanDept) && !cleanDept.includes(cleanDId)) continue;
+              if (cleanSec && !cleanDId.includes(cleanSec)) continue;
+
+              const recs = getAttendanceRecords(aData);
+              if (recs && typeof recs === 'object') {
+                Object.assign(recordsMap, recs);
+              }
+            }
+
             const recordKey = `${dateStr}_P${period}`;
-            const recordsMap = getAttendanceRecords(attData);
             let rec = recordsMap[recordKey];
             let recordFound = !!rec;
 
@@ -830,7 +896,7 @@ export default function FacultyDashboard() {
               const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
               const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
               const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
-              for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
+              for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
                 if (!getAttendanceRecords(aData)?.[recordKey]) continue;
                 const matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : null);
                 if (!matchedPrefix) continue;
@@ -863,7 +929,7 @@ export default function FacultyDashboard() {
                 subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
                 batchLabel: `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`,
                 dayName,
-                groupKey: ttKey
+                groupKey: `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`
               });
             }
           });

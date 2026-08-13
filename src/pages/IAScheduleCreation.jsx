@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, setDoc, getDoc, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -14,7 +15,42 @@ import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDis
 
 const cleanStr = (s) => (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
 
+// Convert 24h string ("09:30" or "14:00") to 12h formatted string ("09:30 AM" or "02:00 PM")
+const format12Hour = (time24) => {
+  if (!time24) return '';
+  const [hStr, mStr] = time24.split(':');
+  let h = parseInt(hStr, 10);
+  if (isNaN(h)) return '';
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  const formattedH = String(h).padStart(2, '0');
+  return `${formattedH}:${mStr || '00'} ${ampm}`;
+};
+
+// Derive FN (Forenoon) or AN (Afternoon) from start time hour (< 12 -> FN, >= 12 -> AN)
+const deriveSlotFromTime = (startTimeStr) => {
+  if (!startTimeStr) return '';
+  const [hStr] = startTimeStr.split(':');
+  const h = parseInt(hStr, 10);
+  if (isNaN(h)) return '';
+  return h < 12 ? 'FN' : 'AN';
+};
+
+// Build complete display string e.g. "FN (09:30 AM - 12:30 PM)"
+const buildTimeSlotString = (startTimeStr, endTimeStr) => {
+  if (!startTimeStr) return '';
+  const slot = deriveSlotFromTime(startTimeStr);
+  const start12 = format12Hour(startTimeStr);
+  const end12 = endTimeStr ? format12Hour(endTimeStr) : '';
+  if (end12) {
+    return `${slot} (${start12} - ${end12})`;
+  }
+  return `${slot} (${start12})`;
+};
+
 export default function IAScheduleCreation() {
+  const navigate = useNavigate();
   const { getActiveBatches } = useBatches();
   const { getRegulationForBatch } = useRegulations();
 
@@ -390,10 +426,15 @@ export default function IAScheduleCreation() {
     effectiveSubjects.forEach((sub, idx) => {
       const dateIdx = idx % availableDates.length;
       const isSecondPass = Math.floor(idx / availableDates.length) >= 1;
-      const timeSlot = isSecondPass ? "AN (2:00 PM - 5:00 PM)" : "FN (10:00 AM - 1:00 PM)";
+      const startTime = isSecondPass ? "14:00" : "10:00";
+      const endTime = isSecondPass ? "17:00" : "13:00";
+      const timeSlot = buildTimeSlotString(startTime, endTime);
 
       newTable[sub.code] = {
         date: availableDates[dateIdx],
+        startTime,
+        endTime,
+        slot: isSecondPass ? "AN" : "FN",
         timeSlot
       };
     });
@@ -425,13 +466,20 @@ export default function IAScheduleCreation() {
   };
 
   const handleUpdateRow = (subjectCode, field, val) => {
-    setTimetable(prev => ({
-      ...prev,
-      [subjectCode]: {
-        ...(prev[subjectCode] || { date: "", timeSlot: "FN (10:00 AM - 1:00 PM)" }),
-        [field]: val
+    setTimetable(prev => {
+      const current = prev[subjectCode] || { date: "", startTime: "", endTime: "", timeSlot: "" };
+      const updated = { ...current, [field]: val };
+      if (field === 'startTime' || field === 'endTime') {
+        const start = field === 'startTime' ? val : current.startTime;
+        const end = field === 'endTime' ? val : current.endTime;
+        updated.slot = deriveSlotFromTime(start);
+        updated.timeSlot = buildTimeSlotString(start, end);
       }
-    }));
+      return {
+        ...prev,
+        [subjectCode]: updated
+      };
+    });
   };
 
   const handleForwardToHOD = async () => {
@@ -446,11 +494,11 @@ export default function IAScheduleCreation() {
     }
 
     const scheduledSubjects = Object.keys(timetable).filter(
-      (code) => timetable[code]?.date && timetable[code]?.timeSlot
+      (code) => timetable[code]?.date && (timetable[code]?.timeSlot || timetable[code]?.startTime)
     );
 
     if (scheduledSubjects.length === 0) {
-      showToast("Please click 'Auto Generate' or configure date and timeslot for at least one subject.", "error");
+      showToast("Please select date and set start/end times for at least one subject.", "error");
       return;
     }
 
@@ -465,7 +513,10 @@ export default function IAScheduleCreation() {
           subjectCode: sub.code,
           subjectName: sub.name,
           date: timetable[sub.code].date,
-          timeSlot: timetable[sub.code].timeSlot
+          startTime: timetable[sub.code].startTime || "",
+          endTime: timetable[sub.code].endTime || "",
+          slot: timetable[sub.code].slot || deriveSlotFromTime(timetable[sub.code].startTime || ""),
+          timeSlot: timetable[sub.code].timeSlot || buildTimeSlotString(timetable[sub.code].startTime || "", timetable[sub.code].endTime || "")
         }));
 
       const schedulePayload = {
@@ -482,8 +533,11 @@ export default function IAScheduleCreation() {
       };
 
       await setDoc(doc(db, "exam_schedules", compositeKey), schedulePayload);
-      showToast("Exam schedule successfully saved and forwarded for approval!", "success");
+      showToast("Exam schedule successfully saved and submitted to HOD!", "success");
       setTimetable({});
+      setTimeout(() => {
+        navigate("/hod-dashboard");
+      }, 800);
     } catch (err) {
       console.error("Failed to forward exam schedule:", err);
       showToast("Failed to save and forward exam schedule.", "error");
@@ -840,14 +894,14 @@ export default function IAScheduleCreation() {
                         <th className="p-4 w-12">#</th>
                         <th className="p-4">Subject Code & Name</th>
                         <th className="p-4 w-32">Source</th>
-                        <th className="p-4 w-52">Exam Date</th>
-                        <th className="p-4 w-60">Time Slot</th>
+                        <th className="p-4 w-48">Exam Date</th>
+                        <th className="p-4 min-w-[300px]">Exam Time & Slot (Clock Picker)</th>
                         <th className="p-4 w-16 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-150">
                       {effectiveSubjects.map((sub, idx) => {
-                        const rowData = timetable[sub.code] || { date: "", timeSlot: "FN (10:00 AM - 1:00 PM)" };
+                        const rowData = timetable[sub.code] || { date: "", startTime: "", endTime: "", slot: "", timeSlot: "" };
                         return (
                           <tr key={sub.code} className="hover:bg-zinc-50/30 transition-colors">
                             <td className="p-4 font-bold text-zinc-400">{idx + 1}</td>
@@ -879,31 +933,37 @@ export default function IAScheduleCreation() {
                               </select>
                             </td>
                             <td className="p-4">
-                              <div className="flex gap-2">
-                                <select
-                                  value={rowData.timeSlot.startsWith("Custom:") ? "Custom" : rowData.timeSlot}
-                                  onChange={(e) => {
-                                    if (e.target.value === "Custom") {
-                                      handleUpdateRow(sub.code, "timeSlot", "Custom: ");
-                                    } else {
-                                      handleUpdateRow(sub.code, "timeSlot", e.target.value);
-                                    }
-                                  }}
-                                  className="rounded-xl border border-zinc-200 p-2 font-semibold text-zinc-700 bg-white flex-1"
-                                >
-                                  <option value="FN (10:00 AM - 1:00 PM)">FN (10:00 AM - 1:00 PM)</option>
-                                  <option value="AN (2:00 PM - 5:00 PM)">AN (2:00 PM - 5:00 PM)</option>
-                                  <option value="Custom">Custom Entry</option>
-                                </select>
-                                
-                                {rowData.timeSlot.startsWith("Custom:") && (
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase">Start:</span>
                                   <input
-                                    type="text"
-                                    value={rowData.timeSlot.replace("Custom: ", "")}
-                                    placeholder="e.g. 10:30 AM - 12:30 PM"
-                                    onChange={(e) => handleUpdateRow(sub.code, "timeSlot", `Custom: ${e.target.value}`)}
-                                    className="rounded-xl border border-zinc-200 p-2 font-semibold text-zinc-700 bg-white w-40 text-xs"
+                                    type="time"
+                                    value={rowData.startTime || ""}
+                                    onChange={(e) => handleUpdateRow(sub.code, "startTime", e.target.value)}
+                                    className="rounded-xl border border-zinc-200 p-2 font-semibold text-zinc-700 bg-white text-xs focus:border-indigo-600 focus:outline-none cursor-pointer"
                                   />
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase">End:</span>
+                                  <input
+                                    type="time"
+                                    value={rowData.endTime || ""}
+                                    onChange={(e) => handleUpdateRow(sub.code, "endTime", e.target.value)}
+                                    className="rounded-xl border border-zinc-200 p-2 font-semibold text-zinc-700 bg-white text-xs focus:border-indigo-600 focus:outline-none cursor-pointer"
+                                  />
+                                </div>
+
+                                {rowData.startTime ? (
+                                  <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-lg text-[11px] font-extrabold shadow-xs ${
+                                    deriveSlotFromTime(rowData.startTime) === 'FN'
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                      : 'bg-indigo-100 text-indigo-800 border border-indigo-300'
+                                  }`}>
+                                    {deriveSlotFromTime(rowData.startTime)}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-zinc-400 italic">Select Time</span>
                                 )}
                               </div>
                             </td>
