@@ -11,7 +11,8 @@ import {
   AlertCircle,
   X,
   ChevronDown,
-  Save
+  Save,
+  Calendar
 } from "lucide-react";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
@@ -97,6 +98,15 @@ export default function Curriculum() {
   const [courseTypePercentages, setCourseTypePercentages] = useState({});
   const [periodConfigs, setPeriodConfigs] = useState({});
   const [selectedConfigReg, setSelectedConfigReg] = useState("");
+  const [selectedConfigAY, setSelectedConfigAY] = useState("");
+
+  const availableAcademicYears = [
+    "2023-2024",
+    "2024-2025",
+    "2025-2026",
+    "2026-2027",
+    "2027-2028"
+  ];
 
   // Grade Config States
   const [gradeReg, setGradeReg] = useState("");
@@ -393,13 +403,13 @@ export default function Curriculum() {
     return [];
   };
 
-  const handleAddCourseType = async () => {
+  const handleAddCourseType = async (targetRegKey) => {
     if (!selectedConfigReg || !newCourseType.trim()) return;
-    const regKey = sanitizeKey(selectedConfigReg);
+    const regKey = typeof targetRegKey === 'string' ? targetRegKey : sanitizeKey(selectedConfigReg);
     const currentTypes = toArray(courseTypeConfigs[regKey]);
     
     if (currentTypes.includes(newCourseType.trim())) {
-      showAlert("Error", "Course type already exists for this regulation.");
+      showAlert("Error", "Course type already exists.");
       return;
     }
     const updatedTypes = [...currentTypes, newCourseType.trim()];
@@ -1039,143 +1049,197 @@ export default function Curriculum() {
                             </div>
                           )}
 
-                          {configType === "course_type" && (
-                              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 max-w-md">
-                                  <h4 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">Add New Category</h4>
-                                  <div className="flex gap-2">
-                                    <input type="text" className="form-control" placeholder="e.g. Theory, Practical, Integrated" value={newCourseType} onChange={(e) => setNewCourseType(e.target.value)} />
-                                    <button className="btn btn-primary px-4 font-bold" style={{ backgroundColor: '#120c7a', border: 'none' }} onClick={handleAddCourseType}>Add</button>
-                                  </div>
-                                </div>
-                                
-                                {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length > 0 && (
-                                  <div className="flex justify-end gap-2">
-                                    <button onClick={() => handleSaveTypePercentages(sanitizeKey(selectedConfigReg))} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
-                                      <Save size={14} /> Save All
-                                    </button>
-                                  </div>
-                                )}
-                                
-                                <div className="bg-white rounded-3xl shadow-sm border border-gray-300 overflow-x-auto">
-                                  <table className="w-full text-sm border-collapse border border-gray-300">
-                                    <thead className="bg-slate-50">
-                                      <tr>
-                                        <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Course Type</th>
-                                        <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Category</th>
-                                        <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Exams</th>
-                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-20">Int. Cons.</th>
-                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
-                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
-                                        <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
-                                        <th className="px-4 py-4 border border-gray-300 w-10"></th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).map((type, idx) => {
-                                        const catGroups = {};
-                                        Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg) && config.courseTypes?.includes(type)).forEach(([id, config]) => {
-                                          const cat = getExamCategory(config);
-                                          if (!catGroups[cat]) catGroups[cat] = { ids: [], names: [] };
-                                          catGroups[cat].ids.push(id);
-                                          catGroups[cat].names.push(config.examName);
-                                        });
-                                        const catEntries = Object.entries(catGroups);
-                                        const rowCount = catEntries.length || 1;
-                                        return catEntries.length === 0 ? (
-                                          <tr key={idx}>
-                                            <td className="px-6 py-4 border border-gray-300" colSpan={2}>
-                                              <div className="flex items-center gap-3">
-                                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
-                                                <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
-                                                  <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
-                                                  <span className="text-[10px] font-black text-amber-700">%</span>
-                                                </div>
-                                              </div>
-                                            </td>
-                                            <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
-                                            <td className="px-4 py-4 border border-gray-300"><button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
-                                          </tr>
-                                        ) : (
-                                          catEntries.map(([catName, group], ci) => (
-                                            <tr key={`${idx}_${ci}`}>
-                                              {ci === 0 && (
-                                                 <td className="px-6 py-4 border border-gray-300 align-middle font-bold text-slate-700" rowSpan={rowCount}>
-                                                   <div className="flex flex-col items-center gap-2">
-                                                     <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
-                                                     <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
-                                                       <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
-                                                       <span className="text-[10px] font-black text-amber-700">%</span>
-                                                     </div>
-                                                     <div className="flex items-center gap-1.5 bg-green-50 p-1.5 rounded-lg border border-green-200">
-                                                       <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-green-200 rounded text-center font-bold text-green-700 outline-none focus:ring-2 focus:ring-green-300 text-xs" value={weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._type_pass_mark ?? ''} onChange={(e) => handleTypePassMarkChange(sanitizeKey(selectedConfigReg), type, e.target.value)} />
-                                                       <span className="text-[10px] font-black text-green-700">Pass%</span>
-                                                     </div>
-                                                   </div>
-                                                 </td>
-                                               )}
-                                              <td className="px-4 py-3 border border-gray-300">
-                                                <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tight border ${catColors[catName] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{catName}</span>
-                                              </td>
-                                              <td className="px-4 py-3 border border-gray-300">
-                                                <div className="flex flex-col gap-1.5">
-                                                  {group.ids.map((id, ei) => {
-                                                    const cfg = weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName]?.exam_weightage || {};
-                                                    return (
-                                                      <div key={id} className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                                                        <span className="whitespace-nowrap">{group.names[ei]}</span>
-                                                        <input type="number" min="0" max="100"
-                                                          className="w-12 px-1 py-0.5 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs"
-                                                          value={cfg[id] ?? ""}
-                                                          onChange={(e) => handleExamWeightageChange(sanitizeKey(selectedConfigReg), type, catName, id, e.target.value)} />
-                                                        <span className="text-[9px] text-slate-400">%</span>
+                           {configType === "course_type" && (() => {
+                              const activeConfigRegKey = selectedConfigAY
+                                ? `${sanitizeKey(selectedConfigReg)}_${sanitizeKey(selectedConfigAY)}`
+                                : sanitizeKey(selectedConfigReg);
+
+                              // Fallback categories list from regulation default if AY-specific list is not yet populated
+                              const activeCourseTypes = toArray(courseTypeConfigs[activeConfigRegKey]).length > 0
+                                ? courseTypeConfigs[activeConfigRegKey]
+                                : courseTypeConfigs[sanitizeKey(selectedConfigReg)];
+
+                              return (
+                               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                 <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-5 rounded-3xl shadow-sm border border-slate-200">
+                                   <div className="flex items-center gap-3">
+                                     <div className="p-2.5 bg-blue-50 text-[#120c7a] rounded-2xl">
+                                       <Calendar size={20} />
+                                     </div>
+                                     <div>
+                                       <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Target Academic Year</h4>
+                                       <p className="text-[11px] text-slate-500 font-medium">Select specific Academic Year to configure custom exam weightages for {selectedConfigReg}</p>
+                                     </div>
+                                   </div>
+                                   <div className="flex items-center gap-3">
+                                     <select
+                                       value={selectedConfigAY}
+                                       onChange={(e) => setSelectedConfigAY(e.target.value)}
+                                       className="bg-slate-50 border border-slate-300 rounded-2xl px-4 py-2 text-xs font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                                     >
+                                       <option value="">All Academic Years (Regulation Default)</option>
+                                       {availableAcademicYears.map(ay => (
+                                         <option key={ay} value={ay}>{ay}</option>
+                                       ))}
+                                     </select>
+                                     {selectedConfigAY ? (
+                                       <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                                         AY {selectedConfigAY} Config
+                                       </span>
+                                     ) : (
+                                       <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                                         Default Regulation
+                                       </span>
+                                     )}
+                                   </div>
+                                 </div>
+
+                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 max-w-md">
+                                   <h4 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider">Add New Category</h4>
+                                   <div className="flex gap-2">
+                                     <input type="text" className="form-control" placeholder="e.g. Theory, Practical, Integrated" value={newCourseType} onChange={(e) => setNewCourseType(e.target.value)} />
+                                     <button className="btn btn-primary px-4 font-bold" style={{ backgroundColor: '#120c7a', border: 'none' }} onClick={() => handleAddCourseType(activeConfigRegKey)}>Add</button>
+                                   </div>
+                                 </div>
+                                 
+                                 {toArray(activeCourseTypes).length > 0 && (
+                                   <div className="flex justify-end gap-2">
+                                     <button onClick={() => handleSaveTypePercentages(activeConfigRegKey)} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
+                                       <Save size={14} /> Save All ({selectedConfigAY ? `AY ${selectedConfigAY}` : 'Default'})
+                                     </button>
+                                   </div>
+                                 )}
+                                 
+                                 <div className="bg-white rounded-3xl shadow-sm border border-gray-300 overflow-x-auto">
+                                   <table className="w-full text-sm border-collapse border border-gray-300">
+                                     <thead className="bg-slate-50">
+                                       <tr>
+                                         <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Course Type</th>
+                                         <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Category</th>
+                                         <th className="px-4 py-4 font-black uppercase tracking-widest text-[10px] text-left border border-gray-300">Exams</th>
+                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-20">Int. Cons.</th>
+                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Best</th>
+                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Mark</th>
+                                         <th className="px-3 py-4 font-black uppercase tracking-widest text-[10px] text-center border border-gray-300 w-16">Wt%</th>
+                                         <th className="px-4 py-4 border border-gray-300 w-10"></th>
+                                       </tr>
+                                     </thead>
+                                     <tbody>
+                                       {toArray(activeCourseTypes).map((type, idx) => {
+                                         const catGroups = {};
+                                         Object.entries(allCiaConfigs).filter(([id, config]) => {
+                                            if (sanitizeKey(config.regulation) !== sanitizeKey(selectedConfigReg)) return false;
+                                            if (!config.courseTypes?.includes(type)) return false;
+                                            const configAY = String(config.academicYear || '').trim();
+                                            if (!selectedConfigAY) {
+                                              if (configAY !== '') return false;
+                                            } else {
+                                              if (configAY !== '' && configAY !== selectedConfigAY) return false;
+                                            }
+                                            return true;
+                                          }).forEach(([id, config]) => {
+                                           const cat = getExamCategory(config);
+                                           if (!catGroups[cat]) catGroups[cat] = { ids: [], names: [] };
+                                           catGroups[cat].ids.push(id);
+                                           catGroups[cat].names.push(config.examName);
+                                         });
+                                         const catEntries = Object.entries(catGroups);
+                                         const rowCount = catEntries.length || 1;
+                                         return catEntries.length === 0 ? (
+                                           <tr key={idx}>
+                                             <td className="px-6 py-4 border border-gray-300" colSpan={2}>
+                                               <div className="flex items-center gap-3">
+                                                 <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                                 <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                                   <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[activeConfigRegKey]?.[type] ?? courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(activeConfigRegKey, type, e.target.value)} />
+                                                   <span className="text-[10px] font-black text-amber-700">%</span>
+                                                 </div>
+                                               </div>
+                                             </td>
+                                             <td colSpan={5} className="px-4 py-4 text-center text-xs text-slate-400 italic border border-gray-300">No exams configured</td>
+                                             <td className="px-4 py-4 border border-gray-300"><button onClick={() => handleRemoveCourseType(activeConfigRegKey, idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>
+                                           </tr>
+                                         ) : (
+                                           catEntries.map(([catName, group], ci) => (
+                                             <tr key={`${idx}_${ci}`}>
+                                               {ci === 0 && (
+                                                  <td className="px-6 py-4 border border-gray-300 align-middle font-bold text-slate-700" rowSpan={rowCount}>
+                                                    <div className="flex flex-col items-center gap-2">
+                                                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-widest">{type}</span>
+                                                      <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-200">
+                                                        <input type="number" className="w-14 px-1.5 py-1 bg-white border border-amber-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-amber-300 text-xs" value={courseTypePercentages[activeConfigRegKey]?.[type] ?? courseTypePercentages[sanitizeKey(selectedConfigReg)]?.[type] ?? ""} onChange={(e) => handleTypePctChange(activeConfigRegKey, type, e.target.value)} />
+                                                        <span className="text-[10px] font-black text-amber-700">%</span>
                                                       </div>
+                                                      <div className="flex items-center gap-1.5 bg-green-50 p-1.5 rounded-lg border border-green-200">
+                                                        <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-green-200 rounded text-center font-bold text-green-700 outline-none focus:ring-2 focus:ring-green-300 text-xs" value={weightageConfigs[activeConfigRegKey]?.[type]?._type_pass_mark ?? weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._type_pass_mark ?? ''} onChange={(e) => handleTypePassMarkChange(activeConfigRegKey, type, e.target.value)} />
+                                                        <span className="text-[10px] font-black text-green-700">Pass%</span>
+                                                      </div>
+                                                    </div>
+                                                  </td>
+                                                )}
+                                               <td className="px-4 py-3 border border-gray-300">
+                                                 <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tight border ${catColors[catName] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{catName}</span>
+                                               </td>
+                                               <td className="px-4 py-3 border border-gray-300">
+                                                 <div className="flex flex-col gap-1.5">
+                                                   {group.ids.map((id, ei) => {
+                                                     const cfg = weightageConfigs[activeConfigRegKey]?.[type]?._category_config?.[catName]?.exam_weightage || weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName]?.exam_weightage || {};
+                                                     return (
+                                                       <div key={id} className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                                                         <span className="whitespace-nowrap">{group.names[ei]}</span>
+                                                         <input type="number" min="0" max="100"
+                                                           className="w-12 px-1 py-0.5 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs"
+                                                           value={cfg[id] ?? ""}
+                                                           onChange={(e) => handleExamWeightageChange(activeConfigRegKey, type, catName, id, e.target.value)} />
+                                                         <span className="text-[9px] text-slate-400">%</span>
+                                                       </div>
+                                                     );
+                                                   })}
+                                                 </div>
+                                               </td>
+                                               {(() => {
+                                                 const cfg = weightageConfigs[activeConfigRegKey]?.[type]?._category_config?.[catName] || weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName] || {};
+                                                 const examWt = cfg.exam_weightage || {};
+                                                 const hasExamWeightage = Object.values(examWt).some(v => v != null && v !== '' && Number(v) > 0);
+                                                 return (
+                                                    <>
+                                                      <td className={`px-3 py-3 text-center border border-gray-300 ${cfg.consider_for_internal === false ? 'bg-red-50' : 'bg-green-50'}`}>
+                                                        <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer" checked={cfg.consider_for_internal !== false} onChange={(e) => handleCategoryConfigChange(activeConfigRegKey, type, catName, 'consider_for_internal', e.target.checked)} />
+                                                      </td>
+                                                      <td className={`px-3 py-3 text-center border border-gray-300 ${hasExamWeightage ? 'bg-slate-100' : ''}`}>
+                                                        {hasExamWeightage ? (
+                                                          <span className="text-[10px] text-slate-400 font-medium italic">Weighted</span>
+                                                        ) : (
+                                                          <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(activeConfigRegKey, type, catName, 'best_count', e.target.value)} />
+                                                        )}
+                                                      </td>
+                                                      <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
+                                                        {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
+                                                      </td>
+                                                        <td className="px-3 py-3 text-center border border-gray-300">
+                                                          <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(activeConfigRegKey, type, catName, 'weightage', e.target.value)} />
+                                                        </td>
+                                                      </>
                                                     );
-                                                  })}
-                                                </div>
-                                              </td>
-                                              {(() => {
-                                                const cfg = weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName] || {};
-                                                const examWt = cfg.exam_weightage || {};
-                                                const hasExamWeightage = Object.values(examWt).some(v => v != null && v !== '' && Number(v) > 0);
-                                                return (
-                                                   <>
-                                                     <td className={`px-3 py-3 text-center border border-gray-300 ${cfg.consider_for_internal === false ? 'bg-red-50' : 'bg-green-50'}`}>
-                                                       <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer" checked={cfg.consider_for_internal !== false} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'consider_for_internal', e.target.checked)} />
-                                                     </td>
-                                                     <td className={`px-3 py-3 text-center border border-gray-300 ${hasExamWeightage ? 'bg-slate-100' : ''}`}>
-                                                       {hasExamWeightage ? (
-                                                         <span className="text-[10px] text-slate-400 font-medium italic">Weighted</span>
-                                                       ) : (
-                                                         <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'best_count', e.target.value)} />
-                                                       )}
-                                                     </td>
-                                                     <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
-                                                       {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
-                                                     </td>
-                                                       <td className="px-3 py-3 text-center border border-gray-300">
-                                                         <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(sanitizeKey(selectedConfigReg), type, catName, 'weightage', e.target.value)} />
-                                                       </td>
-                                                     </>
-                                                   );
-                                                  })()}
-                                                {ci === 0 && (
-                                                 <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
-                                                   <button onClick={() => handleRemoveCourseType(sanitizeKey(selectedConfigReg), idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
-                                                 </td>
-                                              )}
-                                            </tr>
-                                          ))
-                                        );
-                                      })}
-                                      {toArray(courseTypeConfigs[sanitizeKey(selectedConfigReg)]).length === 0 && (
-                                        <tr><td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
-                                      )}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
+                                                   })()}
+                                                 {ci === 0 && (
+                                                  <td className="px-4 py-3 align-middle border border-gray-300" rowSpan={rowCount}>
+                                                    <button onClick={() => handleRemoveCourseType(activeConfigRegKey, idx)} className="text-red-300 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                                                  </td>
+                                               )}
+                                             </tr>
+                                           ))
+                                         );
+                                       })}
+                                       {toArray(activeCourseTypes).length === 0 && (
+                                         <tr><td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic border border-gray-300">No course types added yet.</td></tr>
+                                       )}
+                                     </tbody>
+                                   </table>
+                                 </div>
+                               </div>
+                              );
+                             })()}
 
                           {configType === "exam_sets" && (
                             <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">

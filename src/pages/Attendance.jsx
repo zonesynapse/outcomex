@@ -24,13 +24,20 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 // Sanitize key matching HODRoleConfig's local version
 function sanitizeKey(key) {
   if (!key) return '';
   return String(key).replace(/[.#$[\]]/g, '_');
+}
+
+function extractPureDate(key) {
+  if (!key) return '';
+  const str = String(key).trim();
+  if (str.includes('_P')) return str.slice(0, str.lastIndexOf('_P'));
+  return str;
 }
 
 // Helper functions (adapted from TimetableSetup.jsx)
@@ -136,10 +143,77 @@ export default function Attendance() {
   const [attendanceData, setAttendanceData] = useState(null);
   const [students, setStudents] = useState([]);
   const [masterList, setMasterList] = useState({});
+  const [sectionIndex, setSectionIndex] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState(null); // { absent: [], od: [], notMarked: [] }
   const [searchTerm, setSearchTerm] = useState("");
+
+  const idMap = useMemo(() => {
+    const map = {};
+    Object.entries(sectionIndex).forEach(([admNo, info]) => {
+      if (typeof info === 'object' && info !== null) {
+        if (info.regNo) {
+          map[admNo] = info.regNo;
+          map[info.regNo] = admNo;
+        }
+        if (info.admissionNo) {
+          map[info.admissionNo] = info.regNo || admNo;
+          if (info.regNo) map[info.regNo] = info.admissionNo;
+        }
+      }
+    });
+    return map;
+  }, [sectionIndex]);
+
+  const getStudentData = useCallback((studentsMap, id) => {
+    if (!studentsMap || !id) return undefined;
+    const targetId = String(id).trim().toLowerCase();
+    const altId = idMap[id] ? String(idMap[id]).trim().toLowerCase() : '';
+
+    // 1. If studentsMap is an Array: [ { reg, status }, ... ] or [ { regNo, status }, ... ]
+    if (Array.isArray(studentsMap)) {
+      const match = studentsMap.find(item => {
+        if (!item) return false;
+        const itemReg = String(item.reg || item.regNo || item.admNo || item.admissionNo || item.id || '').trim().toLowerCase();
+        return itemReg === targetId || (altId && itemReg === altId);
+      });
+      return match || undefined;
+    }
+
+    // 2. If studentsMap is an Object: { "420725104001": ... }
+    if (typeof studentsMap === 'object') {
+      if (studentsMap[id] !== undefined) return studentsMap[id];
+      if (idMap[id] && studentsMap[idMap[id]] !== undefined) return studentsMap[idMap[id]];
+
+      const keys = Object.keys(studentsMap);
+      const matchedKey = keys.find(k => {
+        const normK = String(k).trim().toLowerCase();
+        return normK === targetId || (altId && normK === altId);
+      });
+      if (matchedKey) return studentsMap[matchedKey];
+    }
+
+    return undefined;
+  }, [idMap]);
+
+  const findRecordForPeriod = useCallback((recordsObj, dateStr, periodVal) => {
+    if (!recordsObj || !dateStr || !periodVal) return null;
+    const exactKey = `${dateStr}_P${periodVal}`;
+    if (recordsObj[exactKey]) return recordsObj[exactKey];
+
+    const targetDate = String(dateStr).trim();
+    const targetP = String(periodVal).trim();
+
+    const keys = Object.keys(recordsObj);
+    const match = keys.find(k => {
+      if (!k.startsWith(targetDate)) return false;
+      const rest = k.slice(targetDate.length).replace(/^[_ -]+/, '').toLowerCase();
+      return rest === `p${targetP}` || rest === targetP || rest === `period${targetP}` || rest === `p0${targetP}`;
+    });
+
+    return match ? recordsObj[match] : null;
+  }, []);
 
   // Per-date record states
   const [recordDates, setRecordDates] = useState([]);
@@ -630,6 +704,7 @@ export default function Attendance() {
 
     const fetchData = async () => {
       try {
+        const baseAttendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
         const attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
         let studentSnap = await getDoc(doc(db, "students", compositeKey));
         if (!studentSnap.exists() && sectionSuffix) {
@@ -637,9 +712,55 @@ export default function Attendance() {
           studentSnap = await getDoc(doc(db, "students", baseKey));
         }
 
-        const attData = attendanceSnap.data();
+        const data = attendanceSnap.data() || {};
+        let mergedMeta = data._meta || {};
+        let mergedRecords = { ...getAttendanceRecords(data) };
+
+        // If section is selected, ALSO merge records from base doc ID (unsectioned/legacy attendance records)
+        if (sectionSuffix) {
+          try {
+            const baseSnap = await getDoc(doc(db, "attendance", baseAttendanceDocId));
+            if (baseSnap.exists()) {
+              const baseData = baseSnap.data();
+              const baseRecords = getAttendanceRecords(baseData);
+              Object.entries(baseRecords).forEach(([rk, rVal]) => {
+                if (!mergedRecords[rk]) {
+                  mergedRecords[rk] = rVal;
+                }
+              });
+              if (!mergedMeta.totalHours && baseData._meta?.totalHours) {
+                mergedMeta.totalHours = baseData._meta.totalHours;
+              }
+            }
+          } catch (e) {
+            console.warn('[Attendance] Base attendance doc merge warning:', e);
+          }
+        }
+
+        const attData = {
+          _meta: mergedMeta,
+          records_json: JSON.stringify(mergedRecords),
+          records: mergedRecords
+        };
+
         let rawMaster = studentSnap.data() || {};
         setAttendanceData(attData);
+
+        // Fetch student_section_index for dual-ID lookup (admissionNo ↔ regNo)
+        let secIdxData = {};
+        try {
+          const secIdxSnap = await getDoc(doc(db, 'student_section_index', compositeKey));
+          if (secIdxSnap.exists()) {
+            secIdxData = secIdxSnap.data();
+          } else if (sectionSuffix) {
+            const baseSecKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
+            const baseSecSnap = await getDoc(doc(db, 'student_section_index', baseSecKey));
+            if (baseSecSnap.exists()) secIdxData = baseSecSnap.data();
+          }
+        } catch (e) {
+          console.warn('[Attendance] student_section_index load error:', e);
+        }
+        setSectionIndex(secIdxData);
 
         // Filter to only enrolled students from course_enrolments
         try {
@@ -666,7 +787,39 @@ export default function Attendance() {
           console.warn('Enrollment filter failed, showing all students:', e);
         }
         setMasterList(rawMaster);
-        setStudents([]);
+
+        // Build default student list with cumulative attendance
+        const joiningAY = rawMaster._joiningAY || {};
+        const masterListObj = {};
+        Object.entries(rawMaster)
+          .filter(([key]) => !key.startsWith('_'))
+          .filter(([reg]) => {
+            if (!academicYear) return true;
+            const jAY = joiningAY[reg];
+            if (!jAY) return true;
+            return jAY <= academicYear;
+          })
+          .forEach(([reg, nameVal]) => {
+            masterListObj[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
+          });
+
+        const order = rawMaster._order;
+        const studentArray = Object.entries(masterListObj).map(([reg, name]) => ({
+          reg,
+          name,
+          hours: 0,
+          status: '',
+          percentage: "0.00",
+          topicTaught: '',
+          teachingAid: '',
+          teachingMethodology: '',
+          _conflict: false
+        }));
+
+        if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
+        else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
+
+        setStudents(studentArray);
 
         // Support both old format ({ _meta, students }), map format ({ _meta, records }), and json format ({ _meta, records_json })
         let recordKeys = [];
@@ -717,8 +870,8 @@ export default function Attendance() {
     if (!Object.keys(masterList).length || !attendanceDate || !periods.length) return;
 
     const firstPeriod = periods[0];
-    const recordKey = `${attendanceDate}_P${firstPeriod}`;
-    const dateRecord = getAttendanceRecords(attendanceData)?.[recordKey] || null;
+    const recordsMap = getAttendanceRecords(attendanceData);
+    const dateRecord = findRecordForPeriod(recordsMap, attendanceDate, firstPeriod);
     setCurrentRecordData(dateRecord);
 
     const isEvent = dateRecord?.isEvent || false;
@@ -753,29 +906,27 @@ export default function Attendance() {
     const order = masterList._order;
 
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-      const val = dateRecord?.students?.[reg];
-      const studentExists = val !== undefined;
-      let hours = 0, stuTopic = '', stuAid = '', stuMethod = '', storedStatus = '';
-      if (studentExists) {
-        if (typeof val === 'number') {
-          hours = val; // backward compat: old format { reg: hours }
-        } else {
-          hours = val.hours || 0;
-          stuTopic = val.topicTaught || '';
-          stuAid = val.teachingAid || '';
-          stuMethod = val.teachingMethodology || '';
-          storedStatus = val.status || '';
-        }
+      const rawVal = getStudentData(dateRecord?.students, reg);
+      const parsedVal = parseStudentAttendanceVal(rawVal);
+      const studentExists = parsedVal !== null;
+      let hours = parsedVal ? parsedVal.hours : 0;
+      let stuTopic = parsedVal ? parsedVal.topicTaught : '';
+      let stuAid = parsedVal ? parsedVal.teachingAid : '';
+      let stuMethod = parsedVal ? parsedVal.teachingMethodology : '';
+      let storedStatus = parsedVal ? parsedVal.status : '';
+
+      // If dateRecord exists (period was already marked), but student entry was missing/empty in Firestore, default to 'P' (Present)
+      let status = studentExists ? storedStatus : (dateRecord ? 'P' : '');
+      if (dateRecord && !studentExists) {
+        hours = totalH;
       }
-      // Check period conflict (another subject's attendance for same period)
-      let status = studentExists ? (storedStatus || (hours > 0 ? 'P' : 'A')) : '';
+
       let isConflict = false;
-      if (periodConflict?.record?.[reg]) {
-        const conflictVal = periodConflict.record[reg];
-        const conflictHours = typeof conflictVal === 'number' ? conflictVal : (conflictVal.hours || 0);
-        const conflictStatus = typeof conflictVal === 'object' ? conflictVal.status : '';
-        hours = conflictHours;
-        status = conflictStatus || (conflictHours > 0 ? 'P' : 'A');
+      const rawConflictVal = getStudentData(periodConflict?.record, reg);
+      const parsedConflict = parseStudentAttendanceVal(rawConflictVal);
+      if (parsedConflict !== null) {
+        hours = parsedConflict.hours;
+        status = parsedConflict.status;
         isConflict = true;
       }
       return {
@@ -853,10 +1004,10 @@ export default function Attendance() {
       return;
     }
 
-    const fromDate = reportFromDate;
-    const toDate = reportToDate;
+    const fromDate = extractPureDate(reportFromDate);
+    const toDate = extractPureDate(reportToDate);
     const allKeys = Object.keys(allRecords).filter(k => {
-      const datePart = k.includes('_P') ? k.slice(0, k.lastIndexOf('_P')) : k;
+      const datePart = extractPureDate(k);
       return datePart >= fromDate && datePart <= toDate;
     }).sort();
 
@@ -865,7 +1016,7 @@ export default function Attendance() {
       return;
     }
 
-    const totalClasses = allKeys.length;
+    const totalClasses = allKeys.filter(k => !allRecords[k]?.isEvent).length;
 
     // Derive display labels for each key (date-only → plain, compound → "date (Period X)")
     const keyLabels = {};
@@ -902,28 +1053,33 @@ export default function Attendance() {
       const dailyRecords = {};
       allKeys.forEach(key => {
         const rec = allRecords[key];
-        const rawHours = rec?.students?.[reg];
-        const hours = rawHours !== undefined ? (typeof rawHours === 'number' ? rawHours : (rawHours.hours ?? 0)) : undefined;
-        const storedStatus = rawHours !== undefined && typeof rawHours === 'object' ? rawHours.status : undefined;
+        const rawVal = getStudentData(rec?.students, reg);
+        const parsedVal = parseStudentAttendanceVal(rawVal);
 
         if (rec?.isEvent) {
-          const isPresent = storedStatus ? (storedStatus === 'P') : (hours !== undefined && hours > 0);
-          dailyRecords[key] = storedStatus || (isPresent ? 'P' : (hours !== undefined ? 'A' : '—'));
+          const isPresent = parsedVal ? (parsedVal.status === 'P' || parsedVal.hours > 0) : true;
+          dailyRecords[key] = parsedVal ? parsedVal.status : (isPresent ? 'P' : '—');
           return;
         }
-        let statusStr = '—';
-        if (storedStatus === 'OD') {
-          odCount++;
-          statusStr = 'OD';
-        } else if (storedStatus === 'P' || (hours !== undefined && hours > 0 && !storedStatus)) {
+
+        let statusStr = 'P';
+        if (parsedVal) {
+          const isOd = parsedVal.status === 'OD' || parsedVal.hours === -1;
+          if (isOd) {
+            odCount++;
+            statusStr = 'OD';
+          } else if (parsedVal.status === 'P' || parsedVal.hours > 0) {
+            attended++;
+            statusStr = 'P';
+          } else if (parsedVal.status === 'A' || parsedVal.hours <= 0) {
+            statusStr = 'A';
+          }
+        } else {
+          // Marked period where student was missing from studentsObj — count as Present ('P')
           attended++;
           statusStr = 'P';
-        } else if (storedStatus === 'A' || (hours !== undefined && hours <= 0 && !storedStatus)) {
-          statusStr = 'A';
-        } else if (hours !== undefined) {
-          statusStr = hours > 0 ? 'P' : 'A';
         }
-        if (hours !== undefined) markedClasses++;
+        markedClasses++;
         dailyRecords[key] = statusStr;
       });
       const classesForPct = markedClasses - odCount;
@@ -1133,19 +1289,30 @@ export default function Attendance() {
 
     students.forEach(s => {
       if (s._conflict) return; // skip conflict students
-      if (s.status === '') return; // skip unmarked
-      if (isAnotherFacultyRecord && s.reg in existingStudents) return; // skip existing in merge mode
-      newStudentsMap[s.reg] = makeStudentEntry(s);
+      const finalStatus = s.status || 'P';
+      const finalHours = finalStatus === 'P' ? (parseInt(totalConducted, 10) || 1) : (finalStatus === 'OD' ? -1 : 0);
+      const studentObj = { ...s, status: finalStatus, hours: finalHours };
+      if (isAnotherFacultyRecord && (getStudentData(existingStudents, s.reg) !== undefined)) return; // skip existing in merge mode
+      const entry = makeStudentEntry(studentObj);
+      newStudentsMap[s.reg] = entry;
+      const altId = idMap[s.reg];
+      if (altId) newStudentsMap[altId] = entry;
     });
     let mergedStudentsMap = { ...existingStudents, ...newStudentsMap };
     const hasNewEntries = Object.keys(newStudentsMap).length > 0;
 
     if (!hasNewEntries && !isAnotherFacultyRecord) {
-      // No new entries and not a merge — regular flow, build map from all marked students
+      // Regular flow, build map from all active students (defaulting unmarked to P)
       const freshMap = {};
       students.forEach(s => {
         if (s._conflict) return; // skip conflict students
-        if (s.status !== '') freshMap[s.reg] = makeStudentEntry(s);
+        const finalStatus = s.status || 'P';
+        const finalHours = finalStatus === 'P' ? (parseInt(totalConducted, 10) || 1) : (finalStatus === 'OD' ? -1 : 0);
+        const studentObj = { ...s, status: finalStatus, hours: finalHours };
+        const entry = makeStudentEntry(studentObj);
+        freshMap[s.reg] = entry;
+        const altId = idMap[s.reg];
+        if (altId) freshMap[altId] = entry;
       });
       mergedStudentsMap = freshMap;
     }
@@ -1185,7 +1352,7 @@ export default function Attendance() {
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
       setAttendanceData(prev => ({ ...prev, records_json: JSON.stringify(updatedRecords), records: updatedRecords, _meta: { totalHours: nextTotal } }));
-      
+
       // Clear period selection and reset state for next attendance entry
       setPeriod("");
       setPeriods([]);
@@ -1255,15 +1422,23 @@ export default function Attendance() {
     const counts = {};
     Object.values(recordsMap).forEach(record => {
       if (record.isEvent) return;
-      Object.entries(record.students || {}).forEach(([reg, val]) => {
-        const hours = typeof val === 'number' ? val : (val?.hours || 0);
-        const status = typeof val === 'object' ? val?.status : '';
-        if (status === 'OD') return;
-        if (Number(hours) > 0) counts[reg] = (counts[reg] || 0) + 1;
+      const studentsObj = record.students || {};
+      Object.keys(masterList || {}).forEach(reg => {
+        if (reg.startsWith('_')) return;
+        const rawVal = getStudentData(studentsObj, reg);
+        const parsedVal = parseStudentAttendanceVal(rawVal);
+        if (parsedVal) {
+          if (parsedVal.status !== 'OD' && parsedVal.status !== 'A') {
+            counts[reg] = (counts[reg] || 0) + 1;
+          }
+        } else {
+          // Marked period where student entry was missing in studentsObj — default to attended
+          counts[reg] = (counts[reg] || 0) + 1;
+        }
       });
     });
     return counts;
-  }, [attendanceData]);
+  }, [attendanceData, masterList, getStudentData]);
 
   // ─── cumulative OD count ───
   const cumulativeOD = useMemo(() => {
@@ -1272,13 +1447,18 @@ export default function Attendance() {
     const counts = {};
     Object.values(recordsMap).forEach(record => {
       if (record.isEvent) return;
-      Object.entries(record.students || {}).forEach(([reg, val]) => {
-        const status = typeof val === 'object' ? val?.status : '';
-        if (status === 'OD') counts[reg] = (counts[reg] || 0) + 1;
+      const studentsObj = record.students || {};
+      Object.keys(masterList || {}).forEach(reg => {
+        if (reg.startsWith('_')) return;
+        const rawVal = getStudentData(studentsObj, reg);
+        const parsedVal = parseStudentAttendanceVal(rawVal);
+        if (parsedVal && (parsedVal.status === 'OD' || parsedVal.hours === -1)) {
+          counts[reg] = (counts[reg] || 0) + 1;
+        }
       });
     });
     return counts;
-  }, [attendanceData]);
+  }, [attendanceData, masterList, getStudentData]);
 
   // ─── non-event record count (excludes event attendance from total classes) ───
   const nonEventRecordCount = useMemo(() => {
@@ -1296,14 +1476,28 @@ export default function Attendance() {
   // Read-only student regs (existing entries from another faculty for current subject or period conflict)
   const readOnlyRegs = useMemo(() => {
     const regs = new Set();
-    if (currentRecordData?.markedBy && currentRecordData.markedBy !== currentUid) {
-      Object.keys(currentRecordData.students || {}).forEach(r => regs.add(r));
+    if (currentRecordData?.markedBy && currentUid && currentRecordData.markedBy !== currentUid) {
+      const studentKeys = Array.isArray(currentRecordData.students)
+        ? currentRecordData.students.map(s => s.reg || s.regNo || s.admNo || s.id)
+        : Object.keys(currentRecordData.students || {});
+      studentKeys.forEach(r => {
+        if (!r) return;
+        regs.add(r);
+        if (idMap[r]) regs.add(idMap[r]);
+      });
     }
     if (periodConflict?.record) {
-      Object.keys(periodConflict.record).forEach(r => regs.add(r));
+      const conflictKeys = Array.isArray(periodConflict.record)
+        ? periodConflict.record.map(s => s.reg || s.regNo || s.admNo || s.id)
+        : Object.keys(periodConflict.record);
+      conflictKeys.forEach(r => {
+        if (!r) return;
+        regs.add(r);
+        if (idMap[r]) regs.add(idMap[r]);
+      });
     }
     return regs;
-  }, [currentRecordData, currentUid, periodConflict]);
+  }, [currentRecordData, currentUid, periodConflict, idMap]);
 
   return (
     <Layout title="Attendance Records">
@@ -1391,11 +1585,10 @@ export default function Attendance() {
               }}
                 min={dateRangeInfo.minDate ? dateRangeInfo.minDate.toISOString().split('T')[0] : undefined}
                 max={new Date().toISOString().split('T')[0]}
-                className={`w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none focus:ring-2 transition-all ${
-                  dateRangeInfo.blocked
+                className={`w-full bg-gradient-to-r from-blue-50 to-indigo-50/50 border rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none focus:ring-2 transition-all ${dateRangeInfo.blocked
                     ? 'border-rose-300 text-rose-600 focus:ring-rose-500/40'
                     : 'border-blue-200 text-blue-700 focus:ring-blue-500/40'
-                }`}
+                  }`}
               />
               {dateRangeInfo.blocked && (
                 <p className="text-[10px] font-bold text-rose-600 mt-1 flex items-center gap-1">
@@ -1441,23 +1634,22 @@ export default function Attendance() {
                   </div>
                 )}
                 {periods.length > 0 && (periods.some(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]) || periodConflict) ? (
-                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${
-                    periodConflict || (() => {
+                  <span className={`shrink-0 px-2.5 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-wider ${periodConflict || (() => {
                       const rec = periods.map(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]).find(Boolean) || currentRecordData;
                       return rec?.markedBy && rec.markedBy !== currentUid;
                     })()
                       ? 'bg-red-100 border-red-300 text-red-700'
                       : 'bg-amber-100 border-amber-300 text-amber-700'
                     }`}>
-                    {periodConflict 
-                      ? `Already marked (${periodConflict.subjectCode})` 
+                    {periodConflict
+                      ? `Already marked (${periodConflict.subjectCode})`
                       : (() => {
-                          const rec = periods.map(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]).find(Boolean) || currentRecordData;
-                          if (rec?.markedBy && rec.markedBy !== currentUid) {
-                            return `Marked by ${facultyNames[rec.markedBy] || rec.markedBy}`;
-                          }
-                          return 'Already marked';
-                        })()
+                        const rec = periods.map(p => getAttendanceRecords(attendanceData)?.[`${attendanceDate}_P${p}`]).find(Boolean) || currentRecordData;
+                        if (rec?.markedBy && rec.markedBy !== currentUid) {
+                          return `Marked by ${facultyNames[rec.markedBy] || rec.markedBy}`;
+                        }
+                        return 'Already marked';
+                      })()
                     }
                   </span>
                 ) : null}
@@ -1599,16 +1791,16 @@ export default function Attendance() {
                 Save
               </button>
               {currentRecordData && periods.length > 0 && readOnlyRegs.size === 0 && periods.map(p => {
-                  const recordKey = `${attendanceDate}_P${p}`;
-                  const hasRecord = getAttendanceRecords(attendanceData)?.[recordKey];
-                  return hasRecord ? (
-                    <button key={p} onClick={() => handleClearAttendance(p)} disabled={saving}
-                      className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
-                    >
-                      <X size={15} /> Clear P{p}
-                    </button>
-                  ) : null;
-                })}
+                const recordKey = `${attendanceDate}_P${p}`;
+                const hasRecord = getAttendanceRecords(attendanceData)?.[recordKey];
+                return hasRecord ? (
+                  <button key={p} onClick={() => handleClearAttendance(p)} disabled={saving}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-red-500 hover:from-rose-600 hover:to-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-500/25 disabled:opacity-50"
+                  >
+                    <X size={15} /> Clear P{p}
+                  </button>
+                ) : null;
+              })}
               <button
                 onClick={() => {
                   if (!subject) {
@@ -1617,8 +1809,10 @@ export default function Attendance() {
                   }
                   setShowReportModal(true);
                   if (recordDates.length > 0) {
-                    if (!reportFromDate) setReportFromDate(recordDates[0]);
-                    if (!reportToDate) setReportToDate(recordDates[recordDates.length - 1]);
+                    const minD = extractPureDate(recordDates[0]);
+                    const maxD = extractPureDate(recordDates[recordDates.length - 1]);
+                    if (!reportFromDate) setReportFromDate(minD);
+                    if (!reportToDate) setReportToDate(maxD);
                   }
                 }}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-500/25"

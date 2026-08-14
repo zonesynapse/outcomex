@@ -66,6 +66,7 @@ export default function QuestionPaperGenerator() {
   const [exam, setExam] = useState('');
   const [customExam, setCustomExam] = useState('');
   const [assessmentType, setAssessmentType] = useState('Exam');
+  const [selectedCategory, setSelectedCategory] = useState('');
   const [numParts, setNumParts] = useState('');
 
   const [batches, setBatches] = useState([]);
@@ -719,6 +720,124 @@ export default function QuestionPaperGenerator() {
     fetchCourseDetails();
   }, [program, department, batch, subject, getRegulationForBatch, selectedSemester]);
 
+  const findCategoryData = useCallback((reg, cType) => {
+    if (!reg || !cType) return null;
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanSubjType = normClean(cType);
+
+    if (reg[cType]) return reg[cType];
+    const keys = Object.keys(reg).filter(k => !k.startsWith('_'));
+    if (cleanSubjType) {
+      const directKey = keys.find(k => normClean(k) === cleanSubjType);
+      if (directKey) return reg[directKey];
+    }
+
+    const getNormType = (typeStr) => {
+      const s = normClean(typeStr);
+      if (s.includes('cum') || s.includes('integrated') || s.includes('withlab')) return 'integrated';
+      if (s.includes('practical') || s.includes('lab')) return 'practical';
+      if (s.includes('project')) return 'project';
+      if (s.includes('activity')) return 'activity';
+      return 'theory';
+    };
+
+    const targetNorm = getNormType(cType);
+    const catKey = keys.find(k => {
+      const kn = normClean(k);
+      if (targetNorm === 'theory' && (kn === 'theory' || kn.includes('theory') || kn.includes('lecture'))) {
+        return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum');
+      }
+      if (targetNorm === 'practical' && (kn === 'laboratory' || kn === 'practical' || kn.includes('lab') || kn.includes('practical'))) {
+        return !kn.includes('theory');
+      }
+      if (targetNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || (kn.includes('theory') && kn.includes('lab')))) {
+        return true;
+      }
+      if (targetNorm === 'project' && (kn.includes('project') || kn.includes('viva'))) return true;
+      if (targetNorm === 'activity' && kn.includes('activity')) return true;
+      return false;
+    });
+
+    return catKey ? reg[catKey] : null;
+  }, []);
+
+  const availableCategories = useMemo(() => {
+    const regSanitized = sanitizeKey(getRegulationForBatch(formatProgrammeKey(program), batch));
+    const aySanitized = sanitizeKey(academicYear);
+    const regAyKey = `${regSanitized}_${aySanitized}`;
+    const regCleanNorm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const regAyCleanNorm = regCleanNorm(`${getRegulationForBatch(formatProgrammeKey(program), batch)}_${academicYear}`);
+    const regNorm = regCleanNorm(getRegulationForBatch(formatProgrammeKey(program), batch));
+
+    let regWeightage = courseWeightageData[regAyKey] || courseWeightageData[regSanitized];
+    if (!regWeightage && courseWeightageData) {
+      const matchKey = Object.keys(courseWeightageData).find(k => {
+        const kn = regCleanNorm(k);
+        return kn === regAyCleanNorm || kn === regNorm || kn.includes(regAyCleanNorm) || (kn.includes(regNorm) && !kn.includes('_20'));
+      });
+      if (matchKey) regWeightage = courseWeightageData[matchKey];
+    }
+
+    const list = [];
+    if (regWeightage && subjectCourseType) {
+      const catData = findCategoryData(regWeightage, subjectCourseType);
+      if (catData && catData._category_config) {
+        Object.keys(catData._category_config).forEach(catName => {
+          if (catName && !list.includes(catName)) list.push(catName);
+        });
+      }
+    }
+
+    const finalCategories = list.length > 0 ? list : (() => {
+      const sTypeClean = String(subjectCourseType || '').toLowerCase();
+      if (sTypeClean.includes('lab') || sTypeClean.includes('practical')) {
+        return ["PRACTICAL", "ACTIVITY"];
+      }
+      if (sTypeClean.includes('project')) {
+        return ["PROJECT"];
+      }
+      if (sTypeClean.includes('activity')) {
+        return ["ACTIVITY"];
+      }
+      return ["WRITTEN TEST", "ACTIVITY"];
+    })();
+
+    // Temporarily exclude ESE and Indirect Assessment as requested
+    return finalCategories.filter(catName => {
+      const cn = String(catName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return !cn.includes('ese') && !cn.includes('indirect');
+    });
+  }, [program, batch, academicYear, courseWeightageData, subjectCourseType, getRegulationForBatch, findCategoryData]);
+
+  useEffect(() => {
+    if (availableCategories && availableCategories.length > 0) {
+      if (!selectedCategory || !availableCategories.includes(selectedCategory)) {
+        handleCategorySelect(availableCategories[0]);
+      }
+    }
+  }, [availableCategories]);
+
+  const handleCategorySelect = (catName) => {
+    setSelectedCategory(catName);
+    setExam('');
+    setCustomExam('');
+    setShowParts(false);
+    setQbAvailableQNos([]);
+
+    const catClean = (catName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (catClean.includes('activity') || catClean.includes('assignment')) {
+      setAssessmentType('Assignment');
+    } else if (catClean.includes('project')) {
+      setAssessmentType('Project');
+    } else if (catClean.includes('practical') || catClean.includes('observation') || catClean.includes('lab')) {
+      setAssessmentType('Practical');
+    } else if (catClean.includes('indirect') || catClean.includes('survey')) {
+      setAssessmentType('Indirect');
+    } else {
+      setAssessmentType('Exam');
+    }
+  };
+
   const filteredExams = useMemo(() => {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
 
@@ -764,6 +883,28 @@ export default function QuestionPaperGenerator() {
       nameClean.includes('group discussion') ||
       nameClean.includes('value added');
 
+    const doesExamMatchCategory = (cfg, categoryName) => {
+      if (!categoryName) return true;
+
+      const cn = normClean(categoryName);
+      const examNameClean = normClean(cfg?.examName || cfg?.exam_name || cfg?.title || cfg?.name || cfg?.exam || cfg?.label || cfg?.eventTitle || cfg?.eventName || '');
+
+      const isAssignmentOrActivity = Boolean(cfg?.isAssignment || cfg?.isActivity || examNameClean.includes('assignment') || examNameClean.includes('activity'));
+      const isPractical = Boolean(cfg?.isPractical || examNameClean.includes('practical') || examNameClean.includes('lab') || examNameClean.includes('observation'));
+      const isProject = Boolean(cfg?.isProject || examNameClean.includes('project'));
+      const isIndirect = Boolean(cfg?.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey') || examNameClean.includes('exit'));
+      const isEse = Boolean(cfg?.isUniversity || examNameClean.includes('ese') || examNameClean.includes('endsemester') || examNameClean.includes('university') || examNameClean.includes('endsem') || examNameClean.includes('external'));
+
+      if (cn.includes('activity') || cn.includes('assignment')) return isAssignmentOrActivity && !isProject && !isIndirect && !isEse;
+      if (cn.includes('practical') || cn.includes('lab') || cn.includes('observation')) return isPractical && !isEse;
+      if (cn.includes('project')) return isProject && !isEse;
+      if (cn.includes('indirect') || cn.includes('survey') || cn.includes('exit')) return isIndirect;
+      if (cn.includes('ese') || cn.includes('endsemester') || cn.includes('university') || cn.includes('endsem')) return isEse;
+
+      // Default: Written / CIA Test (IA 1, IA 2, IA 3, Model Exam)
+      return !isAssignmentOrActivity && !isPractical && !isProject && !isIndirect && !isEse;
+    };
+
     const addExam = (id, rawName, type) => {
       let name = '';
       if (typeof rawName === 'object' && rawName !== null) {
@@ -782,12 +923,19 @@ export default function QuestionPaperGenerator() {
       examList.push({ id: id || name, examName: name, type });
     };
 
-    // Pre-compute regWeightage for disabled exam lookup
+    // Pre-compute regWeightage for disabled exam lookup (tries Academic Year specific key first, falls back to regulation default)
     const regSanitized = sanitizeKey(regulation);
+    const aySanitized = sanitizeKey(academicYear);
+    const regAyKey = `${regSanitized}_${aySanitized}`;
     const regCleanNorm = normClean(regulation);
-    let regWeightage = courseWeightageData[regSanitized];
+    const regAyCleanNorm = normClean(`${regulation}_${academicYear}`);
+
+    let regWeightage = courseWeightageData[regAyKey] || courseWeightageData[regSanitized];
     if (!regWeightage) {
-      const matchKey = Object.keys(courseWeightageData).find(k => normClean(k) === regCleanNorm || normClean(k).includes(regCleanNorm) || regCleanNorm.includes(normClean(k)));
+      const matchKey = Object.keys(courseWeightageData).find(k => {
+        const kn = normClean(k);
+        return kn === regAyCleanNorm || kn === regCleanNorm || kn.includes(regAyCleanNorm) || (kn.includes(regCleanNorm) && !kn.includes('_20'));
+      });
       if (matchKey) regWeightage = courseWeightageData[matchKey];
     }
 
@@ -852,6 +1000,8 @@ export default function QuestionPaperGenerator() {
       });
     }
 
+    const activeCategoryTarget = selectedCategory || (availableCategories && availableCategories.length > 0 ? availableCategories[0] : 'WRITTEN TEST');
+
     // 1. Process course_type_weightage from Firestore for current regulation (Curriculum configured exams)
     let addedFromWeightage = false;
 
@@ -864,52 +1014,54 @@ export default function QuestionPaperGenerator() {
 
         Object.entries(categoryData._category_config).forEach(([cName, cConf]) => {
           if (!cConf || cConf.consider_for_internal === false) return;
-          const groupClean = normClean(cName);
 
-          const isGroupPractical = groupClean.includes('practical') || groupClean.includes('observation') || groupClean.includes('lab');
-          const isGroupAssignment = groupClean.includes('assignment');
-          const isGroupActivity = groupClean.includes('activity');
-          const isGroupProject = groupClean.includes('project');
-          const isGroupIndirect = groupClean.includes('indirect') || groupClean.includes('survey');
-          const isGroupWritten = groupClean.includes('written') || groupClean.includes('theory') || groupClean.includes('test') || groupClean.includes('ese') || groupClean.includes('exam');
+          if (normClean(cName) !== normClean(activeCategoryTarget)) return;
 
-          let allowGroup = false;
-          if (assessmentType === 'Assignment' && (isGroupAssignment || isGroupActivity)) allowGroup = true;
-          else if (assessmentType === 'Activity' && (isGroupActivity || isGroupAssignment)) allowGroup = true;
-          else if (assessmentType === 'Project' && isGroupProject) allowGroup = true;
-          else if (assessmentType === 'Practical' && isGroupPractical) allowGroup = true;
-          else if (assessmentType === 'Indirect' && isGroupIndirect) allowGroup = true;
-          else if (assessmentType === 'Exam' && (isGroupWritten || (!isGroupPractical && !isGroupAssignment && !isGroupActivity && !isGroupProject && !isGroupIndirect))) allowGroup = true;
+          const candidateExamsMap = new Map();
 
-          if (!allowGroup) return;
-          if (!cConf.exam_weightage || typeof cConf.exam_weightage !== 'object') return;
+          // 1. Explicitly configured exams in exam_weightage for this category
+          if (cConf.exam_weightage && typeof cConf.exam_weightage === 'object') {
+            Object.keys(cConf.exam_weightage).forEach(id => {
+              const cfg = ciaConfigById.get(id);
+              candidateExamsMap.set(id, { id, config: cfg, rawName: cfg ? null : id });
+            });
+          }
 
-          Object.keys(cConf.exam_weightage).forEach(id => {
-            const resolvedCfg = ciaConfigById.get(id);
+          // 2. Matching ciaConfigs for this regulation, course type, and category
+          ciaConfigs.forEach(cfg => {
+            if (!cfg || !cfg.regulation) return;
+            const cfgRegClean = normClean(cfg.regulation);
+            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
+
+            // Academic Year check: if exam has a specific AY, it must match selectedAy
+            const cfgAyNorm = norm(cfg.academicYear);
+            if (cfgAyNorm && cfgAyNorm !== selectedAy) return;
+            if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+              const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+              if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
+            }
+
+            // Match exam using direct CIA Config flags against selected category
+            const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
+
+            if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
+              candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
+            }
+          });
+
+          candidateExamsMap.forEach(({ id, config: resolvedCfg, rawName }) => {
+            if (resolvedCfg && norm(resolvedCfg.academicYear) && norm(resolvedCfg.academicYear) !== selectedAy) return;
+
             const rn = resolvedCfg
               ? (resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName)
-              : id; // Fallback to id if id is the exam name itself
+              : rawName;
 
             if (rn && !isRawFirebaseId(rn)) {
-              const rnClean = normClean(rn);
-              const examIsPractical = (resolvedCfg && resolvedCfg.isPractical) || rnClean.includes('practical') || rnClean.includes('model practical') || rnClean.includes('observation') || rnClean.includes('record') || rnClean.includes('lab');
-              const examIsAssignmentOrActivity = (resolvedCfg && (resolvedCfg.isAssignment || resolvedCfg.isActivity)) || rnClean.includes('assignment') || rnClean.includes('activity');
-              const examIsProject = (resolvedCfg && resolvedCfg.isProject) || rnClean.includes('project');
-              const examIsIndirect = (resolvedCfg && resolvedCfg.isIndirectAssessment) || rnClean.includes('indirect') || rnClean.includes('survey');
-
-              if (assessmentType === 'Assignment' || assessmentType === 'Activity') {
-                if (examIsProject || examIsIndirect || (targetCourseTypeNorm === 'theory' && examIsPractical)) return;
-              } else if (assessmentType === 'Project') {
-                if (!examIsProject) return;
-              } else if (assessmentType === 'Practical') {
-                if (!examIsPractical) return;
-              } else if (assessmentType === 'Indirect') {
-                if (!examIsIndirect) return;
+              // Every exam MUST match the active category based on its CIA Config flags/type.
+              if (resolvedCfg) {
+                if (!doesExamMatchCategory(resolvedCfg, activeCategoryTarget)) return;
               } else {
-                // Exam type (IA 1, IA 2, Model Exam, End Semester Exam)
-                if (examIsAssignmentOrActivity || examIsProject || examIsIndirect) return;
-                if (targetCourseTypeNorm === 'theory' && examIsPractical) return;
-                if (targetCourseTypeNorm === 'practical' && !examIsPractical) return;
+                if (!doesExamMatchCategory({ examName: rn }, activeCategoryTarget)) return;
               }
 
               addExam(resolvedCfg ? resolvedCfg.id : id, rn, 'weightage');
@@ -931,6 +1083,8 @@ export default function QuestionPaperGenerator() {
         if (norm(config.academicYear) && norm(config.academicYear) !== selectedAy) return;
         if (config.semester && String(config.semester) !== semNum) return;
         if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
+
+        if (!doesExamMatchCategory(config, activeCategoryTarget)) return;
 
         const examNameClean = normClean(resolvedName);
         const isPracticalExam = config.isPractical || examNameClean.includes('practical') || examNameClean.includes('observation') || examNameClean.includes('record') || examNameClean.includes('lab');
@@ -4175,25 +4329,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
       <div className="question-paper-page container mx-auto p-6 max-w-7xl">
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
-            <div className="space-y-2.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Assessment Type</label>
-              <div className="relative">
-                <select
-                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
-                  value={assessmentType}
-                  onChange={e => { setAssessmentType(e.target.value); setShowParts(false); setQbAvailableQNos([]); }}
-                >
-                  <option value="Exam">Exam</option>
-                  <option value="Assignment">Activity</option>
-                  <option value="Project">Project</option>
-                  <option value="Practical">Practical</option>
-                  <option value="Indirect">Indirect Assessment</option>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-              </div>
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
             <div className="space-y-2.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Program</label>
               <div className="relative">
@@ -4258,9 +4394,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
             <div className="space-y-2.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester</label>
               <div className="relative">
@@ -4276,7 +4410,9 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
               </div>
             </div>
+          </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div className="space-y-2.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
               <div className="relative">
@@ -4294,12 +4430,19 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             </div>
 
             <div className="space-y-2.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
+                <span>Subject</span>
+                {subjectCourseType && (
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold border border-indigo-100 uppercase tracking-tighter">
+                    {subjectCourseType}
+                  </span>
+                )}
+              </label>
               <div className="relative">
                 <select
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                   value={subject}
-                  onChange={e => setSubject(e.target.value)}
+                  onChange={e => { setSubject(e.target.value); setSelectedCategory(''); setExam(''); }}
                 >
                   <option value="">Select Subject</option>
                   {subjects.map((s, i) => (
@@ -4313,7 +4456,39 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             </div>
 
             <div className="space-y-2.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Exam</label>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
+                <span>Category</span>
+                {selectedCategory && (
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-100 uppercase tracking-tighter">
+                    {selectedCategory}
+                  </span>
+                )}
+              </label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-slate-700"
+                  value={selectedCategory}
+                  onChange={e => handleCategorySelect(e.target.value)}
+                  disabled={!subject}
+                >
+                  <option value="">-- All Categories --</option>
+                  {availableCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1 flex items-center justify-between">
+                <span>Exam</span>
+                {filteredExams.length > 0 && (
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold border border-emerald-100">
+                    {filteredExams.length} Available
+                  </span>
+                )}
+              </label>
               <div className="relative">
                 <select
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"

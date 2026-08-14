@@ -345,7 +345,12 @@ export default function Reports() {
       try {
         const allCiaMap = Object.fromEntries(Object.entries(ciaConfigs || {}).map(([id, c]) => [id, { id, ...c }]));
 
-        const weightageDoc = courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
+        const ayKeyStrict = sanitizeKeyStrict(academicYear);
+        const ayKey = sanitizeKey(academicYear);
+        const regAyKeyStrict = `${regKeyStrict}_${ayKeyStrict}`;
+        const regAyKey = `${regKey}_${ayKey}`;
+
+        const weightageDoc = courseWeightageData[regAyKeyStrict] || courseWeightageData[regAyKey] || courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
         const ctWeightage = weightageDoc[courseType] || weightageDoc[Object.keys(weightageDoc).find(k => !k.startsWith('_'))] || {};
         const catConfigMap = ctWeightage._category_config || {};
         const normalizedCatConfigMap = {};
@@ -641,7 +646,12 @@ export default function Reports() {
     if (!regulation) return null;
     const regKey = sanitizeKey(regulation);
     const regKeyStrict = sanitizeKeyStrict(regulation);
-    const weightageDoc = courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
+    const ayKeyStrict = sanitizeKeyStrict(academicYear);
+    const ayKey = sanitizeKey(academicYear);
+    const regAyKeyStrict = `${regKeyStrict}_${ayKeyStrict}`;
+    const regAyKey = `${regKey}_${ayKey}`;
+
+    const weightageDoc = courseWeightageData[regAyKeyStrict] || courseWeightageData[regAyKey] || courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
     const ctConfig = weightageDoc[courseType] || {};
     const passPct = ctConfig._type_pass_mark;
     return passPct != null && passPct !== '' ? Number(passPct) : null;

@@ -37,6 +37,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     examName: '',
+    academicYear: '',
     totalMarks: 0,
     isUniversity: false,
     isIndirectAssessment: false,
@@ -148,6 +149,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
         program: program || "",
         department: department || "",
         regulation,
+        academicYear: formData.academicYear || "",
         examName,
         totalMarks: Number(totalMarks),
         isUniversity,
@@ -163,6 +165,7 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
       setSuccess("Configuration saved successfully!");
       setFormData({
         examName: '',
+        academicYear: '',
         totalMarks: 0,
         isUniversity: false,
         isIndirectAssessment: false,
@@ -253,6 +256,22 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
                   </span>
                 ))}
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Academic Year (Optional)</label>
+              <select
+                name="academicYear"
+                value={formData.academicYear}
+                onChange={handleInputChange}
+                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-[#120c7a] focus:border-transparent outline-none transition-all text-sm font-medium"
+              >
+                <option value="">All Academic Years (Default)</option>
+                <option value="2023-2024">2023-2024</option>
+                <option value="2024-2025">2024-2025</option>
+                <option value="2025-2026">2025-2026</option>
+                <option value="2026-2027">2026-2027</option>
+                <option value="2027-2028">2027-2028</option>
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Exam Name</label>

@@ -1,13 +1,37 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../firebase";
-import { doc, collection, getDoc, getDocs } from "firebase/firestore";
+import { doc, collection, getDoc, getDocs, query, where, documentId } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { CalendarCheck2, AlertCircle, Loader2, Check, X } from "lucide-react";
-import { getAttendanceRecords } from "../../lib/utils";
+import { getAttendanceRecords, parseStudentAttendanceVal } from "../../lib/utils";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]]/g, '_');
+};
+
+const getStudentValFromRec = (studentsObj, studentIds) => {
+  if (!studentsObj) return undefined;
+  for (const id of studentIds) {
+    if (studentsObj[id] !== undefined) return studentsObj[id];
+  }
+  if (Array.isArray(studentsObj)) {
+    const match = studentsObj.find(item => {
+      if (!item) return false;
+      const itemReg = String(item.reg || item.regNo || item.admNo || item.admissionNo || item.id || '').trim().toLowerCase();
+      return studentIds.some(id => String(id).trim().toLowerCase() === itemReg);
+    });
+    if (match) return match;
+  }
+  if (typeof studentsObj === 'object') {
+    const keys = Object.keys(studentsObj);
+    const matchedKey = keys.find(k => {
+      const normK = String(k).trim().toLowerCase();
+      return studentIds.some(id => String(id).trim().toLowerCase() === normK);
+    });
+    if (matchedKey) return studentsObj[matchedKey];
+  }
+  return undefined;
 };
 
 const extractSubjectCode = (docId) => {
@@ -72,10 +96,13 @@ export default function Attendance() {
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
 
+        const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
+        const batchPrefixEnd = `${batchPrefix}\uf8ff`;
+
         const [attSnapshot, batchRegSnap, assignSnap, usersSnap] = await Promise.all([
-          getDocs(collection(db, "attendance")),
+          getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
-          getDocs(collection(db, "subject_assignments")),
+          getDocs(query(collection(db, "subject_assignments"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDocs(collection(db, "users")),
         ]);
 
@@ -112,7 +139,11 @@ export default function Attendance() {
           facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
         });
 
-        // Collect raw entries where this student was explicitly included in rec.students
+        const studentIds = [regNo, studentData.admissionNo, studentData.admNo, studentData.id]
+          .filter(Boolean)
+          .map(x => String(x).trim());
+
+        // Collect raw entries where this student is enrolled or period is marked
         const rawEntries = [];
         const subjectDocMap = {};
 
@@ -121,7 +152,8 @@ export default function Attendance() {
           if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
           const data = docSnap.data();
           const records = getAttendanceRecords(data);
-          if (!Object.keys(records).length) return;
+          const recordCount = Object.keys(records).length;
+          if (!recordCount) return;
 
           const subjectCode = extractSubjectCode(id);
           subjectDocMap[id] = subjectCode;
@@ -130,17 +162,14 @@ export default function Attendance() {
             const dateMatch = key.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
             if (!dateMatch) return;
 
-            const rawH = rec?.students?.[regNo];
-            if (rawH === undefined) return; // Student was not in this record
+            const rawH = getStudentValFromRec(rec?.students, studentIds);
+            const parsedVal = parseStudentAttendanceVal(rawH);
 
-            const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
-            const storedStatus = typeof rawH === 'object' && rawH !== null ? rawH.status : undefined;
-            let status = 'A';
-            if (storedStatus) {
-              status = storedStatus;
-            } else {
-              if (hours > 0) status = 'P';
-              else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            let status = 'P';
+            if (parsedVal) {
+              status = parsedVal.status;
+            } else if (rec?.students && Object.keys(rec.students).length > 0 && rawH === undefined) {
+              status = 'P';
             }
 
             const [, dateStr, periodStr] = dateMatch;
@@ -157,6 +186,11 @@ export default function Attendance() {
             });
           });
         });
+
+        // Diagnostic: log per-subject entry counts
+        const rawSubjectCounts = {};
+        rawEntries.forEach(e => { rawSubjectCounts[e.subjectCode] = (rawSubjectCounts[e.subjectCode] || 0) + 1; });
+        console.log('[Student Attendance] Attendance docs loaded:', attSnapshot.size, '| Raw entries:', rawEntries.length, '| Per-subject:', rawSubjectCounts);
 
         // Filter by course enrollment: only count subjects the student is actually enrolled in
         const uniqueEnrolKeys = new Set();
@@ -185,10 +219,16 @@ export default function Attendance() {
         const filteredEntries = rawEntries.filter(e => {
           // 1. Course enrollment doc (precise — for data saved after enrollment tracking)
           const ek = enrolKeyMap[e.docId];
-          if (ek && enrolMap[ek]) return enrolMap[ek].has(regNo);
+          if (ek && enrolMap[ek]) {
+            return studentIds.some(id => enrolMap[ek].has(id));
+          }
           // 2. Fallback: subject must be assigned to this batch (handles old data without enrollment docs)
           return !!facultyUidMap[e.subjectCode];
         });
+
+        const filteredSubjectCounts = {};
+        filteredEntries.forEach(e => { filteredSubjectCounts[e.subjectCode] = (filteredSubjectCounts[e.subjectCode] || 0) + 1; });
+        console.log('[Student Attendance] After enrollment filter:', filteredEntries.length, '| Per-subject:', filteredSubjectCounts);
 
         // Dedup by recordKey: when no enrollment docs exist, a student may appear in multiple subjects
         // for the same period (old data). Dedup ensures each period is counted at most once.
@@ -232,6 +272,7 @@ export default function Attendance() {
               subject: '-',
               period: entry.period,
               present: isAttended,
+              status: entry.status,
               isEvent: true,
               subjectName: entry.eventName || '',
               facultyName: entry.markedBy ? (facultyNames[entry.markedBy] || '') : entry.markedBy
@@ -256,7 +297,8 @@ export default function Attendance() {
           dateMap[entry.dateStr].push({
             subject: entry.subjectCode,
             period: entry.period,
-            present: isAttended
+            present: isAttended,
+            status: entry.status
           });
         });
 
@@ -324,7 +366,9 @@ export default function Attendance() {
   const getDateStats = (date) => {
     const rows = dateWiseRows.filter(r => r.date === date);
     const present = rows.filter(r => r.present).length;
-    return { total: rows.length, present, pct: rows.length > 0 ? (present / rows.length) * 100 : 0 };
+    const od = rows.filter(r => r.status === 'OD').length;
+    const nonOd = rows.length - od;
+    return { total: rows.length, present, od, nonOd, pct: nonOd > 0 ? (present / nonOd) * 100 : 0 };
   };
 
   if (loading) {
@@ -460,8 +504,13 @@ export default function Attendance() {
                     <div className="flex flex-wrap items-center gap-2 md:gap-4">
                       <span className="text-sm font-bold text-slate-700">{formatDate(date)}</span>
                       <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${getPercentColor(stats.pct)}`}>
-                        {stats.present}/{stats.total} periods &middot; {stats.pct.toFixed(0)}%
+                        {stats.present}/{stats.nonOd} periods &middot; {stats.pct.toFixed(0)}%
                       </span>
+                      {stats.od > 0 && (
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full border border-blue-200 text-blue-600 bg-blue-50">
+                          {stats.od} OD
+                        </span>
+                      )}
                     </div>
                     <svg
                       className={`w-5 h-5 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
@@ -507,7 +556,11 @@ export default function Attendance() {
                                   <span className="text-sm font-bold text-slate-600">P{row.period}</span>
                                 </td>
                                 <td className="px-4 py-2 text-center">
-                                  {row.present ? (
+                                  {row.status === 'OD' ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-3 py-1">
+                                      <CalendarCheck2 size={12} /> OD
+                                    </span>
+                                  ) : row.present ? (
                                     <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
                                       <Check size={12} /> Present
                                     </span>
