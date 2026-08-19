@@ -14,6 +14,7 @@ import { useBatches } from '../hooks/useBatches';
 import { useSemesterType } from '../hooks/useSemesterType';
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from '../lib/utils';
 import useUnsavedChanges from '../hooks/useUnsavedChanges';
+import { typesetMath } from '../utils/mathJaxUtils';
 
 function deriveSemesterNumber(semStr) {
   if (!semStr) return '';
@@ -28,6 +29,17 @@ const sanitizeKey = (key) => {
 const sanitizeKeyStrict = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]/ ]/g, '_');
+};
+
+const getNormalizedCourseType = (typeStr) => {
+  if (!typeStr) return 'theory';
+  const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (s.includes('lab') && s.includes('theory')) return 'integrated';
+  if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit101') || s.includes('lit102')) return 'integrated';
+  if (s.includes('practical') || s.includes('lab')) return 'practical';
+  if (s.includes('project')) return 'project';
+  if (s.includes('activity')) return 'activity';
+  return 'theory';
 };
 
 export default function QuestionPaperGenerator() {
@@ -104,6 +116,7 @@ export default function QuestionPaperGenerator() {
   }, [qpQuestions, assignmentConfig, qbQuestion]);
   useUnsavedChanges(isQpDirty);
 
+
   // Derive subject code from JSON subject state for Firestore paths
   const subjectCode = useMemo(() => {
     if (!subject) return '';
@@ -157,10 +170,18 @@ export default function QuestionPaperGenerator() {
   const initInlineQbEditor = useCallback(() => {
     try {
       if (!window.CKEDITOR) return;
-      // If an existing instance exists, destroy it first
+      const el = document.getElementById('qbEditor');
+      if (!el) return;
+
+      // If an existing instance exists and is ready, don't destroy it mid-paste or mid-keystroke
       if (window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor) {
-        try { window.CKEDITOR.instances.qbEditor.destroy(true); } catch { /* ignore */ }
+        const existing = window.CKEDITOR.instances.qbEditor;
+        if (existing.status === 'ready' && existing.editable && existing.editable()) {
+          return;
+        }
+        try { existing.destroy(true); } catch { /* ignore */ }
       }
+
       const editor = window.CKEDITOR.replace('qbEditor', {
         removePlugins: 'elementspath',
         resize_enabled: false,
@@ -168,26 +189,33 @@ export default function QuestionPaperGenerator() {
         mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
         filebrowserUploadUrl: '',
         height: 200,
-        contentsCss: [window.CKEDITOR.basePath + 'contents.css']
+        font_defaultLabel: 'Times New Roman',
+        fontSize_defaultLabel: '12pt',
+        contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
+        contentsStyle: `body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; }`
       });
 
       editor.on('instanceReady', function () {
         try {
-          editor.setData(qbQuestion || qbEditorData || '');
+          if (editor.editable && editor.editable()) {
+            editor.setData(qbQuestion || qbEditorData || '');
+          }
         } catch { /* ignore */ }
       });
       editor.on('change', function () {
         try {
-          const data = editor.getData();
-          setQbQuestion(data);
-          setQbEditorData(data);
+          if (editor.editable && editor.editable()) {
+            const data = editor.getData();
+            setQbQuestion(data);
+            setQbEditorData(data);
+          }
         } catch { /* ignore */ }
       });
       handleCkImageUpload(editor);
     } catch (e) {
       console.error('initInlineQbEditor', e);
     }
-  }, []);
+  }, [qbQuestion, qbEditorData]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'batch_sections'), (snap) => {
@@ -273,7 +301,7 @@ export default function QuestionPaperGenerator() {
     };
     attemptInit();
     return () => { cancelled = true; };
-  }, [showQbEditor, initInlineQbEditor]);
+  }, [showQbEditor]);
 
   const extractQNosFromHtml = (html) => {
     try {
@@ -445,6 +473,11 @@ export default function QuestionPaperGenerator() {
   const [hodComments, setHodComments] = useState('');
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
 
+  // Trigger MathJax typesetting whenever question list, editor, or preview state changes
+  useEffect(() => {
+    typesetMath();
+  }, [qpQuestions, showFinalPreview, showParts, qbQuestion]);
+
   const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
 
   // Derives subject's course type (Theory, Laboratory, Theory Cum Lab, Project, Activity)
@@ -573,8 +606,50 @@ export default function QuestionPaperGenerator() {
     }, 0);
   }, [assessmentType, assignmentConfig, partsConfig]);
 
+  const getConfiguredExamTotalMarks = useCallback((selectedConfig) => {
+    const examId = exam !== 'custom' ? exam : (selectedConfig?.id || null);
+
+    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
+
+    const regKey = sanitizeKey(regulation);
+    const ayKey = sanitizeKey(academicYear);
+    const fullRegKey = ayKey ? `${regKey}_${ayKey}` : regKey;
+
+    const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
+
+    const wDataList = [courseWeightageData[fullRegKey], courseWeightageData[regKey]].filter(Boolean);
+
+    for (const wData of wDataList) {
+      if (!wData) continue;
+      for (const [ct, ctObj] of Object.entries(wData)) {
+        if (ct.startsWith('_') || !ctObj || !ctObj._category_config) continue;
+
+        const ctNorm = getNormalizedCourseType(ct);
+        if (targetCourseTypeNorm && ctNorm && ctNorm !== targetCourseTypeNorm) continue;
+
+        for (const [cName, cConf] of Object.entries(ctObj._category_config)) {
+          if (!cConf || !cConf.exam_marks) continue;
+
+          if (examId && cConf.exam_marks[examId] !== undefined && cConf.exam_marks[examId] !== "") {
+            const markVal = parseInt(cConf.exam_marks[examId], 10);
+            if (!isNaN(markVal) && markVal > 0) return markVal;
+          }
+
+          if (selectedCategory && normClean(cName) === normClean(selectedCategory)) {
+            if (cConf.exam_marks && typeof cConf.exam_marks === 'object') {
+              const markVals = Object.values(cConf.exam_marks).map(v => parseInt(v, 10)).filter(v => !isNaN(v) && v > 0);
+              if (markVals.length > 0) return markVals[0];
+            }
+          }
+        }
+      }
+    }
+
+    return parseInt(selectedConfig?.totalMarks, 10) || 0;
+  }, [exam, program, batch, academicYear, subjectCourseType, selectedCategory, courseWeightageData, getRegulationForBatch]);
+
   const alertIfMarksMismatchWithConfig = useCallback((selectedConfig, currentTotal) => {
-    const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+    const configTotal = getConfiguredExamTotalMarks(selectedConfig);
     if (!configTotal) return false; // Nothing to validate (e.g., ESE/Indirect)
     if (currentTotal === configTotal) return false;
 
@@ -589,7 +664,7 @@ export default function QuestionPaperGenerator() {
       `Please ${action} by ${by} mark(s) before proceeding.`
     );
     return true;
-  }, []);
+  }, [getConfiguredExamTotalMarks]);
 
   useEffect(() => {
     const ciaRef = collection(db, 'cia_configs');
@@ -769,13 +844,23 @@ export default function QuestionPaperGenerator() {
     const regAyCleanNorm = regCleanNorm(`${getRegulationForBatch(formatProgrammeKey(program), batch)}_${academicYear}`);
     const regNorm = regCleanNorm(getRegulationForBatch(formatProgrammeKey(program), batch));
 
-    let regWeightage = courseWeightageData[regAyKey] || courseWeightageData[regSanitized];
-    if (!regWeightage && courseWeightageData) {
-      const matchKey = Object.keys(courseWeightageData).find(k => {
+    let regWeightage = courseWeightageData[regAyKey];
+    if (!regWeightage && regAyCleanNorm) {
+      const matchAyKey = Object.keys(courseWeightageData || {}).find(k => {
         const kn = regCleanNorm(k);
-        return kn === regAyCleanNorm || kn === regNorm || kn.includes(regAyCleanNorm) || (kn.includes(regNorm) && !kn.includes('_20'));
+        return kn === regAyCleanNorm || kn.includes(regAyCleanNorm);
       });
-      if (matchKey) regWeightage = courseWeightageData[matchKey];
+      if (matchAyKey) regWeightage = courseWeightageData[matchAyKey];
+    }
+    if (!regWeightage) {
+      regWeightage = courseWeightageData[regSanitized];
+      if (!regWeightage && regNorm) {
+        const matchRegKey = Object.keys(courseWeightageData || {}).find(k => {
+          const kn = regCleanNorm(k);
+          return (kn === regNorm || kn.includes(regNorm)) && !kn.includes('_20');
+        });
+        if (matchRegKey) regWeightage = courseWeightageData[matchRegKey];
+      }
     }
 
     const list = [];
@@ -810,12 +895,84 @@ export default function QuestionPaperGenerator() {
   }, [program, batch, academicYear, courseWeightageData, subjectCourseType, getRegulationForBatch, findCategoryData]);
 
   useEffect(() => {
-    if (availableCategories && availableCategories.length > 0) {
-      if (!selectedCategory || !availableCategories.includes(selectedCategory)) {
-        handleCategorySelect(availableCategories[0]);
+    if (!availableCategories || availableCategories.length === 0) return;
+
+    const urlCat = searchParams.get('category') || searchParams.get('cat') || searchParams.get('categoryName');
+    const urlExam = searchParams.get('exam') || searchParams.get('examName') || searchParams.get('examId') || searchParams.get('cia');
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    let targetCategory = null;
+
+    // 1. Explicit Category URL param match
+    if (urlCat) {
+      const urlCatClean = normClean(urlCat);
+      targetCategory = availableCategories.find(c => {
+        const cn = normClean(c);
+        return cn === urlCatClean || cn.includes(urlCatClean) || urlCatClean.includes(cn);
+      });
+    }
+
+    // 2. Exam URL param match (match exam name to best category)
+    if (!targetCategory && urlExam) {
+      const urlExamClean = normClean(urlExam);
+      const testExamCategoryMatch = (examNameStr, catName) => {
+        const cn = normClean(catName);
+        const en = normClean(examNameStr);
+        if (!en || !cn) return false;
+        if (en.includes('practical') || en.includes('lab') || en.includes('observation')) {
+          return cn.includes('practical') || cn.includes('lab') || cn.includes('observation');
+        }
+        if (en.includes('project')) return cn.includes('project');
+        if (en.includes('activity') || en.includes('assignment')) return cn.includes('activity') || cn.includes('assignment');
+        if (en.includes('indirect') || en.includes('survey')) return cn.includes('indirect');
+        return cn.includes('written') || cn.includes('test') || cn.includes('cia') || cn.includes('internal') || cn.includes('continuous');
+      };
+
+      targetCategory = availableCategories.find(catName => testExamCategoryMatch(urlExamClean, catName));
+
+      if (!targetCategory && ciaConfigs && ciaConfigs.length > 0) {
+        const matchingCfg = ciaConfigs.find(cfg => {
+          const cfgId = String(cfg.id || '');
+          const cfgName = String(cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || '');
+          return cfgId === String(urlExam) || normClean(cfgName) === urlExamClean || normClean(cfgId) === urlExamClean;
+        });
+
+        if (matchingCfg) {
+          const cfgName = matchingCfg.examName || matchingCfg.exam_name || matchingCfg.title || matchingCfg.name || matchingCfg.exam || matchingCfg.label || '';
+          targetCategory = availableCategories.find(catName => testExamCategoryMatch(cfgName, catName));
+        }
       }
     }
-  }, [availableCategories]);
+
+    // 3. Subject Course Type match
+    if (!targetCategory && subjectCourseType) {
+      const sTypeClean = normClean(subjectCourseType);
+      if (sTypeClean.includes('lab') || sTypeClean.includes('practical')) {
+        targetCategory = availableCategories.find(c => {
+          const cn = normClean(c);
+          return cn.includes('practical') || cn.includes('lab') || cn.includes('observation');
+        });
+      } else if (sTypeClean.includes('project')) {
+        targetCategory = availableCategories.find(c => normClean(c).includes('project'));
+      } else if (sTypeClean.includes('activity')) {
+        targetCategory = availableCategories.find(c => normClean(c).includes('activity') || normClean(c).includes('assignment'));
+      } else {
+        targetCategory = availableCategories.find(c => {
+          const cn = normClean(c);
+          return cn.includes('written') || cn.includes('test') || cn.includes('cia') || cn.includes('internal') || cn.includes('continuous');
+        });
+      }
+    }
+
+    // 4. Default fallback to first category
+    if (!targetCategory) {
+      targetCategory = availableCategories[0];
+    }
+
+    if (!selectedCategory || !availableCategories.includes(selectedCategory) || (urlExam && targetCategory && selectedCategory !== targetCategory) || (urlCat && targetCategory && selectedCategory !== targetCategory)) {
+      handleCategorySelect(targetCategory);
+    }
+  }, [availableCategories, subjectCourseType, searchParams, ciaConfigs]);
 
   const handleCategorySelect = (catName) => {
     setSelectedCategory(catName);
@@ -850,18 +1007,6 @@ export default function QuestionPaperGenerator() {
     const selectedDept = norm(department);
     const selectedBatch = norm(batch);
     const selectedAy = norm(academicYear);
-
-    // Normalize course types (Theory, Laboratory, Theory Cum Lab, Project, Activity)
-    const getNormalizedCourseType = (typeStr) => {
-      if (!typeStr) return 'theory';
-      const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (s.includes('lab') && s.includes('theory')) return 'integrated';
-      if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit101') || s.includes('lit102')) return 'integrated';
-      if (s.includes('practical') || s.includes('lab')) return 'practical';
-      if (s.includes('project')) return 'project';
-      if (s.includes('activity')) return 'activity';
-      return 'theory';
-    };
 
     const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
 
@@ -930,13 +1075,23 @@ export default function QuestionPaperGenerator() {
     const regCleanNorm = normClean(regulation);
     const regAyCleanNorm = normClean(`${regulation}_${academicYear}`);
 
-    let regWeightage = courseWeightageData[regAyKey] || courseWeightageData[regSanitized];
-    if (!regWeightage) {
-      const matchKey = Object.keys(courseWeightageData).find(k => {
+    let regWeightage = courseWeightageData[regAyKey];
+    if (!regWeightage && regAyCleanNorm) {
+      const matchAyKey = Object.keys(courseWeightageData || {}).find(k => {
         const kn = normClean(k);
-        return kn === regAyCleanNorm || kn === regCleanNorm || kn.includes(regAyCleanNorm) || (kn.includes(regCleanNorm) && !kn.includes('_20'));
+        return kn === regAyCleanNorm || kn.includes(regAyCleanNorm);
       });
-      if (matchKey) regWeightage = courseWeightageData[matchKey];
+      if (matchAyKey) regWeightage = courseWeightageData[matchAyKey];
+    }
+    if (!regWeightage) {
+      regWeightage = courseWeightageData[regSanitized];
+      if (!regWeightage && regCleanNorm) {
+        const matchRegKey = Object.keys(courseWeightageData || {}).find(k => {
+          const kn = normClean(k);
+          return (kn === regCleanNorm || kn.includes(regCleanNorm)) && !kn.includes('_20');
+        });
+        if (matchRegKey) regWeightage = courseWeightageData[matchRegKey];
+      }
     }
 
     const ciaConfigById = new Map();
@@ -959,11 +1114,14 @@ export default function QuestionPaperGenerator() {
         if (directKey) return reg[directKey];
       }
 
-      // 3. Category match based on targetCourseTypeNorm (theory, practical, integrated, project, activity)
+      // 3. Category match based on targetCourseTypeNorm (theory, practical, integrated, project, activity, mandatory)
       const catKey = keys.find(k => {
         const kn = normClean(k);
+        if (targetCourseTypeNorm === 'mandatory' && (kn.includes('mandatory') || kn.includes('mc'))) {
+          return true;
+        }
         if (targetCourseTypeNorm === 'theory' && (kn === 'theory' || kn.includes('theory') || kn.includes('lecture'))) {
-          return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum');
+          return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum') && !kn.includes('mandatory');
         }
         if (targetCourseTypeNorm === 'practical' && (kn === 'laboratory' || kn === 'practical' || kn.includes('lab') || kn.includes('practical'))) {
           return !kn.includes('theory');
@@ -1020,34 +1178,36 @@ export default function QuestionPaperGenerator() {
           const candidateExamsMap = new Map();
 
           // 1. Explicitly configured exams in exam_weightage for this category
-          if (cConf.exam_weightage && typeof cConf.exam_weightage === 'object') {
+          const hasExplicitWeightageExams = cConf.exam_weightage && typeof cConf.exam_weightage === 'object' && Object.keys(cConf.exam_weightage).length > 0;
+
+          if (hasExplicitWeightageExams) {
             Object.keys(cConf.exam_weightage).forEach(id => {
               const cfg = ciaConfigById.get(id);
               candidateExamsMap.set(id, { id, config: cfg, rawName: cfg ? null : id });
             });
+          } else {
+            // 2. Fallback: Matching ciaConfigs for this regulation, course type, and category ONLY if no explicit exam_weightage is set
+            ciaConfigs.forEach(cfg => {
+              if (!cfg || !cfg.regulation) return;
+              const cfgRegClean = normClean(cfg.regulation);
+              if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
+
+              // Academic Year check: if exam has a specific AY, it must match selectedAy
+              const cfgAyNorm = norm(cfg.academicYear);
+              if (cfgAyNorm && cfgAyNorm !== selectedAy) return;
+              if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+                const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+                if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
+              }
+
+              // Match exam using direct CIA Config flags against selected category
+              const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
+
+              if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
+                candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
+              }
+            });
           }
-
-          // 2. Matching ciaConfigs for this regulation, course type, and category
-          ciaConfigs.forEach(cfg => {
-            if (!cfg || !cfg.regulation) return;
-            const cfgRegClean = normClean(cfg.regulation);
-            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
-
-            // Academic Year check: if exam has a specific AY, it must match selectedAy
-            const cfgAyNorm = norm(cfg.academicYear);
-            if (cfgAyNorm && cfgAyNorm !== selectedAy) return;
-            if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
-              const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
-              if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
-            }
-
-            // Match exam using direct CIA Config flags against selected category
-            const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
-
-            if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
-              candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
-            }
-          });
 
           candidateExamsMap.forEach(({ id, config: resolvedCfg, rawName }) => {
             if (resolvedCfg && norm(resolvedCfg.academicYear) && norm(resolvedCfg.academicYear) !== selectedAy) return;
@@ -1667,7 +1827,8 @@ export default function QuestionPaperGenerator() {
     const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
     const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
     const yearSemester = `${yearLabel} / ${semLabel}`;
-    const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+    const parsedSubj = (() => { try { const o = JSON.parse(qp.subject || '{}'); return o.code ? o : { code: qp.subject, name: '' }; } catch { return { code: qp.subject || '', name: '' }; } })();
+    const subjectDisplay = parsedSubj.name ? `${parsedSubj.code} - ${parsedSubj.name}` : (qp.subject_name ? `${parsedSubj.code} - ${qp.subject_name}` : parsedSubj.code);
 
     // Prepare signature HTML
     let facultySignatureHtml = '';
@@ -2365,11 +2526,241 @@ export default function QuestionPaperGenerator() {
     loadSavedPaper();
   }, [editId, compositeKey, getQuestionPaperHTML, getRegulationForBatch]);
 
+  // Auto-select dropdowns from URL params or single option defaults
   useEffect(() => {
-    if (program) {
-      setDepartment('');
+    if (editId || compositeKey) return;
+
+    const urlCode = searchParams.get('code') || searchParams.get('subjectCode');
+    const urlBatch = searchParams.get('batch');
+    const urlSem = searchParams.get('sem') || searchParams.get('semester');
+    const urlProg = searchParams.get('prog') || searchParams.get('program');
+    const urlDept = searchParams.get('dept') || searchParams.get('department');
+    const urlAy = searchParams.get('ay') || searchParams.get('academicYear');
+    const urlSec = searchParams.get('sec') || searchParams.get('section');
+
+    // 1. Program
+    if (urlProg && filteredProgrammes.length > 0) {
+      const normUrlProg = formatProgrammeKey(urlProg);
+      const matchP = filteredProgrammes.find(p =>
+        formatProgrammeKey(p) === normUrlProg ||
+        p.toLowerCase().replace(/[^a-z0-9]/g, '') === urlProg.toLowerCase().replace(/[^a-z0-9]/g, '')
+      );
+      if (matchP && program !== matchP) {
+        setProgram(matchP);
+      }
+    } else if (!program && filteredProgrammes.length === 1) {
+      setProgram(filteredProgrammes[0]);
     }
-  }, [program]);
+
+    // 2. Department
+    if (urlDept && filteredDepartments.length > 0) {
+      const normDept = sanitizeKey(urlDept).toLowerCase().trim();
+      const matchD = filteredDepartments.find(d =>
+        sanitizeKey(d).toLowerCase().trim() === normDept ||
+        d.toLowerCase().trim() === urlDept.toLowerCase().trim() ||
+        d.toLowerCase().includes(urlDept.toLowerCase()) ||
+        urlDept.toLowerCase().includes(d.toLowerCase())
+      );
+      if (matchD && department !== matchD) {
+        setDepartment(matchD);
+      }
+    } else if (!department && filteredDepartments.length === 1) {
+      setDepartment(filteredDepartments[0]);
+    }
+
+    // 3. Batch
+    if (urlBatch && displayedBatches.length > 0) {
+      const matchB = displayedBatches.find(b => b === urlBatch || formatBatchDisplay(b) === formatBatchDisplay(urlBatch));
+      if (matchB && batch !== matchB) {
+        setBatch(matchB);
+      }
+    } else if (!batch && displayedBatches.length === 1) {
+      setBatch(displayedBatches[0]);
+    }
+
+    // 4. Academic Year
+    if (urlAy && academicYears.length > 0) {
+      const matchY = academicYears.find(y => y === urlAy);
+      if (matchY && academicYear !== matchY) {
+        setAcademicYear(matchY);
+      }
+    } else if (!academicYear && academicYears.length === 1) {
+      setAcademicYear(academicYears[0]);
+    }
+
+    // 5. Semester
+    if (urlSem && semesters.length > 0) {
+      const semNum = deriveSemesterNumber(urlSem);
+      const matchS = semesters.find(s => deriveSemesterNumber(s) === semNum);
+      if (matchS && selectedSemester !== matchS) {
+        setSelectedSemester(matchS);
+      }
+    } else if (!selectedSemester && semesters.length === 1) {
+      setSelectedSemester(semesters[0]);
+    }
+
+    // 6. Section (from URL)
+    if (urlSec && availableSections.length > 0) {
+      const normSec = String(urlSec).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const matchSec = availableSections.find(s =>
+        String(s).toLowerCase().replace(/[^a-z0-9]/g, '') === normSec ||
+        String(s).toLowerCase().endsWith(normSec) ||
+        normSec.endsWith(String(s).toLowerCase())
+      );
+      if (matchSec && section !== matchSec) {
+        setSection(matchSec);
+      }
+    }
+  }, [searchParams, filteredProgrammes, filteredDepartments, displayedBatches, academicYears, semesters, availableSections, editId, compositeKey, program, department, batch, academicYear, selectedSemester, section]);
+
+  // Auto-select Section based on faculty subject assignments if not provided via URL
+  useEffect(() => {
+    if (editId || compositeKey || !program || !department || !batch || !academicYear || !selectedSemester) return;
+
+    const urlSec = searchParams.get('sec') || searchParams.get('section');
+    const urlCode = searchParams.get('code') || searchParams.get('subjectCode');
+
+    // If URL has sec and matched, skip
+    if (urlSec && section) return;
+
+    if (!availableSections.length) {
+      if (section) setSection('');
+      return;
+    }
+
+    // Single section default
+    if (availableSections.length === 1) {
+      if (section !== availableSections[0]) setSection(availableSections[0]);
+      return;
+    }
+
+    // Multiple sections available: check which section has allocated subjects for current faculty
+    const autoPickFacultySection = async () => {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        if (!section) setSection(availableSections[0]);
+        return;
+      }
+
+      const progKey = formatProgrammeKey(program);
+      const deptKey = sanitizeKey(department);
+      const batchKey = sanitizeKey(batch);
+      const ayKey = sanitizeKey(academicYear);
+      const semNum = deriveSemesterNumber(selectedSemester);
+      if (!semNum) return;
+
+      for (const secCand of availableSections) {
+        const secSuffix = `_${sanitizeKey(secCand)}`;
+        const key = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}${secSuffix}`;
+        try {
+          const snap = await getDoc(doc(db, 'subject_assignments', key));
+          if (snap.exists()) {
+            const data = snap.data();
+            const userAssigned = data[currentUser.uid];
+            if (Array.isArray(userAssigned) && userAssigned.length > 0) {
+              if (urlCode) {
+                if (userAssigned.includes(urlCode) || userAssigned.some(c => String(c).toUpperCase() === String(urlCode).toUpperCase())) {
+                  if (section !== secCand) setSection(secCand);
+                  return;
+                }
+              } else {
+                if (section !== secCand) setSection(secCand);
+                return;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Error checking section assignment:", e);
+        }
+      }
+
+      // Default to first section if no specific assignment match found
+      if (!section && availableSections.length > 0) {
+        setSection(availableSections[0]);
+      }
+    };
+
+    autoPickFacultySection();
+  }, [availableSections, program, department, batch, academicYear, selectedSemester, searchParams, section, editId, compositeKey]);
+
+  // Auto-select Exam from URL parameter or single option default
+  useEffect(() => {
+    if (editId || compositeKey || !filteredExams || filteredExams.length === 0) return;
+
+    const urlExam = searchParams.get('exam') || searchParams.get('examName') || searchParams.get('examId') || searchParams.get('cia');
+    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const normalizeExamKey = (str) => {
+      if (!str) return '';
+      let s = String(str).toLowerCase().trim();
+      s = s.replace(/continuous\s*internal\s*assessment/g, 'cia');
+      s = s.replace(/internal\s*assessment/g, 'cia');
+      s = s.replace(/internal\s*test/g, 'cia');
+      s = s.replace(/cia\s*test/g, 'cia');
+      s = s.replace(/test/g, '');
+      s = s.replace(/examination/g, 'exam');
+      s = s.replace(/assessment/g, '');
+
+      // Convert Roman numerals to digits
+      s = s.replace(/\bviii\b/g, '8')
+           .replace(/\bvii\b/g, '7')
+           .replace(/\bvi\b/g, '6')
+           .replace(/\biv\b/g, '4')
+           .replace(/\bv\b/g, '5')
+           .replace(/\biii\b/g, '3')
+           .replace(/\bii\b/g, '2')
+           .replace(/\bi\b/g, '1');
+
+      return s.replace(/[^a-z0-9]/g, '');
+    };
+
+    if (urlExam) {
+      const urlNorm = normalizeExamKey(urlExam);
+      const urlRawClean = normClean(urlExam);
+
+      // 1. Direct ID match
+      let match = filteredExams.find(e => String(e.id) === String(urlExam));
+
+      // 2. Exact examName / ID match using normalizeExamKey
+      if (!match && urlNorm) {
+        match = filteredExams.find(e => normalizeExamKey(e.examName) === urlNorm || normalizeExamKey(e.id) === urlNorm);
+      }
+
+      // 3. Raw clean match
+      if (!match && urlRawClean) {
+        match = filteredExams.find(e => {
+          const eClean = normClean(e.examName);
+          const idClean = normClean(e.id);
+          return eClean === urlRawClean || idClean === urlRawClean;
+        });
+      }
+
+      // 4. Substring / partial match with normalizeExamKey
+      if (!match && urlNorm) {
+        match = filteredExams.find(e => {
+          const eNorm = normalizeExamKey(e.examName);
+          const idNorm = normalizeExamKey(e.id);
+          return (
+            (eNorm && (eNorm.includes(urlNorm) || urlNorm.includes(eNorm))) ||
+            (idNorm && (idNorm.includes(urlNorm) || urlNorm.includes(idNorm)))
+          );
+        });
+      }
+
+      if (match) {
+        if (exam !== match.id) setExam(match.id);
+        return;
+      }
+    }
+
+    // Fallback: If exam is empty or no longer valid in filteredExams, auto-select first available option ONLY if no urlExam was provided or if single option
+    const isCurrentExamValid = filteredExams.some(e => e.id === exam);
+    if (!isCurrentExamValid) {
+      if (filteredExams.length === 1 || (!exam && filteredExams.length > 0 && !urlExam)) {
+        setExam(filteredExams[0].id);
+      }
+    }
+  }, [filteredExams, searchParams, editId, compositeKey, exam]);
 
   // Prevent showing stale saved-summary when building a new paper context.
   useEffect(() => {
@@ -2379,12 +2770,15 @@ export default function QuestionPaperGenerator() {
 
   useEffect(() => {
     if (batch) {
-      setAcademicYears(getAcademicYears(batch));
-      setAcademicYear('');
+      const years = getAcademicYears(batch);
+      setAcademicYears(years);
+      if (academicYear && !years.includes(academicYear)) {
+        setAcademicYear('');
+      }
     } else {
       setAcademicYears([]);
     }
-  }, [batch]);
+  }, [batch, academicYear]);
 
   useEffect(() => {
     if (batch && academicYear) {
@@ -2406,17 +2800,20 @@ export default function QuestionPaperGenerator() {
           const v = n % 100;
           return n + (s[(v - 20) % 10] || s[v] || s[0]);
         };
-        setSemesters(filteredSems.map(num => `${getOrdinal(num)} Semester`));
+        const newSems = filteredSems.map(num => `${getOrdinal(num)} Semester`);
+        setSemesters(newSems);
+        if (selectedSemester && !newSems.includes(selectedSemester)) {
+          setSelectedSemester('');
+        }
       } else {
         setSemesters([]);
       }
-      setSelectedSemester('');
     } else {
       setSemesters([]);
     }
-  }, [batch, academicYear, globalSemesterType]);
+  }, [batch, academicYear, globalSemesterType, selectedSemester]);
 
-  // Fetch Subjects from Syllabus
+  // Fetch Subjects from Syllabus & Auto-select Subject
   useEffect(() => {
     const fetchSubjects = async () => {
       const progKey = formatProgrammeKey(program);
@@ -2460,24 +2857,69 @@ export default function QuestionPaperGenerator() {
           return;
         }
 
-        const userRef = doc(db, 'users', currentUser.uid); // Firestore doc reference
-        const userSnap = await getDoc(userRef); // Use getDoc for Firestore
+        const userRef = doc(db, 'users', currentUser.uid);
+        const userSnap = await getDoc(userRef);
         const userRole = userSnap.exists() ? userSnap.data().role : null;
 
+        let userAssignments = [];
         const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
         const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}${sectionSuffix}`;
-        const assignmentRef = doc(db, 'subject_assignments', assignmentCompositeKey);
-        const assignmentSnap = await getDoc(assignmentRef); // Use getDoc for Firestore
+        let assignmentSnap = await getDoc(doc(db, 'subject_assignments', assignmentCompositeKey));
+
+        // Fallback 1: If no assignment doc for current section, try base key without section
+        if (!assignmentSnap.exists() && section) {
+          const baseKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}`;
+          assignmentSnap = await getDoc(doc(db, 'subject_assignments', baseKey));
+        }
 
         if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.data(); // Use .data() for Firestore documents
-          const userAssignments = assignments[currentUser.uid] || [];
-          const filteredSubjects = (userRole === 'Admin' || userRole === 'Principal' || userAssignments.length === 0)
-            ? fetchedSubjects
-            : fetchedSubjects.filter(s => userAssignments.includes(s.code) || userAssignments.includes(s.value));
-          setSubjects(filteredSubjects);
-        } else {
-          setSubjects(userRole === 'Admin' || userRole === 'Principal' ? fetchedSubjects : []);
+          const assignments = assignmentSnap.data();
+          userAssignments = assignments[currentUser.uid] || [];
+        }
+
+        // Fallback 2: If userAssignments is still empty for Faculty, search all sections for this batch/sem
+        if (userAssignments.length === 0 && userRole !== 'Admin' && userRole !== 'Principal' && availableSections.length > 0) {
+          for (const secCand of availableSections) {
+            const secKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(secCand)}`;
+            try {
+              const secSnap = await getDoc(doc(db, 'subject_assignments', secKey));
+              if (secSnap.exists()) {
+                const secData = secSnap.data();
+                if (secData[currentUser.uid] && secData[currentUser.uid].length > 0) {
+                  userAssignments = secData[currentUser.uid];
+                  if (!section) setSection(secCand);
+                  break;
+                }
+              }
+            } catch (e) {}
+          }
+        }
+
+        const filteredSubjects = (userRole === 'Admin' || userRole === 'Principal' || userAssignments.length === 0)
+          ? fetchedSubjects
+          : fetchedSubjects.filter(s => userAssignments.includes(s.code) || userAssignments.includes(s.value));
+
+        setSubjects(filteredSubjects);
+
+        // Auto-select Subject from URL code parameter
+        const urlCode = searchParams.get('code') || searchParams.get('subjectCode');
+        if (urlCode && filteredSubjects.length > 0) {
+          const matchSub = filteredSubjects.find(s =>
+            s.code === urlCode ||
+            String(s.code).toUpperCase() === String(urlCode).toUpperCase()
+          );
+          if (matchSub) {
+            setSubject(matchSub.value);
+            return;
+          }
+        }
+
+        // Auto-select Subject if current subject is empty or not in the filtered list
+        const currentValid = filteredSubjects.some(s => s.value === subject);
+        if (!currentValid && filteredSubjects.length > 0) {
+          setSubject(filteredSubjects[0].value);
+        } else if (filteredSubjects.length === 0) {
+          setSubject('');
         }
       } catch (error) {
         console.error("Error fetching subjects:", error);
@@ -2486,7 +2928,7 @@ export default function QuestionPaperGenerator() {
     };
 
     fetchSubjects();
-  }, [program, department, batch, selectedSemester, academicYear, section, getRegulationForBatch]);
+  }, [program, department, batch, selectedSemester, academicYear, section, searchParams, getRegulationForBatch, availableSections]);
 
   useEffect(() => {
     // Load CKEditor script dynamically
@@ -2497,6 +2939,8 @@ export default function QuestionPaperGenerator() {
       script.onload = () => {
         if (window.CKEDITOR) {
           window.CKEDITOR.config.versionCheck = false;
+          window.CKEDITOR.config.font_defaultLabel = 'Times New Roman';
+          window.CKEDITOR.config.fontSize_defaultLabel = '12pt';
           window.CKEDITOR.on('log', function (evt) {
             if (evt.data && evt.data.errorCode === 'exportpdf-no-token-url') {
               evt.cancel();
@@ -2591,7 +3035,10 @@ export default function QuestionPaperGenerator() {
             mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
             filebrowserUploadUrl: '',
             height: 200,
-            contentsCss: [window.CKEDITOR.basePath + 'contents.css']
+            font_defaultLabel: 'Times New Roman',
+            fontSize_defaultLabel: '12pt',
+            contentsCss: [window.CKEDITOR.basePath + 'contents.css'],
+            contentsStyle: `body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; }`
           });
 
           editor.on('instanceReady', function () {
@@ -2657,7 +3104,7 @@ export default function QuestionPaperGenerator() {
         contentsStyle: `
         @page { size: A4; margin: 20mm; }
         html, body { width: 210mm; }
-        body { font-family: Arial, sans-serif; font-size: 12pt; margin: 0; padding: 20mm; line-height: 1.5; box-sizing: border-box; }
+        body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; margin: 0; padding: 20mm; line-height: 1.5; box-sizing: border-box; }
         *, *::before, *::after { box-sizing: border-box; }
         p { margin: 0 0 8px 0; }
         img { max-width: 100%; height: auto; }
@@ -2981,7 +3428,7 @@ export default function QuestionPaperGenerator() {
         const marks = parseInt(part?.marksPerQuestion, 10) || 0;
         return sum + (count * marks);
       }, 0);
-      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      const configTotal = getConfiguredExamTotalMarks(selectedConfig);
       if (configTotal > 0 && overallTotal !== configTotal) {
         const diff = overallTotal - configTotal;
         const status = diff > 0 ? 'HIGH' : 'LOW';
@@ -3001,7 +3448,7 @@ export default function QuestionPaperGenerator() {
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
       const currentTotal = getCurrentStructureTotalMarks();
-      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      const configTotal = getConfiguredExamTotalMarks(selectedConfig);
       if (configTotal > 0 && currentTotal !== configTotal) {
         const diff = currentTotal - configTotal;
         const status = diff > 0 ? 'HIGH' : 'LOW';
@@ -3126,11 +3573,11 @@ export default function QuestionPaperGenerator() {
 
     // Enforce CIA total marks match on finalize as well (AI path bypasses handleGenerateTable)
     if (assessmentType === 'Exam' && exam !== 'custom' && selectedConfig) {
-      const configTotal = parseInt(selectedConfig?.totalMarks, 10) || 0;
+      const configTotal = getConfiguredExamTotalMarks(selectedConfig);
       if (configTotal > 0 && overallTotal !== configTotal) {
         // Alert is required so users can correct mark definition
         alertIfMarksMismatchWithConfig(selectedConfig, overallTotal);
-        showToast(`Total marks (${overallTotal}) does not match CIA Config (${configTotal}).`, 'error');
+        showToast(`Total marks (${overallTotal}) does not match configured marks (${configTotal}).`, 'error');
         return;
       }
     }
@@ -3830,28 +4277,52 @@ export default function QuestionPaperGenerator() {
 
     const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, currentUserSignatureUrl);
 
-    // 2. Find HOD for the selected department
-    let hodUid = null;
+    // 2. Find Academic Coordinator for the paper (department-based for non-common, setter-based for common)
+    let acUid = null;
+    let targetDept = department;
     try {
-      const usersRef = collection(db, 'users'); // Firestore collection reference
-      const usersSnapshot = await getDocs(usersRef); // Use getDocs for collection
+      const usersRef = collection(db, 'users');
+      const usersSnapshot = await getDocs(usersRef);
       if (!usersSnapshot.empty) {
-        const allUsers = {}; usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); }); // Convert QuerySnapshot to object
-        const hods = Object.values(allUsers).filter(
-          user => user.role === 'HOD' && user.department === department && user.isApproved
+        const allUsers = {};
+        usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); });
+        const norm = (v) => String(v || '').toLowerCase().replace(/[._\s]+/g, ' ').trim();
+
+        // Common subjects (shared across departments in IAScheduleCreation) route to the
+        // Academic Coordinator of the department whose faculty was set as the QP setter.
+        try {
+          const semNumStr = String(semesterNum || '');
+          const assignKey = `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNumStr}`;
+          const assignSnap = await getDoc(doc(db, 'qp_setter_assignments', assignKey));
+          const assign = assignSnap.exists() ? (assignSnap.data()?.assignments || {})[subjectCode] : null;
+          if (assign && Array.isArray(assign.departments) && assign.departments.length > 1 && assign.setterUid) {
+            const setterUser = allUsers[assign.setterUid];
+            if (setterUser?.department) {
+              targetDept = setterUser.department;
+            }
+          }
+        } catch (e) {
+          console.error("Error reading qp_setter_assignments for AC routing:", e);
+        }
+
+        const targetNorm = norm(targetDept);
+        const acs = Object.values(allUsers).filter(
+          user => user.role === 'Academic Coordinator' && user.isApproved
         );
-        if (hods.length > 0) {
-          hodUid = hods[0].uid; // Assuming one HOD per department or picking the first
+        const matchedAc = acs.find(u => norm(u.department) === targetNorm) ||
+          acs.find(u => norm(u.department).includes(targetNorm) || targetNorm.includes(norm(u.department)));
+        if (matchedAc) {
+          acUid = matchedAc.uid;
         }
       }
     } catch (error) {
-      console.error("Error finding HOD:", error);
-      showToast("Failed to find HOD for the department.", "error");
+      console.error("Error finding Academic Coordinator:", error);
+      showToast("Failed to find Academic Coordinator for the department.", "error");
       return;
     }
 
-    if (!hodUid) {
-      showToast(`No HOD found for department ${department}. Cannot forward.`, "error");
+    if (!acUid) {
+      showToast(`No Academic Coordinator found for ${targetDept}. Cannot forward.`, "error");
       return;
     }
 
@@ -3859,9 +4330,9 @@ export default function QuestionPaperGenerator() {
     if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
       window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
         // 4. Save the paper with 'forwarded' status
-        const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', hodUid) : await handleSaveQuestionPaper(true, 'forwarded', hodUid);
+        const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid) : await handleSaveQuestionPaper(true, 'forwarded', acUid);
         if (isSaved) {
-          showToast("Question paper forwarded to HOD successfully!", "success");
+          showToast("Question paper forwarded to Academic Coordinator successfully!", "success");
         } else {
           showToast("Failed to forward question paper.", "error");
         }
@@ -5202,7 +5673,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                                 )}
                               </td>
                               <td className="px-4 py-3 align-top">
-                                <div className="line-clamp-2" dangerouslySetInnerHTML={{ __html: q.question }}></div>
+                                <div className="qp-question-content text-xs md:text-sm text-slate-800 leading-relaxed font-medium overflow-auto max-h-48" dangerouslySetInnerHTML={{ __html: q.question }}></div>
                               </td>
                               <td className="px-4 py-3 text-slate-600 font-medium">{q.kl}</td>
                               <td className="px-4 py-3">
@@ -5289,7 +5760,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               className={`px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2 ${!currentUserSignatureUrl ? 'opacity-60' : ''}`}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              Forward to HOD
+              Forward to Academic Coordinator
             </button>
             <button
               onClick={() => isAssignmentOrProject ? handleSaveAssignment() : handleSaveQuestionPaper()}

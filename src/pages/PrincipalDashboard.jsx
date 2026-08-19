@@ -10,6 +10,7 @@ import {
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
 import AddEnquiryModal from "../components/AddEnquiryModal";
+import PrincipalIAScheduleView from "./PrincipalIAScheduleView";
 import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
@@ -674,9 +675,10 @@ export default function PrincipalDashboard() {
       const snap = await getDoc(studentRef);
       const existingData = snap.exists() ? snap.data() : {};
       const order = existingData._order || [];
-      if (!existingData[regNo]) {
+      if (!order.includes(regNo)) {
         order.push(regNo);
       }
+      order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
       const joiningAY = existingData._joiningAY || {};
       await setDoc(studentRef, {
         ...existingData,
@@ -1061,10 +1063,10 @@ export default function PrincipalDashboard() {
             font-size: 8px !important;
           }
         `}</style>
-        <div className="mx-auto max-w-[1600px] px-4 pb-10 pt-6 md:px-6">
+        <div className="w-full px-4 md:px-8 pb-12 pt-6 space-y-8 font-sans">
 
           {/* Welcome Header */}
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#120c7a] via-[#1a12a8] to-[#0f0a66] p-6 md:p-8 mb-8 shadow-lg">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#120c7a] via-[#1a12a8] to-[#0f0a66] p-6 md:p-8 shadow-lg">
             <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2" />
             <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2" />
             <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -1097,8 +1099,8 @@ export default function PrincipalDashboard() {
             </div>
           </div>
 
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+          {/* KPI Cards (All 7 cards fit on 1 row on desktop) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-4">
             {kpiCards.map((kpi) => {
               const c = colorMap[kpi.color];
               const Icon = kpi.icon;
@@ -1137,14 +1139,14 @@ export default function PrincipalDashboard() {
           </div>
 
           {/* Quick Actions */}
-          <div className="mb-8">
+          <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
                 <Zap size={20} className="text-amber-500" />
                 Quick Actions
               </h2>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
               {quickActions.map((action) => (
                 <button key={action.label}
                   onClick={() => {
@@ -1173,10 +1175,6 @@ export default function PrincipalDashboard() {
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{stats.admission}</span>
                 )}
               </h2>
-              <button onClick={() => navigate("/admissions/confirm")}
-                className="text-xs font-semibold text-[#120c7a] hover:underline flex items-center gap-1">
-                View All <ArrowRight size={12} />
-              </button>
             </div>
 
             {loading ? (
@@ -1360,6 +1358,22 @@ export default function PrincipalDashboard() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* QP Setter Assignment & Department-Wise IA Schedule */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
+                <FileText size={20} className="text-blue-600" />
+                QP Setter Assignment & IA Schedule (Department-Wise)
+              </h2>
+              <p className="text-xs font-medium text-zinc-500 hidden sm:block">
+                Read-only view of scheduled IA subjects grouped by department
+              </p>
+            </div>
+            <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
+              <PrincipalIAScheduleView />
+            </div>
           </div>
 
           {/* Module Overview */}

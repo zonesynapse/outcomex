@@ -414,7 +414,7 @@ export default function StudentManagement() {
 
   return (
     <Layout title="Student Management">
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-4 md:p-8 w-full space-y-6">
         <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div className="flex items-center gap-4 flex-1">
             <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg shrink-0">

@@ -66,7 +66,7 @@ const timeAgo = (dateStr) => {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 };
 
-export default function HODDashboard() {
+export default function AcademicCoordinatorDashboard() {
   const navigate = useNavigate();
   const { getRegulationForBatch } = useRegulations();
   const [currentUid, setCurrentUid] = useState(auth.currentUser?.uid || null);
@@ -814,9 +814,9 @@ export default function HODDashboard() {
       const docRef = doc(db, act.isStep ? "step_activities" : "activity_entries", act.id);
       await setDoc(docRef, {
         status: "Approved",
-        comments: "Approved by HOD",
+        comments: "Approved by Academic Coordinator",
         reviewedBy: currentUid || "",
-        reviewedByName: hodName || "HOD",
+        reviewedByName: hodName || "Academic Coordinator",
         updatedAt: new Date().toISOString()
       }, { merge: true });
       alert("Activity approved successfully!");
@@ -843,7 +843,7 @@ export default function HODDashboard() {
         status: "Returned",
         comments: returnComment,
         reviewedBy: currentUid || "",
-        reviewedByName: hodName || "HOD",
+        reviewedByName: hodName || "Academic Coordinator",
         updatedAt: new Date().toISOString()
       }, { merge: true });
       alert("Activity returned for correction.");
@@ -884,9 +884,9 @@ export default function HODDashboard() {
         getDoc(userRef).then(snap => {
           if (snap.exists()) {
             const ud = snap.data();
-            console.log('[HODDashboard] User doc fields:', Object.keys(ud).join(', '), '| Full:', ud);
+            console.log('[AcademicCoordinatorDashboard] User doc fields:', Object.keys(ud).join(', '), '| Full:', ud);
             setCurrentHodSignature(ud.signatureUrl || '');
-            setHodName(ud.facultyName || ud.displayName || ud.email || "HOD");
+            setHodName(ud.facultyName || ud.displayName || ud.email || "Academic Coordinator");
             setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "");
             setHodProgramme(ud.programme || "");
           }
@@ -1515,7 +1515,7 @@ export default function HODDashboard() {
             const stuMap = rec?.students || {};
             // Filter by course enrollment for backward compat (old data may include non-enrolled students)
             const subj = actualItem || item;
-            if (!subj) { console.warn('[HODDash] No matching subject for timetable entry:', { code, period: attendanceDate + '_P' + period, batch }); return null; }
+            if (!subj) { console.warn('[AcademicCoordinatorDash] No matching subject for timetable entry:', { code, period: attendanceDate + '_P' + period, batch }); return null; }
             const enrolDocId = `${subj.progKey}_${sanitizeKey(subj.attDeptKey)}_${sanitizeKey(subj.batch)}_${sanitizeKey(subj.ay)}_${subj.sem}_${sanitizeKey(subj.subjectCode)}`;
             const enrolledSet = subjectEnrollments[enrolDocId];
             const entries2 = Object.entries(stuMap).filter(([reg]) => !enrolledSet || enrolledSet.has(reg));
@@ -1995,7 +1995,7 @@ export default function HODDashboard() {
     return getQuestionPaperHTML(qp, modalCourseOutcomes, facultySignatureForQP, selectedQPHodSignature, ciaConfigs);
   }, [modalCourseOutcomes, facultySignatureForQP, selectedQPHodSignature, ciaConfigs]);
 
-  const handleRecorrect = async () => {
+  const handleRevoke = async () => {
     if (!selectedQP || !recorrectComments.trim()) {
       showToast("Please provide comments for revoking the paper.", "error");
       return;
@@ -2008,30 +2008,23 @@ export default function HODDashboard() {
           status: 'recorrected',
           forwarded_to: selectedQP.forwarded_by,
           forwarded_by: null,
-          hod_comments: recorrectComments.trim(),
-          hod_signature_url: null,
+          ac_comments: recorrectComments.trim(),
+          ac_signature_url: null,
           updated_at: now
         }
       }, { merge: true });
 
-      // Notify everyone below the HOD in the chain (Academic Coordinator + Faculty)
-      const notifyTargets = [];
-      if (selectedQP.ac_approved_by && selectedQP.ac_approved_by !== currentUid) {
-        notifyTargets.push({ uid: selectedQP.ac_approved_by, name: selectedQP.ac_approved_by_name || "Academic Coordinator" });
-      }
-      if (selectedQP.forwarded_by && selectedQP.forwarded_by !== currentUid) {
-        notifyTargets.push({ uid: selectedQP.forwarded_by, name: selectedQP.forwarded_by_name || "Faculty" });
-      }
-      for (const t of notifyTargets) {
+      // Notify the faculty (person below the Academic Coordinator in the chain)
+      if (selectedQP.forwarded_by) {
         try {
           await addDoc(collection(db, 'notifications'), {
             type: 'qp_revoked',
-            targetUid: t.uid,
-            targetName: t.name,
+            targetUid: selectedQP.forwarded_by,
+            targetName: selectedQP.forwarded_by_name || "Faculty",
             subjectCode: selectedQP.code || selectedQP.subjectCode || '',
             subjectName: selectedQP.name || selectedQP.subjectName || selectedQP.subject || '',
             reason: recorrectComments.trim(),
-            revokedBy: hodName || "HOD",
+            revokedBy: hodName || "Academic Coordinator",
             revokedByUid: currentUid,
             assignedBy: currentUid,
             createdAt: serverTimestamp(),
@@ -2052,30 +2045,59 @@ export default function HODDashboard() {
     }
   };
 
-  const handleApproveByHOD = async () => {
+  const handleMoveToHOD = async () => {
     if (!selectedQP) return;
     if (!currentHodSignature) {
-      showToast("Please upload your digital signature in your profile before approving.", "error");
+      showToast("Please upload your digital signature in your profile before moving to HOD.", "error");
       return;
     }
     try {
+      // Find HOD for the QP's department (or the coordinator's own department as fallback)
+      let hodUid = null;
+      const hodDept = selectedQP.department || hodDepartment;
+      try {
+        const usersSnapshot = await getDocs(collection(db, 'users'));
+        if (!usersSnapshot.empty) {
+          const allUsers = {};
+          usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); });
+          const norm = (v) => String(v || '').toLowerCase().replace(/[._\s]+/g, ' ').trim();
+          const targetNorm = norm(hodDept);
+          const hods = Object.values(allUsers).filter(
+            user => user.role === 'HOD' && user.isApproved
+          );
+          const matched = hods.find(u => norm(u.department) === targetNorm) ||
+            hods.find(u => norm(u.department).includes(targetNorm) || targetNorm.includes(norm(u.department)));
+          if (matched) hodUid = matched.uid;
+        }
+      } catch (err) {
+        console.error("Error finding HOD:", err);
+      }
+
+      if (!hodUid) {
+        showToast(`No HOD found for ${hodDept}. Cannot move to HOD.`, "error");
+        return;
+      }
+
       const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
       await setDoc(qpRef, {
         [selectedQP.id]: {
-          status: 'approved_by_hod',
-          hod_signature_url: currentHodSignature,
-          approved_at: now,
-          forwarded_to: null,
-          hod_comments: null,
+          status: 'forwarded',
+          forwarded_to: hodUid,
+          forwarded_at: now,
+          ac_approved: true,
+          ac_approved_by: currentUid,
+          ac_approved_at: now,
+          ac_signature_url: currentHodSignature,
+          ac_comments: null,
           updated_at: now
         }
       }, { merge: true });
-      showToast("Question paper approved and forwarded to COE.", "success");
+      showToast("Question paper moved to HOD for review.", "success");
       setShowQPModal(false);
     } catch (error) {
-      console.error("Error approving paper:", error);
-      showToast("Failed to approve question paper.", "error");
+      console.error("Error moving paper to HOD:", error);
+      showToast("Failed to move question paper to HOD.", "error");
     }
   };
 
@@ -2107,7 +2129,7 @@ export default function HODDashboard() {
   }, [showQPModal, fullQPForModal, selectedQP]);
 
   return (
-    <Layout title="HOD Dashboard">
+    <Layout title="Academic Coordinator Dashboard">
       {toast.show && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] animate-in slide-in-from-top-3 fade-in duration-300">
           <div className={`flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border ${toast.type === "success"
@@ -2347,7 +2369,7 @@ export default function HODDashboard() {
                     <CheckCircle2 size={24} />
                   </div>
                   <h3 className="text-xs font-bold text-zinc-900">All caught up!</h3>
-                  <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">No activities currently waiting for HOD verification.</p>
+                  <p className="text-[11px] text-zinc-400 mt-1 max-w-[200px] leading-relaxed">No activities currently waiting for Academic Coordinator verification.</p>
                 </div>
               ) : (
                 pendingActivities.map((act) => {
@@ -2400,7 +2422,7 @@ export default function HODDashboard() {
                   <Award className="text-yellow-400" size={24} />
                   <div>
                     <h4 className="font-extrabold text-xs uppercase tracking-wider text-blue-200">
-                      Activity Verification Board (HOD Review)
+                      Activity Verification Board (Academic Coordinator Review)
                     </h4>
                     <p className="text-base font-bold truncate mt-0.5">
                       {reviewActivity.studentName || reviewActivity.facultyName} 
@@ -3334,9 +3356,9 @@ export default function HODDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={handleApproveByHOD}
+                <button onClick={handleMoveToHOD}
                   className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95">
-                  <CheckCircle2 size={16} /> Submit to COE
+                  <CheckCircle2 size={16} /> Move to HOD
                 </button>
                 <button onClick={() => setShowRecorrectModal(true)}
                   className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95">
@@ -3629,7 +3651,7 @@ export default function HODDashboard() {
                   className="px-4 py-2.5 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition-all">
                   Cancel
                 </button>
-                <button onClick={handleRecorrect} disabled={!recorrectComments.trim()}
+                <button onClick={handleRevoke} disabled={!recorrectComments.trim()}
                   className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95">
                   Revoke Paper
                 </button>

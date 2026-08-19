@@ -1,5 +1,365 @@
 ## Summary of Changes
 
+### 138. Real-Time Authoritative Course Code Pill Resolution (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where `DevOps` (under `B.E. Electronics and Communication Engineering`) displayed the legacy course code pill badge (`CS342`) on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) instead of the authoritative course code configured in Course Bank (`EC3342`).
+- **Changes**:
+  - **`getCanonicalCode` Resolution**: Added `getCanonicalCode` helper to `IAScheduleCreation.jsx` that queries the `courses` collection (Course Bank) `_nameMap` by course name (`devops`) and department (`Electronics_and_Communication_Engineering`).
+  - **Pill Badge & Storage Sync**: Updated both `syllabusSubjects` subject aggregation and table cell rendering to display **`EC3342`** in the course code pill badge on `IAScheduleCreation.jsx`.
+- Build passes cleanly.
+
+### 137. Batch-Wise IA Exam Schedule Sub-grouping & Filter Tabs (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Resolve issue where subjects from different batches (e.g. `23 Batch (2023-27)` - Sem 7 and `24 Batch (2024-28)` - Sem 5) were intermingled in a single flat list under each department card on `PrincipalDashboard.jsx` (`PrincipalIAScheduleView.jsx`), making it difficult to track batch-wise timetables.
+- **Changes**:
+  - **Batch & Semester Sub-sections**: Grouped department items into distinct sub-sections by Batch and Semester (e.g. `23 Batch (2023-27) • Semester 7` and `24 Batch (2024-28) • Semester 5`) with clean sub-header banners and dedicated tables.
+  - **Quick Batch Filter Pills**: Added interactive top filter buttons (`All Batches`, `23 Batch (2023-27)`, `24 Batch (2024-28)`, etc.) allowing the Principal to instantly filter all departments by a specific batch.
+- Build passes cleanly.
+
+### 136. Course Type Priority & Heuristics Fix (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where certain subjects (e.g. `ME3792` - Computer Integrated Manufacturing) were misclassified under `Theory Cum Lab` or `Laboratory` on `IAScheduleCreation.jsx` despite being explicitly set to `Theory` in syllabus/Course Bank.
+- **Root Cause**: `deriveSubjectCourseType` evaluated keyword string matching (`normName.includes("INTEGRATED")`, `normName.includes("DRAWING")`, `normName.includes("SEMINAR")`) BEFORE checking explicit course type properties (`sub.courseType`, `sub.category`, `sub.type`).
+- **Fix**:
+  - Re-ordered `deriveSubjectCourseType` to check explicit course type fields first (`sub.courseType || sub.course_type || sub.category || sub.subjectType || sub.type`).
+  - Refined name fallback matching to match exact phrases (`THEORY CUM LAB`, `PRACTICAL`, `WORKSHOP`) without misclassifying course titles like `COMPUTER INTEGRATED MANUFACTURING`.
+  - Expanded `bankType` resolution to check all course type property aliases in `courseBankMap`.
+- Build passes cleanly.
+
+### 135. Explicit Assignment Department Scope Priority Fix (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Prevent subjects (e.g. `ME3792` - Computer Integrated Manufacturing) from being erroneously displayed under non-offering departments (e.g. `B.E. Robotics and Automation`) on `PrincipalDashboard.jsx` (`PrincipalIAScheduleView.jsx`).
+- **Root Cause**: `PrincipalIAScheduleView.jsx` previously merged `explicitDepts` (saved on assignment) with `codeDeptMap` (a global lookup across all syllabus documents for all semesters). If a course code appeared in another department's syllabus for a different semester or elective, `codeDeptMap` erroneously added that department to the scheduled view.
+- **Fix**:
+  - Updated `rows` in `PrincipalIAScheduleView.jsx` to **prioritize `explicitDepts` (`as.departments`)** saved directly on the assignment document.
+  - Added semester-aware filtering (`String(d.sem) === String(sDoc.semester)`) to fallback `codeDeptMap` lookups, ensuring subjects are rendered ONLY under departments that explicitly offer the subject in that semester.
+- Build passes cleanly.
+
+### 134. Course Code Synchronization with Course Bank (`IAScheduleCreation.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where `DevOps` (under `B.E. Electronics and Communication Engineering`) displayed a legacy/mismatched course code (`CS342`) instead of the authoritative course code configured in Course Bank (`EC3342`).
+- **Changes**:
+  - **Course Bank Name-to-Code Mapping (`courseBankNameMap`, `getCanonicalCode`)**: Added real-time listener and canonical code resolution for `courses` collection documents in `IAScheduleCreation.jsx` and `PrincipalIAScheduleView.jsx`.
+  - **Code Resolution Priority**: When displaying and saving course codes for schedule assignments, the system automatically checks if Course Bank (`courses` collection) defines an updated canonical course code for that course name and department, resolving `CS342` to **`EC3342`** across all schedule views.
+- Build passes cleanly.
+
+### 133. Common Subject IA Schedule Cross-Department Display Fix (`IAScheduleCreation.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where assigning an IA exam date to a Common Subject (e.g. `GE3791` - Human Values and Ethics) in `IAScheduleCreation.jsx` caused the subject to appear under only 1 department and disappear from the remaining offering departments on `PrincipalDashboard.jsx` (`PrincipalIAScheduleView.jsx`).
+- **Root Causes**:
+  1. **Object-to-Array Transformation (`toArray`)**: `PrincipalIAScheduleView.jsx` evaluated `if (!Array.isArray(subs)) return;` when parsing `syllabus_data`. For syllabus documents where semester subjects were persisted as Firestore objects `{ "0": {...}, "1": {...} }`, those department documents were skipped.
+  2. **Normalized Code Keying (`normCodeKey`)**: `codeDeptMap` used raw string comparison (`"GE 3791"` vs `"GE3791"`). Any whitespace differences caused cross-department lookups to fail.
+  3. **Explicit Department Persistence**: `IAScheduleCreation.jsx` did not persist the resolved `departments` array onto assignment objects in `qp_setter_assignments`.
+- **Fix**:
+  - Added `toArray` and `normCodeKey` (`toUpperCase().replace(/\s+/g, "")`) when indexing `syllabus_data` in `PrincipalIAScheduleView.jsx` and `IAScheduleCreation.jsx`.
+  - Updated `IAScheduleCreation.jsx` to persist the explicit `departments` array on each assignment document.
+  - Updated `PrincipalIAScheduleView.jsx` to merge explicit assignment departments with `codeDeptMap`, ensuring common subjects cleanly display under ALL offering departments on the Principal end.
+- Build passes cleanly.
+
+### 132. Comprehensive Admission Enquiry Quota Resolution (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Resolve issue where students whose quota (`seatCategory` / `quotaAskedFor` = `"MQ"`) was stored on their admission enquiry record did not have their quota resolved on initial load, causing `Other Fee` to fall back to the Government Quota (`GQ`) figure (`₹15,000`).
+- **Changes**:
+  - **Enquiries Collection Lookup**: Added real-time and async query lookup on `enquiries` collection matching student identifiers (`applicationNo`, `enquiryId`, `regNo`, `examNumber`, `emailId`, `mobile`, `uid`) so that admission enquiry quota attributes automatically resolve if not yet present on `users` doc root.
+  - **Quota Resolution Sync**: Ensures `seatCategory` state updates reactively with `"MQ"`, causing `fetchConfigs` to immediately load the correct Management Quota fee structure (`Other Fee` = `₹35,000`).
+- Build passes cleanly.
+
+### 131. Student Quota Exact Match Priority Deduplication (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Fix issue where a student under Management Quota (`MQ`) was shown the Government Quota (`GQ`) `Other Fee` figure of `₹15,000` instead of their exact quota figure of `₹35,000` configured in Fee Configurations.
+- **Changes**:
+  - **Comprehensive Quota Field Resolution (`getQuota`)**: Updated student quota resolution to evaluate all possible student quota attributes (`seatCategory`, `quotaAskedFor`, `quota`, `_profile_data.quotaAskedFor`, `_profile_data.seatCategory`, `_student_data.quotaAskedFor`).
+  - **Exact Quota Match Priority Deduplication (`isQuotaMatchExact`)**: Enhanced fee head deduplication so that when both explicit quota fee heads (e.g. `Other Fee` for `GQ` / `₹15,000` and `MQ` / `₹35,000`) are retrieved, the configuration matching the student's exact quota (`MQ`) strictly replaces non-matching quota configurations (`GQ`), displaying the exact `₹35,000` fee head amount on the student and staff fee portals.
+- Build passes cleanly.
+
+### 130. Fee Head Alias Matching & Semester Paid Credit Capping (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Fix calculation errors where `CONSORTIUM FEE` showed `₹500 DUE` despite `Application Fee ₹500` being paid during admission, and prevent `semPaid` from exceeding `semTotal` when payments (e.g. ₹65,000 for Tuition Fee) exceed the configured head total amount (e.g. ₹50,000).
+- **Changes**:
+  - **Fee Head Alias Normalization (`normHead`)**: Enhanced `normHead` to map alias variations (`"CONSORTIUM FEE"`, `"Application Fee"`, `"App Fee"`, `"Registration Fee"`) to a single canonical key, allowing application-time payments to automatically match and settle consortium/application fee heads.
+  - **Semester Paid Credit Capping (`Math.min(headAmt, rawPaid)`)**: Updated `semPaid` calculation to cap paid credits at the head's configured amount per item, ensuring `semPaid` equals `semTotal` when all heads are paid and prevents over-payment credit distortion on semester totals.
+- Build passes cleanly.
+
+### 129. Student Quota-Based Fee Matching & Quota Priority Filtering (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Fix discrepancy where the Fee Structure table loaded generic un-quota'd fee configurations (e.g. ₹50,000 Tuition Fee) for students assigned to a specific seat category/quota (e.g. Management Quota / ₹65,000), causing mismatch between Payment History total paid (₹65,000) and Fee Structure configured amount (₹50,000).
+- **Changes**:
+  - **Quota Normalization (`normalizeQuotaStr`, `isQuotaApplicable`)**: Added robust quota normalization so student quotas (e.g. `"Management Quota"`, `"MQ"`, `"Government Quota"`, `"GQ"`, `"7.5% GQ"`) map accurately to configured fee quotas regardless of minor string variations.
+  - **Quota Priority Deduplication**: When matching fee configurations for a student's batch, programme, and department, explicit quota-matched configurations now take strict priority over generic (`quota: ""`) fallback configurations for the same fee head, ensuring the student's exact quota fee structure is loaded.
+- Build passes cleanly.
+
+### 128. Fee Structure Table Head Amount & Breakdown Display Enhancement (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Resolve issue where fully paid fee heads in the Fee Structure table displayed ONLY a "Paid" pill badge without showing the actual fee head total amount (e.g. ₹50,000, ₹15,000, ₹10,000, ₹5,000, ₹500), making it impossible for students and staff to see the configured fee figures per head.
+- **Changes**:
+  - **Student Portal (`student/Fees.jsx`)**: Updated the Amount column cell for fully paid heads to display both the bold formatted head total amount (e.g. `₹50,000`) and the green **Paid** badge beneath it. Updated partially paid heads to show `₹20,000 Due` with total and paid breakdown (`Total: ₹35,000 (Paid: ₹15,000)`). Updated semester total rows to show total semester amount and paid status clearly.
+  - **Office Dues Portal (`FeeOperations.jsx`)**: Applied the identical format to the office fee breakdown table for complete visual and calculation consistency across student and staff portals.
+- Build passes cleanly.
+
+### 127. Academic Year-Specific Curriculum Exam Weightage Priority Fix (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where exams newly added or configured for a specific Academic Year (e.g. `IA 3` added for `2026-2027` under `AU - R2021`) in `Curriculum.jsx` did not appear in the Exam dropdown on `QuestionPaperGenerator.jsx`.
+- **Root Cause**: In `QuestionPaperGenerator.jsx`, `Object.keys(courseWeightageData).find(k => ...)` evaluated the generic regulation default key (`au_r2021`) in the same expression as the Academic Year specific key (`au_r2021_2026_2027`). If the generic key appeared first in `Object.keys()`, `.find()` prematurely matched the generic default document (which lacked `IA 3`), ignoring the Academic Year specific document.
+- **Fix**: Replaced single-stage `.find()` with a strict 2-stage lookup in `availableCategories` and `filteredExams`. The lookup first evaluates the Academic Year specific key (`regAyKey` / `regAyCleanNorm`); only if no Academic Year specific weightage exists does it fall back to the regulation default (`regSanitized` / `regCleanNorm`).
+- Build passes cleanly.
+
+### 126. Course Type & Curriculum Weightage Exam Scope Isolation (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where exams configured for other course types (e.g. `IA` configured under `MANDATORY COURSE` in `Curriculum.jsx`) appeared in the Exam dropdown when generating question papers for a `THEORY` course (`EE25C04`).
+- **Root Cause**:
+  1. `findCategoryData` in `QuestionPaperGenerator.jsx` did not handle `mandatory` course types separately, causing `Mandatory Course` to fall back to `Theory`.
+  2. When Curriculum weightage (`cConf.exam_weightage`) was defined for a specific category (e.g. `WRITTEN TEST` for `Theory`), `QuestionPaperGenerator.jsx` still executed a secondary loop over all `ciaConfigs` in Firestore without strict course type checks, causing `IA` (from `MANDATORY COURSE`) to bleed into `THEORY`.
+- **Fix**:
+  - Updated `getNormalizedCourseType` and `findCategoryData` to explicitly isolate `mandatory` course types (`Mandatory Course`).
+  - Updated `filteredExams` so that when Curriculum `exam_weightage` is explicitly defined for a Course Type and Category, ONLY those exams explicitly configured for that Course Type (e.g., `IA 1` and `IA 2` for Theory) are loaded into the Exam dropdown.
+- Build passes cleanly.
+
+### 125. Student Namelist Register Number Sorting Order Fix (`Attendance.jsx`, `MarkEntry.jsx`, `Dashboard.jsx`, `Reports.jsx`, `AdmissionConfirmation.jsx`, `PrincipalDashboard.jsx`)
+- **Goal**: Fix issue where student namelists for certain batches (e.g., EEE 2025-2029) displayed out of numerical order (e.g. `2026778` placed above `2026701`).
+- **Root Cause**:
+  1. `addStudentToNamelist` in `AdmissionConfirmation.jsx` and `PrincipalDashboard.jsx` appended student register numbers to `_order` array in Firestore via `order.push(regNo)` in random admission approval sequence (`["2026778", "2026701", "2026750", ...]`).
+  2. `Attendance.jsx`, `MarkEntry.jsx`, `Dashboard.jsx`, and `Reports.jsx` evaluated `if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg))`. Because `_order` in Firestore was populated out of sequence, `order.indexOf` forced the table rows to display in random arrival order (`2026778` before `2026701`).
+- **Fix**:
+  - **Attendance & Dashboards (`Attendance.jsx`, `MarkEntry.jsx`, `Dashboard.jsx`, `Reports.jsx`)**: Replaced `order.indexOf` sorting with natural numeric/alphanumeric locale sorting: `a.reg.localeCompare(b.reg, undefined, { numeric: true, sensitivity: 'base' })`.
+  - **Firestore Namelist Generation (`AdmissionConfirmation.jsx`, `PrincipalDashboard.jsx`)**: Updated `addStudentToNamelist` to sort `_order` array naturally before persisting into Firestore (`order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }))`).
+- Build passes cleanly.
+
+### 124. Automatic Admission Application Data Fetching on Student Profile (`student/Profile.jsx`)
+- **Goal**: Automatically fetch and pre-fill all admission application data (Personal, Family, Contact, Address, Academic, Qualifying Marks, Quota, Hostel/Transport, etc.) entered during application entry (`enquiries` collection) on the Student Portal Profile page (`src/pages/student/Profile.jsx`).
+- **Changes**:
+  - **`mapEnquiryToProfileFields` Mapping Helper**: Maps all 60+ fields stored during admission entry (`enquiries` collection) to exact profile form field keys (`firstName`, `lastName`, `gender`, `dateOfBirth`, `nationality`, `religion`, `community`, `caste`, `motherTongue`, `bloodGroup`, `maritalStatus`, `aadharNo`, `fatherGuardianName`, `motherName`, `guardianName`, `fatherOccupationSector`, `motherOccupationSector`, `fatherAnnualIncome`, `motherAnnualIncome`, `familyAnnualIncome`, `fatherMobile`, `motherMobile`, `presentHouseNo`, `presentStreet`, `presentLocality`, `presentCity`, `presentPincode`, `presentDistrict`, `presentState`, `permanentAddress`, `hostellerDayScholar`, `transportRequired`, `transportRoute`, `transportStage`, `schoolCollege`, `mediumOfInstruction`, `examinationPassedAppeared`, `studentCategory`, `quotaAskedFor`, `scholarshipDetails`, `emsUmsNo`, `mathsMark`, `physicsMark`, `chemistryMark`, `totalMarks`, `cutoff`, `qualifyingExam10th...`, `qualifyingExam12th...`, `qualifyingExamDipDeg...`).
+  - **Auto-Prefill on Initial Load**: Queries Firestore `enquiries` collection matching candidate identifiers (`regNo`, `applicationNo`, `enquiryId`, `admissionNo`, `examNumber`, `emailId`, `mobile`, `uid`) to auto-populate empty profile fields.
+  - **Real-Time `onSnapshot` Sync**: Subscribes to real-time `enquiries` collection updates so updates made by staff on admission records immediately reflect on the student portal profile page live.
+  - **Bidirectional Persistence**: Updating profile data saves to `users` doc (`_profile_data`), `students` doc (`_student_data`), and syncs back to the student's `enquiries` document.
+- Build passes cleanly.
+
+### 123. Department-Scoped Course Name Lookup Fix across Dashboards & Attendance (`courseUtils.js`)
+- **Goal**: Fix issue where course codes shared across departments (e.g. `EE25C04`, which is `"Electromagnetic Theory"` in EEE but `"BASIC ELECTRONICS AND ELECTRICAL ENGINEEERING"` in ECE) resolved to the wrong department's course name on `FacultyDashboard.jsx`, `Attendance.jsx`, and other dashboards.
+- **Root Cause**: `getCourseName(courseMap, code, deptKey, progKey)` in `src/utils/courseUtils.js` evaluated generic un-scoped `courseMap[cleanCode]` FIRST before checking department-scoped keys (`${cleanProg}_${cleanDept}_${cleanCode}`, `${cleanDept}_${cleanCode}`). Whichever course was loaded last in `fetchAllCourseNamesMap` overwrote `courseMap[cleanCode]`, forcing all departments to display that single course name.
+- **Fix**:
+  - Updated `getCourseName` to evaluate department-scoped keys (`cleanProg_cleanDept_code`, `cleanDept_code`, `deptNoProg_code`, and department fuzzy matching) FIRST before falling back to generic un-scoped `courseMap[code]`.
+  - Updated `extractAndSave` to save department-scoped keys reliably and avoid blindly overwriting generic `map[code]`.
+- Build passes cleanly.
+
+### 122. IA Schedule Principal Approval & Student Portal View Workflow (`IAScheduleCreation.jsx`, `PrincipalIAScheduleView.jsx`, `student/Timetable.jsx`, `student/Dashboard.jsx`)
+- **Goal**: Enable complete end-to-end workflow where IA schedules created/updated in `IAScheduleCreation.jsx` move to the Principal end for review & approval, and ONLY upon Principal approval (`status: "Approved"`, `as.approved: true`), students can view their official IA Exam Timetable on the student portal.
+- **Changes**:
+  - **Schedule Submission (`IAScheduleCreation.jsx`)**: Saving an IA schedule sets `status: "Pending Principal Approval"` in `qp_setter_assignments` collection in Firestore and notifies staff that it has been sent for Principal review.
+  - **Principal Approval (`PrincipalIAScheduleView.jsx`)**: When Principal approves a department's schedule, it writes `status = "Approved"`, `principalApproved = true`, and sets `assignments[code].approved = true` in Firestore.
+  - **Student IA Exam Timetable (`student/Timetable.jsx`)**: Added a view mode switcher ("Class Timetable" vs "IA Exam Timetable"). Listens in real time to `qp_setter_assignments` matching the student's batch and filters to display ONLY Principal-approved schedules (`as.approved === true`). Shows an informative pending approval card if no schedules are approved yet.
+  - **Student Dashboard Widget (`student/Dashboard.jsx`)**: Added an "Upcoming IA Exams" widget listing approved exam counts and linking directly to `/student/timetable?tab=ia`.
+- Build passes cleanly.
+
+### 121. Question Paper Generator Warning Synchronized with Curriculum Marks (`QuestionPaperGenerator.jsx`)
+- **Goal**: Ensure the mark validation warnings ("Your mark is HIGH/LOW...") in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) are evaluated against the custom total mark set for that specific exam in `Curriculum.jsx` (`course_type_weightage` collection for the selected Regulation and Academic Year).
+- **Changes**:
+  - **`getConfiguredExamTotalMarks` Helper**: Added `getConfiguredExamTotalMarks(selectedConfig)` to inspect `courseWeightageData` from Firestore for the selected Regulation and Academic Year (`${regKey}_${ayKey}` or `regKey`), retrieving the customized exam mark from `_category_config[catName].exam_marks[examId]` before falling back to default `cia_configs` total marks.
+  - **Validation Synchronization**: Updated `alertIfMarksMismatchWithConfig`, `handleGenerateTable`, `handleOpenAIModal`, and `handleFinalizeQuestions` to evaluate total paper marks against `getConfiguredExamTotalMarks(selectedConfig)`.
+- Build passes cleanly.
+
+### 120. Academic Year-Specific Editable MARK Column (`Curriculum.jsx`)
+- **Goal**: Make the values in the MARK column of the Course Categories & Weightage table in `Curriculum.jsx` editable inputs (per exam in `group.ids`), and ensure modifications are saved specifically for the Academic Year selected in the top dropdown (`selectedConfigAY`, e.g. `2026-2027`).
+- **Changes**:
+  - **Editable MARK Input Fields**: Replaced static string rendering (`group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ')`) with interactive numeric `<input>` fields per exam in `group.ids`.
+  - **`handleExamMarkChange` Handler**: Added `handleExamMarkChange(regKey, courseType, catName, examId, value)` to update `weightageConfigs` state for the currently active academic year key (`activeConfigRegKey`, e.g. `au_r2021_2026_2027`).
+  - **Academic Year-Specific Persistence**: `handleSaveTypePercentages(regKey)` persists the updated `exam_marks` map into Firestore under `course_type_weightage` for the selected academic year, preserving default regulation configs while permitting per-AY customization.
+- Build passes cleanly.
+
+### 119. Real-Time Admission Enquiry Payment Multi-Key Sync (`FeeOperations.jsx`, `student/Fees.jsx`)
+- **Goal**: Guarantee that any fee payment collected during application/enquiry entry in `AdmissionEnquiries.jsx` / `AddEnquiryModal.jsx` immediately reduces student fees in real time on BOTH `FeeOperations.jsx` (office/accounts portal) and `student/Fees.jsx` (student portal), regardless of whether the query uses `enquiryId`, `applicationNo`, `regNo`, `examNumber`, `admissionNo`, `emailId`, or `mobile`.
+- **Changes**:
+  - **Multi-Key Listener (`subscribeAppPaymentsForStudent`)**: Implemented a comprehensive real-time `onSnapshot` listener in both `FeeOperations.jsx` and `student/Fees.jsx` that queries the `enquiries` collection across all candidate keys (`applicationNo`, `enquiryId`, `regNo`, `examNumber`, `admissionNo`, `emailId`, `mobile`).
+  - **Real-Time Auto-Reduction**: When an application/enquiry payment is created or edited in `AdmissionEnquiries.jsx` or `AddEnquiryModal.jsx`, the real-time listener instantly updates `appPayments` state on both the office portal (`FeeOperations.jsx`) and student portal (`student/Fees.jsx`), reducing total outstanding dues and updating breakdown badges live.
+- Build passes cleanly.
+
+### 118. Complete Fee Payment & Breakdown Synchronization across Office & Student Portal (`FeeOperations.jsx`, `student/Fees.jsx`)
+- **Goal**: Resolve discrepancy where `FeeOperations.jsx` (office) and `student/Fees.jsx` (student portal) displayed different fee figures, paid amounts, breakdown badges, and payment history for the same student (e.g. Saravanan M, Reg: 2026778).
+- **Changes**:
+  - **Application Payments Sync in Office Portal** (`FeeOperations.jsx`): Added `appPayments` state and real-time fetch listener querying `enquiries` collection matching `applicationNo` / `enquiryId`. Integrated application payments (Application Fee ₹500, Admission Fee ₹10k, Caution Deposit ₹5k, Other Fee ₹15k, Tuition Fee ₹10k) into `allStudentPayments`.
+  - **Head Breakdown & Status Alignment** (`FeeOperations.jsx`): Replaced naive `paidForThisHead` calculation with `paidForHead(cfg)` and `isFirstYearConfig(cfg)` logic (identical to `student/Fees.jsx`). `Paid` badges now display correctly for Admission Fee, Caution Deposit, Other Fee, and Tuition Fee in `FeeOperations.jsx`.
+  - **Summary Cards & History Table** (`FeeOperations.jsx`): Updated `totalPaid` (₹80,500) and `outstanding` (₹1,95,000) cards and Payment History table to list all 6 transactions (application + manual payments).
+- Build passes cleanly.
+
+### 117. Student Portal Payment Multi-Field Sync & Legacy Manual Payment Fix (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Ensure payments recorded manually by office staff in `FeeOperations.jsx` (such as ₹40,000 for Saravanan M, Reg: 2026778) reflect immediately on the student portal (`student/Fees.jsx`), even if legacy records were stored under `examNumber` or `studentId` without a `uid` field or explicit `status: "SUCCESS"`.
+- **Changes**:
+  - **Multi-Field Query Listeners** (`student/Fees.jsx`): Replaced single `where("uid", "==", currentUid)` query with concurrent real-time listeners for `uid == currentUid`, `studentId == currentUid`, `examNumber == studentData.regNo`, and `studentId == studentData.regNo`. Merges results in a Map deduped by document ID.
+  - **Status & Calculation Logic** (`student/Fees.jsx`): Created `isSuccessfulPayment(p)` helper that treats `"SUCCESS"`, `"active"`, and missing status (`!p.status`) as valid paid transactions (filtering out `"FAILED"`, `"CANCELLED"`). Updated `totalPaid`, `paidForHead`, and Payment History status badge rendering so manual office payments show green **Paid** badge and update total paid / pending dues.
+  - **Office Payment Recording** (`FeeOperations.jsx`): Enhanced `handleRecordPayment` payData object to capture `uid`, `studentId`, `examNumber`, and `status: "SUCCESS"` with complete student fallback identifiers.
+- Build passes cleanly.
+
+### 116. Bidirectional Fee Payment Sync — Office & Student Portal (`FeeOperations.jsx`, `functions/index.js`, `student/Fees.jsx`)
+- **Goal**: The office's `FeeOperations.jsx` and the student portal's `student/Fees.jsx` must show the SAME payment data. A payment recorded on either page must reflect on BOTH pages.
+- **Office → Student (manual payment)**: `handleRecordPayment` in `FeeOperations.jsx` now writes `uid: selectedStudent.id` (the `users` doc ID = student's Firebase UID) and `status: "SUCCESS"` into `payData` before `addDoc(fee_payments, ...)` and `addDoc(fee_receipts, ...)`. The student portal queries `fee_payments` with `where("uid", "==", auth.currentUser.uid)` and only counts `status === "SUCCESS"`, so manual office payments now appear in the student's Payment History and reduce the outstanding balance.
+- **Student → Office (online HDFC payment)**: `createPaymentSession` in `functions/index.js` now enriches the `paymentRecord` with `studentId: uid`, `examNumber: regNo`, `programme`, `department`, `batch`, and a resolved `studentName` (from `users` doc: `displayName || name || studentName`, falling back to auth token name/email). Previously online records only carried `uid`/`studentName`, so the office's `studentFeeDetails.studentPayments` and Receipts tab matched them only via `uid` and displayed incomplete student info. Now they match via `studentId`/`examNumber` too and show full programme/dept/batch details.
+- **Student portal display consistency** (`student/Fees.jsx`):
+  - Payment History "Receipt / Order" cell now shows `p.receiptNo || p.orderId` so manual office receipts (which have `receiptNo`, no `orderId`) display their receipt number instead of `-`.
+  - Receipt modal now shows `p.receiptNo || p.orderId` as Receipt No and resolves the payment Mode (`p.mode`, capitalized; `online` → "Online (SmartGateway)") instead of hardcoding HDFC SmartGateway for manual cash/cheque/UPI payments.
+- Both pages read from the same `fee_payments` collection, so all new payments sync both ways in real time. Existing legacy manual payments (no `uid`/`status`) still won't show on the student portal — a one-off backfill would be needed for those.
+- App build passes; functions `node --check` passes (2 pre-existing `parseError` unused-var lint errors untouched).
+
+### 115. Manual Fee Payments Missing from Student Portal (`FeeOperations.jsx`)
+- **Goal**: Payments recorded manually by the office in FeeOperations (`fee_payments` collection) did not appear in the student's `student/Fees.jsx` payment history and did not reduce the outstanding balance.
+- **Root cause**: `student/Fees.jsx` loads payments via `query(fee_payments, where("uid", "==", auth.currentUser.uid))` and only counts `status === "SUCCESS"` toward `totalPaid`/`paidForHead`. But `handleRecordPayment` in `FeeOperations.jsx` wrote the `fee_payments` doc WITHOUT a `uid` field and WITHOUT a `status` field — so the student query never matched, and even matched records would have been excluded from the paid totals.
+- **Fix** (`src/pages/FeeOperations.jsx` `handleRecordPayment`): Added `uid: selectedStudent.id` (the `users` doc ID, which is the student's Firebase UID) and `status: "SUCCESS"` to `payData` before `addDoc(collection(db, "fee_payments"), ...)`. The parallel `fee_receipts` doc spreads `payData`, so it now carries both fields too.
+- `FeeControl.jsx` is read-only (all `fee_payments` listener) — no change needed there.
+- Build passes cleanly.
+
+### 114. CKEditor Paste & Instance Re-initialization Fix (`QuestionPaperGenerator.jsx`, `MathTemplateToolbar.jsx`)
+- **Goal**: Fix `Uncaught TypeError: Cannot read properties of undefined (reading 'checkReadOnly')` when pasting or inserting content into CKEditor in `QuestionPaperGenerator.jsx`.
+- **Changes**:
+  - **CKEditor Instance Preservation** (`QuestionPaperGenerator.jsx`): Updated `initInlineQbEditor` to check if `window.CKEDITOR.instances.qbEditor` is already active and ready before attempting to destroy/replace it. Removed `initInlineQbEditor` from the `useEffect` dependency array so the editor is not destroyed mid-paste or mid-keystroke on React re-renders.
+  - **Math Template Toolbar Safety** (`MathTemplateToolbar.jsx`): Added checks for `editor.status === 'ready'` and `editor.editable()` before executing `editor.insertHtml()`.
+- Build passes cleanly.
+
+### 113. Global LaTeX MathJax Formula Rendering Fix (`QuestionPaperGenerator.jsx`, `index.html`, `mathJaxUtils.js`)
+- **Goal**: Resolve issue where LaTeX math equations (such as `\(\left( a_{1}, a_{2} \right)\)`) were rendered as raw unparsed text strings in the question builder summary table, preview cards, and Firestore loaded papers on `QuestionPaperGenerator.jsx`, `HODDashboard.jsx`, and `ExamCellQPReview.jsx`.
+- **Changes**:
+  - **Global MathJax CDN & Config** (`index.html`): Added MathJax 2.7.9 CDN script with TeX-AMS-MML_HTMLorMML configuration supporting inline `\(` `\)` and display `\[` `\]` math delimiters globally.
+  - **MathJax Typesetting Utility** (`src/utils/mathJaxUtils.js`): Created reusable `typesetMath(containerElement)` helper function to trigger `window.MathJax.Hub.Queue(['Typeset', window.MathJax.Hub, target])` safely.
+  - **Question Paper Generator** (`src/pages/QuestionPaperGenerator.jsx`):
+    - Added `useEffect` listening to `qpQuestions`, `showFinalPreview`, and `qbQuestion` changes to automatically typeset math formulas on screen.
+    - Updated question summary table cell to remove `line-clamp-2` restriction (`qp-question-content text-xs md:text-sm text-slate-800 leading-relaxed font-medium overflow-auto max-h-48`) so multi-line equations render cleanly without truncation.
+  - **Dashboard Reviews** (`src/pages/HODDashboard.jsx`, `src/pages/ExamCell/ExamCellQPReview.jsx`): Connected `typesetMath` helper to modal preview effects.
+- Build passes cleanly.
+
+### 112. Exam Event Auto-Selection & Dropdown Filter (`QuestionPaperGenerator.jsx`)
+- **Goal**: Add an explicit "Exam Event" filter dropdown to `QuestionPaperGenerator.jsx` sourced directly from `academic_calendar_events` (`type === "Exam"`), and auto-select the exam event when navigating from task cards or URL query parameters (`exam` or `examName`).
+- **Changes** (`src/pages/QuestionPaperGenerator.jsx` & `src/pages/FacultyDashboard.jsx`):
+  - **Firestore Listener**: Added `onSnapshot` listener on `academic_calendar_events` (`type === "Exam"`) to populate `availableExamEvents` for the selected batch.
+  - **Exam Dropdown**: Added an "Exam Event" select input alongside Program, Department, Batch, Academic Year, and Semester dropdowns.
+  - **Auto-Selection**:
+    - URL parameter `exam` / `examName` is auto-selected when present (e.g. when coming from Faculty Dashboard QP Task cards).
+    - If no URL parameter is provided, automatically selects the first available exam event for the selected batch.
+  - **Task Navigation**: Updated `FacultyDashboard.jsx` task cards to include `examId` and `examName` from `qp_setter_assignments` in the URL navigation string (`&exam=...`).
+- Build passes cleanly.
+
+### 111. Subject Name Font Size Reduction & Full Name Display (`FacultyDashboard.jsx`)
+- **Goal**: Reduce subject name font size and remove single-line `line-clamp-1` truncation in Question Paper Setter Task Cards on `FacultyDashboard.jsx` so long subject names (e.g., "DIAGNOSTIC AND THERAPEUTIC EQUIPMENT") wrap cleanly across multiple lines and display 100% of their content compactly without `...` truncation.
+- **Changes** (`src/pages/FacultyDashboard.jsx`):
+  - **QP Setter Task Cards**: Changed course name `<h3>` styling from `text-base font-bold line-clamp-1` / `text-xs md:text-sm font-extrabold` to `text-xs font-bold text-slate-800 leading-snug mb-2 break-words`.
+  - **Task & Listing Rows**: Removed `truncate` on `task.subjectName` and `qp.subject_name` across Missed Attendance, Recorrection tasks, and Question Paper listing rows, replacing with `font-semibold text-zinc-600 leading-snug` for full visibility.
+- Build passes cleanly.
+
+### 110. Automatic Section & Subject Auto-Selection for Allocated Faculty (`QuestionPaperGenerator.jsx`)
+- **Goal**: Enable seamless single-click Question Paper generation where Section and Subject are automatically selected based on the logged-in faculty member's allocated subjects in `subject_assignments` (from HOD role allocation), eliminating manual dropdown selection or "Select Subject" bottlenecks.
+- **Changes** (`src/pages/QuestionPaperGenerator.jsx`):
+  - **Section Auto-Selection**:
+    - URL parameter `sec` / `section` support added to URL auto-selection effect.
+    - If no section URL parameter is present, automatically checks `availableSections` from `batch_sections` for the selected batch.
+    - If multiple sections exist (e.g. `Sec-A`, `Sec-B`), queries Firestore `subject_assignments` for each section key (`{progKey}_{deptKey}_{batchKey}_{ayKey}_{semNum}_{secKey}`) to find which section carries allocated subjects for `auth.currentUser.uid`, and auto-selects that section.
+  - **Subject Auto-Selection**:
+    - Added section-aware `subject_assignments` document fetching with fallback to base key and multi-section inspection.
+    - Added automatic auto-selection of the subject (`setSubject(filteredSubjects[0].value)`) as soon as subjects are loaded for allocated faculty members.
+    - Preserves URL `code`/`subjectCode` parameter matching when navigated from task cards or notifications.
+  - Single-option auto-selection added across all dropdowns (Program, Department, Batch, Academic Year, Semester).
+- Build passes cleanly.
+
+### 109. Question Paper Setter Tasks Displayed on Faculty Dashboard (`FacultyDashboard.jsx`)
+- **Goal**: Automatically display Question Paper Setter task cards on `FacultyDashboard.jsx` whenever a faculty member is assigned as a Question Paper (QP) Setter in `IAScheduleCreation.jsx` / Exam Cell (`qp_setter_assignments` collection).
+- **Changes** (`src/pages/FacultyDashboard.jsx` & `src/pages/QuestionPaperGenerator.jsx`):
+  - Added real-time `onSnapshot` listener on `qp_setter_assignments` matching tasks where `setterUid === currentUid` or `setterName === facultyName`.
+  - **Exam Date Constraint**: Added filtering (`hasExamDate = as.examDate && String(as.examDate).trim().length > 0`) so that subjects without an assigned exam date are NOT shown on the faculty task list until scheduled.
+  - Added `qpSetterTaskCards` memo comparing required sets (`numSets`) with existing generated papers in `baseQps` created by the faculty for that course code to track completion (`isDone`, `isOverdue`, `isDueSoon`).
+  - Added **"QP Tasks"** KPI card in the top summary row.
+  - Added a dedicated, glassmorphic **"Question Paper Setter Tasks"** card section right below Stats, showing:
+    - Subject Code & Name
+    - Batch, Semester & Academic Year
+    - Department chips (including multi-department `COMMON` courses)
+    - Sets Required vs Sets Created status badges (Action Needed / Overdue / Completed)
+    - Submission Window & Exam Date
+    - Direct action button navigating to `/question-paper-generator?code={code}&batch={batch}&sem={sem}&prog={prog}&dept={dept}&ay={ay}`.
+  - **URL Parameter Auto-Selection**: Updated `QuestionPaperGenerator.jsx` auto-selection effect to dynamically auto-select Program, Department, Batch, Academic Year, Semester, and Subject dropdowns when arriving from Faculty Dashboard task cards or Assigned Subjects.
+  - Updated outer container layout to standard responsive full-width `w-full p-4 md:p-8 space-y-8 font-sans`.
+- Build passes cleanly.
+
+### 108. System-Wide Full-Width Responsive Screen Layout & Table Optimization
+- **Goal**: Eliminate restricted max-width constraints (`max-w-7xl`, `max-w-6xl`, `max-w-5xl`, `max-w-[1600px]`) across all module pages and dashboards so that every page utilizes 100% of the screen width on high-resolution displays (1080p, 1440p, 4K monitors) without wasting side margins.
+- **Pages Converted**:
+  - `PrincipalDashboard.jsx`: Changed `max-w-[1600px]` → `w-full px-4 md:px-8 space-y-8`. KPI cards grid updated to `xl:grid-cols-7` (fitting all 7 cards in 1 row). Quick actions grid updated to `lg:grid-cols-8`.
+  - `IAScheduleCreation.jsx`: Changed container to `w-full px-4 md:px-8 space-y-6`. Merged single-department subject rows with `rowSpan` while preserving individual per-row `COMMON` department chips. Added explicit cell borders (`border border-slate-300` / `border border-slate-200`) and center-aligned the Department column.
+  - Resource Hub pages (`ResourceHubDashboard.jsx`, `ResourceBooking.jsx`, `ResourceManagement.jsx`, `MyBookings.jsx`, `ResourceApprovals.jsx`, `StudentResourceHub.jsx`): Converted containers to `w-full px-4 md:px-8 space-y-6`.
+  - Core Modules (`Dashboard.jsx`, `Attendance.jsx`, `FeeDashboard.jsx`, `FeeConfig.jsx`, `CourseBank.jsx`, `CourseEnrolment.jsx`, `RegulationFormation.jsx`, `PlacementDashboard.jsx`, `PlacementStudents.jsx`, `LibraryCirculation.jsx`, `LibraryCategories.jsx`, `TimetableCreation.jsx`, `ActivitySettings.jsx`, `ActivityApproval.jsx`, `StudentManagement.jsx`, `AdminRoleConfig.jsx`, `student/Attendance.jsx`): Converted all outer containers to `w-full px-4 md:px-8 space-y-6`.
+- Build passes.
+
+### 107. PrincipalDashboard IA schedule — read-only view + approve (no interactive widget)
+- **Goal**: Replace the interactive `IAScheduleCreation embedded` widget on PrincipalDashboard with a read-only "view & approve" of already-saved IA schedules. No dropdowns/selection — the Principal only sees subjects grouped by department across ALL batches, and only subjects that have an assigned exam date (`examDate`), plus an Approve action.
+- **New file** (`src/pages/PrincipalIAScheduleView.jsx`):
+  - Reads all `qp_setter_assignments` docs via `onSnapshot` (sorted by `updatedAt` desc).
+  - Reads `syllabus_data` via `onSnapshot`, parses doc IDs with `parseSyllabusDocId`, builds a global `codeDeptMap` (course code → departments across all programmes/semesters).
+  - `rows` memo flattens ONLY assignments with `as.examDate` set, resolves each subject's departments from `codeDeptMap` (falls back to "Unknown Department" when unmapped), and groups by department (subjects in multiple departments appear under each).
+  - Stats cards: Subjects Scheduled / Approved / Pending. Per-department card with a table: Batch | Semester | Course Code | Course Name | Exam | Exam Date | QP Setter | Submission Window | Status | Action.
+  - **Approve**: `updateDoc(doc(db, "qp_setter_assignments", docId), { status: "Approved", principalApprovedBy: uid, principalApprovedByName: "Principal", principalApprovedAt })`. Approved schedules show green "Approved"/"Done" states; action button disabled while any approve is in flight.
+- **Changes** (`src/pages/PrincipalDashboard.jsx`):
+  - Import swapped `IAScheduleCreation` → `PrincipalIAScheduleView`; section renders `<PrincipalIAScheduleView />` inside a white rounded card (kept title "QP Setter Assignment & IA Schedule (Department-Wise)" + read-only hint).
+- Interactive assignment/editing flow remains available on Exam Cell's `/exam-cell/qp-assignment` (QPSetterAssignment) and `/ia/schedule-create` (IAScheduleCreation standalone).
+- Build passes.
+
+### 106. IAScheduleCreation course type sourced from CourseBank (`courses` collection)
+- **Problem**: IAScheduleCreation showed the course type derived from the subject name (e.g. `Theory Cum Lab`) which differed from the authoritative `type` each course carries in CourseBank (`courses` collection, e.g. `Integrated`).
+- **Changes** (`src/pages/IAScheduleCreation.jsx`):
+  - Added real-time `onSnapshot` listener on `courses` → `courseBankMap` state (keyed by uppercase course code, capturing `type`/`courseType`/`course_type`/`category` + name).
+  - `syllabusSubjects` now prefers `courseBankMap[code].type` as the base course type (skipped when empty or generic `Program Course`/`Overall`, falling back to `deriveSubjectCourseType(sub)`), then maps through `mapToConfiguredCourseType` to the configured regulation course type for the row chips.
+  - `courseBankMap` added to `syllabusSubjects` memo deps so chips update live when CourseBank changes.
+- Build passes.
+
+### 105. IAScheduleCreation embedded into Principal Dashboard (department-wise IA schedule)
+- **Goal**: Bring the full "Save & Notify QP Setter" department-wise IA schedule workflow (from `IAScheduleCreation.jsx`, the Exam Cell QP Setter Assignment & IA Schedule page) directly into the Principal Dashboard.
+- **Changes** (`src/pages/IAScheduleCreation.jsx`):
+  - Added `embedded = false` prop. When `embedded` is true the component renders without its own `<Layout>` wrapper and without outer page padding (`p-4 md:p-8 w-full font-sans` → `space-y-6`), so it can be dropped inside another page's layout. Loading state also returns a bare loader (no Layout).
+- **Changes** (`src/pages/PrincipalDashboard.jsx`):
+  - Imported `IAScheduleCreation`.
+  - Added a new "QP Setter Assignment & IA Schedule (Department-Wise)" section (FileText icon) rendered before the Module Overview grid: `<IAScheduleCreation embedded />` inside a white rounded card.
+- The standalone `/ia/schedule-create` route and Exam Cell entry remain unchanged.
+- Build passes.
+
+### 104. IAScheduleCreation Course Type dropdown sourced from Curriculum (`course_type_configs`)
+- **Goal**: The "Course Type" filter dropdown should show the course types created in Curriculum.jsx (`course_type_configs` collection, per-regulation with AY-specific fallback) instead of only the types derived from subject names.
+- **Changes** (`src/pages/IAScheduleCreation.jsx`):
+  - Added real-time `onSnapshot` listener on `course_type_configs` → `courseTypeConfigs` state.
+  - Added `toArray` helper (mirrors Curriculum.jsx) to unwrap Firestore array-as-object data.
+  - Added `normalizeTypeKey` + `mapToConfiguredCourseType` helpers — maps a derived subject type (`Theory Cum Lab`, `Laboratory`, `Project Work`, `Activity`, `Theory`) to the closest configured regulation course type (e.g. `Integrated`, `Practical`, `Project`) via exact-match then keyword scoring (integrated/lab/practical/project/activity/elective/open/mandatory).
+  - `getConfiguredTypesForRegulation(regulation)` resolves the config key with AY-specific preference: `${regKey}_${ayKey}` first, falls back to `${regKey}` (same as Curriculum's `activeConfigRegKey` logic).
+  - `syllabusSubjects` now stores each code's `courseTypes` mapped to configured regulation course types (fallback to derived names when no config exists).
+  - `availableCourseTypes` now prefers the union of configured course types across the selected batch's active programmes/regulations; falls back to semester-derived types only when no config is present.
+  - Subject rows still show per-code course-type chips; filter still drives the `rows` memo; reset-on-batch/AY-change unchanged.
+- Build passes.
+
+### 103. QP Setter page — Multi-select Course Type filter (`IAScheduleCreation.jsx`)
+- **Goal**: Filter the subject table by course type (Theory / Laboratory / Theory Cum Lab / Project Work / Activity) with a multi-select dropdown — only subjects matching the chosen types appear.
+- **Changes** (`src/pages/IAScheduleCreation.jsx`):
+  - Added `deriveSubjectCourseType(sub)` helper — mirrors QPG's convention: name keywords (`LABORATORY`/`PRACTICAL`/`WORKSHOP`/`DRAWING` → Laboratory; `THEORY CUM LAB`/`INTEGRATED`/`WITH LAB` → Theory Cum Lab; `PROJECT`/`VIVA`/`DISSERTATION`/`THESIS` → Project Work; `ACTIVITY`/`VALUE ADDED`/`SEMINAR` → Activity) override the explicit `category`/`type`/`courseType`/`course_type`/`subjectType` field; fallback `Theory`.
+  - Each grouped subject in `syllabusSubjects` now carries `courseTypes[]` (deduped per code across departments).
+  - `availableCourseTypes` = distinct types present in the current semester, ordered Theory → Theory Cum Lab → Laboratory → Project Work → Activity.
+  - **Course Type dropdown** (6th filter column, grid now `xl:grid-cols-6`): toggle button with a checkbox panel (Clear / Select All). `selectedCourseTypes` multi-select state drives the `rows` memo — `showAll` when empty, else subjects whose `courseTypes` intersect the selection.
+  - Course Name cell shows per-row course-type chips; empty-state hints to clear the filter; filter resets when batch/academic-year changes.
+  - Removed a duplicate `setSemester("")` effect and consolidated the reset effect to also clear `selectedCourseTypes`.
+- Build passes.
+
+### 102. QP Setter page — Exam Date Assign driven by Academic Calendar exam config (`IAScheduleCreation.jsx`)
+- **Goal**: The "Exam Date Assign" column should only allow dates within the exam configured in `AcademicCalendar.jsx` (`academic_calendar_events` type `Exam`).
+- **Changes** (`src/pages/IAScheduleCreation.jsx`):
+  - Added **Exam Event** dropdown beside Semester in the filter grid (5th column; grid now `xl:grid-cols-5`). Options are `academic_calendar_events` where `type === "Exam"` with `fromDate`/`toDate`, filtered to the selected batch (fuzzy `cleanStr` matching on `ev.batch`/`ev.batches`/linked `cia_configs.batch`), deduped by title+window, sorted by fromDate.
+  - Auto-selects the first matching exam for the batch; shows a chip under the dropdown with `{title}: from → to`.
+  - **Exam Date Assign** column is now a `<select>` constrained to **availableExamDates** = working days (excl. Sundays + Academic Calendar `Holiday` events) inside the selected exam's from→to window. "Choose exam event" warning shown when no exam selected.
+  - Changing exam or semester clears previously assigned `examDate` values.
+  - Save payload + report meta include `examId`/`examName`/`examWindow`; print report shows Exam in the meta bar.
+- Build passes.
+
+### 101. QP Setter Assignment page in Exam Cell module
+- **Goal**: Let the Exam Cell (COE) assign question paper setters, set counts, and QP submission windows per subject for a batch/academic-year/semester across ALL departments — with common (multi-department) course codes merged into single rows.
+- **New page** (`src/pages/ExamCell/QPSetterAssignment.jsx`) at route `/exam-cell/qp-assignment`:
+  - Filters: Batch → Academic Year → Semester (semesters derived from batch+AY same as HODRoleConfig).
+  - Reads `syllabus_data` across all programmes/departments (matching each programme's regulation for the batch via `getRegulationForBatch`), groups subjects by course code — a code shared by 2+ departments renders one **Common** row (departments listed, per-prog badges), unique codes render under their single department.
+  - Reads `subject_assignments` (all docs) to list each code's **Subject Handling Faculty** (name + department chips; "No faculty allocated" warning when none).
+  - Table columns: Department | Course Code | Course Name | Handling Faculty | **QP Setter (Assign)** dropdown (faculty for that code; auto-picks when exactly one) | **Sets** (1–6) | **Submission Window** (From → To date inputs) | Status.
+  - Saves to `qp_setter_assignments/{batchKey}_{academicYearKey}_{sem}` doc `{ batch, academicYear, semester, updatedBy, updatedById, updatedAt, assignments: { [code]: { code, name, departments[{prog, progKey, dept}], setterUid, setterName, numSets, fromDate, toDate } } }`. Existing saved values auto-load via onSnapshot on the same key.
+  - Notifies each assigned faculty via `notifications` collection `{ type: 'qp_setter_assigned', targetUid, targetName, batch, academicYear, semester, subjectCodes, assignedBy, createdAt: serverTimestamp(), read: false }`.
+  - Validation: all visible rows must have a setter before save; To-before-From date ranges blocked. Stats cards (subjects / setters assigned / ready / submission window), search, sticky save bar.
+- **Routing**: `App.tsx` route `/exam-cell/qp-assignment`; sidebar item `exam-cell-qp-assignment` (icon `PenLine`) added to Layout.jsx `allPossibleItems`, `exam_cell` module `itemIds`, and Admin's `effectivePermissions`; `AdminRoleConfig.jsx` `ALL_PAGES` entry under "Exam Cell"; quick-action button "Setter Assign" on ExamCellDashboard header.
+- Build passes.
+
+### 100. Exam Cell (COE) Module — new premium examiner command center
+- **Goal**: Move all "COE end" work out of the HOD flow into a dedicated Exam Cell module for the Controller of Examinations role (`COE`). COE is a separate role in charge of all examination works (finalise/assign question papers, approve timetables/schedules).
+- **New pages** (`src/pages/ExamCell/`):
+  - `ExamCellDashboard.jsx` — premium navy overview: stat cards (QPs awaiting COE review / schedules awaiting approval / published QPs / approved schedules), live approval pipeline (Faculty → HOD → Exam Cell → Principal), pending QP review queue, recently published QPs, quick actions. Reads `generated_qps` + `exam_schedules`.
+  - `ExamCellQPReview.jsx` — lists QPs with `status === "approved_by_hod"` (Review Queue) and `status === "approved_by_coe"` (Published). Full QP renderer with faculty + HOD + COE signatures, approve → writes `{ status: 'approved_by_coe', coe_signature_url, coe_approved_by, coe_approved_at }` (merge into `generated_qps/{compositeKey}.{id}`), or send back → `{ status: 'recorrected', forwarded_to: faculty, coe_comments }`.
+  - `ExamCellSchedules.jsx` — lists `exam_schedules` with `status === "pending_hod"` (Pending) and `status === "approved"` (Approved). Detail modal shows programme/AV/date-window/submitter stats + timetable table with date, time, FN/AN slot, subject. Approve → `updateDoc` with `{ status: 'approved', approvedBy, approvedAt }`.
+- **Routing**: `App.tsx` — ROOT `role === "COE"` → `/exam-cell`; new routes `/exam-cell`, `/exam-cell/qp-review`, `/exam-cell/schedules`. `DashboardRouter.jsx` — COE → `<ExamCellDashboard />`.
+- **Sidebar**: New "Exam Cell" module (`exam_cell`) in `Layout.jsx` (icon `Landmark`) with Exam Cell Dashboard / QP Final Review / Schedule Approvals items. Auto-granted to Admin via `effectivePermissions`.
+- **AdminRoleConfig.jsx**: Added `exam-cell-dashboard`, `exam-cell-qp-review`, `exam-cell-schedules` to `ALL_PAGES` under module "Exam Cell".
+- **QP HTML signature**: `getQuestionPaperHTML` gained a 7th trailing param `coeSignatureUrl` (non-breaking). Signature row is now Subject Faculty | HOD | COE | Principal (was Academic Coord).
+- **FacultyDashboard**: `statusConfig` gained `approved_by_coe` ("Approved & Published"); QP visibility now also includes `status === "approved_by_coe"` for owned/forwarded papers.
+- **Status lifecycle**: `draft` → `forwarded` (faculty) → `approved_by_hod` (HOD → toast "…forwarded to COE", unchanged) → `approved_by_coe` (COE publish) OR `recorrected` (COE send back to faculty, `coe_comments`).
+- Build passes.
+
 ### 1. QPGenerator subjects not showing
 - Changed assignmentRef from nested subcollection path to flat key path (`assignments/${batchKey}_${progKey}_${regKey}_${sKey}_${ayKey}_${semKey}`) in `src/pages/QPGenerator.jsx`
 - Cleared Vite cache, restarted dev server
@@ -896,15 +1256,37 @@
   3. Defaulted marked periods missing explicit student entries to Present (`'P'`).
   4. Updated course enrollment filter (`enrolMap[ek]`) to check all student IDs.
 - Result: Student Portal Attendance page now accurately calculates 23 classes, 100% attendance, and matches Faculty Module data perfectly.
+### 98. Resource Hub Module Implementation
+- **Goal**: Create a full-featured campus Resource Hub module for allocating Auditoriums, Computer Labs, Seminar Halls, Projectors, Vehicles, and Sports Complex using a **First-Come First-Serve (FCFS)** model with conflict detection, approval workflow, and mandatory revocation reasoning.
+- **Created Pages**:
+  1. `src/pages/resourceHub/ResourceHubDashboard.jsx`: Overview dashboard with metrics, quick actions, today's schedule timeline, and recent queue activity.
+  2. `src/pages/resourceHub/ResourceManagement.jsx`: Config page for Admins/Facility Managers to add/edit campus resources, seating capacity, location, amenities list, and status (`Available` / `Under Maintenance`).
+  3. `src/pages/resourceHub/ResourceBooking.jsx`: User request catalog with real-time slot availability check, date/time range selection, purpose/reason field, attendee count, equipment options, and automated FCFS overlap warning.
+  4. `src/pages/resourceHub/MyBookings.jsx`: User booking history tracking statuses (`Pending`, `Approved`, `Rejected`, `Revoked`, `Cancelled`) and displaying Manager's **Revocation / Rejection Reason** in a prominent red/amber callout card.
+  5. `src/pages/resourceHub/ResourceApprovals.jsx`: Manager approval queue ordered strictly by FCFS submission timestamp (`createdAt`), displaying overlap warnings, and triggering a mandatory text prompt modal for entering **Reason for Revocation/Rejection** before saving to Firestore.
+  6. `src/pages/student/ResourceHub.jsx`: Student Portal view allowing students to browse campus resources, submit booking requests, and track request status with revocation reasoning.
+- **Integrations**:
+  - `src/App.tsx`: Registered routes for `/resource-hub`, `/resource-hub/manage`, `/resource-hub/booking`, `/resource-hub/my-bookings`, `/resource-hub/approvals`, `/student/resource-hub`.
+  - `src/components/Layout.jsx`: Added `Resource Hub` sidebar module with custom items.
+  - `src/components/student/StudentLayout.jsx`: Added `Resource Hub` to student sidebar menu items.
+  - `src/pages/AdminRoleConfig.jsx`: Added Resource Hub items to `ALL_PAGES` for permission configuration.
+- **Result**: Complete FCFS campus resource booking and allocation system active with mandatory revocation reasoning.
+
+### 102. Central Multi-Department Subject Aggregation & QP Setter Table (`IAScheduleCreation.jsx`)
+- **Goal**: Transition IA Schedule Creation & QP Setter Assignment from department-specific filtering to central Exam Cell management across ALL departments for the selected Batch, Academic Year, and Semester.
+- **Implemented Features**:
+  1. Removed `userDepartment` single-department restriction. Batch → Academic Year → Semester selection reads `syllabus_data` across all programmes and departments.
+  2. **Common vs Department Grouping**: Courses appearing in 2+ departments (or with different names) are grouped into a single **Common** row with department badges (`CSE, ECE`). Unique courses display under their single Department.
+  3. **7-Column Table Structure**:
+     - `1st Column`: **Department** (Shows "Common" badge with department chips, or specific Department name).
+     - `2nd Column`: **Course Code** (e.g. `CS3301`).
+     - `3rd Column`: **Course Name** (e.g. `Data Structures`).
+     - `4th Column`: **Subject Handling Faculty** (Displays assigned handling faculty with department tags e.g. `Dr. Ramesh (CSE), Prof. Priya (ECE)`; displays warning if unallocated).
+     - `5th Column`: **Question Paper Setter (Assign)** (`Assign` dropdown with handling faculty options. **Auto-selects** if exactly 1 handling faculty exists!).
+     - `6th Column`: **Set** (QP set count selection 1 to 6).
+     - `7th Column`: **Submission Window** (Date picker inputs: `From Date` → `To Date` for QP submission deadline).
+  4. **Persistence & Notifications**: Saves assignments to `qp_setter_assignments/{batchKey}_{academicYearKey}_{sem}` and automatically notifies assigned faculty via `notifications` collection.
 - Build passes.
-
-
-
-
-
-
-
-
 
 
 

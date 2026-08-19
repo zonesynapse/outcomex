@@ -855,6 +855,8 @@ export default function QuestionPaper() {
                   width: '210mm',
                   versionCheck: false,
                   bodyClass: 'a4-body',
+                  font_defaultLabel: 'Times New Roman',
+                  fontSize_defaultLabel: '12pt',
                   extraPlugins: 'image,table,justify,font,colorbutton',
                   toolbar: [
                     { name: 'clipboard', items: ['Cut', 'Copy', 'Paste', 'Undo', 'Redo'] },
@@ -867,7 +869,7 @@ export default function QuestionPaper() {
                   ],
                   contentsCss: [
                     'https://cdn.ckeditor.com/4.20.1/full-all/contents.css',
-                    'body { font-family: "Times New Roman", Times, serif; font-size: 11pt; padding: 20mm; }' +
+                    'body { font-family: "Times New Roman", Times, serif; font-size: 12pt; padding: 20mm; }' +
                     'table { width: 100%; border-collapse: collapse; }' +
                     'td, th { border: 1px solid #333; padding: 4px; }' +
                     'img { max-width: 100%; height: auto; }'

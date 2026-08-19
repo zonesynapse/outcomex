@@ -241,4 +241,23 @@ export function parseStudentAttendanceVal(val) {
   return null;
 }
 
+/**
+ * Parse a subject field that may be a JSON string or plain string.
+ * Returns { code, name, category }.
+ */
+export function parseSubjectField(subject) {
+  if (!subject) return { code: '', name: '', category: '' };
+  const raw = String(subject).trim();
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') {
+      return {
+        code: obj.code || obj.subject_code || '',
+        name: obj.name || obj.subject_name || '',
+        category: obj.category || ''
+      };
+    }
+  } catch { /* not JSON */ }
+  return { code: raw, name: '', category: '' };
+}
 

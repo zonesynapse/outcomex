@@ -688,12 +688,7 @@ export default function Dashboard() {
             .filter(([key]) => !key.startsWith('_'))
             .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
 
-          const order = data._order || data.order;
-          if (order && Array.isArray(order)) {
-            studentList.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-          } else {
-            studentList.sort((a, b) => a.reg.localeCompare(b.reg));
-          }
+          studentList.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
           (async () => {
             if ((module === "consolidation" || module === "log-report") && selectedSubject && academicYear && semester) {
@@ -1472,7 +1467,7 @@ export default function Dashboard() {
         }
       `}</style>
       {/* Main Content */}
-      <div className="p-6 md:p-10 max-w-6xl mx-auto">
+      <div className="p-6 md:p-8 w-full space-y-8 font-sans">
         {/* Selection Card */}
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-10 border border-white/20">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">

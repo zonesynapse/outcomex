@@ -17,7 +17,7 @@ export default function RegulationFormation() {
 
   return (
     <Layout title="Regulation Formation">
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-8 w-full space-y-6">
 
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="p-10 text-center">

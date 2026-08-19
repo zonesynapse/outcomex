@@ -20,12 +20,20 @@ export async function fetchAllCourseNamesMap(forceRefresh = false) {
         const cCode = String(item.code || item.subjectCode || item.courseCode || item.subject_code || item.id || '').trim();
         const cName = String(item.name || item.subjectName || item.courseName || item.subject_name || item.title || item.courseTitle || '').trim();
         if (cCode && cName) {
-            map[cCode] = cName;
-            map[cCode.toUpperCase()] = cName;
+            // Save generic un-scoped fallback ONLY IF not set yet (so earlier docs aren't overwritten)
+            if (!map[cCode]) map[cCode] = cName;
+            if (!map[cCode.toUpperCase()]) map[cCode.toUpperCase()] = cName;
+
             if (dK) {
                 const cleanD = sanitizeKey(dK);
                 map[`${cleanD}_${cCode}`] = cName;
                 map[`${cleanD}_${cCode.toUpperCase()}`] = cName;
+
+                const deptNoProg = cleanD.replace(/^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A|UG|PG)_/i, '');
+                if (deptNoProg) {
+                    map[`${deptNoProg}_${cCode}`] = cName;
+                    map[`${deptNoProg}_${cCode.toUpperCase()}`] = cName;
+                }
             }
             if (pK && dK) {
                 const cleanP = sanitizeKey(pK);
@@ -150,23 +158,43 @@ export function getCourseName(courseMap, code, deptKey, progKey) {
     const cleanCode = String(code).trim();
     const cleanCodeUpper = cleanCode.toUpperCase();
 
-    // 1. Check exact code match first (most reliable!)
-    if (courseMap[cleanCode]) return courseMap[cleanCode];
-    if (courseMap[cleanCodeUpper]) return courseMap[cleanCodeUpper];
-
-    // 2. Check department-scoped keys
     const cleanDept = deptKey ? sanitizeKey(deptKey) : '';
     const cleanProg = progKey ? sanitizeKey(progKey) : '';
-    const deptNoProg = cleanDept.replace(/^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A|UG|PG)_/i, '');
+    const deptNoProg = cleanDept ? cleanDept.replace(/^(B_E|B_Tech|M_E|M_Tech|B_Sc|M_Sc|B_C_A|M_C_A|B_B_A|M_B_A|B_Com|M_Com|B_A|M_A|UG|PG)_/i, '') : '';
 
-    if (cleanProg && cleanDept && courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`];
-    if (cleanProg && cleanDept && courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`];
+    // 1. Check department-scoped keys FIRST when department context is available!
+    if (cleanProg && cleanDept) {
+        if (courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCodeUpper}`];
+        if (courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`]) return courseMap[`${cleanProg}_${cleanDept}_${cleanCode}`];
+    }
 
-    if (cleanDept && courseMap[`${cleanDept}_${cleanCode}`]) return courseMap[`${cleanDept}_${cleanCode}`];
-    if (cleanDept && courseMap[`${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanDept}_${cleanCodeUpper}`];
+    if (cleanDept) {
+        if (courseMap[`${cleanDept}_${cleanCodeUpper}`]) return courseMap[`${cleanDept}_${cleanCodeUpper}`];
+        if (courseMap[`${cleanDept}_${cleanCode}`]) return courseMap[`${cleanDept}_${cleanCode}`];
+    }
 
-    if (deptNoProg && courseMap[`${deptNoProg}_${cleanCode}`]) return courseMap[`${deptNoProg}_${cleanCode}`];
-    if (deptNoProg && courseMap[`${deptNoProg}_${cleanCodeUpper}`]) return courseMap[`${deptNoProg}_${cleanCodeUpper}`];
+    if (deptNoProg) {
+        if (courseMap[`${deptNoProg}_${cleanCodeUpper}`]) return courseMap[`${deptNoProg}_${cleanCodeUpper}`];
+        if (courseMap[`${deptNoProg}_${cleanCode}`]) return courseMap[`${deptNoProg}_${cleanCode}`];
+    }
+
+    // 2. Fuzzy department match in keys (e.g. key ends with _EE25C04 and contains dept substring)
+    if (cleanDept || deptNoProg) {
+        const targetDeptSub = (deptNoProg || cleanDept).toLowerCase();
+        const codeSuffix = `_${cleanCodeUpper}`;
+        for (const [k, v] of Object.entries(courseMap)) {
+            if (k.toUpperCase().endsWith(codeSuffix)) {
+                const kLower = k.toLowerCase();
+                if (kLower.includes(targetDeptSub) || targetDeptSub.includes(kLower.replace(codeSuffix.toLowerCase(), ''))) {
+                    return v;
+                }
+            }
+        }
+    }
+
+    // 3. Fallback to generic un-scoped code match ONLY IF department-scoped key doesn't exist
+    if (courseMap[cleanCodeUpper]) return courseMap[cleanCodeUpper];
+    if (courseMap[cleanCode]) return courseMap[cleanCode];
 
     return '';
 }

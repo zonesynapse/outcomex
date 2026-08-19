@@ -819,12 +819,7 @@ export default function MarkEntry() {
             .filter(([key]) => !key.startsWith('_'))
             .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
             
-          const order = studentData._order || studentData.order;
-          if (order && Array.isArray(order)) {
-            studentList.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-          } else {
-            studentList.sort((a, b) => a.reg.localeCompare(b.reg));
-          }
+          studentList.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
           // Filter by joining academic year — lateral entry students only show from their joining AY
           const joiningAY = studentData._joiningAY || {};

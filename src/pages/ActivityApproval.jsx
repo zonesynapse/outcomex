@@ -514,7 +514,7 @@ export default function ActivityApproval() {
         }
       `}</style>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="p-4 md:p-8 w-full space-y-6">
         
         {!previewMode ? (
           <>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { db, auth, functions } from "../../firebase";
-import { doc, getDoc, collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot, query, where, Timestamp } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -16,29 +16,117 @@ const PAYMENT_STATUS = {
   FAILED: { label: "Failed", color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
 };
 
-const buildAppPaymentsFromEnquiry = (d) => {
-  const data = d.data ? d.data() : d;
-  const id = d.id || "";
-  const out = [];
-  if (!Array.isArray(data.payments)) return out;
-  data.payments.forEach((p, i) => {
-    const amt = Number(p.feeAmount || 0);
-    if (!amt || amt <= 0) return;
-    const dateVal = p.paymentDate ? new Date(p.paymentDate) : (data.createdAt ? new Date(data.createdAt) : new Date(0));
-    out.push({
-      id: `app-${id}-${i}`,
-      status: "SUCCESS",
-      feeHead: p.feeCategory || "Application Fee",
-      amount: amt,
-      chargedAmount: amt,
-      createdAt: dateVal,
-      paymentMode: p.paymentMode || "cash",
-      orderId: `APP ${id}`,
-      upiNumber: p.upiNumber || "",
-      _source: "Application",
+const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
+  if (!student) {
+    setAppPayments([]);
+    return () => {};
+  }
+
+  const keys = new Set();
+  const addKey = (k) => {
+    if (k && typeof k === "string" && k.trim()) {
+      keys.add(k.trim());
+    }
+  };
+
+  addKey(student.applicationNo);
+  addKey(student.enquiryId);
+  addKey(student.regNo);
+  addKey(student.examNumber);
+  addKey(student.admissionNo);
+  addKey(student.id);
+  addKey(student._docId);
+  addKey(student.uid);
+  addKey(student._profile_data?.enquiryId);
+  addKey(student._profile_data?.applicationNo);
+
+  const email = (student.email || student.emailId || student._profile_data?.emailId || "").trim();
+  const mobile = (student.mobile || student.parentMobile || student.studentMobile || student._profile_data?.mobile || "").trim();
+
+  const matchingDocSnaps = new Map();
+
+  const parseAndSet = () => {
+    const collected = [];
+    const seenPayments = new Set();
+
+    matchingDocSnaps.forEach((data, docId) => {
+      // 1. Array of payments
+      if (Array.isArray(data.payments) && data.payments.length > 0) {
+        data.payments.forEach((p, i) => {
+          const amt = Number(p.feeAmount || p.amount || 0);
+          if (!amt || amt <= 0) return;
+          const pId = `app-${docId}-${i}`;
+          if (!seenPayments.has(pId)) {
+            seenPayments.add(pId);
+            const dateVal = p.paymentDate
+              ? (p.paymentDate.toDate ? p.paymentDate : Timestamp.fromDate(new Date(p.paymentDate)))
+              : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+            collected.push({
+              id: pId,
+              status: "SUCCESS",
+              feeHead: p.feeCategory || p.feeHead || p.head || "Application Fee",
+              amount: amt,
+              chargedAmount: amt,
+              paymentDate: dateVal,
+              createdAt: dateVal,
+              mode: p.paymentMode || p.mode || "cash",
+              receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
+              orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+              _source: "Application",
+            });
+          }
+        });
+      }
+
+      // 2. Single payment fields
+      if (Number(data.feeAmount) > 0) {
+        const amt = Number(data.feeAmount);
+        const pId = `app-${docId}-single`;
+        if (!seenPayments.has(pId)) {
+          seenPayments.add(pId);
+          const dateVal = data.paymentDate
+            ? (data.paymentDate.toDate ? data.paymentDate : Timestamp.fromDate(new Date(data.paymentDate)))
+            : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+          collected.push({
+            id: pId,
+            status: "SUCCESS",
+            feeHead: data.feeCategory || "Application Fee",
+            amount: amt,
+            chargedAmount: amt,
+            paymentDate: dateVal,
+            createdAt: dateVal,
+            mode: data.paymentMode || "cash",
+            receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
+            orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+            _source: "Application",
+          });
+        }
+      }
     });
-  });
-  return out;
+
+    setAppPayments(collected);
+  };
+
+  const handleSnapshot = (snap) => {
+    snap.forEach((d) => matchingDocSnaps.set(d.id, d.data()));
+    parseAndSet();
+  };
+
+  const unsubs = [];
+  for (const k of keys) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("applicationNo", "==", k)), handleSnapshot, () => {}));
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("enquiryId", "==", k)), handleSnapshot, () => {}));
+  }
+  if (email) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("emailId", "==", email)), handleSnapshot, () => {}));
+  }
+  if (mobile) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("mobile", "==", mobile)), handleSnapshot, () => {}));
+  }
+
+  return () => {
+    unsubs.forEach(u => u());
+  };
 };
 
 export default function Fees() {
@@ -160,36 +248,57 @@ export default function Fees() {
     return () => clearInterval(interval);
   }, [processing]);
 
-  // Load seatCategory from _student_data or _profile_data (reactive)
+  // Load seatCategory from _student_data or _profile_data or enquiries (reactive)
   useEffect(() => {
     if (!studentData) return;
-    const reg = studentData.regNo;
-    if (!reg) {
-      // Fallback: read from _profile_data on users doc
-      setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
-      setStudentStage(studentData._profile_data?.transportStage || "");
-      return;
-    }
+    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || obj?.studentCategory || "";
+    const reg = studentData.regNo || studentData.examNumber || "";
+    const appNo = studentData.applicationNo || studentData.enquiryId || studentData._profile_data?.applicationNo || "";
 
     (async () => {
-      try {
-        const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
-        if (idxSnap.exists()) {
-          const sDocId = idxSnap.data().studentDocId;
-          if (sDocId) {
-            const sSnap = await getDoc(doc(db, 'students', sDocId));
-            if (sSnap.exists()) {
-              const extra = sSnap.data()._student_data?.[reg] || {};
-              setSeatCategory(extra.quotaAskedFor || "");
-              setStudentStage(extra.transportStage || "");
-              return;
+      let foundQuota = getQuota(studentData) || getQuota(studentData._profile_data);
+      let foundStage = studentData._profile_data?.transportStage || "";
+
+      if (reg) {
+        try {
+          const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+          if (idxSnap.exists()) {
+            const sDocId = idxSnap.data().studentDocId;
+            if (sDocId) {
+              const sSnap = await getDoc(doc(db, 'students', sDocId));
+              if (sSnap.exists()) {
+                const extra = sSnap.data()._student_data?.[reg] || {};
+                if (!foundQuota) foundQuota = getQuota(extra);
+                if (!foundStage) foundStage = extra.transportStage || "";
+              }
             }
           }
+        } catch (_) {}
+      }
+
+      // If still missing, check enquiries collection
+      if (!foundQuota) {
+        const lookupKeys = [appNo, reg, studentData.id, studentData.uid, studentData._docId].filter(Boolean);
+        for (const k of lookupKeys) {
+          try {
+            const q1 = await getDocs(query(collection(db, "enquiries"), where("applicationNo", "==", k)));
+            if (!q1.empty) {
+              const d = q1.docs[0].data();
+              foundQuota = getQuota(d);
+              if (foundQuota) break;
+            }
+            const q2 = await getDocs(query(collection(db, "enquiries"), where("enquiryId", "==", k)));
+            if (!q2.empty) {
+              const d = q2.docs[0].data();
+              foundQuota = getQuota(d);
+              if (foundQuota) break;
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
-      // Fallback: read from _profile_data on users doc
-      setSeatCategory(studentData._profile_data?.quotaAskedFor || "");
-      setStudentStage(studentData._profile_data?.transportStage || "");
+      }
+
+      if (foundQuota) setSeatCategory(foundQuota);
+      if (foundStage) setStudentStage(foundStage);
     })();
   }, [studentData]);
 
@@ -217,10 +326,34 @@ export default function Fees() {
     const fetchConfigs = async () => {
       try {
         const feeSnap = await getDocs(collection(db, "fee_configurations"));
-        const configs = [];
+        const matchedConfigs = [];
         const normStudentProg = formatProgrammeKey(programme);
         const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
         const normStudentBatch = (batch || "").trim().toLowerCase();
+        const resolvedQuota = studentData.seatCategory || studentData.quotaAskedFor || studentData.quota || studentData._profile_data?.quotaAskedFor || studentData._profile_data?.seatCategory || seatCategory || "";
+
+        const normalizeQuotaStr = (q) => {
+          if (!q) return '';
+          const s = String(q).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (s.includes('mgmt') || s.includes('management') || s === 'mq') return 'management';
+          if (s.includes('govt') || s.includes('government') || s === 'gq' || s.includes('75')) return 'government';
+          if (s.includes('nri')) return 'nri';
+          if (s.includes('sports')) return 'sports';
+          return s;
+        };
+
+        const isQuotaMatchExact = (configQuota, studentQuota) => {
+          if (!configQuota || !studentQuota) return false;
+          const cq = normalizeQuotaStr(configQuota);
+          const sq = normalizeQuotaStr(studentQuota);
+          return Boolean(cq && sq && (cq === sq || cq.includes(sq) || sq.includes(cq)));
+        };
+
+        const isQuotaApplicable = (configQuota, studentQuota) => {
+          if (!configQuota || configQuota.trim().toLowerCase() === 'all') return true;
+          if (!studentQuota) return true;
+          return isQuotaMatchExact(configQuota, studentQuota);
+        };
 
         feeSnap.forEach((d) => {
           const data = d.data();
@@ -231,12 +364,36 @@ export default function Fees() {
           const isProgMatch = normDataProg && normDataProg === normStudentProg;
           const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
           const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
-          const isQuotaMatch = !seatCategory || !data.quota || data.quota === seatCategory;
+          const isQuotaMatch = isQuotaApplicable(data.quota, resolvedQuota);
 
           if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch) {
-            configs.push({ id: d.id, ...data });
+            matchedConfigs.push({ id: d.id, ...data });
           }
         });
+
+        // Deduplicate & prioritize quota-specific configs over generic configs per (academicYear + semester + head)
+        const configMap = new Map();
+        matchedConfigs.forEach((c) => {
+          const key = `${c.academicYear || ''}_${c.semester || ''}_${normHead(c.head)}`;
+          const existing = configMap.get(key);
+          if (!existing) {
+            configMap.set(key, c);
+          } else {
+            const existingMatchesExact = isQuotaMatchExact(existing.quota, resolvedQuota);
+            const currentMatchesExact = isQuotaMatchExact(c.quota, resolvedQuota);
+
+            if (currentMatchesExact && !existingMatchesExact) {
+              configMap.set(key, c);
+            } else if (!existingMatchesExact && (!existing.quota || existing.quota.trim().toLowerCase() === 'all')) {
+              const currentHasQuota = Boolean(c.quota && c.quota.trim().toLowerCase() !== 'all');
+              if (currentHasQuota) {
+                configMap.set(key, c);
+              }
+            }
+          }
+        });
+
+        const configs = Array.from(configMap.values());
 
         // Transport fee: match the student's transport stage to a configured stage
         if (studentStage && transportStages.length) {
@@ -259,81 +416,55 @@ export default function Fees() {
 
     fetchConfigs();
 
-    // 2. Real-time listen to payments for this student
+    // 2. Real-time listen to payments for this student (matching by uid, studentId, examNumber)
     const currentUid = auth.currentUser?.uid;
     if (!currentUid) {
       setLoading(false);
       return;
     }
 
-    const q = query(
-      collection(db, "fee_payments"),
-      where("uid", "==", currentUid)
-    );
+    const regNo = studentData.regNo || studentData.examNumber || "";
+    const studentDocId = studentData.id || studentData._docId || "";
+    const paymentsMap = new Map();
 
-    const unsubPayments = onSnapshot(q, (snapshot) => {
-      const payList = [];
-      snapshot.forEach((d) => {
-        payList.push({ id: d.id, ...d.data(), _docId: d.id });
-      });
+    const updateCombinedPayments = () => {
+      const payList = Array.from(paymentsMap.values());
       payList.sort((a, b) => {
-        const da = a.createdAt?.toDate?.() || new Date(0);
-        const db2 = b.createdAt?.toDate?.() || new Date(0);
+        const da = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
+        const db2 = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
         return db2 - da;
       });
       setPayments(payList);
       setLoading(false);
-    }, (err) => {
-      console.error("Payments listener error:", err);
-      setLoading(false);
-    });
+    };
+
+    const handleSnapshot = (snapshot) => {
+      snapshot.forEach((d) => {
+        paymentsMap.set(d.id, { id: d.id, ...d.data(), _docId: d.id });
+      });
+      updateCombinedPayments();
+    };
+
+    const unsubs = [];
+    unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("uid", "==", currentUid)), handleSnapshot, () => setLoading(false)));
+    unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("studentId", "==", currentUid)), handleSnapshot, () => setLoading(false)));
+    if (regNo) {
+      unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("examNumber", "==", regNo)), handleSnapshot, () => setLoading(false)));
+      unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("studentId", "==", regNo)), handleSnapshot, () => setLoading(false)));
+    }
+    if (studentDocId && studentDocId !== currentUid && studentDocId !== regNo) {
+      unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("uid", "==", studentDocId)), handleSnapshot, () => setLoading(false)));
+      unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("studentId", "==", studentDocId)), handleSnapshot, () => setLoading(false)));
+    }
 
     return () => {
-      unsubPayments();
+      unsubs.forEach(u => u());
     };
   }, [studentData, seatCategory, studentStage, transportStages]);
 
   // Load fee payments made during the admission application (from the enquiries doc)
   useEffect(() => {
-    if (!studentData) {
-      setAppPayments([]);
-      return;
-    }
-    const reg = studentData.regNo || studentData.admissionNo || "";
-    if (!reg) {
-      setAppPayments([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const qApp = query(collection(db, "enquiries"), where("applicationNo", "==", reg));
-        const appSnap = await getDocs(qApp);
-        let docs = appSnap.docs;
-        if (docs.length === 0) {
-          const qId = query(collection(db, "enquiries"), where("enquiryId", "==", reg));
-          const idSnap = await getDocs(qId);
-          docs = idSnap.docs;
-        }
-        const collected = [];
-        const seen = new Set();
-        docs.forEach((d) => {
-          buildAppPaymentsFromEnquiry(d).forEach((p) => {
-            if (!seen.has(p.id)) {
-              seen.add(p.id);
-              collected.push(p);
-            }
-          });
-        });
-        if (cancelled) return;
-        setAppPayments(collected);
-      } catch (err) {
-        console.error("Failed to load application payments:", err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    return subscribeAppPaymentsForStudent(studentData, setAppPayments);
   }, [studentData]);
 
   useEffect(() => {
@@ -374,9 +505,15 @@ export default function Fees() {
     return feeConfigs.reduce((s, c) => s + (Number(c.amount) || 0), 0);
   }, [feeConfigs]);
 
+  const isSuccessfulPayment = (p) => {
+    if (!p) return false;
+    if (p.status === "FAILED" || p.status === "CANCELLED" || p.status === "cancelled") return false;
+    return p.status === "SUCCESS" || p.status === "active" || p.status === undefined || p.status === null;
+  };
+
   const totalPaid = useMemo(() => {
     return [...payments, ...appPayments]
-      .filter((p) => p.status === "SUCCESS")
+      .filter((p) => isSuccessfulPayment(p))
       .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
   }, [payments, appPayments]);
 
@@ -384,7 +521,18 @@ export default function Fees() {
 
   // Determine the FIRST academic year per fee head — application-time payments only reduce that year's head
   const yearStart = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
-  const normHead = (s) => String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
+  const normHead = (s) => {
+    const str = String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
+    if (!str) return '';
+    if (str.includes('application') || str.includes('app fee') || str.includes('consortium') || str.includes('registration') || str.includes('enquiry')) return 'application fee';
+    if (str.includes('admission')) return 'admission fee';
+    if (str.includes('caution')) return 'caution deposit';
+    if (str.includes('tuition')) return 'tuition fee';
+    if (str.includes('other')) return 'other fee';
+    if (str.includes('transport')) return 'transport fee';
+    if (str.includes('hostel')) return 'hostel fee';
+    return str;
+  };
 
   // A config is the "first year" instance of its head when it's the only config for that head,
   // or when all same-headed configs share the same year, or when it's the chronologically earliest year.
@@ -401,12 +549,12 @@ export default function Fees() {
     const nh = normHead(cfg.head);
     // Portal payments count against every matching head
     const portalPaid = payments
-      .filter((p) => p.status === "SUCCESS" && normHead(p.feeHead) === nh)
+      .filter((p) => isSuccessfulPayment(p) && normHead(p.feeHead) === nh)
       .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
     // Application payments ONLY reduce the FIRST academic year's config for that head
     if (isFirstYearConfig(cfg)) {
       const appPaid = appPayments
-        .filter((p) => p.status === "SUCCESS" && normHead(p.feeHead) === nh)
+        .filter((p) => isSuccessfulPayment(p) && normHead(p.feeHead) === nh)
         .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
       return portalPaid + appPaid;
     }
@@ -558,8 +706,10 @@ export default function Fees() {
                       let semTotal = 0;
                       let semPaid = 0;
                       semGroup.rows.forEach(r => {
-                        semTotal += (Number(r.amount) || 0);
-                        semPaid += paidForHead(r);
+                        const headAmt = Number(r.amount) || 0;
+                        const rawPaid = paidForHead(r);
+                        semTotal += headAmt;
+                        semPaid += Math.min(headAmt, rawPaid);
                       });
                       const semRemaining = Math.max(0, semTotal - semPaid);
 
@@ -602,14 +752,17 @@ export default function Fees() {
                               }}
                             >
                               {isFullyPaid ? (
-                                <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="font-black text-[#120c7a]">{formatCurrency(cfg.amount)}</span>
+                                  <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                                </div>
                               ) : isPartiallyPaid ? (
-                                <div className="flex flex-col items-end">
-                                  <span>{formatCurrency(remainingForThisHead)}</span>
-                                  <span className="text-[9px] text-slate-400 font-semibold">Total: {formatCurrency(cfg.amount)}</span>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="font-black text-amber-600">{formatCurrency(remainingForThisHead)} <span className="text-[9px] font-bold text-amber-600 uppercase">Due</span></span>
+                                  <span className="text-[9px] text-slate-400 font-semibold">Total: {formatCurrency(cfg.amount)} (Paid: {formatCurrency(paidForThisHead)})</span>
                                 </div>
                               ) : (
-                                formatCurrency(remainingForThisHead)
+                                formatCurrency(cfg.amount)
                               )}
                             </td>
                           </tr>
@@ -625,14 +778,17 @@ export default function Fees() {
                             <td className="px-4 py-3 border border-slate-200" />
                             <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-slate-200">
                               {isSemFullyPaid ? (
-                                <span className="text-emerald-600">Paid</span>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="font-black text-emerald-700">{formatCurrency(semTotal)}</span>
+                                  <span className="text-emerald-600 text-[10px] font-bold">Paid</span>
+                                </div>
                               ) : isSemPartiallyPaid ? (
-                                <div className="flex flex-col items-end">
-                                  <span>{formatCurrency(semRemaining)}</span>
-                                  <span className="text-[9px] text-blue-400 font-semibold">Total: {formatCurrency(semTotal)}</span>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="font-black text-blue-700">{formatCurrency(semRemaining)} <span className="text-[9px] font-bold text-blue-600 uppercase">Due</span></span>
+                                  <span className="text-[9px] text-blue-400 font-semibold">Total: {formatCurrency(semTotal)} (Paid: {formatCurrency(semPaid)})</span>
                                 </div>
                               ) : (
-                                formatCurrency(semRemaining)
+                                formatCurrency(semTotal)
                               )}
                             </td>
                           </tr>
@@ -695,7 +851,8 @@ export default function Fees() {
                       return db2 - da;
                     })
                     .map((p, i) => {
-                    const st = PAYMENT_STATUS[p.status] || PAYMENT_STATUS.PENDING;
+                    const isPaid = isSuccessfulPayment(p);
+                    const st = isPaid ? PAYMENT_STATUS.SUCCESS : (PAYMENT_STATUS[p.status] || PAYMENT_STATUS.PENDING);
                     return (
                       <tr key={p.id || i} className="hover:bg-slate-50 transition-colors">
                         <td className="px-3 py-3 text-xs font-bold text-slate-600">
@@ -703,7 +860,7 @@ export default function Fees() {
                           {p.createdAt && <span className="text-[10px] text-slate-400">{formatTime(p.createdAt)}</span>}
                         </td>
                         <td className="px-3 py-3">
-                          <span className="text-xs font-mono font-bold text-slate-700 block">{p.orderId || '-'}</span>
+                          <span className="text-xs font-mono font-bold text-slate-700 block">{p.receiptNo || p.orderId || '-'}</span>
                           {p.gatewayResponse?.rrn && (
                             <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
                           )}
@@ -713,7 +870,7 @@ export default function Fees() {
                         </td>
                         <td className="px-3 py-3 text-xs font-bold text-slate-600">{p.feeHead || '-'}</td>
                         <td className="px-3 py-3 text-right text-xs font-black text-slate-700">
-                          {p.status === "SUCCESS"
+                          {isPaid
                             ? formatCurrency(p.chargedAmount || p.amount)
                             : formatCurrency(p.amount)}
                         </td>
@@ -737,7 +894,7 @@ export default function Fees() {
                               <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border`}>
                                 {st.label}
                               </span>
-                              {p.status === "SUCCESS" && (
+                              {isPaid && (
                                 <button
                                   onClick={() => setReceiptModal({ open: true, payment: p })}
                                   className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-[#120c7a] transition-all"
@@ -1021,8 +1178,8 @@ export default function Fees() {
                     </div>
                     <div className="space-y-0.5">
                       <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Receipt Information</p>
-                      <p className="font-bold text-slate-800 mt-1 break-all">Receipt No: <span className="font-mono">{p.orderId}</span></p>
-                      <p className="text-slate-500">Gateway: HDFC SmartGateway</p>
+                      <p className="font-bold text-slate-800 mt-1 break-all">Receipt No: <span className="font-mono">{p.receiptNo || p.orderId}</span></p>
+                      <p className="text-slate-500">Mode: <span className="font-semibold capitalize">{p.mode ? (p.mode === "online" ? "Online (SmartGateway)" : p.mode) : "Online (SmartGateway)"}</span></p>
                       <p className="text-slate-500 break-all">Txn ID: <span className="font-mono">{txId}</span></p>
                       {rrn && rrn !== "—" && <p className="text-slate-500 break-all">Bank RRN: <span className="font-mono">{rrn}</span></p>}
                     </div>
@@ -1041,7 +1198,7 @@ export default function Fees() {
                       <tbody className="divide-y divide-slate-100 text-slate-700 text-[11px] md:text-sm">
                         <tr>
                           <td className="px-3 py-3 md:px-4 md:py-4 font-bold break-words">{p.feeHead || "Semester Fee"}</td>
-                          <td className="px-3 py-3 md:px-4 md:py-4 font-semibold text-slate-400 break-words">Online (SmartGateway)</td>
+                          <td className="px-3 py-3 md:px-4 md:py-4 font-semibold text-slate-400 break-words">{p.mode ? (p.mode === "online" ? "Online (SmartGateway)" : p.mode.charAt(0).toUpperCase() + p.mode.slice(1)) : "Online (SmartGateway)"}</td>
                           <td className="px-3 py-3 md:px-4 md:py-4 text-right font-black text-slate-800">
                             {formatCurrency(p.chargedAmount || p.amount)}
                           </td>

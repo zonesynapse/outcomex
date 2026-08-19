@@ -31,6 +31,7 @@ import RegulationFormation from "./pages/RegulationFormation";
 import TimetableCreation from "./pages/TimetableCreation";
 import FacultyDashboard from "./pages/FacultyDashboard";
 import HODDashboard from "./pages/HODDashboard";
+import AcademicCoordinatorDashboard from "./pages/AcademicCoordinatorDashboard";
 import PrincipalDashboard from "./pages/PrincipalDashboard";
 import AdmissionEnquiries from "./pages/AdmissionEnquiries.js";
 import AdmissionConfirmation from "./pages/AdmissionConfirmation";
@@ -96,6 +97,16 @@ import FacultyAppraisal from "./pages/FacultyAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import IAScheduleCreation from "./pages/IAScheduleCreation";
+import ExamCellDashboard from "./pages/ExamCell/ExamCellDashboard";
+import ExamCellQPReview from "./pages/ExamCell/ExamCellQPReview";
+import ExamCellSchedules from "./pages/ExamCell/ExamCellSchedules";
+import QPSetterAssignment from "./pages/ExamCell/QPSetterAssignment";
+import ResourceHubDashboard from "./pages/resourceHub/ResourceHubDashboard";
+import ResourceManagement from "./pages/resourceHub/ResourceManagement";
+import ResourceBooking from "./pages/resourceHub/ResourceBooking";
+import MyBookings from "./pages/resourceHub/MyBookings";
+import ResourceApprovals from "./pages/resourceHub/ResourceApprovals";
+import StudentResourceHub from "./pages/student/ResourceHub";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -121,8 +132,10 @@ function RootRedirect() {
 
   if (role === "Student") return <Navigate to="/student/dashboard" replace />;
   if (role === "HOD") return <Navigate to="/hod-dashboard" replace />;
+  if (role === "Academic Coordinator") return <Navigate to="/academic-coordinator-dashboard" replace />;
   if (role === "Principal") return <Navigate to="/principal-dashboard" replace />;
   if (role === "Faculty") return <Navigate to="/faculty-dashboard" replace />;
+  if (role === "COE") return <Navigate to="/exam-cell" replace />;
   return <Navigate to="/reports" replace />;
 }
 
@@ -138,6 +151,7 @@ export default function App() {
         <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
         <Route path="/faculty-dashboard" element={<ProtectedRoute><FacultyDashboard /></ProtectedRoute>} />
         <Route path="/hod-dashboard" element={<ProtectedRoute><HODDashboard /></ProtectedRoute>} />
+        <Route path="/academic-coordinator-dashboard" element={<ProtectedRoute><AcademicCoordinatorDashboard /></ProtectedRoute>} />
         <Route path="/principal-dashboard" element={<ProtectedRoute><PrincipalDashboard /></ProtectedRoute>} />
         <Route path="/course-bank" element={<ProtectedRoute><CourseBank /></ProtectedRoute>} />
         <Route path="/admin-roles" element={<ProtectedRoute><AdminRoleConfig /></ProtectedRoute>} />
@@ -236,6 +250,19 @@ export default function App() {
         <Route path="/cia-configuration" element={<ProtectedRoute><CIAConfiguration /></ProtectedRoute>} />
         <Route path="/ia/schedule-create" element={<ProtectedRoute><IAScheduleCreation /></ProtectedRoute>} />
 
+        {/* Exam Cell Routes */}
+        <Route path="/exam-cell" element={<ProtectedRoute><ExamCellDashboard /></ProtectedRoute>} />
+        <Route path="/exam-cell/qp-review" element={<ProtectedRoute><ExamCellQPReview /></ProtectedRoute>} />
+        <Route path="/exam-cell/schedules" element={<ProtectedRoute><ExamCellSchedules /></ProtectedRoute>} />
+        <Route path="/exam-cell/qp-assignment" element={<ProtectedRoute><QPSetterAssignment /></ProtectedRoute>} />
+
+        {/* Resource Hub Routes */}
+        <Route path="/resource-hub" element={<ProtectedRoute><ResourceHubDashboard /></ProtectedRoute>} />
+        <Route path="/resource-hub/manage" element={<ProtectedRoute><ResourceManagement /></ProtectedRoute>} />
+        <Route path="/resource-hub/booking" element={<ProtectedRoute><ResourceBooking /></ProtectedRoute>} />
+        <Route path="/resource-hub/my-bookings" element={<ProtectedRoute><MyBookings /></ProtectedRoute>} />
+        <Route path="/resource-hub/approvals" element={<ProtectedRoute><ResourceApprovals /></ProtectedRoute>} />
+
         {/* Student Routes */}
         <Route path="/student/dashboard" element={<ProtectedRoute><StudentLayout title="Dashboard"><StudentDashboard /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/profile" element={<ProtectedRoute><StudentLayout title="My Profile"><StudentProfile /></StudentLayout></ProtectedRoute>} />
@@ -254,6 +281,7 @@ export default function App() {
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/mentor" element={<ProtectedRoute><StudentLayout title="My Mentor"><StudentMentorProfile /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/circulars" element={<ProtectedRoute><StudentLayout title="Circulars"><StudentCirculars /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/resource-hub" element={<ProtectedRoute><StudentResourceHub /></ProtectedRoute>} />
 
         {/* Redirects */}
         <Route path="/" element={<ProtectedRoute><RootRedirect /></ProtectedRoute>} />

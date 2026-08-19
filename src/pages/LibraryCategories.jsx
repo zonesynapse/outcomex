@@ -98,7 +98,7 @@ export default function LibraryCategories() {
 
   return (
     <Layout title="Library - Book Categories">
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-4 md:p-8 w-full space-y-6">
         {toast.show && (
           <div className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 ${toast.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-red-100 text-red-800 border border-red-200'}`}>
             {toast.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}

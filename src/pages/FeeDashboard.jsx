@@ -107,7 +107,7 @@ export default function FeeDashboard() {
 
   return (
     <Layout title="Fee Dashboard">
-      <div className="p-6 max-w-7xl mx-auto space-y-6 pb-24">
+      <div className="p-4 md:p-8 w-full space-y-6 pb-24">
         {/* Header */}
         <div className="bg-gradient-to-br from-[#120c7a] via-[#1a10a0] to-blue-900 rounded-3xl p-6 md:p-8 text-white shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-72 h-72 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/3" />

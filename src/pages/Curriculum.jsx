@@ -316,6 +316,22 @@ export default function Curriculum() {
     });
   };
 
+  const handleExamMarkChange = (regKey, courseType, catName, examId, value) => {
+    setWeightageConfigs(prev => {
+      const reg = { ...(prev[regKey] || {}) };
+      const ct = { ...(reg[courseType] || {}) };
+      const cc = { ...(ct._category_config || {}) };
+      const cat = { ...(cc[catName] || {}) };
+      const em = { ...(cat.exam_marks || {}) };
+      em[examId] = value === "" ? "" : parseInt(value) || 0;
+      cat.exam_marks = em;
+      cc[catName] = cat;
+      ct._category_config = cc;
+      reg[courseType] = ct;
+      return { ...prev, [regKey]: reg };
+    });
+  };
+
   const getExamCategory = (config) => {
     if (config.isAssignment) return "Activity";
     if (config.isProject) return "Project";
@@ -1213,8 +1229,29 @@ export default function Curriculum() {
                                                           <input type="number" min="1" className="w-12 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.best_count || ''} onChange={(e) => handleCategoryConfigChange(activeConfigRegKey, type, catName, 'best_count', e.target.value)} />
                                                         )}
                                                       </td>
-                                                      <td className="px-3 py-3 text-center border border-gray-300 text-xs font-bold text-[#120c7a]">
-                                                        {group.ids.map(id => allCiaConfigs[id]?.totalMarks).join(', ') || '-'}
+                                                      <td className="px-3 py-3 text-center border border-gray-300">
+                                                        <div className="flex flex-col items-center justify-center gap-1.5">
+                                                          {group.ids.map((id, ei) => {
+                                                            const marksCfg = weightageConfigs[activeConfigRegKey]?.[type]?._category_config?.[catName]?.exam_marks
+                                                              || weightageConfigs[sanitizeKey(selectedConfigReg)]?.[type]?._category_config?.[catName]?.exam_marks
+                                                              || {};
+                                                            const val = marksCfg[id] !== undefined && marksCfg[id] !== null ? marksCfg[id] : (allCiaConfigs[id]?.totalMarks ?? "");
+                                                            return (
+                                                              <div key={id} className="flex items-center gap-1">
+                                                                <input
+                                                                  type="number"
+                                                                  min="1"
+                                                                  max="1000"
+                                                                  className="w-14 px-1.5 py-0.5 bg-white border border-slate-200 rounded text-center font-extrabold text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500 focus:border-[#120c7a] text-xs shadow-xs transition-all"
+                                                                  value={val}
+                                                                  onChange={(e) => handleExamMarkChange(activeConfigRegKey, type, catName, id, e.target.value)}
+                                                                  placeholder={allCiaConfigs[id]?.totalMarks || "100"}
+                                                                  title={`${group.names[ei]} Max Mark`}
+                                                                />
+                                                              </div>
+                                                            );
+                                                          })}
+                                                        </div>
                                                       </td>
                                                         <td className="px-3 py-3 text-center border border-gray-300">
                                                           <input type="number" min="0" max="100" className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center font-bold text-[#120c7a] outline-none focus:ring-1 focus:ring-blue-100 text-xs" value={cfg.weightage || ''} onChange={(e) => handleCategoryConfigChange(activeConfigRegKey, type, catName, 'weightage', e.target.value)} />

@@ -383,7 +383,7 @@ export default function CreateCourse() {
           appearance: textfield;
         }
       `}</style>
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-8 w-full space-y-6">
         <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden">
           <div className="bg-[#120c7a] px-6 py-2">
             <h2 className="text-white font-bold text-sm">New Course Setup</h2>

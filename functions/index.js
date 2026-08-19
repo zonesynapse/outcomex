@@ -72,6 +72,7 @@ exports.createPaymentSession = onCall(
     }
     const userData = userSnap.data();
     const { programme, department, batch, regNo } = userData;
+    const userDisplayName = userData.displayName || userData.name || userData.studentName || userName || "";
 
     if (!programme || !batch) {
       throw new HttpsError("failed-precondition", "Student profile is incomplete (programme/batch missing).");
@@ -227,8 +228,13 @@ exports.createPaymentSession = onCall(
     const paymentRecord = {
       orderId,
       uid,
+      studentId: uid,
       studentEmail: userEmail,
-      studentName: userName,
+      studentName: userDisplayName || userEmail,
+      examNumber: regNo || "",
+      programme: programme || "",
+      department: department || "",
+      batch: batch || "",
       feeHead,
       amount,
       currency: "INR",

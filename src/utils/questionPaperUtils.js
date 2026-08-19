@@ -1,6 +1,6 @@
-import { formatProgDisplay } from '../lib/utils';
+import { formatProgDisplay, parseSubjectField } from '../lib/utils';
 
-export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}, poMarks = null) => {
+export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}, poMarks = null, coeSignatureUrl = '') => {
   // Compute exam display name (resolve config ID to name)
   let examDisplay = qp.exam_name;
   if (!examDisplay) {
@@ -13,7 +13,10 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
   const yearLabel = { "1": "I", "2": "I", "3": "II", "4": "II", "5": "III", "6": "III", "7": "IV", "8": "IV" }[qp.semester] || "";
   const semLabel = { "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII" }[qp.semester] || qp.semester;
   const yearSemester = `${yearLabel} / ${semLabel}`;
-  const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+  const parsedSubject = parseSubjectField(qp.subject);
+  const subjectCode = parsedSubject.code || qp.subject || '';
+  const subjectName = parsedSubject.name || qp.subject_name || '';
+  const subjectDisplay = subjectName ? `${subjectCode} - ${subjectName}` : subjectCode;
 
   // Prepare signature HTML
   let facultySignatureHtml = '';
@@ -28,6 +31,13 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     hodSignatureHtml = `<img src="${hodSignatureUrl}" alt="HOD Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
   } else {
     hodSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
+  }
+
+  let coeSignatureHtml = '';
+  if (coeSignatureUrl) {
+    coeSignatureHtml = `<img src="${coeSignatureUrl}" alt="COE Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
+  } else {
+    coeSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
   }
 
   let html = `
@@ -312,13 +322,13 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
   <tr>
     <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>
     <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${hodSignatureHtml}</td>
-    <td style="height: 80px; width: 25%;"></td>
+    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${coeSignatureHtml}</td>
     <td style="height: 80px; width: 25%;"></td>
   </tr>
   <tr>
     <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Subject Faculty</td>
     <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">HOD</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Academic Coord.</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">COE</td>
     <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Principal</td>
   </tr>
 </table>

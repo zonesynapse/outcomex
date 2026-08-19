@@ -389,7 +389,7 @@ export default function Attendance() {
   }
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
+    <div className="p-4 md:p-8 w-full space-y-8 font-sans">
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Subjects</p>

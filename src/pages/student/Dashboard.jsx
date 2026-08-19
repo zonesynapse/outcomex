@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { formatProgDisplay, getAttendanceRecords } from "../../lib/utils";
 import {
@@ -142,6 +142,41 @@ export default function StudentDashboard() {
     fetchAttendance();
   }, [userData]);
 
+  const [approvedExamsCount, setApprovedExamsCount] = useState(0);
+
+  useEffect(() => {
+    if (!userData?.batch) return;
+    const studentBatch = String(userData.batch).trim();
+    const sanitizedStudentBatch = sanitizeKey(studentBatch);
+
+    const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
+      let count = 0;
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (!d || !d.assignments) return;
+
+        const docBatch = String(d.batch || "").trim();
+        const docBatchSanitized = sanitizeKey(docBatch);
+
+        if (
+          docBatch === studentBatch ||
+          docBatchSanitized === sanitizedStudentBatch ||
+          docSnap.id.startsWith(sanitizedStudentBatch) ||
+          docSnap.id.includes(sanitizedStudentBatch)
+        ) {
+          Object.values(d.assignments).forEach((as) => {
+            if (as && as.examDate && (as.approved === true || as.principalApprovedBy || d.principalApproved === true || d.status === "Approved")) {
+              count++;
+            }
+          });
+        }
+      });
+      setApprovedExamsCount(count);
+    }, () => {});
+
+    return () => unsub();
+  }, [userData]);
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
       <Loader2 className="animate-spin text-[#120c7a]" size={40} />
@@ -227,14 +262,24 @@ export default function StudentDashboard() {
           </p>
           <p className="text-xs text-zinc-500 mt-1">Attendance %</p>
         </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-zinc-100">
+        <div
+          onClick={() => navigate("/student/timetable?tab=ia")}
+          className="bg-white rounded-xl p-5 shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-0.5 transition-all text-left cursor-pointer group"
+        >
           <div className="flex items-center justify-between mb-3">
-            <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
-              <BarChart3 size={20} className="text-purple-600" />
+            <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+              <CalendarDays size={20} className="text-emerald-600" />
             </div>
+            {approvedExamsCount > 0 && (
+              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                Approved
+              </span>
+            )}
           </div>
-          <p className="text-2xl font-bold text-zinc-800">--</p>
-          <p className="text-xs text-zinc-500 mt-1">Upcoming Exams</p>
+          <p className="text-2xl font-bold text-zinc-800">{approvedExamsCount}</p>
+          <p className="text-xs text-zinc-500 mt-1 flex items-center justify-between">
+            Upcoming IA Exams <ArrowRight size={10} className="group-hover:translate-x-1 transition-transform" />
+          </p>
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm border border-zinc-100">
           <div className="flex items-center justify-between mb-3">

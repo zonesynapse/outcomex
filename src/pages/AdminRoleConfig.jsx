@@ -54,6 +54,7 @@ export default function AdminRoleConfig() {
     { id: "reports", label: "Reports", path: "/reports", module: "General" },
     { id: "faculty-dashboard", label: "Faculty Dashboard", path: "/faculty-dashboard", module: "General" },
     { id: "hod-dashboard", label: "HOD Dashboard", path: "/hod-dashboard", module: "General" },
+    { id: "academic-coordinator-dashboard", label: "Academic Coordinator Dashboard", path: "/academic-coordinator-dashboard", module: "General" },
     { id: "principal-dashboard", label: "Principal Dashboard", path: "/principal-dashboard", module: "General" },
     { id: "course-bank", label: "Course Bank", path: "/course-bank", module: "Academics" },
     { id: "admin-roles", label: "Admin Role Config", path: "/admin-roles", module: "Configuration" },
@@ -122,7 +123,16 @@ export default function AdminRoleConfig() {
     { id: "faculty-appraisal-request", label: "HR — Appraisal Request", path: "/hr/appraisal", module: "HR" },
     { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
     { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
-    { id: "ia-schedule-creation", label: "IA — Schedule Creation", path: "/ia/schedule-create", module: "IA" }
+    { id: "resource-hub-dashboard", label: "Resource Hub — Overview", path: "/resource-hub", module: "Resource Hub" },
+    { id: "resource-hub-booking", label: "Resource Hub — Request Booking", path: "/resource-hub/booking", module: "Resource Hub" },
+    { id: "resource-hub-my-bookings", label: "Resource Hub — My Requests", path: "/resource-hub/my-bookings", module: "Resource Hub" },
+    { id: "resource-hub-approvals", label: "Resource Hub — Approvals & FCFS Queue", path: "/resource-hub/approvals", module: "Resource Hub" },
+    { id: "resource-hub-manage", label: "Resource Hub — Resource Config", path: "/resource-hub/manage", module: "Resource Hub" },
+    { id: "ia-schedule-creation", label: "Exam Cell — Schedule Creation", path: "/ia/schedule-create", module: "Exam Cell" },
+    { id: "exam-cell-dashboard", label: "Exam Cell — Dashboard", path: "/exam-cell", module: "Exam Cell" },
+    { id: "exam-cell-qp-review", label: "Exam Cell — QP Final Review", path: "/exam-cell/qp-review", module: "Exam Cell" },
+    { id: "exam-cell-schedules", label: "Exam Cell — Schedule Approvals", path: "/exam-cell/schedules", module: "Exam Cell" },
+    { id: "exam-cell-qp-assignment", label: "Exam Cell — QP Setter Assignment", path: "/exam-cell/qp-assignment", module: "Exam Cell" }
   ];
 
   const groupedPages = useMemo(() => {
@@ -533,7 +543,7 @@ export default function AdminRoleConfig() {
 
   return (
     <Layout title="Admin Role Configuration">
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-4 md:p-8 w-full space-y-6">
         <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
             <div className="flex items-center gap-4 flex-1">
             <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg shrink-0">

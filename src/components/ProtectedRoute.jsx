@@ -52,6 +52,7 @@ export default function ProtectedRoute({ children }) {
 
   if (userRole !== "Student" && isStudentRoute) {
     if (userRole === "HOD") return <Navigate to="/hod-dashboard" replace />;
+    if (userRole === "Academic Coordinator") return <Navigate to="/academic-coordinator-dashboard" replace />;
     if (userRole === "Principal") return <Navigate to="/principal-dashboard" replace />;
     if (userRole === "Faculty") return <Navigate to="/faculty-dashboard" replace />;
     return <Navigate to="/reports" replace />;

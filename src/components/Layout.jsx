@@ -50,7 +50,11 @@ import {
   Plus,
   Megaphone,
   UserCheck,
-  Loader2
+  Loader2,
+  Landmark,
+  ScrollText,
+  CalendarCheck2,
+  PenLine
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -59,6 +63,7 @@ const allPossibleItems = [
   { id: "reports", icon: LayoutDashboard, label: "Reports", path: "/reports" },
   { id: "faculty-dashboard", icon: LayoutDashboard, label: "Faculty Dashboard", path: "/faculty-dashboard" },
   { id: "hod-dashboard", icon: LayoutDashboard, label: "HOD Dashboard", path: "/hod-dashboard" },
+  { id: "academic-coordinator-dashboard", icon: LayoutDashboard, label: "Academic Coordinator Dashboard", path: "/academic-coordinator-dashboard" },
   { id: "principal-dashboard", icon: LayoutDashboard, label: "Principal Dashboard", path: "/principal-dashboard" },
   { id: "course-bank", icon: BookOpen, label: "Course Bank", path: "/course-bank" },
   { id: "admin-roles", icon: User, label: "Admin Role Config", path: "/admin-roles" },
@@ -88,7 +93,7 @@ const allPossibleItems = [
   { id: "co_configuration", icon: Database, label: "CO Configuration", path: "/co_configuration" },
   { id: "questionpaper", icon: BookOpen, label: "Question Paper Generator", path: "/question-paper-generator" },
   { id: "markk", icon: FileText, label: "Marks Entry", path: "/markk" },
-  { id: "ia-schedule-creation", icon: Calendar, label: "IA Schedule Creation", path: "/ia/schedule-create" },
+  { id: "ia-schedule-creation", icon: Calendar, label: "Exam Schedule Creation", path: "/ia/schedule-create" },
   { id: "library-catalog", icon: BookOpen, label: "Catalog", path: "/library/catalog" },
   { id: "library-circulation", icon: ArrowLeftRight, label: "Circulation", path: "/library/circulation" },
   { id: "library-reports", icon: BarChart3, label: "Reports", path: "/library/reports" },
@@ -138,7 +143,20 @@ const allPossibleItems = [
   // HR Module
   { id: "faculty-appraisal-request", icon: FileText, label: "Appraisal Request", path: "/hr/appraisal" },
   { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
-  { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" }
+  { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" },
+
+  // Resource Hub Module
+  { id: "resource-hub-dashboard", icon: LayoutDashboard, label: "Resource Dashboard", path: "/resource-hub" },
+  { id: "resource-hub-booking", icon: Calendar, label: "Request Booking", path: "/resource-hub/booking" },
+  { id: "resource-hub-my-bookings", icon: ClipboardList, label: "My Requests", path: "/resource-hub/my-bookings" },
+  { id: "resource-hub-approvals", icon: CheckCircle2, label: "Approvals & FCFS Queue", path: "/resource-hub/approvals" },
+  { id: "resource-hub-manage", icon: Building2, label: "Resource Config", path: "/resource-hub/manage" },
+
+  // Exam Cell Module
+  { id: "exam-cell-dashboard", icon: Landmark, label: "Exam Cell Dashboard", path: "/exam-cell" },
+  { id: "exam-cell-qp-review", icon: ScrollText, label: "QP Final Review", path: "/exam-cell/qp-review" },
+  { id: "exam-cell-schedules", icon: CalendarCheck2, label: "Schedule Approvals", path: "/exam-cell/schedules" },
+  { id: "exam-cell-qp-assignment", icon: PenLine, label: "QP Setter Assignment", path: "/exam-cell/qp-assignment" }
 ];
 
 const modules = [
@@ -152,7 +170,7 @@ const modules = [
     id: "ia",
     label: "IA",
     icon: Network,
-    itemIds: ["questionpaper", "markk", "ia-schedule-creation"]
+    itemIds: ["questionpaper", "markk"]
   },
   {
     id: "admission",
@@ -226,6 +244,18 @@ const modules = [
     label: "HR",
     icon: UserCheck,
     itemIds: ["faculty-appraisal-request", "faculty-appraisal-reviews", "appraisal-settings"]
+  },
+  {
+    id: "resource_hub",
+    label: "Resource Hub",
+    icon: Building2,
+    itemIds: ["resource-hub-dashboard", "resource-hub-booking", "resource-hub-my-bookings", "resource-hub-approvals", "resource-hub-manage"]
+  },
+  {
+    id: "exam_cell",
+    label: "Exam Cell",
+    icon: Landmark,
+    itemIds: ["exam-cell-dashboard", "exam-cell-qp-review", "exam-cell-schedules", "exam-cell-qp-assignment", "ia-schedule-creation"]
   }
 ];
 
@@ -504,7 +534,7 @@ export default function Layout({ children, title }) {
     }
     if (rolePermissions === null) return null;
     if (userRole === 'Admin') {
-      const adminPerms = new Set([...(rolePermissions || []), 'activity-settings']);
+      const adminPerms = new Set([...(rolePermissions || []), 'activity-settings', 'exam-cell-dashboard', 'exam-cell-qp-review', 'exam-cell-schedules', 'exam-cell-qp-assignment']);
       return Array.from(adminPerms);
     }
     if (userRole === 'HOD' && hasAssignments) {

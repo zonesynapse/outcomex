@@ -129,7 +129,7 @@ export default function PlacementStudents() {
         </div>
       )}
 
-      <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div className="p-4 md:p-8 w-full space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1"><Users size={14}/> <span>Placement</span> <span className="text-zinc-300">/</span> <span>Students</span></div>

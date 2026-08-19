@@ -264,9 +264,10 @@ export default function AdmissionConfirmation() {
       const snap = await getDoc(studentRef);
       const existingData = snap.exists() ? snap.data() : {};
       const order = existingData._order || [];
-      if (!existingData[regNo]) {
+      if (!order.includes(regNo)) {
         order.push(regNo);
       }
+      order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
       const joiningAY = existingData._joiningAY || {};
       await setDoc(studentRef, {
         ...existingData,

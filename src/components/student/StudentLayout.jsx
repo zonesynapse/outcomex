@@ -28,6 +28,7 @@ const studentMenuItems = [
   { id: "downloads", icon: Download, label: "Downloads", path: "/student/downloads" },
   { id: "notices", icon: Bell, label: "Notifications", path: "/student/notices" },
   { id: "circulars", icon: Megaphone, label: "Circulars", path: "/student/circulars" },
+  { id: "resource-hub", icon: Building2, label: "Resource Hub", path: "/student/resource-hub" },
 ];
 
 export default function StudentLayout({ children, title }) {

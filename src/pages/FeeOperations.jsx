@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { db } from "../firebase";
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp, query, where } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp, query, where, getDocs } from "firebase/firestore";
 import {
   IndianRupee, Plus, Search, Edit3, Trash2, X, CheckCircle2, AlertCircle,
   CreditCard, Building2, Users, Download, Printer,
@@ -17,6 +17,119 @@ import Layout from "../components/Layout";
 import * as XLSX from "xlsx";
 
 const STUDENT_CATEGORY_OPTIONS = ["Regular", "Lateral Entry", "Transfer", "Readmission"];
+
+const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
+  if (!student) {
+    setAppPayments([]);
+    return () => {};
+  }
+
+  const keys = new Set();
+  const addKey = (k) => {
+    if (k && typeof k === "string" && k.trim()) {
+      keys.add(k.trim());
+    }
+  };
+
+  addKey(student.applicationNo);
+  addKey(student.enquiryId);
+  addKey(student.regNo);
+  addKey(student.examNumber);
+  addKey(student.admissionNo);
+  addKey(student.id);
+  addKey(student._docId);
+  addKey(student.uid);
+  addKey(student._profile_data?.enquiryId);
+  addKey(student._profile_data?.applicationNo);
+
+  const email = (student.email || student.emailId || student._profile_data?.emailId || "").trim();
+  const mobile = (student.mobile || student.parentMobile || student.studentMobile || student._profile_data?.mobile || "").trim();
+
+  const matchingDocSnaps = new Map();
+
+  const parseAndSet = () => {
+    const collected = [];
+    const seenPayments = new Set();
+
+    matchingDocSnaps.forEach((data, docId) => {
+      // 1. Array of payments
+      if (Array.isArray(data.payments) && data.payments.length > 0) {
+        data.payments.forEach((p, i) => {
+          const amt = Number(p.feeAmount || p.amount || 0);
+          if (!amt || amt <= 0) return;
+          const pId = `app-${docId}-${i}`;
+          if (!seenPayments.has(pId)) {
+            seenPayments.add(pId);
+            const dateVal = p.paymentDate
+              ? (p.paymentDate.toDate ? p.paymentDate : Timestamp.fromDate(new Date(p.paymentDate)))
+              : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+            collected.push({
+              id: pId,
+              status: "SUCCESS",
+              feeHead: p.feeCategory || p.feeHead || p.head || "Application Fee",
+              amount: amt,
+              chargedAmount: amt,
+              paymentDate: dateVal,
+              createdAt: dateVal,
+              mode: p.paymentMode || p.mode || "cash",
+              receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
+              orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+              _source: "Application",
+            });
+          }
+        });
+      }
+
+      // 2. Single payment fields
+      if (Number(data.feeAmount) > 0) {
+        const amt = Number(data.feeAmount);
+        const pId = `app-${docId}-single`;
+        if (!seenPayments.has(pId)) {
+          seenPayments.add(pId);
+          const dateVal = data.paymentDate
+            ? (data.paymentDate.toDate ? data.paymentDate : Timestamp.fromDate(new Date(data.paymentDate)))
+            : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+          collected.push({
+            id: pId,
+            status: "SUCCESS",
+            feeHead: data.feeCategory || "Application Fee",
+            amount: amt,
+            chargedAmount: amt,
+            paymentDate: dateVal,
+            createdAt: dateVal,
+            mode: data.paymentMode || "cash",
+            receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
+            orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+            _source: "Application",
+          });
+        }
+      }
+    });
+
+    setAppPayments(collected);
+  };
+
+  const handleSnapshot = (snap) => {
+    snap.forEach((d) => matchingDocSnaps.set(d.id, d.data()));
+    parseAndSet();
+  };
+
+  const unsubs = [];
+  for (const k of keys) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("applicationNo", "==", k)), handleSnapshot, () => {}));
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("enquiryId", "==", k)), handleSnapshot, () => {}));
+  }
+  if (email) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("emailId", "==", email)), handleSnapshot, () => {}));
+  }
+  if (mobile) {
+    unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("mobile", "==", mobile)), handleSnapshot, () => {}));
+  }
+
+  return () => {
+    unsubs.forEach(u => u());
+  };
+};
 
 const DEFAULT_FEE_HEADS = [
   { name: "Tuition Fee", splitType: "academic-year" },
@@ -192,6 +305,7 @@ export default function FeeOperations() {
   const [selectedStudentQuota, setSelectedStudentQuota] = useState("");
   const [selectedStudentCategory, setSelectedStudentCategory] = useState("");
   const [selectedStudentStage, setSelectedStudentStage] = useState("");
+  const [appPayments, setAppPayments] = useState([]);
   const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
 
   // Receipt state
@@ -242,35 +356,62 @@ export default function FeeOperations() {
       setSelectedStudentStage("");
       return;
     }
-    const reg = selectedStudent.regNo;
-    if (!reg) {
-      setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
-      setSelectedStudentCategory(selectedStudent._profile_data?.studentCategory || "");
-      setSelectedStudentStage(selectedStudent._profile_data?.transportStage || "");
-      return;
-    }
+    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || obj?.studentCategory || "";
+    const reg = selectedStudent.regNo || selectedStudent.examNumber || "";
+    const appNo = selectedStudent.applicationNo || selectedStudent.enquiryId || selectedStudent._profile_data?.applicationNo || "";
 
     (async () => {
-      try {
-        const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
-        if (idxSnap.exists()) {
-          const sDocId = idxSnap.data().studentDocId;
-          if (sDocId) {
-            const sSnap = await getDoc(doc(db, 'students', sDocId));
-            if (sSnap.exists()) {
-              const extra = sSnap.data()._student_data?.[reg] || {};
-              setSelectedStudentQuota(extra.quotaAskedFor || "");
-              setSelectedStudentCategory(extra.studentCategory || "");
-              setSelectedStudentStage(extra.transportStage || "");
-              return;
+      let foundQuota = getQuota(selectedStudent) || getQuota(selectedStudent._profile_data);
+      let foundCategory = selectedStudent._profile_data?.studentCategory || "";
+      let foundStage = selectedStudent._profile_data?.transportStage || "";
+
+      if (reg) {
+        try {
+          const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+          if (idxSnap.exists()) {
+            const sDocId = idxSnap.data().studentDocId;
+            if (sDocId) {
+              const sSnap = await getDoc(doc(db, 'students', sDocId));
+              if (sSnap.exists()) {
+                const extra = sSnap.data()._student_data?.[reg] || {};
+                if (!foundQuota) foundQuota = getQuota(extra);
+                if (!foundCategory) foundCategory = extra.studentCategory || "";
+                if (!foundStage) foundStage = extra.transportStage || "";
+              }
             }
           }
+        } catch (_) {}
+      }
+
+      // If still missing, check enquiries collection
+      if (!foundQuota) {
+        const lookupKeys = [appNo, reg, selectedStudent.id, selectedStudent.uid, selectedStudent._docId].filter(Boolean);
+        for (const k of lookupKeys) {
+          try {
+            const q1 = await getDocs(query(collection(db, "enquiries"), where("applicationNo", "==", k)));
+            if (!q1.empty) {
+              const d = q1.docs[0].data();
+              foundQuota = getQuota(d);
+              if (foundQuota) break;
+            }
+            const q2 = await getDocs(query(collection(db, "enquiries"), where("enquiryId", "==", k)));
+            if (!q2.empty) {
+              const d = q2.docs[0].data();
+              foundQuota = getQuota(d);
+              if (foundQuota) break;
+            }
+          } catch (_) {}
         }
-      } catch (_) {}
-      setSelectedStudentQuota(selectedStudent._profile_data?.quotaAskedFor || "");
-      setSelectedStudentCategory(selectedStudent._profile_data?.studentCategory || "");
-      setSelectedStudentStage(selectedStudent._profile_data?.transportStage || "");
+      }
+
+      setSelectedStudentQuota(foundQuota || "");
+      setSelectedStudentCategory(foundCategory || "");
+      setSelectedStudentStage(foundStage || "");
     })();
+  }, [selectedStudent]);
+
+  useEffect(() => {
+    return subscribeAppPaymentsForStudent(selectedStudent, setAppPayments);
   }, [selectedStudent]);
 
   const showToast = (msg, type = "success") => {
@@ -325,14 +466,17 @@ export default function FeeOperations() {
     try {
       const receiptNo = `FEE${new Date().getFullYear()}-${String(receipts.length + 1).padStart(5, "0")}`;
       const examNo = selectedStudent.regNo || selectedStudent.examNumber || selectedStudent.id;
+      const studentUid = selectedStudent.id || selectedStudent.uid || examNo;
       const payData = {
-        studentId: selectedStudent.id,
+        uid: studentUid,
+        studentId: studentUid,
         examNumber: examNo,
-        studentName: selectedStudent.displayName || selectedStudent.studentName,
+        studentName: selectedStudent.displayName || selectedStudent.studentName || selectedStudent.name || "",
         programme: selectedStudent.programme || "",
         department: selectedStudent.department || "",
         batch: selectedStudent.batch || "",
         amount: Number(paymentForm.amount),
+        status: "SUCCESS",
         mode: paymentForm.mode,
         feeHead: paymentForm.feeHead,
         semester: paymentForm.semester,
@@ -414,8 +558,31 @@ export default function FeeOperations() {
     const normStudentDept = (dept || "").replace(/[_.\s]/g, '').toLowerCase();
     const normStudentBatch = (batch || "").trim().toLowerCase();
 
+    const normalizeQuotaStr = (q) => {
+      if (!q) return '';
+      const s = String(q).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (s.includes('mgmt') || s.includes('management') || s === 'mq') return 'management';
+      if (s.includes('govt') || s.includes('government') || s === 'gq' || s.includes('75')) return 'government';
+      if (s.includes('nri')) return 'nri';
+      if (s.includes('sports')) return 'sports';
+      return s;
+    };
+
+    const isQuotaMatchExact = (configQuota, studentQuota) => {
+      if (!configQuota || !studentQuota) return false;
+      const cq = normalizeQuotaStr(configQuota);
+      const sq = normalizeQuotaStr(studentQuota);
+      return Boolean(cq && sq && (cq === sq || cq.includes(sq) || sq.includes(cq)));
+    };
+
+    const isQuotaApplicable = (configQuota, studentQuota) => {
+      if (!configQuota || configQuota.trim().toLowerCase() === 'all') return true;
+      if (!studentQuota) return true;
+      return isQuotaMatchExact(configQuota, studentQuota);
+    };
+
     // 1. Filter configs based on programme, department, batch AND quota/seatCategory
-    const fees = feeConfigs.filter(f => {
+    const matchedFees = feeConfigs.filter(f => {
       const normDataProg = formatProgrammeKey(f.programme);
       const normDataDept = (f.department || "").replace(/[_.\s]/g, '').toLowerCase();
       const normDataBatch = (f.batch || "").trim().toLowerCase();
@@ -423,11 +590,47 @@ export default function FeeOperations() {
       const isProgMatch = normDataProg && normDataProg === normStudentProg;
       const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
       const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
-      const isQuotaMatch = !selectedStudentQuota || !f.quota || f.quota === selectedStudentQuota;
+      const isQuotaMatch = isQuotaApplicable(f.quota, selectedStudentQuota);
       const isCategoryMatch = !selectedStudentCategory || !f.studentCategory || f.studentCategory === selectedStudentCategory;
 
       return isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch && isCategoryMatch;
     });
+
+    // Deduplicate & prioritize quota-specific configs over generic configs per (academicYear + semester + head)
+    const normHead = (s) => {
+      const str = String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
+      if (!str) return '';
+      if (str.includes('application') || str.includes('app fee') || str.includes('consortium') || str.includes('registration') || str.includes('enquiry')) return 'application fee';
+      if (str.includes('admission')) return 'admission fee';
+      if (str.includes('caution')) return 'caution deposit';
+      if (str.includes('tuition')) return 'tuition fee';
+      if (str.includes('other')) return 'other fee';
+      if (str.includes('transport')) return 'transport fee';
+      if (str.includes('hostel')) return 'hostel fee';
+      return str;
+    };
+    const configMap = new Map();
+    matchedFees.forEach((c) => {
+      const key = `${c.academicYear || ''}_${c.semester || ''}_${normHead(c.head)}`;
+      const existing = configMap.get(key);
+      if (!existing) {
+        configMap.set(key, c);
+      } else {
+        const existingMatchesExact = isQuotaMatchExact(existing.quota, selectedStudentQuota);
+        const currentMatchesExact = isQuotaMatchExact(c.quota, selectedStudentQuota);
+
+        if (currentMatchesExact && !existingMatchesExact) {
+          configMap.set(key, c);
+        } else if (!existingMatchesExact && (!existing.quota || existing.quota.trim().toLowerCase() === 'all')) {
+          const currentHasQuota = Boolean(c.quota && c.quota.trim().toLowerCase() !== 'all');
+          if (currentHasQuota) {
+            configMap.set(key, c);
+          }
+        }
+      }
+    });
+
+    const fees = Array.from(configMap.values());
 
     // Transport fee: match the student's transport stage to a configured stage
     if (selectedStudentStage && transportStages.length) {
@@ -445,37 +648,68 @@ export default function FeeOperations() {
     }
 
     // 2. Filter payments matching the selected student & valid payment statuses only (filter out pending/failed online payments!)
+    const isSuccessfulPayment = (p) => {
+      if (!p) return false;
+      if (p.status === "FAILED" || p.status === "CANCELLED" || p.status === "cancelled") return false;
+      return p.status === "SUCCESS" || p.status === "active" || p.status === undefined || p.status === null;
+    };
+
     const studentPayments = payments.filter(p => {
       const matchesStudent = 
         (selectedStudent.id && (p.studentId === selectedStudent.id || p.uid === selectedStudent.id)) ||
         (selectedStudent.regNo && p.examNumber === selectedStudent.regNo) ||
         (selectedStudent.examNumber && p.examNumber === selectedStudent.examNumber);
       if (!matchesStudent) return false;
+      return isSuccessfulPayment(p);
+    });
 
-      // Online payment check: must be SUCCESS
-      if (p.status !== undefined) {
-        return p.status === "SUCCESS";
-      }
-      return true; // Manual payment (has no status field), count it
+    const allStudentPayments = [...studentPayments, ...appPayments].sort((a, b) => {
+      const getTS = (p) => p.paymentDate || p.createdAt || p.verifiedAt || 0;
+      const da = getTS(a).toDate ? getTS(a).toDate() : new Date(getTS(a));
+      const dbVal = getTS(b).toDate ? getTS(b).toDate() : new Date(getTS(b));
+      return dbVal - da;
     });
 
     const totalFees = fees.reduce((s, f) => s + (f.amount || 0), 0);
-    const totalPaid = studentPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+    const totalPaid = allStudentPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
     const outstanding = Math.max(0, totalFees - totalPaid);
+
+    const yearStart = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
+
+    const isFirstYearConfig = (cfg) => {
+      const nh = normHead(cfg.head);
+      const siblings = fees.filter((c) => normHead(c.head) === nh);
+      if (siblings.length <= 1) return true;
+      const distinctYears = [...new Set(siblings.map((c) => String(c.academicYear || '').trim()))];
+      if (distinctYears.length <= 1) return true;
+      return yearStart(cfg.academicYear) === Math.min(...siblings.map((c) => yearStart(c.academicYear)));
+    };
+
+    const paidForHead = (cfg) => {
+      const nh = normHead(cfg.head);
+      const portalPaid = studentPayments
+        .filter((p) => normHead(p.feeHead) === nh)
+        .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+      if (isFirstYearConfig(cfg)) {
+        const appPaid = appPayments
+          .filter((p) => normHead(p.feeHead) === nh)
+          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
+        return portalPaid + appPaid;
+      }
+      return portalPaid;
+    };
 
     // Calculate individual paid amount head-wise
     const headBreakdown = fees.map(f => {
-      const paidForHead = studentPayments
-        .filter(p => p.feeHead === f.head)
-        .reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
+      const pfh = paidForHead(f);
       return { 
         id: f.id,
         head: f.head, 
         academicYear: f.academicYear || '—',
         semester: f.semester || 'All',
         amount: f.amount || 0, 
-        paid: paidForHead, 
-        due: Math.max(0, (f.amount || 0) - paidForHead) 
+        paid: pfh, 
+        due: Math.max(0, (f.amount || 0) - pfh) 
       };
     });
 
@@ -490,12 +724,14 @@ export default function FeeOperations() {
     return { 
       fees, 
       studentPayments, 
+      appPayments,
+      allStudentPayments,
       totalFees, 
       totalPaid, 
       outstanding, 
       headBreakdown: sortedBreakdown
     };
-  }, [selectedStudent, selectedStudentQuota, selectedStudentCategory, selectedStudentStage, transportStages, feeConfigs, payments]);
+  }, [selectedStudent, selectedStudentQuota, selectedStudentCategory, selectedStudentStage, transportStages, feeConfigs, payments, appPayments]);
 
   const groupedStudentFees = useMemo(() => {
     if (!studentFeeDetails || !studentFeeDetails.fees) return [];
@@ -873,19 +1109,17 @@ export default function FeeOperations() {
                                   let semTotal = 0;
                                   let semPaid = 0;
                                   semGroup.rows.forEach(r => {
-                                    semTotal += (Number(r.amount) || 0);
-                                    const paidForThisHead = studentFeeDetails.studentPayments
-                                      .filter((p) => p.feeHead === r.head)
-                                      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-                                    semPaid += paidForThisHead;
+                                    const headAmt = Number(r.amount) || 0;
+                                    semTotal += headAmt;
+                                    const headItem = studentFeeDetails.headBreakdown.find(h => h.id === r.id);
+                                    semPaid += headItem ? Math.min(headAmt, headItem.paid) : 0;
                                   });
                                   const semRemaining = Math.max(0, semTotal - semPaid);
 
                                   const rows = semGroup.rows.map((cfg, idx) => {
-                                    const paidForThisHead = studentFeeDetails.studentPayments
-                                      .filter((p) => p.feeHead === cfg.head)
-                                      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-                                    const remainingForThisHead = Math.max(0, Number(cfg.amount) - paidForThisHead);
+                                    const headItem = studentFeeDetails.headBreakdown.find(h => h.id === cfg.id);
+                                    const paidForThisHead = headItem ? headItem.paid : 0;
+                                    const remainingForThisHead = headItem ? headItem.due : Math.max(0, Number(cfg.amount) - paidForThisHead);
                                     const isFullyPaid = remainingForThisHead === 0;
                                     const isPartiallyPaid = paidForThisHead > 0 && remainingForThisHead > 0;
                                     
@@ -903,14 +1137,17 @@ export default function FeeOperations() {
                                         <td className="px-4 py-3 text-sm font-bold border border-zinc-200 text-zinc-700">{cfg.head || 'Fee'}</td>
                                         <td className="px-4 py-3 text-right text-sm font-black border border-zinc-200 text-zinc-700">
                                           {isFullyPaid ? (
-                                            <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                                            <div className="flex flex-col items-end gap-0.5">
+                                              <span className="font-black text-[#120c7a]">₹{(Number(cfg.amount) || 0).toLocaleString()}</span>
+                                              <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">Paid</span>
+                                            </div>
                                           ) : isPartiallyPaid ? (
-                                            <div className="flex flex-col items-end">
-                                              <span className="text-[#120c7a]">₹{remainingForThisHead.toLocaleString()}</span>
-                                              <span className="text-[9px] text-zinc-400 font-semibold">Total: ₹{cfg.amount.toLocaleString()}</span>
+                                            <div className="flex flex-col items-end gap-0.5">
+                                              <span className="font-black text-amber-600">₹{remainingForThisHead.toLocaleString()} <span className="text-[9px] font-bold text-amber-600 uppercase">Due</span></span>
+                                              <span className="text-[9px] text-zinc-400 font-semibold">Total: ₹{(Number(cfg.amount) || 0).toLocaleString()} (Paid: ₹{paidForThisHead.toLocaleString()})</span>
                                             </div>
                                           ) : (
-                                            <span>₹{remainingForThisHead.toLocaleString()}</span>
+                                            <span>₹{(Number(cfg.amount) || 0).toLocaleString()}</span>
                                           )}
                                         </td>
                                       </tr>
@@ -930,14 +1167,17 @@ export default function FeeOperations() {
                                         <td className="px-4 py-3 border border-zinc-200" />
                                         <td className="px-4 py-3 text-right text-xs font-black text-blue-700 border border-zinc-200">
                                           {isSemFullyPaid ? (
-                                            <span className="text-emerald-600">Paid</span>
+                                            <div className="flex flex-col items-end gap-0.5">
+                                              <span className="font-black text-emerald-700">₹{semTotal.toLocaleString()}</span>
+                                              <span className="text-emerald-600 text-[10px] font-bold">Paid</span>
+                                            </div>
                                           ) : isSemPartiallyPaid ? (
-                                            <div className="flex flex-col items-end">
-                                              <span>₹{semRemaining.toLocaleString()}</span>
-                                              <span className="text-[9px] text-blue-400 font-semibold">Total: ₹{semTotal.toLocaleString()}</span>
+                                            <div className="flex flex-col items-end gap-0.5">
+                                              <span className="font-black text-blue-700">₹{semRemaining.toLocaleString()} <span className="text-[9px] font-bold text-blue-600 uppercase">Due</span></span>
+                                              <span className="text-[9px] text-blue-400 font-semibold">Total: ₹{semTotal.toLocaleString()} (Paid: ₹{semPaid.toLocaleString()})</span>
                                             </div>
                                           ) : (
-                                            <span>₹{semRemaining.toLocaleString()}</span>
+                                            <span>₹{semTotal.toLocaleString()}</span>
                                           )}
                                         </td>
                                       </tr>
@@ -1028,10 +1268,10 @@ export default function FeeOperations() {
                       )}
 
                       {/* Payment History */}
-                      {studentFeeDetails.studentPayments.length > 0 && (
+                      {(studentFeeDetails.allStudentPayments || studentFeeDetails.studentPayments).length > 0 && (
                         <div className="bg-white rounded-2xl shadow-sm border border-zinc-200 overflow-hidden">
                           <div className="px-5 py-3 bg-zinc-50 border-b border-zinc-200">
-                            <h4 className="font-bold text-xs text-zinc-600 uppercase tracking-wider">Payment History ({studentFeeDetails.studentPayments.length})</h4>
+                            <h4 className="font-bold text-xs text-zinc-600 uppercase tracking-wider">Payment History ({(studentFeeDetails.allStudentPayments || studentFeeDetails.studentPayments).length})</h4>
                           </div>
                           <table className="w-full text-sm">
                             <thead>
@@ -1044,12 +1284,7 @@ export default function FeeOperations() {
                               </tr>
                             </thead>
                             <tbody>
-                              {studentFeeDetails.studentPayments.sort((a, b) => {
-                                const getTS = (p) => p.paymentDate || p.createdAt || p.verifiedAt || 0;
-                                const da = getTS(a).toDate ? getTS(a).toDate() : new Date(getTS(a));
-                                const db = getTS(b).toDate ? getTS(b).toDate() : new Date(getTS(b));
-                                return db - da;
-                              }).slice(0, 10).map((p, i) => (
+                              {(studentFeeDetails.allStudentPayments || studentFeeDetails.studentPayments).map((p, i) => (
                                 <tr key={p.id || i} className="border-b border-zinc-50 hover:bg-zinc-50/50">
                                   <td className="px-5 py-2.5 text-xs text-zinc-500 font-medium">
                                     <span className="block">{
@@ -1076,6 +1311,9 @@ export default function FeeOperations() {
                                     <span className="font-mono font-bold text-[#120c7a] block">{p.receiptNo || p.orderId || "—"}</span>
                                     {p.gatewayResponse?.rrn && (
                                       <span className="text-[10px] text-zinc-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
+                                    )}
+                                    {p._source === "Application" && (
+                                      <span className="text-[9px] font-bold text-blue-500 block">Application</span>
                                     )}
                                   </td>
                                   <td className="px-5 py-2.5"><span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg text-[9px] font-bold">{p.feeHead}</span></td>

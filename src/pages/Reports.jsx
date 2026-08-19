@@ -1192,15 +1192,7 @@ export default function Reports() {
                 }
               }
               // Sort by regNo (displayed value) first, then by reg via _order
-              if (order && Array.isArray(order)) {
-                studentList.sort((a, b) => {
-                  const orderA = order.indexOf(a.reg);
-                  const orderB = order.indexOf(b.reg);
-                  return orderA !== -1 && orderB !== -1 ? orderA - orderB : (a.regNo || a.reg).localeCompare(b.regNo || b.reg);
-                });
-              } else {
-                studentList.sort((a, b) => (a.regNo || a.reg).localeCompare(b.regNo || b.reg));
-              }
+              studentList.sort((a, b) => String(a.regNo || a.reg).localeCompare(String(b.regNo || b.reg), undefined, { numeric: true, sensitivity: 'base' }));
               setStudents(studentList);
               setLoadingStudents(false);
             }

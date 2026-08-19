@@ -278,18 +278,24 @@ const MathTemplateToolbar = ({ editorId }) => {
     setOpen(false);
     setQuery("");
     const editor = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances[editorId];
-    if (!editor) return;
+    if (!editor || editor.status !== 'ready' || typeof editor.editable !== 'function' || !editor.editable()) return;
 
     const hasWidget = editor.widgets && editor.widgets.registered && editor.widgets.registered.mathjax;
-    const cleanLatex = window.CKEDITOR.tools.htmlEncode(latex);
+    const cleanLatex = (window.CKEDITOR && window.CKEDITOR.tools && window.CKEDITOR.tools.htmlEncode)
+      ? window.CKEDITOR.tools.htmlEncode(latex)
+      : latex;
     const mathHtml = '<span class="math-tex">\\(' + cleanLatex + '\\)</span>';
 
-    if (hasWidget) {
-      editor.insertHtml(mathHtml);
-    } else {
-      try { editor.execCommand("mathjax"); } catch (e) { /* ignore */ }
+    try {
+      if (editor.focus) editor.focus();
+      if (hasWidget) {
+        editor.insertHtml(mathHtml);
+      } else {
+        try { editor.execCommand("mathjax"); } catch (e) { /* ignore */ }
+      }
+    } catch (err) {
+      console.warn("CKEditor insertHtml error:", err);
     }
-    if (editor.focus && !hasWidget) editor.focus();
   };
 
   const normalizedQuery = query.trim().toLowerCase();

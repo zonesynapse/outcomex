@@ -280,7 +280,7 @@ export default function CourseEnrolment() {
 
   return (
     <Layout title="Course Enrolment">
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-8 w-full space-y-6">
         {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-zinc-100">
           <div className="flex items-center gap-3">

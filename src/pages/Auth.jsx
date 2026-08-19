@@ -125,6 +125,8 @@ export default function Auth() {
           navigate("/student/dashboard", { replace: true });
         } else if (role === "HOD") {
           navigate("/hod-dashboard", { replace: true });
+        } else if (role === "Academic Coordinator") {
+          navigate("/academic-coordinator-dashboard", { replace: true });
         } else if (role === "Principal") {
           navigate("/principal-dashboard", { replace: true });
         } else if (role === "Faculty") {
@@ -194,6 +196,8 @@ export default function Auth() {
         navigate("/student/dashboard");
       } else if (userProfile.role === "HOD") {
         navigate("/hod-dashboard");
+      } else if (userProfile.role === "Academic Coordinator") {
+        navigate("/academic-coordinator-dashboard");
       } else if (userProfile.role === "Principal") {
         navigate("/principal-dashboard");
       } else if (userProfile.role === "Faculty") {

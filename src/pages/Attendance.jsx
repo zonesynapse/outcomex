@@ -816,8 +816,7 @@ export default function Attendance() {
           _conflict: false
         }));
 
-        if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-        else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
+        studentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
         setStudents(studentArray);
 
@@ -940,8 +939,7 @@ export default function Attendance() {
       };
     });
 
-    if (order) studentArray.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-    else studentArray.sort((a, b) => a.reg.localeCompare(b.reg));
+    studentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
     setStudents(studentArray);
   }, [attendanceDate, periods, attendanceData, masterList, periodConflict]);
@@ -1097,8 +1095,7 @@ export default function Attendance() {
 
     const eventDates = new Set(allKeys.filter(k => allRecords[k]?.isEvent));
 
-    if (order) studentStats.sort((a, b) => order.indexOf(a.reg) - order.indexOf(b.reg));
-    else studentStats.sort((a, b) => a.reg.localeCompare(b.reg));
+    studentStats.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
     setReportData({ dates: allKeys, keyLabels, students: studentStats, totalClasses, eventDates });
   };
@@ -1501,7 +1498,7 @@ export default function Attendance() {
 
   return (
     <Layout title="Attendance Records">
-      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
+      <div className="p-4 md:p-8 w-full space-y-6">
 
         {/* ═══ Hero Stats ═══ */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
