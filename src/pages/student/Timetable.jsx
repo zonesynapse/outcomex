@@ -14,6 +14,11 @@ const sanitizeKey = (key) => {
   return String(key).replace(/[.#$[\]]/g, '_');
 };
 
+const normKey = (key) => {
+  if (!key) return '';
+  return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function formatTime(date) {
@@ -72,6 +77,24 @@ export default function Timetable() {
   // Approved IA Exam Timetable state
   const [iaSchedules, setIaSchedules] = useState([]);
   const [iaExamFilter, setIaExamFilter] = useState("ALL");
+
+  // Resolve the student's current Academic Year + Semester from their batch (shares class timetable logic)
+  const currentContext = useMemo(() => {
+    if (!studentData?.batch) return { academicYear: "", semester: "" };
+    const years = getAcademicYears(studentData.batch);
+    if (years.length === 0) return { academicYear: "", semester: "" };
+    const currentYear = new Date().getFullYear();
+    const month = new Date().getMonth();
+    const isOddSem = month >= 6;
+    const activeAy = years.find((y) => {
+      const [start] = y.split('-').map(Number);
+      if (isOddSem) return start === currentYear;
+      return start + 1 === currentYear;
+    }) || years[0];
+    const ayIndex = years.indexOf(activeAy);
+    const semNum = String(ayIndex * 2 + (isOddSem ? 1 : 2));
+    return { academicYear: activeAy, semester: semNum };
+  }, [studentData]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -145,6 +168,12 @@ export default function Timetable() {
     if (!studentData?.batch) return;
     const studentBatch = String(studentData.batch).trim();
     const sanitizedStudentBatch = sanitizeKey(studentBatch);
+    const studentProg = studentData.programme ? String(studentData.programme) : "";
+    const studentDept = studentData.department ? String(studentData.department) : "";
+    const studentProgNorm = studentProg ? normKey(studentProg) : "";
+    const studentAyNorm = currentContext.academicYear ? normKey(currentContext.academicYear) : "";
+    const studentDeptNorm = studentDept ? normKey(studentDept) : "";
+    const studentSemNorm = currentContext.semester ? normKey(currentContext.semester) : "";
 
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       const items = [];
@@ -162,10 +191,32 @@ export default function Timetable() {
           docSnap.id.startsWith(sanitizedStudentBatch) ||
           docSnap.id.includes(sanitizedStudentBatch)
         ) {
+          const docAy = String(d.academicYear || "").trim();
+          const docAyNorm = docAy ? normKey(docAy) : "";
+          // Restrict to the student's own academic year (skip docs for other years)
+          if (studentAyNorm && docAyNorm && docAyNorm !== studentAyNorm) return;
+
+          const docSem = String(d.semester || "").trim();
+          const docSemNorm = docSem ? normKey(docSem) : "";
+          // Restrict to the student's current semester (skip docs for other semesters)
+          if (studentSemNorm && docSemNorm && docSemNorm !== studentSemNorm) return;
+
           Object.values(d.assignments).forEach((as) => {
             if (!as || !as.examDate) return;
             // CRITICAL CHECK: ONLY DISPLAY SCHEDULES APPROVED BY PRINCIPAL!
             if (as.approved === true || as.principalApprovedBy || d.principalApproved === true || d.status === "Approved") {
+              // Restrict to entries that belong to the student's own department
+              const asDepts = Array.isArray(as.departments) && as.departments.length > 0 ? as.departments : null;
+              if (asDepts && studentDeptNorm) {
+                const deptMatch = asDepts.some((dd) => {
+                  const ddDept = normKey(dd?.dept || dd?.deptKey || dd?.department || "");
+                  const ddProg = normKey(dd?.progKey || dd?.programmeKey || dd?.prog || "");
+                  const deptOk = ddDept === studentDeptNorm || ddDept.includes(studentDeptNorm) || studentDeptNorm.includes(ddDept);
+                  const progOk = !studentProgNorm || !ddProg || ddProg === studentProgNorm || ddProg.includes(studentProgNorm) || studentProgNorm.includes(ddProg);
+                  return deptOk && progOk;
+                });
+                if (!deptMatch) return;
+              }
               items.push({
                 docId: docSnap.id,
                 batch: d.batch || studentBatch,
@@ -194,7 +245,7 @@ export default function Timetable() {
     });
 
     return () => unsub();
-  }, [studentData]);
+  }, [studentData, currentContext]);
 
   const periodTimings = useMemo(() => {
     if (!timetable) return [];

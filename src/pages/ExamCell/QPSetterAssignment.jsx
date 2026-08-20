@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, getDoc, onSnapshot, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
@@ -42,12 +42,14 @@ export default function QPSetterAssignment() {
   const [allSyllabus, setAllSyllabus] = useState([]);
   const [allAssignments, setAllAssignments] = useState([]);
 
+  const [selectedProgramme, setSelectedProgramme] = useState("");
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const [assignments, setAssignments] = useState({});
+  const [existingDocData, setExistingDocData] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadedKey, setLoadedKey] = useState("");
@@ -79,7 +81,7 @@ export default function QPSetterAssignment() {
         map[d.id] = d.data();
       });
       setUsersMap(map);
-    });
+    }, (err) => console.warn("QPSetterAssignment users listener:", err));
     return () => unsub();
   }, []);
 
@@ -144,11 +146,12 @@ export default function QPSetterAssignment() {
 
   const availableBatches = useMemo(() => {
     const set = new Set();
-    programmes.forEach(p => {
+    const progsToUse = selectedProgramme ? [selectedProgramme] : programmes;
+    progsToUse.forEach(p => {
       getActiveBatches(p).forEach(b => set.add(b));
     });
     return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [programmes, getActiveBatches]);
+  }, [selectedProgramme, programmes, getActiveBatches]);
 
   const academicYears = useMemo(() => getAcademicYears(batch), [batch]);
 
@@ -167,8 +170,9 @@ export default function QPSetterAssignment() {
 
   const activeProgrammes = useMemo(() => {
     if (!batch) return [];
-    return programmes.filter(p => getActiveBatches(p).includes(batch));
-  }, [programmes, batch, getActiveBatches]);
+    const baseProgs = selectedProgramme ? [selectedProgramme] : programmes;
+    return baseProgs.filter(p => getActiveBatches(p).includes(batch));
+  }, [selectedProgramme, programmes, batch, getActiveBatches]);
 
   const syllabusSubjects = useMemo(() => {
     if (!batch || !semester) return [];
@@ -242,6 +246,16 @@ export default function QPSetterAssignment() {
     });
   }, [syllabusSubjects, codeHandlers, usersMap]);
 
+  const allFacultyList = useMemo(() => {
+    return Object.entries(usersMap)
+      .filter(([, u]) => u.role === "Faculty" || u.role === "HOD" || u.role === "Academic Coordinator" || u.role === "Principal" || u.role === "Admin" || u.role === "Master")
+      .map(([uid, u]) => ({
+        uid,
+        label: u.facultyName || u.displayName || u.name || u.email || "Faculty"
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [usersMap]);
+
   const filteredRows = useMemo(() => {
     if (!searchQuery.trim()) return rows;
     const q = searchQuery.trim().toLowerCase();
@@ -253,25 +267,78 @@ export default function QPSetterAssignment() {
     );
   }, [rows, searchQuery]);
 
+  const getAssignmentForCode = useCallback((code, assignObj) => {
+    if (!code || !assignObj) return {};
+    if (assignObj[code]) return assignObj[code];
+    const targetNorm = normClean(code);
+    let matchedKey = Object.keys(assignObj).find(k => normClean(k) === targetNorm);
+    if (matchedKey && assignObj[matchedKey]) {
+      return assignObj[matchedKey];
+    }
+    matchedKey = Object.keys(assignObj).find(k => {
+      const kn = normClean(k);
+      return kn && targetNorm && (kn.includes(targetNorm) || targetNorm.includes(kn));
+    });
+    if (matchedKey && assignObj[matchedKey]) {
+      return assignObj[matchedKey];
+    }
+    return {};
+  }, []);
+
   const saveDocKey = useMemo(() => {
     if (!batch || !academicYear || !semester) return "";
     return `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
   }, [batch, academicYear, semester]);
 
   useEffect(() => {
-    if (!saveDocKey || saveDocKey === loadedKey) return;
-    setLoadedKey(saveDocKey);
-    const ref = doc(db, "qp_setter_assignments", saveDocKey);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setAssignments(data.assignments || {});
-      } else {
-        setAssignments({});
-      }
-    }, () => setAssignments({}));
+    if (!batch || !semester) {
+      setAssignments({});
+      setExistingDocData({});
+      return;
+    }
+    const normB = normClean(batch);
+    const normAY = academicYear ? normClean(academicYear) : "";
+    const normSem = String(semester).trim();
+
+    const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
+      let combinedAssignments = {};
+      let docDataCombined = {};
+
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const dBatch = normClean(data.batch || "");
+        const normID = normClean(d.id);
+        const dSem = String(data.semester || "").trim();
+        const dAY = normClean(data.academicYear || "");
+
+        const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+        const targetStr = (data.batch || "") + " " + d.id;
+        const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+
+        let yearMatches = false;
+        if (startYr1 && startYr2) {
+          const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
+          const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
+          yearMatches = (y1Clean === y2Clean);
+        }
+
+        const isBatchMatch = dBatch === normB || (dBatch && normB && (dBatch.includes(normB) || normB.includes(dBatch))) || normID.includes(normB) || yearMatches;
+        const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
+        const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
+
+        if (isBatchMatch && isSemMatch && isAyMatch) {
+          docDataCombined = { ...docDataCombined, ...data };
+          if (data.assignments && typeof data.assignments === "object") {
+            combinedAssignments = { ...combinedAssignments, ...data.assignments };
+          }
+        }
+      });
+
+      setExistingDocData(docDataCombined);
+      setAssignments(prev => ({ ...prev, ...combinedAssignments }));
+    }, (err) => console.warn("QPSetterAssignment qp_setter_assignments listener:", err));
     return () => unsub();
-  }, [saveDocKey]);
+  }, [batch, academicYear, semester]);
 
   useEffect(() => {
     if (!rows.length) return;
@@ -279,24 +346,36 @@ export default function QPSetterAssignment() {
       const next = { ...prev };
       let changed = false;
       rows.forEach(r => {
-        if (next[r.code]) return;
-        if (r.handlers.length === 1) {
-          next[r.code] = { setterUid: r.handlers[0].uid, numSets: next[r.code]?.numSets || 1, fromDate: "", toDate: "" };
+        const existing = getAssignmentForCode(r.code, next);
+        if (existing.setterUid) return;
+        if (r.handlers.length >= 1) {
+          const handlerUid = r.handlers[0].uid;
+          const handlerName = usersMap[handlerUid]?.facultyName || usersMap[handlerUid]?.displayName || usersMap[handlerUid]?.name || "";
+          next[r.code] = { ...existing, setterUid: handlerUid, setterName: handlerName, numSets: existing.numSets || 1, fromDate: existing.fromDate || "", toDate: existing.toDate || "" };
           changed = true;
-        } else {
-          next[r.code] = { setterUid: "", numSets: next[r.code]?.numSets || 1, fromDate: "", toDate: "" };
+        } else if (!next[r.code]) {
+          next[r.code] = { ...existing, setterUid: "", setterName: "", numSets: existing.numSets || 1, fromDate: existing.fromDate || "", toDate: existing.toDate || "" };
           changed = true;
         }
       });
       return changed ? next : prev;
     });
-  }, [rows]);
+  }, [rows, getAssignmentForCode, usersMap]);
 
   const updateAssignment = (code, field, value) => {
-    setAssignments(prev => ({
-      ...prev,
-      [code]: { ...(prev[code] || {}), [field]: value }
-    }));
+    setAssignments(prev => {
+      const existing = getAssignmentForCode(code, prev);
+      const updated = { ...existing, [field]: value };
+      if (field === "setterUid") {
+        const setterObj = usersMap[value];
+        const sName = setterObj ? (setterObj.facultyName || setterObj.displayName || setterObj.name || setterObj.email) : "";
+        updated.setterName = sName;
+      }
+      return {
+        ...prev,
+        [code]: updated
+      };
+    });
   };
 
   const autoFillSetter = (code) => {
@@ -305,24 +384,51 @@ export default function QPSetterAssignment() {
     updateAssignment(code, "setterUid", r.handlers[0].uid);
   };
 
-  const setterOptions = (r) => {
-    if (r.handlers.length > 1) return r.handlers;
-    if (r.handlers.length === 1) {
-      return [{ uid: "", label: "Auto (single faculty)" }, ...r.handlers];
+  const setterOptions = useCallback((r, row) => {
+    const list = [];
+    const addedUids = new Set();
+
+    // 1. Subject handling faculty
+    if (r.handlers && r.handlers.length > 0) {
+      r.handlers.forEach(h => {
+        if (!addedUids.has(h.uid)) {
+          list.push({ uid: h.uid, label: `${h.label} (Subject Faculty)` });
+          addedUids.add(h.uid);
+        }
+      });
     }
-    return [{ uid: "", label: "No faculty assigned yet" }];
-  };
+
+    // 2. Currently assigned setter (if saved previously from IAScheduleCreation or elsewhere)
+    const currentUid = row?.setterUid;
+    const currentName = row?.setterName || getFacultyName(currentUid);
+    if (currentUid && !addedUids.has(currentUid)) {
+      list.push({ uid: currentUid, label: `${currentName} (Assigned Setter)` });
+      addedUids.add(currentUid);
+    }
+
+    // 3. All other faculty in the institution
+    allFacultyList.forEach(f => {
+      if (!addedUids.has(f.uid)) {
+        list.push({ uid: f.uid, label: f.label });
+        addedUids.add(f.uid);
+      }
+    });
+
+    return list;
+  }, [allFacultyList, getFacultyName]);
 
   const handleSave = async () => {
-    if (!saveDocKey) return showToast("Please select Batch, Academic Year and Semester.", "error");
+    if (!batch || !academicYear || !semester) return showToast("Please select Batch, Academic Year and Semester.", "error");
+
+    const targetSaveDocKey = saveDocKey || `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
 
     const invalid = filteredRows.filter(r => {
-      const row = assignments[r.code];
+      const row = getAssignmentForCode(r.code, assignments);
       if (!row || !row.setterUid) return true;
       return false;
     });
     const dateInvalid = filteredRows.filter(r => {
-      const row = assignments[r.code];
+      const row = getAssignmentForCode(r.code, assignments);
       if (!row?.fromDate || !row?.toDate) return false;
       return new Date(row.toDate) < new Date(row.fromDate);
     });
@@ -336,36 +442,46 @@ export default function QPSetterAssignment() {
 
     setSaving(true);
     try {
-      const payloadAssignments = {};
+      const payloadAssignments = { ...(existingDocData.assignments || {}) };
       const notifications = [];
+
       rows.forEach(r => {
-        const row = assignments[r.code];
-        if (!row) return;
-        const setter = usersMap[row.setterUid];
-        const setterName = setter?.facultyName || setter?.displayName || setter?.name || setter?.email || "Unassigned";
+        const row = getAssignmentForCode(r.code, assignments);
+        const existingAs = getAssignmentForCode(r.code, existingDocData.assignments);
+
+        const setterUid = row.setterUid || existingAs.setterUid || "";
+        const setter = usersMap[setterUid];
+        const setterName = setter?.facultyName || setter?.displayName || setter?.name || setter?.email || (setterUid ? "Assigned" : "Unassigned");
+
         payloadAssignments[r.code] = {
+          ...existingAs, // PRESERVES examDate, startTime, endTime, slot, session, timeSlot, approved!
+          ...row,
           code: r.code,
-          name: r.name,
+          name: r.name || existingAs.name || "",
           departments: r.departments.map(d => ({ prog: d.prog, progKey: d.progKey, dept: d.dept })),
-          setterUid: row.setterUid || "",
-          setterName: row.setterUid ? setterName : "",
-          numSets: parseInt(row.numSets, 10) || 1,
-          fromDate: row.fromDate || "",
-          toDate: row.toDate || ""
+          setterUid,
+          setterName: setterUid ? setterName : "",
+          numSets: parseInt(row.numSets || existingAs.numSets, 10) || 1,
+          fromDate: row.fromDate || existingAs.fromDate || "",
+          toDate: row.toDate || existingAs.toDate || ""
         };
-        notifications.push({ code: r.code, uid: row.setterUid });
+        if (setterUid) {
+          notifications.push({ code: r.code, uid: setterUid });
+        }
       });
 
-      await setDoc(doc(db, "qp_setter_assignments", saveDocKey), {
+      const { assignments: _discard, ...cleanDocMeta } = (existingDocData || {});
+
+      await setDoc(doc(db, "qp_setter_assignments", targetSaveDocKey), {
+        ...cleanDocMeta, // PRESERVES examId, examName, examWindow, status, etc.!
         batch,
         academicYear,
         semester,
-        programmeKey: null,
         updatedBy: coeName || auth.currentUser?.email || "Exam Cell",
         updatedById: currentUid,
         updatedAt: new Date().toISOString(),
         assignments: payloadAssignments
-      });
+      }, { merge: true });
 
       const uniqueSetters = {};
       notifications.forEach(n => {
@@ -402,26 +518,26 @@ export default function QPSetterAssignment() {
   const setterCount = useMemo(() => {
     const set = new Set();
     rows.forEach(r => {
-      const s = assignments[r.code]?.setterUid;
+      const s = getAssignmentForCode(r.code, assignments)?.setterUid;
       if (s) set.add(s);
     });
     return set.size;
-  }, [rows, assignments]);
+  }, [rows, assignments, getAssignmentForCode]);
 
   const unsavedCount = useMemo(() => {
     let c = 0;
     rows.forEach(r => {
-      const row = assignments[r.code];
+      const row = getAssignmentForCode(r.code, assignments);
       if (row?.setterUid) c++;
     });
     return c;
-  }, [rows, assignments]);
+  }, [rows, assignments, getAssignmentForCode]);
 
   const commonRows = filteredRows.filter(r => r.departments.length > 1);
   const deptRows = filteredRows.filter(r => r.departments.length === 1);
 
   const renderRow = (r) => {
-    const row = assignments[r.code] || {};
+    const row = getAssignmentForCode(r.code, assignments);
     const isCommon = r.departments.length > 1;
     return (
       <tr key={r.code} className="align-top hover:bg-blue-50/30 transition-colors">
@@ -479,7 +595,7 @@ export default function QPSetterAssignment() {
               : "border-zinc-200 bg-white text-zinc-500 focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
             }`}>
             <option value="">— Assign Setter —</option>
-            {setterOptions(r).map(opt => (
+            {setterOptions(r, row).map(opt => (
               <option key={opt.uid || `x${opt.label}`} value={opt.uid}>{opt.label}</option>
             ))}
           </select>
@@ -566,11 +682,38 @@ export default function QPSetterAssignment() {
         {/* Filter Bar */}
         <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-4 md:p-5 mb-6">
           <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+            {/* Programme Filter */}
             <div className="flex-1">
-              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1.5 block">Batch</label>
-              <select value={batch} onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); }}
-                className={`${selectCls} w-full`}>
-                <option value="">Select Batch</option>
+              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1.5 block">
+                Programme <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={selectedProgramme}
+                onChange={(e) => {
+                  setSelectedProgramme(e.target.value);
+                  setBatch("");
+                  setAcademicYear("");
+                  setSemester("");
+                }}
+                className={`${selectCls} w-full`}
+              >
+                <option value="">-- Select Programme --</option>
+                {programmes.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1.5 block">
+                Batch <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={batch}
+                disabled={!selectedProgramme}
+                onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); }}
+                className={`${selectCls} w-full ${!selectedProgramme ? "opacity-50 cursor-not-allowed bg-zinc-100" : ""}`}
+              >
+                <option value="">{selectedProgramme ? "-- Select Batch --" : "-- Select Programme First --"}</option>
                 {availableBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}
               </select>
             </div>

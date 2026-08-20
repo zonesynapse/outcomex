@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, onSnapshot, getDoc, getDocs, query, where } from "firebase/firestore";
+import { doc, collection, onSnapshot, getDoc, getDocs, query, where, deleteDoc, updateDoc, deleteField } from "firebase/firestore";
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
-  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine
+  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2
 } from "lucide-react";
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField } from "../lib/utils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp } from "../lib/utils";
 
 const progPrefixMap = [
   { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
@@ -687,7 +687,8 @@ export default function FacultyDashboard() {
             all.push({
               ...docData,
               id: docData.id || docData.qpId || 'Exam',
-              compositeKey
+              compositeKey,
+              _isFlatDoc: true
             });
           } else {
             // Otherwise, iterate through field keys where value is a nested QP object
@@ -695,7 +696,7 @@ export default function FacultyDashboard() {
               if (qp && typeof qp === 'object' && !Array.isArray(qp)) {
                 // Must be a valid QP object (has subject/parts/assignment_config/status/created_by/etc)
                 if (qp.subject || qp.subject_code || qp.parts || qp.assignment_config || qp.status || qp.created_by) {
-                  all.push({ ...qp, id: vId, compositeKey });
+                  all.push({ ...qp, id: vId, compositeKey, _isFlatDoc: false });
                 }
               }
             });
@@ -806,6 +807,30 @@ export default function FacultyDashboard() {
   const totalDraftCount = useMemo(() => pendingQps.filter(q => q.status === 'draft').length, [pendingQps]);
   const totalForwardedCount = useMemo(() => pendingQps.filter(q => q.status === 'forwarded').length, [pendingQps]);
   const totalApprovedCount = useMemo(() => pendingQps.filter(q => q.status === 'approved_by_hod').length, [pendingQps]);
+
+  const [deletingQp, setDeletingQp] = useState("");
+
+  const handleDeleteQp = async (qp) => {
+    const p = parseSubjectField(qp.subject);
+    const label = `${p.code || qp.subject || ""}${qp.exam_name ? ` — ${qp.exam_name}` : ""}`;
+    if (!window.confirm(`Delete question paper "${label}"?\nThis cannot be undone.`)) return;
+    setDeletingQp(`${qp.compositeKey}-${qp.id}`);
+    try {
+      if (qp._isFlatDoc) {
+        await deleteDoc(doc(db, "generated_qps", qp.compositeKey));
+      } else {
+        await updateDoc(doc(db, "generated_qps", qp.compositeKey), {
+          [qp.id]: deleteField()
+        });
+      }
+      alert("Question paper deleted successfully.");
+    } catch (err) {
+      console.error("Error deleting QP:", err);
+      alert("Failed to delete question paper.");
+    } finally {
+      setDeletingQp("");
+    }
+  };
   const totalRecorrectCount = useMemo(() => pendingQps.filter(q => q.status === 'recorrected').length, [pendingQps]);
 
   const currentWeekDates = useMemo(() => {
@@ -1008,16 +1033,33 @@ export default function FacultyDashboard() {
       .filter(task => task.examDate && String(task.examDate).trim().length > 0)
       .map(task => {
         const code = String(task.code || '').trim().toUpperCase();
-        // Count generated sets by this faculty for this subject code
+        // Count generated sets by this faculty for this subject code — ONLY written test papers count
         const generatedSets = (baseQps || []).filter(qp => {
           const parsedQp = parseSubjectField(qp.subject);
           const qpCode = String(parsedQp.code || qp.subject_code || '').trim().toUpperCase();
           const isMyPaper = qp.created_by === currentUid || !qp.created_by;
-          return isMyPaper && qpCode === code;
+          if (!isMyPaper || qpCode !== code) return false;
+          const isWrittenTest = isWrittenTestQp(qp);
+          return isWrittenTest;
         });
 
         const requiredSets = parseInt(task.numSets, 10) || 1;
         const createdCount = generatedSets.length;
+
+        // Determine which set numbers have already been created by this faculty for this subject,
+        // so the "Create Question Paper" button auto-opens the next not-yet-created set (e.g. Set 2 after Set 1).
+        const createdSetNumbers = [...new Set(generatedSets.map(qp => {
+          const raw = String((qp && qp.qp_set) || (qp && qp.setNumber) || '');
+          const m = raw.match(/\d+/);
+          return m ? parseInt(m[0], 10) : 1;
+        }))];
+        createdSetNumbers.sort((a, b) => a - b);
+        let nextSetNum = requiredSets + 1;
+        for (let i = 1; i <= requiredSets; i++) {
+          if (!createdSetNumbers.includes(i)) { nextSetNum = i; break; }
+        }
+        const nextSetLabel = `Set ${nextSetNum}`;
+
         const isDone = createdCount >= requiredSets;
         const isOverdue = !isDone && task.toDate && task.toDate < todayStr;
         const isDueSoon = !isDone && task.toDate && task.toDate >= todayStr;
@@ -1033,6 +1075,8 @@ export default function FacultyDashboard() {
           ...task,
           createdCount,
           requiredSets,
+          nextSetNum,
+          nextSetLabel,
           isDone,
           isOverdue,
           isDueSoon,
@@ -1453,7 +1497,8 @@ export default function FacultyDashboard() {
                           const taskDept = task.department || (firstDept ? firstDept.dept : '') || '';
                           const taskSec = task.section || (Array.isArray(task.sections) && task.sections[0] ? task.sections[0] : '');
                           const taskExam = task.examName || task.examId || task.exam || '';
-                          navigate(`/question-paper-generator?code=${encodeURIComponent(task.code || '')}&batch=${encodeURIComponent(task.batch || '')}&sem=${encodeURIComponent(task.semester || '')}&prog=${encodeURIComponent(taskProgKey)}&dept=${encodeURIComponent(taskDept)}&ay=${encodeURIComponent(task.academicYear || '')}${taskSec ? `&sec=${encodeURIComponent(taskSec)}` : ''}${taskExam ? `&exam=${encodeURIComponent(taskExam)}` : ''}`);
+                          const nextSet = (!task.isDone && task.requiredSets > 1) ? `&set=${encodeURIComponent(task.nextSetLabel)}` : '';
+                          navigate(`/question-paper-generator?code=${encodeURIComponent(task.code || '')}&batch=${encodeURIComponent(task.batch || '')}&sem=${encodeURIComponent(task.semester || '')}&prog=${encodeURIComponent(taskProgKey)}&dept=${encodeURIComponent(taskDept)}&ay=${encodeURIComponent(task.academicYear || '')}${taskSec ? `&sec=${encodeURIComponent(taskSec)}` : ''}${taskExam ? `&exam=${encodeURIComponent(taskExam)}` : ''}${nextSet}`);
                         }}
                         className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer ${task.isDone
                           ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
@@ -2374,6 +2419,15 @@ export default function FacultyDashboard() {
                       >
                         {qp.status === 'recorrected' ? <Edit2 size={14} /> : <Eye size={14} />}
                         {qp.status === 'recorrected' ? 'Edit' : 'Open'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteQp(qp)}
+                        disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-100 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Delete question paper"
+                      >
+                        {deletingQp === `${qp.compositeKey}-${qp.id}` ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        Delete
                       </button>
                     </div>
                   </div>

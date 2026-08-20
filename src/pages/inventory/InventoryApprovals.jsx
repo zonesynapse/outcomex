@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, onSnapshot, getDoc, updateDoc } from "firebase/firestore";
 import { ShieldAlert, CheckCircle2, XCircle, Search, ClipboardCheck, Clock, PackageCheck } from "lucide-react";
 import Layout from "../../components/Layout";
+import { isMasterOrAdmin } from "../../lib/utils";
 
 export default function InventoryApprovals() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -36,7 +37,7 @@ export default function InventoryApprovals() {
     return () => unsub();
   }, []);
 
-  const isAuthorized = currentUserData?.role === "Principal" || currentUserData?.role === "Admin";
+  const isAuthorized = isMasterOrAdmin(currentUserData?.role, auth.currentUser?.email) || currentUserData?.role === "Principal";
 
   const handleApprove = async (id) => {
     try {

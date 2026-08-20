@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, onSnapshot, getDoc, runTransaction } from "firebase/firestore";
 import { ShieldAlert, Search, PackageCheck, CheckCircle2, AlertCircle, User, Package } from "lucide-react";
 import Layout from "../../components/Layout";
+import { isMasterOrAdmin } from "../../lib/utils";
 
 export default function InventoryFulfill() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -43,7 +44,7 @@ export default function InventoryFulfill() {
     return () => unsub();
   }, []);
 
-  const isAuthorized = currentUserData?.role === "Admin" || currentUserData?.role === "Principal";
+  const isAuthorized = isMasterOrAdmin(currentUserData?.role, auth.currentUser?.email) || currentUserData?.role === "Principal";
 
   const handleFulfill = async (req) => {
     if (!confirm(`Mark "${req.itemName}" (Qty: ${req.quantity}) as issued?\n\nStock will be deducted from inventory.`)) return;

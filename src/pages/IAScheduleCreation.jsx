@@ -8,7 +8,7 @@ import {
   ChevronRight, ClipboardList, Info, HelpCircle, Sparkles, Plus,
   Printer, Trash2, Eye, ShieldCheck, Clock, BookOpen, Layers,
   PenLine, Search, X, Landmark, UserCheck, Users2, RefreshCw,
-  CalendarCheck2, ChevronDown, Layers2
+  CalendarCheck2, ChevronDown, Layers2, Lock
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { useBatches } from "../hooks/useBatches";
@@ -118,40 +118,45 @@ const toArray = (v) => {
 // options, row chips and filtering all use the configured names.
 const mapToConfiguredCourseType = (derivedType, configuredTypes) => {
   if (!derivedType) return derivedType;
-  if (!configuredTypes || configuredTypes.length === 0) return derivedType;
   const d = normalizeTypeKey(derivedType);
   if (!d) return derivedType;
 
-  const exact = configuredTypes.find(t => normalizeTypeKey(t) === d);
-  if (exact) return exact;
+  if (configuredTypes && configuredTypes.length > 0) {
+    const exact = configuredTypes.find(t => normalizeTypeKey(t) === d);
+    if (exact) return exact;
+  }
 
-  const isIntegrated = d.includes("integrated") || d.includes("theorycumlab") || (d.includes("theory") && d.includes("lab"));
+  const isIntegrated = d.includes("integrated") || d.includes("theorycumlab") || (d.includes("theory") && d.includes("lab")) || d.includes("labintegrated");
   const isLab = d.includes("lab") || d.includes("practical") || d.includes("workshop") || d.includes("drawing");
   const isTheory = d.includes("theory") && !d.includes("lab");
   const isProject = d.includes("project") || d.includes("viva") || d.includes("dissertation") || d.includes("thesis");
   const isActivity = d.includes("activity") || d.includes("valueadded") || d.includes("seminar");
-  const isElective = d.includes("elective");
-  const isOpen = d.includes("open");
-  const isMandatory = d.includes("mandatory");
 
-  let best = null;
-  let bestScore = 0;
-  configuredTypes.forEach(t => {
-    const k = normalizeTypeKey(t);
-    if (!k) return;
-    let score = 0;
-    if (isIntegrated && (k.includes("integrated") || (k.includes("theory") && k.includes("lab")))) score += 10;
-    if (isLab && (k.includes("lab") || k.includes("practical"))) score += 10;
-    if (isTheory && k.includes("theory") && !k.includes("lab")) score += 8;
-    if (isProject && (k.includes("project") || k.includes("viva") || k.includes("dissertation") || k.includes("thesis"))) score += 10;
-    if (isActivity && (k.includes("activity") || k.includes("seminar") || k.includes("valueadd"))) score += 10;
-    if (isElective && k.includes("elective")) score += 10;
-    if (isOpen && k.includes("open")) score += 10;
-    if (isMandatory && k.includes("mandatory")) score += 10;
-    if (k.includes(d) || d.includes(k)) score += 4;
-    if (score > bestScore) { bestScore = score; best = t; }
-  });
-  return best || derivedType;
+  if (configuredTypes && configuredTypes.length > 0) {
+    let best = null;
+    let bestScore = 0;
+    configuredTypes.forEach(t => {
+      const k = normalizeTypeKey(t);
+      if (!k) return;
+      let score = 0;
+      if (isIntegrated && (k.includes("integrated") || (k.includes("theory") && k.includes("lab")))) score += 10;
+      if (isLab && (k.includes("lab") || k.includes("practical"))) score += 10;
+      if (isTheory && k.includes("theory") && !k.includes("lab")) score += 8;
+      if (isProject && (k.includes("project") || k.includes("viva") || k.includes("dissertation") || k.includes("thesis"))) score += 10;
+      if (isActivity && (k.includes("activity") || k.includes("seminar") || k.includes("valueadd"))) score += 10;
+      if (k.includes(d) || d.includes(k)) score += 4;
+      if (score > bestScore) { bestScore = score; best = t; }
+    });
+    if (best) return best;
+  }
+
+  if (isIntegrated) return "Integrated";
+  if (isLab) return "Laboratory";
+  if (isProject) return "Project Work";
+  if (isActivity) return "Activity";
+  if (isTheory) return "Theory";
+
+  return derivedType;
 };
 
 export default function IAScheduleCreation({ embedded = false }) {
@@ -188,6 +193,7 @@ export default function IAScheduleCreation({ embedded = false }) {
   // --- Assignments State (QP Setters, Sets, Window) ---
   const [assignments, setAssignments] = useState({});
   const [timetable, setTimetable] = useState({}); // maps subjectCode -> { date, startTime, endTime, slot, timeSlot }
+  const [bulkSetsVal, setBulkSetsVal] = useState("2");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -362,7 +368,10 @@ export default function IAScheduleCreation({ embedded = false }) {
         const data = d.data() || {};
         const rawCode = String(data.code || data.subjectCode || data.courseCode || "").trim();
         const code = normCodeKey(rawCode);
-        const type = String(data.type || data.courseType || data.course_type || data.category || "").trim();
+        const rawType = String(data.courseType || data.course_type || data.category || "").trim();
+        const fallbackType = String(data.type || "").trim();
+        const ignoreGeneric = new Set(["program course", "professional elective", "open elective", "mandatory course", "overall"]);
+        const type = rawType || (!ignoreGeneric.has(fallbackType.toLowerCase()) ? fallbackType : "");
         const name = String(data.name || data.courseName || data.subjectName || "").trim();
         const dept = sanitizeKey(data.department || "Overall");
         if (code) {
@@ -432,6 +441,22 @@ export default function IAScheduleCreation({ embedded = false }) {
   }, [selectedProgramme, programmes, batch, getActiveBatches]);
 
   // Exam events (configured in Academic Calendar) filtered for the selected batch
+  const getFormattedExamTitle = useCallback((rawTitle, batchName) => {
+    if (!rawTitle) return "";
+    const bReg = getRegulationForBatch(activeProgrammes[0], batchName || batch);
+    if (!bReg) return rawTitle;
+
+    let cleanReg = bReg.trim();
+    const rMatch = cleanReg.match(/R\d{4}/i);
+    if (rMatch) cleanReg = `AU - ${rMatch[0].toUpperCase()}`;
+
+    const regParenRegex = /\((?:AU\s*-\s*)?R\d{4}\)/i;
+    if (regParenRegex.test(rawTitle)) {
+      return rawTitle.replace(regParenRegex, `(${cleanReg})`);
+    }
+    return `${rawTitle} (${cleanReg})`;
+  }, [batch, activeProgrammes, getRegulationForBatch]);
+
   const filteredExamEvents = useMemo(() => {
     if (!batch) return [];
     const cBatch = cleanStr(batch);
@@ -456,15 +481,39 @@ export default function IAScheduleCreation({ embedded = false }) {
 
     const uniqueMap = new Map();
     matching.forEach(ev => {
-      const key = `${cleanStr(ev.title)}_${ev.fromDate || ''}_${ev.toDate || ''}`;
-      if (!uniqueMap.has(key)) uniqueMap.set(key, ev);
+      const displayTitle = getFormattedExamTitle(ev.title, batch);
+      const key = `${cleanStr(displayTitle)}_${ev.fromDate || ''}_${ev.toDate || ''}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, { ...ev, displayTitle });
+      }
     });
     return Array.from(uniqueMap.values());
-  }, [examEvents, ciaConfigs, batch]);
+  }, [examEvents, ciaConfigs, batch, getFormattedExamTitle]);
 
   const selectedExam = useMemo(() => {
     return filteredExamEvents.find(e => e.id === selectedExamId) || null;
   }, [selectedExamId, filteredExamEvents]);
+
+  // Set count configured per academic year in Curriculum (Exam Version Sets).
+  // Stored on the linked cia_configs doc as numSetsByAy.{sanitizedAY} (or flat numSets).
+  const configuredNumSets = useMemo(() => {
+    if (!academicYear) return null;
+    let cfg = null;
+    if (selectedExam?.ciaId) {
+      cfg = ciaConfigs.find(c => c.id === selectedExam.ciaId) || null;
+    }
+    if (!cfg && selectedExam?.title) {
+      const titleNorm = cleanStr(selectedExam.title);
+      cfg = ciaConfigs.find(c => {
+        const nameNorm = cleanStr(c.examName || c.exam || c.name || c.title || "");
+        return nameNorm && (nameNorm === titleNorm || nameNorm.includes(titleNorm) || titleNorm.includes(nameNorm));
+      }) || null;
+    }
+    const ayKey = sanitizeKey(academicYear);
+    const ayVal = ayKey ? cfg?.numSetsByAy?.[ayKey] : undefined;
+    const parsed = parseInt(ayVal ?? cfg?.numSets ?? "", 10);
+    return (parsed > 0) ? parsed : null;
+  }, [selectedExam, ciaConfigs, academicYear]);
 
   // Auto-select first matching exam event
   useEffect(() => {
@@ -476,20 +525,7 @@ export default function IAScheduleCreation({ embedded = false }) {
     }
   }, [filteredExamEvents, selectedExamId]);
 
-  // Reset exam date assignments when exam/semester changes
-  useEffect(() => {
-    setAssignments(prev => {
-      const next = { ...prev };
-      let changed = false;
-      Object.keys(next).forEach(code => {
-        if (next[code]?.examDate) {
-          delete next[code].examDate;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [selectedExamId, semester]);
+
 
   // Working dates (excl. Sundays & academic-calendar holidays) within the selected exam window
   const availableExamDates = useMemo(() => {
@@ -571,12 +607,12 @@ export default function IAScheduleCreation({ embedded = false }) {
           if (code && byCode[codeKey].code !== code) byCode[codeKey].code = code;
 
           const bankEntry = courseBankMap[codeKey];
-          const bankType = String(bankEntry?._anyType || "").trim();
-          const ignoreTypes = new Set(["", "program course", "overall", "undefined", "null"]);
+          const deptCleanKey = sanitizeKey(sDoc.deptKey);
+          const bankType = String(bankEntry?._byDept?.[deptCleanKey] || bankEntry?._anyType || "").trim();
+          const ignoreTypes = new Set(["", "program course", "overall", "undefined", "null", "professional elective", "open elective", "mandatory course"]);
           const useBankType = bankType && !ignoreTypes.has(bankType.toLowerCase());
           const baseType = useBankType ? bankType : deriveSubjectCourseType(sub);
-          const ct = useBankType ? baseType : mapToConfiguredCourseType(baseType, configuredTypes);
-          if (ct && !byCode[codeKey].courseTypes.includes(ct)) byCode[codeKey].courseTypes.push(ct);
+          const ct = mapToConfiguredCourseType(baseType, configuredTypes);
           if (ct && !byCode[codeKey].courseTypes.includes(ct)) byCode[codeKey].courseTypes.push(ct);
 
           const key = `${progKey}|||${sDoc.deptKey}`;
@@ -686,8 +722,8 @@ export default function IAScheduleCreation({ embedded = false }) {
 
       rows.forEach(r => {
         const existing = next[r.code];
-        const singleHandlerUid = r.handlers.length === 1 ? r.handlers[0].uid : "";
-        const singleHandlerName = r.handlers.length === 1 ? r.handlers[0].name : "";
+        const singleHandlerUid = r.handlers.length >= 1 ? r.handlers[0].uid : "";
+        const singleHandlerName = r.handlers.length >= 1 ? r.handlers[0].name : "";
 
         if (!existing) {
           next[r.code] = {
@@ -701,7 +737,7 @@ export default function IAScheduleCreation({ embedded = false }) {
             toDate: ""
           };
           changed = true;
-        } else if (!existing.setterUid && r.handlers.length === 1) {
+        } else if (!existing.setterUid && r.handlers.length >= 1) {
           next[r.code] = {
             ...existing,
             departments: r.departments || existing.departments || [],
@@ -722,21 +758,113 @@ export default function IAScheduleCreation({ embedded = false }) {
     });
   }, [rows]);
 
+  // Helper to normalize any date format (ISO, Timestamp object, DD/MM/YYYY, YYYY-MM-DD) to YYYY-MM-DD
+  const getEffectiveExamDate = useCallback((as) => {
+    if (!as) return "";
+    let raw = as.examDate ?? as.exam_date ?? as.date ?? as.assignedDate ?? "";
+    if (!raw) return "";
+
+    if (typeof raw === "object" && raw !== null) {
+      if (typeof raw.toDate === "function") {
+        raw = raw.toDate().toISOString().split("T")[0];
+      } else if (raw.seconds) {
+        raw = new Date(raw.seconds * 1000).toISOString().split("T")[0];
+      } else if (raw instanceof Date) {
+        raw = raw.toISOString().split("T")[0];
+      } else {
+        raw = String(raw);
+      }
+    }
+
+    const rawStr = String(raw).trim();
+    if (!rawStr) return "";
+
+    if (rawStr.includes("T")) return rawStr.split("T")[0];
+
+    if (rawStr.includes("/")) {
+      const parts = rawStr.split("/");
+      if (parts.length === 3) {
+        const [d, m, y] = parts;
+        if (y.length === 4) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        if (d.length === 4) return `${d}-${m.padStart(2, '0')}-${y.padStart(2, '0')}`;
+      }
+    }
+
+    if (rawStr.includes("-")) {
+      const parts = rawStr.split("-");
+      if (parts.length === 3 && parts[0].length === 2 && parts[2].length === 4) {
+        const [d, m, y] = parts;
+        return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
+    }
+
+    return rawStr;
+  }, []);
+
   // 9. Load Saved QP Setter Assignments from Firestore
   useEffect(() => {
-    if (!batch || !academicYear || !semester) {
+    if (!batch || !semester) {
       setAssignments({});
       return;
     }
-    const docKey = `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
-    const unsub = onSnapshot(doc(db, "qp_setter_assignments", docKey), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data()?.assignments || {};
-        setAssignments(prev => ({ ...prev, ...data }));
+    const normB = normCodeKey(batch);
+    const normAY = academicYear ? normCodeKey(academicYear) : "";
+    const normSem = String(semester).trim();
+
+    const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
+      let combinedAssignments = {};
+      let foundExamId = "";
+
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const dBatch = normCodeKey(data.batch || "");
+        const normID = normCodeKey(d.id);
+        const dSem = String(data.semester || "").trim();
+        const dAY = normCodeKey(data.academicYear || "");
+
+        const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+        const targetStr = (data.batch || "") + " " + d.id;
+        const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+
+        let yearMatches = false;
+        if (startYr1 && startYr2) {
+          const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
+          const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
+          yearMatches = (y1Clean === y2Clean);
+        }
+
+        const isBatchMatch =
+          dBatch === normB ||
+          (dBatch && normB && (dBatch.includes(normB) || normB.includes(dBatch))) ||
+          normID.includes(normB) ||
+          yearMatches;
+
+        const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
+        const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
+
+        if (isBatchMatch && isSemMatch && isAyMatch) {
+          if (data.assignments && typeof data.assignments === "object") {
+            Object.entries(data.assignments).forEach(([k, item]) => {
+              if (!item) return;
+              const effectiveDate = getEffectiveExamDate(item);
+              combinedAssignments[k] = {
+                ...item,
+                examDate: effectiveDate || item.examDate || ""
+              };
+            });
+          }
+          if (data.examId) foundExamId = data.examId;
+        }
+      });
+
+      setAssignments(prev => ({ ...prev, ...combinedAssignments }));
+
+      if (foundExamId) {
+        setSelectedExamId(prev => prev || foundExamId);
       }
     });
     return () => unsub();
-  }, [batch, academicYear, semester]);
+  }, [batch, academicYear, semester, getEffectiveExamDate]);
 
   // 10. Filtered Rows by Search Query
   const filteredRows = useMemo(() => {
@@ -757,15 +885,48 @@ export default function IAScheduleCreation({ embedded = false }) {
   const commonCount = rows.filter(r => r.departments.length > 1).length;
   const assignedCount = Object.values(assignments).filter(a => a.setterUid).length;
 
+  const getAssignmentForCode = useCallback((code, assignObj) => {
+    if (!code || !assignObj) return {};
+    if (assignObj[code]) return assignObj[code];
+    const targetNorm = normCodeKey(code);
+    const matchedKey = Object.keys(assignObj).find(k => normCodeKey(k) === targetNorm);
+    if (matchedKey && assignObj[matchedKey]) {
+      return assignObj[matchedKey];
+    }
+    return {};
+  }, []);
+
   const handleAssignmentChange = (code, field, value) => {
     setAssignments(prev => {
-      const cur = prev[code] || { code, name: "", setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
-      const updated = { ...cur, [field]: value };
-      if (field === "setterUid") {
-        const handlerObj = usersMap[value];
-        updated.setterName = handlerObj ? (handlerObj.facultyName || handlerObj.displayName || handlerObj.name || handlerObj.email) : "";
+      const targetNorm = normCodeKey(code);
+      const matchingKeys = Object.keys(prev).filter(k => normCodeKey(k) === targetNorm);
+      const keysToUpdate = matchingKeys.length > 0 ? matchingKeys : [code];
+
+      const next = { ...prev };
+      keysToUpdate.forEach(k => {
+        const cur = next[k] || { code: k, name: "", setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "", examDate: "", startTime: "", endTime: "", slot: "", session: "", timeSlot: "" };
+        const updated = { ...cur, [field]: value };
+        if (field === "setterUid") {
+          const handlerObj = usersMap[value];
+          updated.setterName = handlerObj ? (handlerObj.facultyName || handlerObj.displayName || handlerObj.name || handlerObj.email) : "";
+        }
+        if (field === "startTime" || field === "endTime") {
+          const sTime = field === "startTime" ? value : (cur.startTime || "");
+          const eTime = field === "endTime" ? value : (cur.endTime || "");
+          const slot = deriveSlotFromTime(sTime);
+          updated.slot = slot;
+          updated.session = slot;
+          updated.timeSlot = buildTimeSlotString(sTime, eTime);
+        }
+        next[k] = updated;
+      });
+
+      if (!next[code]) {
+        const primary = next[keysToUpdate[0]] || {};
+        next[code] = { ...primary, code };
       }
-      return { ...prev, [code]: updated };
+
+      return next;
     });
   };
 
@@ -783,18 +944,65 @@ export default function IAScheduleCreation({ embedded = false }) {
     showToast("Applied submission window date range to all subjects!", "success");
   };
 
+  // Bulk Apply Exam Timing across all rows
+  const handleApplyBulkTiming = (sTime, eTime) => {
+    if (!sTime) return;
+    setAssignments(prev => {
+      const next = { ...prev };
+      rows.forEach(r => {
+        const cur = next[r.code] || { code: r.code, name: r.name, setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
+        const slot = deriveSlotFromTime(sTime);
+        next[r.code] = {
+          ...cur,
+          startTime: sTime,
+          endTime: eTime || "",
+          slot,
+          session: slot,
+          timeSlot: buildTimeSlotString(sTime, eTime)
+        };
+      });
+      return next;
+    });
+    showToast("Applied exam timing to all subjects!", "success");
+  };
+
+  // Bulk Apply Question Paper Set count across all rows
+  const handleApplyBulkSets = (numSetsVal) => {
+    const num = parseInt(numSetsVal, 10);
+    if (isNaN(num) || num < 1) return;
+    setAssignments(prev => {
+      const next = { ...prev };
+      rows.forEach(r => {
+        const cur = next[r.code] || { code: r.code, name: r.name, setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
+        next[r.code] = { ...cur, numSets: num };
+      });
+      return next;
+    });
+    showToast(`Applied ${num} Set${num > 1 ? 's' : ''} to all subjects!`, "success");
+  };
+
   // ---- Exam Timetable Report (print window with college logo on top) ----
   const buildReportHtml = (logoDataUrl, collegeName) => {
     const scheduled = rows
-      .filter(r => assignments[r.code]?.examDate)
-      .map(r => ({
-        code: r.code,
-        name: r.name,
-        date: assignments[r.code].examDate,
-        dept: r.departments.map(d => formatDepartmentDisplay(d.dept, d.progKey)).join(", "),
-        isCommon: r.departments.length > 1,
-        setter: assignments[r.code]?.setterName || "-"
-      }))
+      .filter(r => getAssignmentForCode(r.code, assignments)?.examDate)
+      .map(r => {
+        const as = getAssignmentForCode(r.code, assignments);
+        const sTime = as.startTime || "";
+        const eTime = as.endTime || "";
+        const slot = as.slot || as.session || (sTime ? deriveSlotFromTime(sTime) : "");
+        return {
+          code: r.code,
+          name: r.name,
+          date: as.examDate,
+          startTime: sTime,
+          endTime: eTime,
+          slot,
+          timeSlot: as.timeSlot || buildTimeSlotString(sTime, eTime),
+          dept: r.departments.map(d => formatDepartmentDisplay(d.dept, d.progKey)).join(", "),
+          isCommon: r.departments.length > 1,
+          setter: as.setterName || "-"
+        };
+      })
       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
     const logoImg = logoDataUrl || "";
@@ -811,12 +1019,16 @@ export default function IAScheduleCreation({ embedded = false }) {
           <tr>
             <td class="center">${idx + 1}</td>
             <td class="center">${new Date(s.date).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" })}<br/><span class="day">(${new Date(s.date).toLocaleDateString("en-IN", { weekday: "long" })})</span></td>
+            <td class="center">
+              ${s.slot ? `<span class="session-badge ${s.slot.toLowerCase()}">${s.slot}</span>` : ""}
+              <br/><span class="time-str">${s.startTime ? (s.endTime ? `${format12Hour(s.startTime)} - ${format12Hour(s.endTime)}` : format12Hour(s.startTime)) : "-"}</span>
+            </td>
             <td class="center code-cell">${s.code}</td>
             <td class="name-cell">${s.name}${s.isCommon ? '<br/><span class="common-tag">Common</span>' : ""}</td>
             <td class="center">${s.setter}</td>
           </tr>
         `).join("")
-      : `<tr><td colspan="5" class="center empty">No exam dates assigned yet. Set dates in the "Exam Date Assign" column before generating the report.</td></tr>`;
+      : `<tr><td colspan="6" class="center empty">No exam dates assigned yet. Set dates in the "Exam Date Assign" column before generating the report.</td></tr>`;
 
     return `<!doctype html>
       <html>
@@ -842,6 +1054,10 @@ export default function IAScheduleCreation({ embedded = false }) {
           .code-cell { font-weight: 700; color: #120c7a; }
           .name-cell { font-weight: 600; }
           .common-tag { display: inline-block; margin-top: 3px; font-size: 9px; font-weight: 700; color: #7c3aed; background: #f3e8ff; border: 1px solid #e9d5ff; padding: 1px 6px; border-radius: 4px; }
+          .session-badge { display: inline-block; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; }
+          .session-badge.fn { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+          .session-badge.an { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+          .time-str { font-size: 10px; font-weight: 700; color: #4b5563; }
           .empty { color: #999; font-style: italic; padding: 24px 10px; }
           .footer { margin-top: 44px; display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; }
           .sig-box { text-align: center; width: 32%; border-top: 1px dashed #333; padding-top: 6px; }
@@ -865,11 +1081,12 @@ export default function IAScheduleCreation({ embedded = false }) {
         <table>
           <thead>
             <tr>
-              <th style="width:6%">Sl.No</th>
-              <th style="width:20%">Date & Day</th>
-              <th style="width:15%">Subject Code</th>
+              <th style="width:5%">Sl.No</th>
+              <th style="width:18%">Date & Day</th>
+              <th style="width:18%">Session & Timing</th>
+              <th style="width:14%">Subject Code</th>
               <th>Subject Name</th>
-              <th style="width:22%">QP Setter</th>
+              <th style="width:20%">QP Setter</th>
             </tr>
           </thead>
           <tbody>
@@ -935,7 +1152,7 @@ export default function IAScheduleCreation({ embedded = false }) {
       return;
     }
 
-    const unassigned = rows.filter(r => !assignments[r.code]?.setterUid);
+    const unassigned = rows.filter(r => !getAssignmentForCode(r.code, assignments)?.setterUid);
     if (unassigned.length > 0) {
       if (!window.confirm(`${unassigned.length} subjects have not been assigned a QP Setter yet. Do you still want to save?`)) {
         return;
@@ -945,12 +1162,26 @@ export default function IAScheduleCreation({ embedded = false }) {
     setSaving(true);
     try {
       const docKey = `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
+      const savedReg = getRegulationForBatch(activeProgrammes[0], batch);
+      let cleanExamName = selectedExam?.title || "";
+      if (savedReg && cleanExamName) {
+        let cleanRegStr = savedReg.trim();
+        const rMatch = cleanRegStr.match(/R\d{4}/i);
+        if (rMatch) cleanRegStr = `AU - ${rMatch[0].toUpperCase()}`;
+        const regParenRegex = /\((?:AU\s*-\s*)?R\d{4}\)/i;
+        if (regParenRegex.test(cleanExamName)) {
+          cleanExamName = cleanExamName.replace(regParenRegex, `(${cleanRegStr})`);
+        } else {
+          cleanExamName = `${cleanExamName} (${cleanRegStr})`;
+        }
+      }
+
       const payload = {
         batch,
         academicYear,
         semester,
         examId: selectedExam?.id || "",
-        examName: selectedExam?.title || "",
+        examName: cleanExamName || selectedExam?.title || "",
         examWindow: selectedExam ? `${selectedExam.fromDate} to ${selectedExam.toDate}` : "",
         status: "Pending Principal Approval",
         updatedBy: currentUserData?.facultyName || auth.currentUser?.email || "Exam Cell",
@@ -1071,7 +1302,7 @@ export default function IAScheduleCreation({ embedded = false }) {
                 }}
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer"
               >
-                <option value="">All Programmes</option>
+                <option value="">-- Choose Programme --</option>
                 {programmes.map(p => (
                   <option key={p} value={p}>{p}</option>
                 ))}
@@ -1085,10 +1316,11 @@ export default function IAScheduleCreation({ embedded = false }) {
               </label>
               <select
                 value={batch}
+                disabled={!selectedProgramme}
                 onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer"
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <option value="">-- Choose Batch --</option>
+                <option value="">{selectedProgramme ? "-- Choose Batch --" : "-- Choose Programme First --"}</option>
                 {availableBatches.map(b => (
                   <option key={b} value={b}>{formatBatchDisplay(b)}</option>
                 ))}
@@ -1143,16 +1375,19 @@ export default function IAScheduleCreation({ embedded = false }) {
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all cursor-pointer disabled:opacity-50"
               >
                 <option value="">-- Choose Exam --</option>
-                {filteredExamEvents.map(ev => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.title} ({ev.fromDate} to {ev.toDate})
-                  </option>
-                ))}
+                {filteredExamEvents.map(ev => {
+                  const displayTitle = getFormattedExamTitle(ev.title, batch);
+                  return (
+                    <option key={ev.id} value={ev.id}>
+                      {displayTitle} ({ev.fromDate} to {ev.toDate})
+                    </option>
+                  );
+                })}
               </select>
               {selectedExam && (
                 <p className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-1 rounded-lg flex items-center gap-1.5">
                   <CalendarCheck2 size={12} className="shrink-0" />
-                  <span className="truncate">{selectedExam.title}: {selectedExam.fromDate} &rarr; {selectedExam.toDate}</span>
+                  <span className="truncate">{getFormattedExamTitle(selectedExam.title, batch)}: {selectedExam.fromDate} &rarr; {selectedExam.toDate}</span>
                 </p>
               )}
             </div>
@@ -1225,8 +1460,51 @@ export default function IAScheduleCreation({ embedded = false }) {
 
         {/* Stats & Quick Actions Bar */}
         {batch && academicYear && semester && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Setters Assigned & Bulk Apply Sets */}
+            <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Setters Assigned</span>
+                  <span className="text-xl font-black text-slate-900">{assignedCount} / {totalSubjects}</span>
+                </div>
+                <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <UserCheck size={18} />
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                <select
+                  id="bulkNumSets"
+                  value={configuredNumSets ? String(configuredNumSets) : bulkSetsVal}
+                  onChange={(e) => setBulkSetsVal(e.target.value)}
+                  disabled={!!configuredNumSets}
+                  className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 text-[11px] font-bold text-slate-800 outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                  title={configuredNumSets ? "Set count configured in Curriculum (Exam Version Sets)" : ""}
+                >
+                  {[1, 2, 3, 4, 5, 6].map(n => (
+                    <option key={n} value={n}>{n} Set{n > 1 ? 's' : ''}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const val = configuredNumSets ? String(configuredNumSets) : bulkSetsVal;
+                    handleApplyBulkSets(val);
+                  }}
+                  className="w-1/2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-extrabold py-1.5 rounded-xl transition-all"
+                >
+                  Apply Sets to All
+                </button>
+              </div>
+              {configuredNumSets && (
+                <div className="text-[10px] font-bold text-slate-400 flex items-center justify-between pt-1">
+                  <span className="truncate">Curriculum configured: {configuredNumSets} Set{configuredNumSets > 1 ? 's' : ''} for this AY</span>
+                  <Lock size={12} className="shrink-0 ml-1" />
+                </div>
+              )}
+            </div>
+
+            {/* Total Subjects */}
+            <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
               <div>
                 <span className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Total Subjects</span>
                 <span className="text-2xl font-black text-slate-900">{totalSubjects}</span>
@@ -1234,19 +1512,6 @@ export default function IAScheduleCreation({ embedded = false }) {
               </div>
               <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
                 <BookOpen size={22} />
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-              <div>
-                <span className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Setters Assigned</span>
-                <span className="text-2xl font-black text-slate-900">{assignedCount} / {totalSubjects}</span>
-                <span className="text-[10px] block font-bold text-emerald-600 mt-0.5">
-                  {assignedCount === totalSubjects && totalSubjects > 0 ? "All Assigned!" : `${totalSubjects - assignedCount} Pending`}
-                </span>
-              </div>
-              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl">
-                <UserCheck size={22} />
               </div>
             </div>
 
@@ -1273,7 +1538,37 @@ export default function IAScheduleCreation({ embedded = false }) {
                 }}
                 className="w-full bg-[#120c7a] hover:bg-[#100b6e] text-white text-[11px] font-extrabold py-1.5 rounded-xl transition-all"
               >
-                Apply Dates to All Rows
+                Apply Dates to All
+              </button>
+            </div>
+
+            {/* Bulk Apply Exam Timing */}
+            <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col justify-between space-y-2">
+              <span className="block text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Bulk Apply Timing to All</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="time"
+                  id="bulkStartTime"
+                  defaultValue="09:30"
+                  className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 text-[11px] font-bold text-slate-800"
+                />
+                <span className="text-slate-400 font-bold text-xs">&rarr;</span>
+                <input
+                  type="time"
+                  id="bulkEndTime"
+                  defaultValue="11:00"
+                  className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 text-[11px] font-bold text-slate-800"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  const st = document.getElementById("bulkStartTime")?.value;
+                  const et = document.getElementById("bulkEndTime")?.value;
+                  handleApplyBulkTiming(st, et);
+                }}
+                className="w-full bg-gradient-to-r from-blue-700 to-indigo-900 hover:opacity-95 text-white text-[11px] font-extrabold py-1.5 rounded-xl transition-all"
+              >
+                Apply Timing to All
               </button>
             </div>
           </div>
@@ -1318,13 +1613,14 @@ export default function IAScheduleCreation({ embedded = false }) {
                       <th className="p-3.5 border border-slate-300">Question Paper Setter (Assign)</th>
                       <th className="p-3.5 border border-slate-300 text-center">Set</th>
                       <th className="p-3.5 border border-slate-300">Submission Window</th>
+                      <th className="p-3.5 border border-slate-300">Exam Timing (FN / AN)</th>
                       <th className="p-3.5 border border-slate-300 rounded-tr-2xl">Exam Date Assign</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-medium">
                     {filteredRows.map((r, idx) => {
                       const isCommon = r.departments.length > 1;
-                      const as = assignments[r.code] || {};
+                      const as = getAssignmentForCode(r.code, assignments);
                       const hasSingleHandler = r.handlers.length === 1;
 
                       // Helper to get group key for single-department rowSpan merging
@@ -1350,6 +1646,8 @@ export default function IAScheduleCreation({ embedded = false }) {
                           nextIdx++;
                         }
                       }
+
+                      const activeSlot = as.slot || as.session || (as.startTime ? deriveSlotFromTime(as.startTime) : "");
 
                       return (
                         <tr key={r.code} className="hover:bg-slate-50 transition-colors">
@@ -1453,9 +1751,11 @@ export default function IAScheduleCreation({ embedded = false }) {
                           {/* 6th Col: Set Count */}
                           <td className="p-3.5 align-middle border border-slate-200 text-center w-20">
                             <select
-                              value={as.numSets || 1}
+                              value={configuredNumSets ? String(configuredNumSets) : String(as.numSets || 1)}
                               onChange={(e) => handleAssignmentChange(r.code, "numSets", parseInt(e.target.value, 10))}
-                              className="w-16 bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-black text-slate-800 text-center outline-none"
+                              disabled={!!configuredNumSets}
+                              title={configuredNumSets ? "Set count locked from Curriculum (Exam Version Sets)" : ""}
+                              className="w-16 bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-black text-slate-800 text-center outline-none disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               {[1, 2, 3, 4, 5, 6].map(num => (
                                 <option key={num} value={num}>{num} Set{num > 1 ? 's' : ''}</option>
@@ -1482,26 +1782,75 @@ export default function IAScheduleCreation({ embedded = false }) {
                             </div>
                           </td>
 
-                          {/* 8th Col: Exam Date Assign */}
+                          {/* 8th Col: Exam Timing (Start -> End & Auto FN/AN Badge) */}
+                          <td className="p-3.5 align-middle border border-slate-200 min-w-[200px]">
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="time"
+                                  value={as.startTime || ""}
+                                  onChange={(e) => handleAssignmentChange(r.code, "startTime", e.target.value)}
+                                  className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 text-[11px] font-bold text-slate-800 outline-none focus:ring-1 focus:ring-indigo-400"
+                                />
+                                <span className="text-slate-400 font-bold text-xs">&rarr;</span>
+                                <input
+                                  type="time"
+                                  value={as.endTime || ""}
+                                  onChange={(e) => handleAssignmentChange(r.code, "endTime", e.target.value)}
+                                  className="w-1/2 bg-slate-50 border border-slate-200 rounded-xl p-1.5 text-[11px] font-bold text-slate-800 outline-none focus:ring-1 focus:ring-indigo-400"
+                                />
+                              </div>
+
+                              {as.startTime ? (
+                                <div className="flex items-center justify-between gap-1 px-1">
+                                  <span className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                                    activeSlot === "FN"
+                                      ? "bg-blue-100 text-blue-800 border border-blue-200"
+                                      : "bg-amber-100 text-amber-800 border border-amber-200"
+                                  }`}>
+                                    <Clock size={10} />
+                                    {activeSlot} SESSION
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-500 truncate">
+                                    {format12Hour(as.startTime)}{as.endTime ? ` - ${format12Hour(as.endTime)}` : ""}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] font-semibold text-slate-400 block text-center">
+                                  No timing set
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* 9th Col: Exam Date Assign */}
                           <td className="p-3.5 align-middle border border-slate-200 min-w-[160px]">
-                            {selectedExam ? (
-                              <select
-                                value={as.examDate || ""}
-                                onChange={(e) => handleAssignmentChange(r.code, "examDate", e.target.value)}
-                                className={`w-full border rounded-xl p-2 text-[11px] font-bold outline-none transition-all cursor-pointer ${
-                                  as.examDate
-                                    ? "bg-emerald-50 border-emerald-300 text-emerald-900"
-                                    : "bg-slate-50 border-slate-200 text-slate-800"
-                                }`}
-                              >
-                                <option value="">-- Assign Date --</option>
-                                {availableExamDates.map(dateStr => (
-                                  <option key={dateStr} value={dateStr}>
-                                    {new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", weekday: "short" })}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
+                            {selectedExam ? (() => {
+                              const effectiveDate = getEffectiveExamDate(as);
+                              return (
+                                <select
+                                  value={effectiveDate}
+                                  onChange={(e) => handleAssignmentChange(r.code, "examDate", e.target.value)}
+                                  className={`w-full border rounded-xl p-2 text-[11px] font-bold outline-none transition-all cursor-pointer ${
+                                    effectiveDate
+                                      ? "bg-emerald-50 border-emerald-300 text-emerald-900"
+                                      : "bg-slate-50 border-slate-200 text-slate-800"
+                                  }`}
+                                >
+                                  <option value="">-- Assign Date --</option>
+                                  {effectiveDate && !availableExamDates.includes(effectiveDate) && (
+                                    <option value={effectiveDate}>
+                                      {new Date(effectiveDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", weekday: "short" })} (Saved)
+                                    </option>
+                                  )}
+                                  {availableExamDates.map(dateStr => (
+                                    <option key={dateStr} value={dateStr}>
+                                      {new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", weekday: "short" })}
+                                    </option>
+                                  ))}
+                                </select>
+                              );
+                            })() : (
                               <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">
                                 <AlertTriangle size={12} /> Choose exam event
                               </span>

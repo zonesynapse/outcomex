@@ -1,5 +1,86 @@
 import { formatProgDisplay, parseSubjectField } from '../lib/utils';
 
+const calculateDuration = (startTime, endTime, timeSlot) => {
+  let start = startTime || "";
+  let end = endTime || "";
+
+  if ((!start || !end) && timeSlot && String(timeSlot).includes("-")) {
+    const parts = String(timeSlot).split("-").map(s => s.trim());
+    if (parts.length === 2) {
+      start = parts[0];
+      end = parts[1];
+    }
+  }
+
+  const parseMins = (timeStr) => {
+    if (!timeStr) return null;
+    let s = String(timeStr).trim();
+    let isPM = /pm/i.test(s);
+    let isAM = /am/i.test(s);
+    s = s.replace(/(am|pm)/i, '').trim();
+    const parts = s.split(':').map(Number);
+    if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+    let h = parts[0];
+    let m = parts[1];
+    if (isPM && h < 12) h += 12;
+    if (isAM && h === 12) h = 0;
+    return h * 60 + m;
+  };
+
+  const startMins = parseMins(start);
+  const endMins = parseMins(end);
+
+  if (startMins !== null && endMins !== null && endMins > startMins) {
+    const total = endMins - startMins;
+    const hrs = Math.floor(total / 60);
+    const mins = total % 60;
+    if (hrs > 0 && mins > 0) {
+      return `${hrs} Hour${hrs > 1 ? 's' : ''} ${mins} Mins`;
+    } else if (hrs > 0 && mins === 0) {
+      return `${hrs} Hour${hrs > 1 ? 's' : ''}`;
+    } else {
+      return `${mins} Mins`;
+    }
+  }
+  return "180 min";
+};
+
+const formatExamDateDisplay = (dateVal) => {
+  if (!dateVal) return "";
+  try {
+    let d = null;
+    if (typeof dateVal === 'object' && dateVal?.seconds) {
+      d = new Date(dateVal.seconds * 1000);
+    } else if (typeof dateVal === 'string') {
+      if (dateVal.includes('-')) {
+        const parts = dateVal.split('T')[0].split('-');
+        if (parts.length === 3 && parts[0].length === 4) {
+          return `${parts[2]}.${parts[1]}.${parts[0]}`;
+        }
+      }
+      if (dateVal.includes('/')) {
+        const parts = dateVal.split('/');
+        if (parts.length === 3) {
+          const p0 = parts[0].padStart(2, '0');
+          const p1 = parts[1].padStart(2, '0');
+          const p2 = parts[2];
+          return `${p0}.${p1}.${p2}`;
+        }
+      }
+      d = new Date(dateVal);
+    } else if (dateVal instanceof Date) {
+      d = dateVal;
+    }
+    if (d && !isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}.${month}.${year}`;
+    }
+  } catch (e) {}
+  return String(dateVal);
+};
+
 export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}, poMarks = null, coeSignatureUrl = '') => {
   // Compute exam display name (resolve config ID to name)
   let examDisplay = qp.exam_name;
@@ -66,15 +147,15 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     <td style="padding: 6px;"><strong>Department</strong></td>
     <td style="padding: 6px;">${qp.department}</td>
     <td style="padding: 6px;"><strong>Common for</strong></td>
-    <td style="padding: 6px;">-</td>
+    <td style="padding: 6px;">${qp.common_for || qp.commonFor || 'NIL'}</td>
   </tr>
   <tr>
     <td style="padding: 6px;"><strong>Max Mark</strong></td>
     <td style="padding: 6px;">${qp.total_marks}</td>
     <td style="padding: 6px;"><strong>Duration</strong></td>
-    <td style="padding: 6px;">180 min</td>
+    <td style="padding: 6px;">${qp.duration || calculateDuration(qp.start_time, qp.end_time, qp.time_slot || qp.timeSlot) || '180 min'}</td>
     <td style="padding: 6px;"><strong>Date</strong></td>
-    <td style="padding: 6px;">${qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : ''}</td>
+    <td style="padding: 6px;">${qp.exam_date_display || formatExamDateDisplay(qp.exam_date) || (qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '')}</td>
   </tr>
   <tr>
     <td style="padding: 6px;"><strong>Reg. No.</strong></td>

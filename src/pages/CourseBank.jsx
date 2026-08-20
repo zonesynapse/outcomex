@@ -5,7 +5,8 @@ import { useRegulations } from "../hooks/useRegulations";
 import { db } from "../firebase"; // Import db for Firestore
 import { doc, collection, setDoc, onSnapshot, getDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { sanitizeKey, formatProgDisplay } from "../lib/utils";
-import { ChevronDown, Trash2, AlertCircle } from "lucide-react";
+import { ChevronDown, Trash2, AlertCircle, GitCompareArrows, Loader2, CheckCircle2, X } from "lucide-react";
+import { scanCourseCodeUsage, replaceCourseCode } from "../utils/courseCodeReplace";
 
 export default function CreateCourse() {
   const { departments: allDepartments, durations, loading: dLoading } = useDepartments();
@@ -32,6 +33,16 @@ export default function CreateCourse() {
   const [existingCourses, setExistingCourses] = useState([]); // merged list for dropdown
   const [selectedExistingCourseKey, setSelectedExistingCourseKey] = useState("");
   const [availableCourseTypes, setAvailableCourseTypes] = useState(["Program Course"]);
+
+  // Replace Course Code modal state
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
+  const [replaceOldCode, setReplaceOldCode] = useState("");
+  const [replaceNewCode, setReplaceNewCode] = useState("");
+  const [replaceScan, setReplaceScan] = useState(null);
+  const [replaceScanning, setReplaceScanning] = useState(false);
+  const [replaceRunning, setReplaceRunning] = useState(false);
+  const [replaceProgress, setReplaceProgress] = useState({ step: 0, total: 0, msg: "" });
+  const [replaceResult, setReplaceResult] = useState("");
 
   const deptKey = department || "Overall";
   const regKey = useMemo(() => sanitizeKey(regulation), [regulation]);
@@ -233,6 +244,65 @@ export default function CreateCourse() {
     }
     setSaving(false);
     setTimeout(() => setMessage(""), 4000);
+  };
+
+  const openReplaceModal = () => {
+    setReplaceOldCode(courseCode.trim());
+    setReplaceNewCode("");
+    setReplaceScan(null);
+    setReplaceResult("");
+    setReplaceProgress({ step: 0, total: 0, msg: "" });
+    setShowReplaceModal(true);
+  };
+
+  const handleReplacePreview = async () => {
+    const oldCode = replaceOldCode.trim();
+    if (!oldCode) {
+      setReplaceResult("Please enter the current course code.");
+      return;
+    }
+    setReplaceScanning(true);
+    setReplaceResult("");
+    try {
+      const report = await scanCourseCodeUsage(oldCode);
+      setReplaceScan(report);
+    } catch (e) {
+      setReplaceResult("Preview failed: " + e.message);
+    }
+    setReplaceScanning(false);
+  };
+
+  const handleReplaceExecute = async () => {
+    const oldCode = replaceOldCode.trim();
+    const newCode = replaceNewCode.trim();
+    if (!oldCode || !newCode) {
+      setReplaceResult("Both old and new course codes are required.");
+      return;
+    }
+    if (oldCode.toUpperCase().replace(/\s+/g, '') === newCode.toUpperCase().replace(/\s+/g, '')) {
+      setReplaceResult("Old and new codes are the same.");
+      return;
+    }
+    if (!window.confirm(`Replace course code "${oldCode}" with "${newCode}"?\n\n- Course Bank record moved to the new code\n- CO configuration copied (legacy kept)\n- Faculty subject assignments, enrolments & QP setter schedules updated\n- Past records (marks, attendance, question papers) keep the old code but stay valid\n\nThis affects ALL departments that use this code. Continue?`)) {
+      return;
+    }
+    setReplaceRunning(true);
+    setReplaceResult("");
+    try {
+      await replaceCourseCode(oldCode, newCode, {
+        onProgress: (step, total, msg) => setReplaceProgress({ step, total, msg })
+      });
+      setReplaceResult(`Success! Course code "${oldCode}" replaced with "${newCode}".`);
+      setReplaceProgress({ step: 0, total: 0, msg: "" });
+      // refresh course list after a short delay for listeners to catch up
+      setTimeout(() => {
+        setShowReplaceModal(false);
+        setSelectedExistingCourseKey("");
+      }, 2500);
+    } catch (e) {
+      setReplaceResult("Replace failed: " + e.message);
+    }
+    setReplaceRunning(false);
   };
 
   // Fetch existing courses for selected Programme + Department + Regulation.
@@ -511,12 +581,25 @@ export default function CreateCourse() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-zinc-600">Course Code</label>
-                  <input
-                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
-                    value={courseCode}
-                    onChange={(e) => setCourseCode(e.target.value)}
-                    placeholder="e.g., CS301"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-100 transition-all font-medium"
+                      value={courseCode}
+                      onChange={(e) => setCourseCode(e.target.value)}
+                      placeholder="e.g., CS301"
+                    />
+                    {selectedExistingCourseKey && selectedExistingCourseKey !== "__new__" && (
+                      <button
+                        type="button"
+                        onClick={openReplaceModal}
+                        title="Replace this course code across the system"
+                        className="shrink-0 px-3 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold shadow transition-all flex items-center gap-1.5"
+                      >
+                        <GitCompareArrows size={15} />
+                        Replace Code
+                      </button>
+                    )}
+                  </div>
                   {courseCodeExists && (
                     <div className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-1.5 flex items-center gap-1.5">
                       <AlertCircle size={14} />
@@ -712,6 +795,151 @@ export default function CreateCourse() {
         </div>
       </div>
       </div>
+
+      {showReplaceModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto" onClick={() => !replaceRunning && setShowReplaceModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-zinc-200 w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-amber-500 px-6 py-3 rounded-t-2xl flex items-center justify-between">
+              <h3 className="text-white font-bold text-sm flex items-center gap-2">
+                <GitCompareArrows size={16} />
+                Replace Course Code — whole-system migration
+              </h3>
+              <button
+                type="button"
+                onClick={() => !replaceRunning && setShowReplaceModal(false)}
+                className="text-white/80 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-600 uppercase tracking-wide">Current Course Code</label>
+                  <input
+                    disabled={replaceRunning}
+                    className="w-full bg-zinc-100 border border-zinc-200 rounded-lg px-4 py-2.5 font-bold text-zinc-700 outline-none"
+                    value={replaceOldCode}
+                    onChange={(e) => setReplaceOldCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. CS342"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-600 uppercase tracking-wide">New Course Code</label>
+                  <input
+                    disabled={replaceRunning}
+                    className="w-full bg-[#f0f0fa] border border-zinc-200 rounded-lg px-4 py-2.5 font-bold outline-none focus:ring-2 focus:ring-amber-200"
+                    value={replaceNewCode}
+                    onChange={(e) => setReplaceNewCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. EC3342"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 leading-relaxed">
+                <strong>What happens:</strong> The Course Bank record is renamed to the new code, CO configuration is
+                copied (the old one is kept so existing question papers keep resolving), faculty subject assignments,
+                course enrolments and QP setter schedules are updated to the new code. Past records (marks, attendance,
+                generated question papers, syllabus) <strong>keep the old code</strong> and remain fully valid — nothing
+                historical is deleted.
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={replaceScanning || replaceRunning}
+                  onClick={handleReplacePreview}
+                  className="px-4 py-2 rounded-lg font-bold border border-zinc-300 hover:bg-zinc-50 transition-all disabled:opacity-50"
+                >
+                  {replaceScanning ? (
+                    <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Scanning...</span>
+                  ) : (
+                    "Preview Impact"
+                  )}
+                </button>
+              </div>
+
+              {replaceScan && (
+                <div className="border border-zinc-200 rounded-xl overflow-hidden">
+                  <div className="bg-zinc-50 px-4 py-2 text-xs font-bold text-zinc-700 flex items-center justify-between">
+                    <span>Affected Collections</span>
+                    <span>{replaceScan.totalDocs} docs / {replaceScan.totalFieldRefs} refs match "{replaceOldCode.toUpperCase()}"</span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-white text-zinc-500 border-b border-zinc-200">
+                        <th className="text-left px-4 py-2 font-bold">Collection</th>
+                        <th className="text-right px-4 py-2 font-bold">Docs</th>
+                        <th className="text-right px-4 py-2 font-bold">Refs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {replaceScan.collections.map((c, i) => (
+                        <tr key={i} className={`${i % 2 ? 'bg-zinc-50' : 'bg-white'} border-b border-zinc-100`}>
+                          <td className="px-4 py-2 font-medium text-zinc-700">{c.label}</td>
+                          <td className="px-4 py-2 text-right font-bold text-zinc-800">{c.docCount}</td>
+                          <td className="px-4 py-2 text-right">
+                            {c.error ? (
+                              <span className="text-red-600">err</span>
+                            ) : (
+                              <span className={`font-bold ${c.fieldCount ? 'text-amber-600' : 'text-zinc-400'}`}>{c.fieldCount}</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {replaceProgress.step > 0 && (
+                <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+                  <Loader2 size={16} className="animate-spin text-indigo-600" />
+                  <div className="flex-1">
+                    <div className="text-xs font-bold text-indigo-800">{replaceProgress.msg}</div>
+                    <div className="mt-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-600 rounded-full transition-all"
+                        style={{ width: `${replaceProgress.total ? Math.round((replaceProgress.step / replaceProgress.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {replaceResult && (
+                <div className={`p-3 rounded-xl text-sm font-bold ${replaceResult.startsWith('Success') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {replaceResult}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 border-t border-zinc-100 pt-4">
+                <button
+                  type="button"
+                  disabled={replaceRunning}
+                  onClick={() => setShowReplaceModal(false)}
+                  className="px-4 py-2 rounded-lg font-bold text-zinc-500 hover:bg-zinc-100 transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={replaceRunning || replaceScanning}
+                  onClick={handleReplaceExecute}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold shadow transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {replaceRunning ? (
+                    <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Replacing...</span>
+                  ) : (
+                    <span className="flex items-center gap-2"><CheckCircle2 size={15} /> Replace & Migrate</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

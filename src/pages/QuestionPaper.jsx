@@ -342,15 +342,15 @@ export default function QuestionPaper() {
           <td><strong>Department</strong></td>
           <td>${department}</td>
           <td><strong>Common for</strong></td>
-          <td>-</td>
+          <td>${qpData?.common_for || qpData?.commonFor || 'NIL'}</td>
         </tr>
         <tr>
           <td><strong>Max Mark</strong></td>
           <td>${overallTotal}</td>
           <td><strong>Duration</strong></td>
-          <td>180 min</td>
+          <td>${qpData?.duration || '180 min'}</td>
           <td><strong>Date</strong></td>
-          <td>${new Date().toLocaleDateString()}</td>
+          <td>${qpData?.exam_date_display || (qpData?.exam_date ? new Date(qpData.exam_date).toLocaleDateString() : '')}</td>
         </tr>
         <tr>
           <td><strong>Reg. No.</strong></td>

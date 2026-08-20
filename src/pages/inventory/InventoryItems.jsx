@@ -4,7 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, setDoc, deleteDoc, onSnapshot, getDoc } from "firebase/firestore";
 import { Package, Plus, Trash2, Save, Edit3, Search, AlertTriangle, X, ChevronDown, RefreshCw, PackagePlus } from "lucide-react";
 import Layout from "../../components/Layout";
-import { sanitizeKey } from "../../lib/utils";
+import { sanitizeKey, isMasterOrAdmin } from "../../lib/utils";
 
 const CATEGORIES = ["Stationery", "Electronics", "Furniture", "Cleaning", "Sports", "Lab Equipment", "Printing", "Catering", "Gardening", "General"];
 const UNITS = ["Nos", "Packs", "Kg", "Litres", "Metres", "Boxes", "Sets", "Pairs"];
@@ -48,7 +48,7 @@ export default function InventoryItems() {
     return () => unsub();
   }, []);
 
-  const isAuthorized = currentUserData?.role === "Admin" || currentUserData?.role === "Principal";
+  const isAuthorized = isMasterOrAdmin(currentUserData?.role, auth.currentUser?.email) || currentUserData?.role === "Principal";
   const filteredItems = useMemo(() => {
     if (!search.trim()) return items;
     const q = search.toLowerCase();

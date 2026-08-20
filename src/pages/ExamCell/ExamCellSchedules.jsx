@@ -33,7 +33,7 @@ export default function ExamCellSchedules() {
 
         {/* IA Schedule (same department-wise view as Principal Dashboard) */}
         <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-          <PrincipalIAScheduleView />
+          <PrincipalIAScheduleView showApproveButton={false} />
         </div>
 
         {initialTab && (

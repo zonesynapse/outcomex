@@ -6,6 +6,7 @@ import {
   Award, Settings, Plus, Trash2, Save, BookOpen, ListTodo, Target, Check, Info, ShieldAlert
 } from "lucide-react";
 import Layout from "../components/Layout";
+import { isMasterOrAdmin } from "../lib/utils";
 import { STEP_CATEGORIES } from "./student/StepPoints";
 
 const DEFAULT_CHECKLIST = [
@@ -344,7 +345,7 @@ export default function StepSettings() {
     }
   };
 
-  const isAuthorized = currentUserData?.role === "Admin" || currentUserData?.role === "Principal";
+  const isAuthorized = isMasterOrAdmin(currentUserData?.role, auth.currentUser?.email) || currentUserData?.role === "Principal";
 
   if (loading) {
     return (

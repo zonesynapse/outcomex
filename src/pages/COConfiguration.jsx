@@ -448,24 +448,10 @@ Return an exhaustive list of all plausible mappings.`;
           const assignments = assignmentSnap.data();
           console.log('[COCONFIG] assignment keys:', Object.keys(assignments));
           
-          if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
-            // Show all subjects that have at least one allocation to ANY faculty
-            const allAllocatedCodes = new Set();
-            Object.values(assignments).forEach(userAssignments => {
-              if (Array.isArray(userAssignments)) {
-                userAssignments.forEach(code => allAllocatedCodes.add(code));
-              }
-            });
-            console.log('[COCONFIG] allAllocatedCodes:', [...allAllocatedCodes]);
-            const filteredSubjects = fetchedSubjects.filter(s => allAllocatedCodes.has(s.id));
-            console.log('[COCONFIG] filtered subjects count:', filteredSubjects.length);
-            setSubjects(filteredSubjects);
-          } else {
-            const userAssignments = assignments[currentUser.uid] || [];
-            console.log('[COCONFIG] user assignments:', userAssignments);
-            const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.id));
-            setSubjects(filteredSubjects);
-          }
+          const userAssignments = assignments[currentUser.uid] || [];
+          console.log('[COCONFIG] user assignments:', userAssignments);
+          const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.id));
+          setSubjects(filteredSubjects);
         } else {
           console.log('[COCONFIG] no assignment doc, setting empty subjects');
           setSubjects([]);

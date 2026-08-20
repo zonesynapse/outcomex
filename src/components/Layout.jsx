@@ -524,9 +524,13 @@ export default function Layout({ children, title }) {
 
   const menuItems = [];
   const isMasterAdmin =
-    !!user?.email &&
-    !!masterAdminEmail &&
-    user.email.toLowerCase() === masterAdminEmail.toLowerCase();
+    (!!user?.email && !!masterAdminEmail && user.email.toLowerCase() === masterAdminEmail.toLowerCase()) ||
+    (!!userRole && (
+      userRole.toLowerCase().includes('master') ||
+      userRole.toLowerCase().includes('admin') ||
+      userRole.toLowerCase() === 'super admin' ||
+      userRole.toLowerCase() === 'system admin'
+    ));
 
   const effectivePermissions = (() => {
     if (isMasterAdmin) {

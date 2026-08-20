@@ -9,6 +9,7 @@ import {
   RefreshCw, Layers, ShoppingCart, X, Plus, Trash2, ChevronDown
 } from "lucide-react";
 import Layout from "../../components/Layout";
+import { isMasterOrAdmin } from "../../lib/utils";
 import { sanitizeKey } from "../../lib/utils";
 
 const SEED_ITEMS = [
@@ -163,7 +164,7 @@ export default function InventoryDashboard() {
     } catch {}
   };
 
-  const isAdmin = currentUserData?.role === "Admin" || currentUserData?.role === "Principal";
+  const isAdmin = isMasterOrAdmin(currentUserData?.role, auth.currentUser?.email) || currentUserData?.role === "Principal";
 
   const lowStockItems = useMemo(() => items.filter((i) => i.quantity <= i.minStock), [items]);
   const pendingReqs = useMemo(() => requests.filter((r) => r.status === "pending"), [requests]);

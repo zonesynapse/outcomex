@@ -69,6 +69,11 @@ export default function Attendance() {
   const [userDepartment, setUserDepartment] = useState("");
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
 
+  // Only elevated roles (Admin/Principal) see ALL programmes/departments/subjects.
+  // Any other role — including custom roles created in AdminRoleConfig (which default
+  // to Faculty behavior) — is scoped to their own department & assigned subjects.
+  const isElevatedRole = useMemo(() => userRole === 'Admin' || userRole === 'Principal', [userRole]);
+
   // Filter States
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
@@ -117,7 +122,7 @@ export default function Attendance() {
   useEffect(() => {
     if (!currentUid || !userRole) return;
     let unsubscribeAssignments = null;
-    if (userRole === 'Faculty' || userRole === 'HOD') {
+    if (!isElevatedRole) {
       const assignmentsRef = collection(db, "subject_assignments");
       unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
         const prefixes = [];
@@ -137,7 +142,7 @@ export default function Attendance() {
     return () => {
       if (unsubscribeAssignments) unsubscribeAssignments();
     };
-  }, [currentUid, userRole]);
+  }, [currentUid, userRole, isElevatedRole]);
 
   // Data States
   const [attendanceData, setAttendanceData] = useState(null);
@@ -291,12 +296,12 @@ export default function Attendance() {
 
   const filteredProgrammes = useMemo(() => {
     return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-      if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
+      if (isElevatedRole) return true;
       const progKey = formatProgrammeKey(prog);
       if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
       return derivedProgs.includes(progKey);
     });
-  }, [userRole, userProgramme, derivedProgs, PROGRAMME_DEPARTMENTS]);
+  }, [userRole, userProgramme, derivedProgs, PROGRAMME_DEPARTMENTS, isElevatedRole]);
 
   const derivedDepts = useMemo(() => {
     if (!facultyAssignPrefixes.length || !programme) return [];
@@ -312,7 +317,7 @@ export default function Attendance() {
 
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
-    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
+    if (isElevatedRole) return depts;
     const progKey = formatProgrammeKey(programme);
     const allowedDepts = new Set();
     if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey && userDepartment) {
@@ -325,7 +330,7 @@ export default function Attendance() {
       const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
       return Array.from(allowedDepts).some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
     });
-  }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS]);
+  }, [programme, userRole, derivedDepts, userProgramme, userDepartment, PROGRAMME_DEPARTMENTS, isElevatedRole]);
 
   // Normalize department key (e.g. "B_E_Bio Medical Engineering" or "Computer_Science")
   // to display name (e.g. "B.E. Bio Medical Engineering" or "Computer Science")
@@ -459,7 +464,7 @@ export default function Attendance() {
         const data = doc.data();
 
         Object.entries(data).forEach(([uid, codes]) => {
-          if ((userRole === 'Faculty' || userRole === 'HOD') && uid !== currentUid) return;
+          if (!isElevatedRole && uid !== currentUid) return;
           if (Array.isArray(codes)) {
             codes.forEach(code => {
               contexts.push({ code, batch, ay, sem, section: secSuffix, uid, dept: deptKey, progKey });
@@ -540,7 +545,7 @@ export default function Attendance() {
     });
 
     return () => unsubscribe();
-  }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay, semesterConfigs]);
+  }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay, semesterConfigs, isElevatedRole]);
 
   const handleSubjectChange = (val) => {
     if (!val) {

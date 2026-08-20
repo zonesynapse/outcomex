@@ -1,5 +1,271 @@
 ## Summary of Changes
 
+### 171. Pre-selection & Default Setter Resolution for Common Subjects (`QPSetterAssignment.jsx`, `IAScheduleCreation.jsx`)
+- **Goal**: Resolve issue where common subjects shared across multiple departments (e.g. `GE3791`, `OML351`, `OSF352`, `GE3751`, `ICL`) displayed `— Assign Setter —` when unassigned, whereas single-faculty subjects auto-selected their handling faculty.
+- **Changes**:
+  - **Auto-Preselection for Common Courses**: Updated auto-select logic in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx) and [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to evaluate `r.handlers.length >= 1`.
+  - When no setter is saved in Firestore for a common subject, the first handling faculty member is automatically pre-selected as the default Question Paper Setter. The Exam Cell / Academic Coordinator can keep the default or select any other handling faculty or institution faculty from the dropdown.
+- Build passes cleanly.
+
+### 170. Fuzzy Code Lookup & Complete Setter Assignment Synchronization (`QPSetterAssignment.jsx`, `IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where assigned QP Setters (such as `sivaprakash` for `CS25C09 - Java Programming`), Set counts (`2 Set`), and submission windows saved in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) appeared unassigned (`— Assign Setter —`, `1 Set`) in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx).
+- **Changes**:
+  - **Replaced Direct Array Lookups**: Updated `renderRow`, `setterCount`, and `unsavedCount` in `QPSetterAssignment.jsx` (and report generators/validations in `IAScheduleCreation.jsx`) to use `getAssignmentForCode(r.code, assignments)` instead of raw direct object access `assignments[r.code]`.
+  - **Fuzzy Code & Whitespace Matching**: `getAssignmentForCode()` now handles exact matching, clean code normalization, and fuzzy string matching across all course code variations (`CS25C09`, `CS 25C09`, `cs25c09`), guaranteeing saved setter assignments, set counts, and submission dates are 100% rendered across both pages.
+- Build passes cleanly.
+
+### 169. Bidirectional QP Setter Assignment Synchronization (`QPSetterAssignment.jsx`, `IAScheduleCreation.jsx`)
+- **Goal**: Ensure Question Paper Setter assignments made in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) immediately show up and render selected in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx) (and vice versa).
+- **Changes**:
+  - **Firestore State Priority**: Corrected `setAssignments(prev => ({ ...prev, ...combinedAssignments }))` in `QPSetterAssignment.jsx` so Firestore live data (`combinedAssignments`) takes precedence and is not overwritten by empty/default local state.
+  - **Comprehensive Faculty Options**: Updated `setterOptions(r, row)` in `QPSetterAssignment.jsx` to combine subject-handling faculty, the assigned setter (`row.setterUid` / `row.setterName`), and all active institution faculty (`allFacultyList`).
+  - **`setterName` Resolution**: Updated `updateAssignment()` in `QPSetterAssignment.jsx` to resolve and store `setterName` whenever `setterUid` is selected.
+- Build passes cleanly.
+
+### 168. Unrestricted Full Access for Master & Admin Roles across ERP (`lib/utils.js`, `Layout.jsx`, `StudentManagement.jsx`, `SeatManagement.jsx`, `CircularList.jsx`, `AdminRoleConfig.jsx`, `StepSettings.jsx`, `inventory/*`)
+- **Goal**: Ensure users with **`Master`** and **`Admin`** roles (`Master`, `Master Admin`, `Super Admin`, `System Admin`, `Admin`) have 100% unrestricted access to all modules, pages, sidebar links, settings, actions, and features across the entire ERP system.
+- **Changes**:
+  - **`isMasterOrAdmin` Utility**: Added global `isMasterOrAdmin(role, email)` helper in [`src/lib/utils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/lib/utils.js) that returns `true` for all variations of Master and Admin roles & emails.
+  - **Unrestricted Sidebar & Module Access**: Updated `isMasterAdmin` check in [`src/components/Layout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/Layout.jsx) so all Master/Admin users automatically receive permissions for 100% of ERP menu items without role-permission restrictions.
+  - **Unrestricted Feature Access**: Updated permission guards across `StudentManagement.jsx`, `SeatManagement.jsx`, `CircularList.jsx`, `AdminRoleConfig.jsx`, `StepSettings.jsx`, and `Inventory` modules to use `isMasterOrAdmin()`.
+- Build passes cleanly.
+
+### 167. Removal of "Approve Department" Button on Exam Cell Schedules (`ExamCellSchedules.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Remove the **"Approve Department"** action button from the Exam Cell Schedule Approvals view ([`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx)), reserving approval actions exclusively for the Principal Dashboard ([`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx)).
+- **Changes**:
+  - **Prop Addition**: Added `showApproveButton = true` prop to [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx).
+  - **Exam Cell Override**: Passed `showApproveButton={false}` in [`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx), hiding the action button while retaining the `Pending` / `Approved` status badges.
+- Build passes cleanly.
+
+### 166. Department-Scoped CourseBank Precedence & Course Type Normalization (`IAScheduleCreation.jsx`)
+- **Goal**: Ensure the course type displayed under each subject title on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) is taken **directly from CourseBank (`courses` collection in Firestore)** for that specific department, completely overriding raw or outdated `syllabus_data` strings (like `LAB INTEGRATED THEORY`).
+- **Changes**:
+  - **Department-Scoped Lookup**: `bankType` now checks `courseBankMap[codeKey]._byDept[sDoc.deptKey]` first (falling back to `_anyType`).
+  - **`mapToConfiguredCourseType` Normalization**: If `configuredTypes` in Curriculum contains the type, it uses the exact regulation configured type name. If not, it falls back to standard clean names (`"Integrated"`, `"Laboratory"`, `"Theory"`, `"Project Work"`, `"Activity"`), eliminating raw ugly strings like `LAB INTEGRATED THEORY`.
+- Build passes cleanly.
+
+### 165. Regulation-Strict Course Type Mapping & Badge Normalization (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where raw, unmapped, or outdated course type strings (such as `LAB INTEGRATED THEORY`) appeared as badges under subject titles on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Changes**:
+  - **`courseBankMap` Listener**: Prioritized specific `courseType`, `course_type`, and `category` fields while ignoring generic classification strings (`Program Course`, `Professional Elective`, `Open Elective`, `Mandatory Course`).
+  - **Mandatory Regulation Mapping**: Ensured all subject course types (whether loaded from `course_bank` or derived from syllabus entries) are ALWAYS passed through `mapToConfiguredCourseType(baseType, configuredTypes)` so badge values are strictly mapped to the regulation's configured course types (e.g. `Theory`, `Integrated`, `Practical` / `Laboratory`).
+  - Removed duplicate course type array push logic.
+- Build passes cleanly.
+
+### 164. Dynamic Exam Schedule Duration & Date Resolution (`QuestionPaperGenerator.jsx`, `questionPaperUtils.js`, `QuestionPaper.jsx`)
+- **Goal**: Automatically populate the **Duration** and **Date** cells in the Question Paper header table on [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) using the exact exam schedule timings (`startTime` to `endTime`) and scheduled date (`examDate`) configured for that subject in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Changes**:
+  - **`calculateDuration` Helper**: Added time-parsing utility to calculate the exact duration (e.g., `09:30 AM` to `11:00 AM` $\rightarrow$ `1 Hour 30 Mins` / `90 Mins`).
+  - **`formatExamDateDisplay` Helper**: Formats Firestore/string dates into standardized `DD.MM.YYYY` display format.
+  - **`scheduledExamInfo` Memo**: Automatically looks up `matchedAssignment` in `qp_setter_assignments` for the batch, semester, and subject code, resolving `date`, `duration`, `startTime`, and `endTime`.
+  - **Header Table & Payload Updates**: Updated `generateHeaderHtml` & saved paper payload in `QuestionPaperGenerator.jsx`, `renderQpHtml` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js), and preview table in [`src/pages/QuestionPaper.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaper.jsx) to render dynamic duration & exam date.
+- Build passes cleanly.
+
+### 163. Fix ReferenceError `getSubjectCode is not defined` (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix runtime ReferenceError crash when initializing [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+- **Fix**: Replaced invalid function reference `getSubjectCode` with the existing helper `getSubjectCodeFrom` in `commonForDisplay` and its `useMemo` dependency array.
+- Build passes cleanly.
+
+### 162. Dynamic "Common for" Department Resolution & "NIL" Fallback (`QuestionPaperGenerator.jsx`, `questionPaperUtils.js`, `QuestionPaper.jsx`)
+- **Goal**: Dynamically display shared/common departments in the header table cell under **"Common for"** when generating or viewing question papers for common subjects assigned in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx), and display **"NIL"** for non-common subjects.
+- **Changes**:
+  - **`commonForDisplay` Memo**: In [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx), added `commonForDisplay` which queries `qp_setter_assignments` and `syllabus_data` for the subject code in that batch/semester.
+  - **Dynamic Department List**: If the subject is shared across multiple departments (e.g. `CSE`, `ECE`, `EEE`), it lists the other common departments (e.g. `ECE, EEE` or `Electrical and Electronics Engineering`). If the subject is not common (single department), it evaluates to **`NIL`**.
+  - **HTML Table & Saved Payload Update**: Updated `generateHeaderHtml` and saved paper payload in `QuestionPaperGenerator.jsx`, `renderQpHtml` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js), and preview table in [`src/pages/QuestionPaper.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaper.jsx) to render `commonForDisplay` / `qp.common_for` / `NIL`.
+- Build passes cleanly.
+
+### 161. Complete Hardcoded Fallback Cleanup & 100% Dynamic Firestore Data Resolution (`QuestionPaperGenerator.jsx`)
+- **Goal**: Ensure all dropdowns (Categories, Exams, Course Types, Sets) on [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) are fetched 100% dynamically from Firestore collections (`cia_configs`, `course_type_weightage`, `syllabus_data`, `batch_regulations`), with zero hardcoded default arrays.
+- **Changes**:
+  - **`availableCategories`**: Removed static fallback arrays (`["PRACTICAL", "ACTIVITY"]`, `["WRITTEN TEST", "ACTIVITY"]`). Categories are derived strictly from `course_type_weightage` and `cia_configs` matching the regulation and course type.
+  - **`filteredExams`**: Removed static fallback arrays (`["IA 1", "IA 2", "IA 3", "Model Exam"]`). Exams are derived strictly from Curriculum configurations in Firestore.
+- Build passes cleanly.
+
+### 160. Curriculum-Strict Exam Dropdown Resolution & Hardcoded Fallback Removal (`QuestionPaperGenerator.jsx`)
+- **Goal**: Ensure that ONLY the exact exams configured in Curriculum (`Curriculum.jsx` / `cia_configs` / `course_type_weightage`) for a regulation and category appear in the EXAM dropdown in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx), preventing unconfigured exams like `Model Exam` from appearing.
+- **Root Cause & Reason for "Model Exam"**:
+  - In a previous step, a hardcoded fallback array `["IA 1", "IA 2", "IA 3", "Model Exam"]` was injected when testing fallback behavior.
+  - Because `Model Exam` was in that fallback array, it appeared in the dropdown even though it was never configured in `Curriculum.jsx` for regulation `AU - R2025`.
+- **Fix**:
+  - Removed the hardcoded fallback array completely.
+  - Now `filteredExams` derives its list **strictly from Curriculum configurations** (`cia_configs` and `course_type_weightage` for that regulation and course type). Unconfigured exams (like `Model Exam`) will never appear if they are not in Curriculum.
+- Build passes cleanly.
+
+### 159. Comprehensive Exam List Resolution & Safety Fallback (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where the EXAM dropdown in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) showed only a single exam (e.g. `IA 2`) or incomplete exam list for courses/batches.
+- **Root Cause**:
+  1. When Curriculum weightage had `exam_weightage` configured for specific exams (e.g. `IA 2`), `hasExplicitWeightageExams` previously evaluated to `true` and skipped querying `ciaConfigs`, blocking all other standard exams (`IA 1`, `IA 3`, `Model Exam`) from appearing in the dropdown.
+  2. Strict `academicYear` string comparisons on `ciaConfigs` discarded valid regulation CIA exams tagged with different academic year strings or untagged.
+- **Fix**:
+  - Updated `filteredExams` Stage 1 to populate `candidateExamsMap` with explicit weightage exams AND matching `ciaConfigs` for that regulation and category.
+  - Removed strict `academicYear` blocking on CIA config exams so standard regulation exams are available across academic years.
+  - Added safety fallback for the Written Test category so standard CIA tests (`IA 1`, `IA 2`, `IA 3`, `Model Exam`) are always available as options.
+- Build passes cleanly.
+
+### 158. Schedule Preservation During QP Setter Assignment Updates (`QPSetterAssignment.jsx`)
+- **Goal**: Prevent saving QP Setter assignments in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx) from wiping out schedule data (`examDate`, `startTime`, `endTime`, `slot`, `session`, `timeSlot`, `approved`, `examId`, `examName`, `status`) created in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**: `QPSetterAssignment.jsx` previously built assignment payload objects containing only `{ code, name, departments, setterUid, setterName, numSets, fromDate, toDate }` and saved to Firestore without `{ merge: true }`, which overwrote and cleared all exam dates, timings, sessions, and Principal approvals created on the IA Schedule page.
+- **Fix**:
+  - **Assignment Level Preservation**: `payloadAssignments[r.code]` now merges `existingAs = getAssignmentForCode(r.code, existingDocData.assignments)`, carrying forward `examDate`, `startTime`, `endTime`, `slot`, `session`, `timeSlot`, `approved`, etc.
+  - **Document Level Preservation**: Merges `cleanDocMeta` (`examId`, `examName`, `examWindow`, `status`) and writes with `{ merge: true }`.
+  - QP Setters can now be assigned or modified at any time without disturbing the IA exam schedule.
+- Build passes cleanly.
+
+### 157. Programme Dependency & Disabled Batch Selector Until Programme Selection (`QPSetterAssignment.jsx`, `IAScheduleCreation.jsx`)
+- **Goal**: Prevent users from selecting a Batch before choosing a Programme on the "Setter Assign" page ([`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx)) and IA Schedule page ([`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx)).
+- **Changes**:
+  - **Disabled Batch Control**: Set `disabled={!selectedProgramme}` on the Batch `<select>` elements.
+  - **Dynamic Dropdown Placeholder**: Displays `-- Select Programme First --` / `-- Choose Programme First --` and applies muted non-clickable styling until a Programme is explicitly chosen.
+- Build passes cleanly.
+
+### 156. Programme Filter Addition & Programme-Scoped Batch Selection (`QPSetterAssignment.jsx`)
+- **Goal**: Add a **Programme** dropdown before the **Batch** dropdown on the "Setter Assign" page ([`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx)) so that selecting a Programme dynamically filters and displays only the corresponding batches in the Batch dropdown.
+- **Changes**:
+  - **`selectedProgramme` State**: Added `selectedProgramme` state in `QPSetterAssignment.jsx`.
+  - **Programme-Scoped `availableBatches`**: Updated `availableBatches` and `activeProgrammes` `useMemo` hooks to filter active batches by `selectedProgramme` when chosen (or fallback to all programmes when "All Programmes" is selected).
+  - **Filter Bar UI**: Rendered Programme `<select>` element before the Batch dropdown in the top Filter Bar.
+- Build passes cleanly.
+
+### 155. Universal Start-Year Batch Matching & Firestore Timestamp Normalization (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where exam dates appeared unassigned (`-- Assign Date --`) for specific batches (e.g. `24 Batch (2024-28)`) when loading [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**:
+  1. `isBatchMatch` string comparison failed when Firestore document IDs or batch fields used short names (e.g. `24 Batch` or `2024-28`) while the selected batch was `24 Batch (2024-28)`.
+  2. `getEffectiveExamDate` previously called `.includes()` directly on raw date objects, throwing a silent error when Firestore saved `examDate` as a Firestore `Timestamp` object (`{ seconds, nanoseconds }`) or `Date` object.
+- **Fix**:
+  - Upgraded `getEffectiveExamDate` to handle Firestore `Timestamp` objects (`raw.toDate()`, `raw.seconds`), JS `Date` objects, and all date string variations (`DD/MM/YYYY`, `DD-MM-YYYY`, ISO).
+  - Added start-year regex matching (`startYr1` vs `startYr2`, e.g. `2024` === `2024`) in `isBatchMatch` so ANY document created for that batch (regardless of short or full batch name) is 100% matched and rendered.
+- Build passes cleanly.
+
+### 154. Multi-Format Date Normalization & Digit-Based Batch Matching (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where exam dates for **`24 Batch (2024-28)`** (and other batches) appeared unassigned (`-- Assign Date --`) in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) even though QP Setters and submission windows were assigned.
+- **Root Cause**:
+  1. Saved exam dates in Firestore were stored in varying string formats (e.g. `20/08/2026`, ISO `2026-08-20T...`, or `as.exam_date`), causing `<select value={as.examDate}>` to fail exact YYYY-MM-DD option key matching.
+  2. Batch document ID matching missed batch documents keyed by year digits (e.g. `24_Batch_2024-28` vs `24 Batch (2024-28)`).
+- **Fix**:
+  - Added `getEffectiveExamDate` helper to normalize ISO, `DD/MM/YYYY`, `DD-MM-YYYY`, and alternative date property names to standard `YYYY-MM-DD`.
+  - Added digit-sequence matching (`bDigits` / `dDigits`) to Firestore listener in `IAScheduleCreation.jsx`, ensuring `24 Batch (2024-28)` document data is 100% matched and all saved exam dates display properly.
+- Build passes cleanly.
+
+### 153. Robust Timetable Document Discovery & Exam Auto-Selection (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where previously saved exam timetables appeared missing or unpopulated when selecting Batch, Academic Year, and Semester in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**: The Firestore listener previously queried an exact single document ID `docKey = `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}``. If the stored document ID differed in special characters/formatting (e.g. parentheses `(2023-27)` or raw spaces), exact document lookup returned non-existent.
+- **Fix**:
+  - Upgraded Firestore listener in `IAScheduleCreation.jsx` to scan `qp_setter_assignments` collection using normalized batch and semester matching (`isBatchMatch` && `isSemMatch` && `isAyMatch`).
+  - Automatically merges all saved assignments matching the batch/semester and auto-populates `selectedExamId` from the saved timetable document.
+- Build passes cleanly.
+
+### 152. Exam Event Dropdown Deduplication & Space-Insensitive Assignment Key Lookup (`IAScheduleCreation.jsx`)
+- **Goal**: Resolve issue where duplicate exam event titles were displayed in the Exam Event dropdown and saved exam dates/timings showed as unassigned (`-- Assign Date --` and `No timing set`) in table rows.
+- **Root Cause**:
+  1. `filteredExamEvents` deduplicated by raw title instead of formatted title (`getFormattedExamTitle`), resulting in duplicate options when multiple events mapped to the same formatted regulation title.
+  2. Table row rendering looked up assignments using exact `assignments[r.code]` keying. When course codes differed in whitespace (e.g. `GE3791` vs `GE 3791`), saved dates and timings were missed.
+- **Fix**:
+  - Reordered `getFormattedExamTitle` and updated `filteredExamEvents` to deduplicate by formatted title + date range, eliminating dropdown duplicates.
+  - Added `getAssignmentForCode` helper using `normCodeKey` fuzzy matching to look up saved assignments regardless of whitespace differences, restoring all saved exam dates, timings (`09:30 AM → 11:00 AM`), and session badges in table rows.
+  - Updated `handleAssignmentChange` to update all matching code variations in local state.
+- Build passes cleanly.
+
+### 151. Academic Year-Wise Exam Version Sets (QP Set Counts) (`Curriculum.jsx`, `QuestionPaperGenerator.jsx`)
+- **Goal**: In the "Exam Version Sets" configuration on `Curriculum.jsx`, the required number of Question Paper Sets per exam should be configurable **per Academic Year** — mirroring the AY selector behavior of "Course Type & Weightage" (`selectedConfigAY`).
+- **Changes**:
+  - **`Curriculum.jsx`**:
+    - Added an **Academic Year** selector header inside the `exam_sets` (Exam QP Versions) modal with `All Academic Years (Regulation Default)` + `selectedConfigAY` options (same band and styling as the course_type AY selector).
+    - `handleUpdateNumSets` now writes AY-specific values using a dotted field path onto `cia_configs`: `numSetsByAy.{sanitizedAY}` when an AY is selected, and the legacy flat `numSets` field for the regulation default — preserving backward compatibility with existing docs.
+    - The exam list is filtered by AY (untagged default exams always shown; AY-tagged exams only when that AY is selected, same rule as the Weightage table); shows Default/AY badges; input value reads `numSetsByAy[ay] ?? numSets ?? 1`.
+  - **`QuestionPaperGenerator.jsx`**:
+    - Added `getEffectiveNumSets(cfg)` helper (resolves `cfg.numSetsByAy[academicYear]` first, falls back to `cfg.numSets`, default `1`).
+    - Replaced all hardcoded `selectedConfig?.numSets` checks for `setSuffix` generation (`_Set_N` in composite keys / qpDocIds) and the "Choose Question Paper Set" dropdown (show + option count) with `getEffectiveNumSets(...)` so QPG honors AY-specific set counts.
+- Build passes cleanly.
+
+### 150. Preservation of Saved Timetable Assignments & Removal of Destructive Wiping Effect (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where previously saved exam timetables appeared blank or unassigned when loading [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**: A `useEffect` listening to `[selectedExamId, semester]` was executing on initial load when `selectedExamId` auto-selected, wiping out `examDate` from the local `assignments` state (`delete next[code].examDate`).
+- **Fix**:
+  - Removed the destructive `useEffect` that cleared `examDate`.
+  - Updated the Exam Date `<select>` in table rows to always include the saved `as.examDate` in the options list even if outside the active calendar window.
+- Build passes cleanly.
+
+### 149. Dynamic Exam Event Dropdown Regulation Formatting (`IAScheduleCreation.jsx`)
+- **Goal**: Format option labels in the **Exam Event** dropdown on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to dynamically match the selected batch's regulation (`AU - R2021` for `23 Batch`, `AU - R2025` for `25 Batch`), eliminating the need to re-create or re-entry any timetables.
+- **Changes**:
+  - Added `getFormattedExamTitle` helper in `IAScheduleCreation.jsx` that inspects the selected batch's regulation via `getRegulationForBatch`.
+  - Updated Exam Event `<select>` option items and selected preview banner to render the formatted title dynamically.
+- Build passes cleanly.
+
+### 148. Student IA Exam Timetable Scoped to Own Department / Batch / Academic Year (`student/Timetable.jsx`)
+- **Goal**: On the Student Portal IA Exam Timetable, students were seeing IA schedules for ALL departments/batches of their course. Only the schedules for their own department, batch, and current academic year (semester) should be shown.
+- **Changes**:
+  - Added `normKey` helper (lowercase, strips non-alphanumerics) for fuzzy matching of programme/department/academic-year/semester strings.
+  - Added `currentContext` `useMemo` that derives the student's current Academic Year + Semester from their `batch` + today's date (same `getAcademicYears` logic as the Class Timetable fetch).
+  - `onSnapshot` listener on `qp_setter_assignments` now additionally:
+    - Skips docs whose `academicYear` differs from the student's current academic year.
+    - Skips docs whose `semester` differs from the student's current semester.
+    - For each assignment, when `as.departments` (`{ progKey, prog, dept, key }`) is present, only includes entries whose dept (and programme, when known) matches the student's own `department`/`programme` — supporting legacy formats via `deptKey`/`department`/`programmeKey` aliases.
+  - Backwards compatible: schedules without `departments` metadata or missing AY/semester fields are still shown (unscoped filtering as before).
+- Build passes cleanly.
+
+### 147. Dynamic Batch-Mapped Regulation Resolution in Exam Name (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where the EXAM column displayed generic/mismatched regulation strings (e.g., `IA 1 (AU - R2025)`) for batches mapped to a different regulation (e.g., `23 Batch (2023-27)` mapped to `AU - R2021`).
+- **Changes**:
+  - **`batch_regulations` Listener & Resolution**: Added real-time listener for `batch_regulations` and `resolveBatchRegulation` helper in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to determine the exact regulation assigned to each batch.
+  - **`formatExamNameWithRegulation`**: Formats the Exam column string by dynamically replacing outdated regulation tags with the batch's actual mapped regulation (`AU - R2021` for `23 Batch`, `AU - R2025` for `25 Batch`), ensuring accurate exam titles across all batches.
+- Build passes cleanly.
+
+### 146. Question Paper Generator Category Dropdown — CIA Config-Derived Category Surfacing & Fallback (`QuestionPaperGenerator.jsx`)
+- **Problem**: The **Category** dropdown on `QuestionPaperGenerator.jsx` showed only `Written Test` even though the subject had other categories (e.g. Activity/Assignment, Practical) available in CIA Configuration (`cia_configs`). Because `availableCategories` previously read category names ONLY from `course_type_weightage` `_category_config` keys, and `filteredExams` Stage 1 iterated strict `_category_config` categories while `addedFromWeightage=true` blocked the raw `cia_configs` path (Stage 2), categories absent from the weightage config never appeared and never yielded exams.
+- **Changes**:
+  - `availableCategories` now always scans matching `ciaConfigs` (flags `isAssignment`/`isActivity` → Activity, `isProject` → Project, `isPractical` → Practical, `isUniversity` → ESE, `isIndirectAssessment` → Indirect Assessment; exam name heuristics as fallback) and adds any categories not already surfaced by `_category_config`. Matching respects normalized regulation, `cfg.academicYear` (vs selected AY), and `cfg.courseTypes` against the target course-type norm. `ese`/`indirect` categories remain filtered out at the end.
+  - `filteredExams` Stage 1 now checks `categoryInWeightage`; when the selected category is NOT defined in `_category_config`, it falls back to enumerating matching raw `ciaConfigs` for that category (regulation/AY/course-type/category flag filters applied), so the Exam dropdown is never empty for CIA-derived categories.
+- Build passes cleanly.
+
+### 145. Curriculum Exam Total Marks Resolved via Fuzzy Weightage Key (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix mismatch where Curriculum-configuruned exam total marks (e.g. `IA 1` = 60 in `course_type_weightage` for a specific Academic Year) were ignored by `QuestionPaperGenerator.jsx` — the paper total fell back to CIA default 100 and the "Your mark is HIGH/LOW" warning compared against 100.
+- **Root Cause**: Curriculum.jsx saves `course_type_weightage` doc IDs with a stricter `sanitizeKey` that also strips spaces/slashes (`AU - R2021` → `AU_-_R2021`, AY suffix `_2026-2027`), while QPG's module-level `sanitizeKey` only strips `[.#$[\]]`. `getConfiguredExamTotalMarks` used exact `courseWeightageData[fullRegKey]`/`[regKey]` lookups that missed the AY-specific documents.
+- **Fix**: `getConfiguredExamTotalMarks` now resolves the weightage doc using the same fuzzy normalization cascade (`regAyCleanNorm`, `regCleanNorm`, `regNorm`, excluding `_20...` heuristic keys) used by `availableCategories` / `filteredExams`, reading `_category_config[catName].exam_marks[examId]` when present. Also added a local `normClean` alias to fix a latent undefined-reference crash.
+- Build passes cleanly.
+
+### 144. Question Paper Setter Task Completion Only Counts Written Test Papers (`FacultyDashboard.jsx`, `utils.js`)
+- **Goal**: On `FacultyDashboard.jsx` "Question Paper Setter Tasks", a subject's set-count progress (`Sets Created` vs `Sets Required`, and `isDone`/Overdue/Action Needed status) should only be satisfied by question papers generated as written exams — not Activity/Project/Practical/Assignment papers.
+- **Changes**:
+  - Added `isWrittenTestQp(qp)` helper in `src/lib/utils.js` that returns `true` when `assessment_type`/`assessmentType` is `exam`/`written`/`written test`; otherwise inspects category/exam-name regex (excludes `assignment`, `activity`, `project`, `practical`, `observation`, `record`, `survey`, `indirect`, `viva`, `lab`); defaults to `true` when no info is present.
+  - `FacultyDashboard.jsx` imports `isWrittenTestQp` and filters `generatedSets`/progress counting in `qpSetterTaskCards` to only count written-test papers.
+- Build passes cleanly.
+
+### 143. 12-Hour Timing & Session Badge Display on Principal Dashboard (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Render exam timing (e.g. `09:30 AM - 11:00 AM`) and session badges (**`FN`** / **`AN`**) configured in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) on [`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx) (`PrincipalIAScheduleView.jsx`).
+- **Changes**:
+  - Added `format12Hour` helper to convert 24h start/end times into formatted 12-hour strings (e.g., `09:30 AM - 11:00 AM`).
+  - Updated the Exam Date cell in each batch table to render the **`FN`** (blue) or **`AN`** (amber) session badge along with the 12-hour time range underneath the exam date.
+- Build passes cleanly.
+
+### 142. Missing Icon Import Fix (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix `ReferenceError: Can't find variable: Calendar` in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx).
+- **Fix**: Added `Calendar` to the `lucide-react` import statement at the top of [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx).
+- Build passes cleanly.
+
+### 141. Comprehensive Assignment Key Target Matching on Principal Approval (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where clicking **"Approve Department"** on [`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx) (`PrincipalIAScheduleView.jsx`) approved some subjects (e.g. `BM25C06`, `BM25C04`) but left other subjects (e.g. `BM3352`, `BM3301`) in **Pending** (amber) status.
+- **Root Cause**: `handleApproveDept` previously updated Firestore using ONLY `it.code` (`displayCode` resolved via Course Bank). If the underlying Firestore document stored assignment keys with raw formatting (e.g., `"BM 3352"` or raw syllabus keys), `updates['assignments.BM3352.approved'] = true` wrote to a new key while leaving the original Firestore assignment key (`"BM 3352"`) as `approved: false`.
+- **Fix**:
+  - Preserved `rawKey` and `rawCode` on each row item in `PrincipalIAScheduleView.jsx`.
+  - Updated `handleApproveDept` to resolve all matching keys in `sDoc.assignments` (`rawKey`, `rawCode`, `code`, and any key matching `normCodeKey`), ensuring `approved = true` is set on every key variation in Firestore.
+- Build passes cleanly.
+
+### 140. Bulk Question Paper Set Count Action Bar (`IAScheduleCreation.jsx`)
+- **Goal**: Add a bulk Question Paper Set count control bar in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to set all subjects to a common set count (e.g. `2 Sets` or `1 Set`) in 1 click, while retaining per-subject dropdown override.
+- **Changes**:
+  - **`handleApplyBulkSets` Helper**: Added bulk set count updater that sets `numSets` across all schedule assignment rows.
+  - **Quick Action Bar Control**: Embedded a set count selector (`1 Set` to `6 Sets`) and **`Apply Sets to All`** button in the Quick Actions header card.
+- Build passes cleanly.
+
+### 139. Exam Timing Setting & Automatic FN/AN Session Resolution (`IAScheduleCreation.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Add per-subject exam timing controls (`startTime`, `endTime`) on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) and automatically derive/display **`FN`** (Forenoon) or **`AN`** (Afternoon) sessions based on start time.
+- **Changes**:
+  - **Auto Session Resolution (`deriveSlotFromTime`)**: Automatically resolves `FN` (Forenoon) if start time is before `12:00 PM` and `AN` (Afternoon) if start time is `12:00 PM` or later, updating `slot`, `session`, and `timeSlot` state dynamically.
+  - **Per-Subject & Bulk Timing Controls**: Added `<input type="time" />` controls in each table row on `IAScheduleCreation.jsx` along with a **Bulk Apply Timing to All** quick action bar.
+  - **Principal View & PDF Report Sync**: Updated [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) and print timetable report generator (`buildReportHtml`) to display `FN`/`AN` session badges and time ranges under exam dates.
+- Build passes cleanly.
+
 ### 138. Real-Time Authoritative Course Code Pill Resolution (`IAScheduleCreation.jsx`)
 - **Goal**: Fix issue where `DevOps` (under `B.E. Electronics and Communication Engineering`) displayed the legacy course code pill badge (`CS342`) on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) instead of the authoritative course code configured in Course Bank (`EC3342`).
 - **Changes**:

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { doc, onSnapshot } from "firebase/firestore";
+import { isMasterOrAdmin } from "../lib/utils";
 import {
   getSeatConfigurationsRealtime,
   saveSeatConfiguration,
@@ -139,8 +140,7 @@ export default function SeatManagement() {
     };
   }, []);
 
-  const isAdmin = userData?.role === 'Admin' || 
-                 auth.currentUser?.email === import.meta.env.VITE_MASTER_ADMIN_EMAIL;
+  const isAdmin = isMasterOrAdmin(userData?.role, auth.currentUser?.email);
 
   // Calculate filled seats from enquiries (only status === "Approved")
   const filledSeatsByDept = useMemo(() => {

@@ -12,7 +12,7 @@ import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
 import { useSemesterType } from '../hooks/useSemesterType';
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay } from '../lib/utils';
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay } from '../lib/utils';
 import useUnsavedChanges from '../hooks/useUnsavedChanges';
 import { typesetMath } from '../utils/mathJaxUtils';
 
@@ -40,6 +40,87 @@ const getNormalizedCourseType = (typeStr) => {
   if (s.includes('project')) return 'project';
   if (s.includes('activity')) return 'activity';
   return 'theory';
+};
+
+const calculateDuration = (startTime, endTime, timeSlot) => {
+  let start = startTime || "";
+  let end = endTime || "";
+
+  if ((!start || !end) && timeSlot && String(timeSlot).includes("-")) {
+    const parts = String(timeSlot).split("-").map(s => s.trim());
+    if (parts.length === 2) {
+      start = parts[0];
+      end = parts[1];
+    }
+  }
+
+  const parseMins = (timeStr) => {
+    if (!timeStr) return null;
+    let s = String(timeStr).trim();
+    let isPM = /pm/i.test(s);
+    let isAM = /am/i.test(s);
+    s = s.replace(/(am|pm)/i, '').trim();
+    const parts = s.split(':').map(Number);
+    if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+    let h = parts[0];
+    let m = parts[1];
+    if (isPM && h < 12) h += 12;
+    if (isAM && h === 12) h = 0;
+    return h * 60 + m;
+  };
+
+  const startMins = parseMins(start);
+  const endMins = parseMins(end);
+
+  if (startMins !== null && endMins !== null && endMins > startMins) {
+    const total = endMins - startMins;
+    const hrs = Math.floor(total / 60);
+    const mins = total % 60;
+    if (hrs > 0 && mins > 0) {
+      return `${hrs} Hour${hrs > 1 ? 's' : ''} ${mins} Mins`;
+    } else if (hrs > 0 && mins === 0) {
+      return `${hrs} Hour${hrs > 1 ? 's' : ''}`;
+    } else {
+      return `${mins} Mins`;
+    }
+  }
+  return "180 min";
+};
+
+const formatExamDateDisplay = (dateVal) => {
+  if (!dateVal) return "";
+  try {
+    let d = null;
+    if (typeof dateVal === 'object' && dateVal?.seconds) {
+      d = new Date(dateVal.seconds * 1000);
+    } else if (typeof dateVal === 'string') {
+      if (dateVal.includes('-')) {
+        const parts = dateVal.split('T')[0].split('-');
+        if (parts.length === 3 && parts[0].length === 4) {
+          return `${parts[2]}.${parts[1]}.${parts[0]}`;
+        }
+      }
+      if (dateVal.includes('/')) {
+        const parts = dateVal.split('/');
+        if (parts.length === 3) {
+          const p0 = parts[0].padStart(2, '0');
+          const p1 = parts[1].padStart(2, '0');
+          const p2 = parts[2];
+          return `${p0}.${p1}.${p2}`;
+        }
+      }
+      d = new Date(dateVal);
+    } else if (dateVal instanceof Date) {
+      d = dateVal;
+    }
+    if (d && !isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}.${month}.${year}`;
+    }
+  } catch (e) {}
+  return String(dateVal);
 };
 
 export default function QuestionPaperGenerator() {
@@ -606,6 +687,14 @@ export default function QuestionPaperGenerator() {
     }, 0);
   }, [assessmentType, assignmentConfig, partsConfig]);
 
+  const getEffectiveNumSets = useCallback((cfg) => {
+    if (!cfg || typeof cfg !== 'object') return 1;
+    const ayKey = academicYear ? sanitizeKey(academicYear) : '';
+    const ayVal = ayKey ? cfg.numSetsByAy?.[ayKey] : undefined;
+    const parsed = parseInt(ayVal ?? cfg.numSets, 10);
+    return (!isNaN(parsed) && parsed > 0) ? parsed : 1;
+  }, [academicYear]);
+
   const getConfiguredExamTotalMarks = useCallback((selectedConfig) => {
     const examId = exam !== 'custom' ? exam : (selectedConfig?.id || null);
 
@@ -614,10 +703,35 @@ export default function QuestionPaperGenerator() {
     const regKey = sanitizeKey(regulation);
     const ayKey = sanitizeKey(academicYear);
     const fullRegKey = ayKey ? `${regKey}_${ayKey}` : regKey;
+    const regCleanNorm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normClean = regCleanNorm;
+    const regAyCleanNorm = regCleanNorm(`${regulation}_${academicYear}`);
+    const regNorm = regCleanNorm(regulation);
+
+    // Resolve the actual weightage doc id with the same fuzzy fallback logic used in
+    // availableCategories/filteredExams (Curriculum's sanitizeKey strips spaces/slashes too).
+    let regWeightage = courseWeightageData[fullRegKey];
+    if (!regWeightage && regAyCleanNorm) {
+      const matchAyKey = Object.keys(courseWeightageData || {}).find(k => {
+        const kn = regCleanNorm(k);
+        return kn === regAyCleanNorm || kn.includes(regAyCleanNorm);
+      });
+      if (matchAyKey) regWeightage = courseWeightageData[matchAyKey];
+    }
+    if (!regWeightage) {
+      regWeightage = courseWeightageData[regKey];
+      if (!regWeightage && regNorm) {
+        const matchRegKey = Object.keys(courseWeightageData || {}).find(k => {
+          const kn = regCleanNorm(k);
+          return (kn === regNorm || kn.includes(regNorm)) && !kn.includes('_20');
+        });
+        if (matchRegKey) regWeightage = courseWeightageData[matchRegKey];
+      }
+    }
 
     const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
 
-    const wDataList = [courseWeightageData[fullRegKey], courseWeightageData[regKey]].filter(Boolean);
+    const wDataList = [regWeightage].filter(Boolean);
 
     for (const wData of wDataList) {
       if (!wData) continue;
@@ -681,6 +795,167 @@ export default function QuestionPaperGenerator() {
 
     return () => unsubscribe();
   }, []);
+
+  const [qpSetterAssignmentsData, setQpSetterAssignmentsData] = useState({});
+  const [allSyllabusDataList, setAllSyllabusDataList] = useState([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'qp_setter_assignments'), (snap) => {
+      const data = {};
+      snap.forEach(doc => { data[doc.id] = doc.data(); });
+      setQpSetterAssignmentsData(data);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'syllabus_data'), (snap) => {
+      const list = [];
+      snap.forEach(doc => { list.push({ id: doc.id, data: doc.data() }); });
+      setAllSyllabusDataList(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const commonForDisplay = useMemo(() => {
+    if (!batch || !selectedSemester || !subject) return "NIL";
+
+    const subjectCode = getSubjectCodeFrom(subject);
+    if (!subjectCode) return "NIL";
+
+    const semNum = deriveSemesterNumber(selectedSemester);
+    const normCode = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const codeClean = normCode(subjectCode);
+    const batchNorm = normCode(batch);
+    const deptNorm = normCode(department);
+
+    let matchedAssignment = null;
+
+    Object.values(qpSetterAssignmentsData || {}).forEach(docData => {
+      if (matchedAssignment) return;
+      const dBatch = normCode(docData.batch || "");
+      const dSem = String(docData.semester || "").trim();
+
+      const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+      const targetStr = (docData.batch || "") + " " + (docData.id || "");
+      const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+
+      let yearMatches = false;
+      if (startYr1 && startYr2) {
+        const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
+        const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
+        yearMatches = (y1Clean === y2Clean);
+      }
+
+      if ((dBatch === batchNorm || dBatch.includes(batchNorm) || batchNorm.includes(dBatch) || yearMatches) && dSem === semNum) {
+        if (docData.assignments && typeof docData.assignments === "object") {
+          const found = Object.entries(docData.assignments).find(([k, v]) => normCode(k) === codeClean || normCode(v?.code || "") === codeClean);
+          if (found && found[1] && Array.isArray(found[1].departments)) {
+            matchedAssignment = found[1];
+          }
+        }
+      }
+    });
+
+    let deptList = [];
+    if (matchedAssignment && Array.isArray(matchedAssignment.departments) && matchedAssignment.departments.length > 0) {
+      deptList = matchedAssignment.departments.map(d => d.dept || d.deptKey || d.name || d.progKey || d);
+    }
+
+    if (deptList.length <= 1 && allSyllabusDataList && allSyllabusDataList.length > 0) {
+      const syllabusDepts = new Set();
+      allSyllabusDataList.forEach(sDoc => {
+        const parts = String(sDoc.id || '').split('_');
+        let deptKey = "";
+        if (parts.length >= 3) {
+          const deptStartIdx = (['B', 'M'].includes(parts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(parts[1])) ? 2 : 1;
+          deptKey = parts.slice(deptStartIdx, parts.length - 1).join('_');
+        }
+        const subs = sDoc.data?.semesters?.[semNum] || [];
+        if (Array.isArray(subs)) {
+          const hasSub = subs.some(sub => sub && normCode(sub.code || sub.subjectCode || sub.courseCode || "") === codeClean);
+          if (hasSub && deptKey) {
+            syllabusDepts.add(deptKey);
+          }
+        }
+      });
+      if (syllabusDepts.size > 1) {
+        deptList = Array.from(syllabusDepts);
+      }
+    }
+
+    if (deptList.length <= 1) return "NIL";
+
+    const otherDepts = deptList.filter(d => {
+      const dn = normCode(d);
+      return dn !== deptNorm && !dn.includes(deptNorm) && !deptNorm.includes(dn);
+    });
+
+    if (otherDepts.length === 0) return "NIL";
+
+    return otherDepts.map(d => {
+      const formatted = formatDepartmentDisplay(d);
+      return formatted.replace(/^(B\.E\.|B\.Tech\.|M\.E\.|M\.Tech\.)\s*/i, '').trim() || d;
+    }).join(", ");
+  }, [batch, selectedSemester, subject, department, qpSetterAssignmentsData, allSyllabusDataList, getSubjectCodeFrom]);
+
+  const scheduledExamInfo = useMemo(() => {
+    if (!batch || !selectedSemester || !subject) return { date: "", duration: "180 min", rawDate: "", startTime: "", endTime: "" };
+
+    const subjectCode = getSubjectCodeFrom(subject);
+    if (!subjectCode) return { date: "", duration: "180 min", rawDate: "", startTime: "", endTime: "" };
+
+    const semNum = deriveSemesterNumber(selectedSemester);
+    const normCode = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const codeClean = normCode(subjectCode);
+    const batchNorm = normCode(batch);
+
+    let matchedAssignment = null;
+
+    Object.values(qpSetterAssignmentsData || {}).forEach(docData => {
+      if (matchedAssignment) return;
+      const dBatch = normCode(docData.batch || "");
+      const dSem = String(docData.semester || "").trim();
+
+      const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+      const targetStr = (docData.batch || "") + " " + (docData.id || "");
+      const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+
+      let yearMatches = false;
+      if (startYr1 && startYr2) {
+        const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
+        const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
+        yearMatches = (y1Clean === y2Clean);
+      }
+
+      if ((dBatch === batchNorm || dBatch.includes(batchNorm) || batchNorm.includes(dBatch) || yearMatches) && dSem === semNum) {
+        if (docData.assignments && typeof docData.assignments === "object") {
+          const found = Object.entries(docData.assignments).find(([k, v]) => normCode(k) === codeClean || normCode(v?.code || "") === codeClean);
+          if (found && found[1]) {
+            matchedAssignment = found[1];
+          }
+        }
+      }
+    });
+
+    if (!matchedAssignment) return { date: "", duration: "180 min", rawDate: "", startTime: "", endTime: "" };
+
+    const rawDate = matchedAssignment.examDate || matchedAssignment.exam_date || matchedAssignment.date || matchedAssignment.assignedDate || "";
+    const dateDisplay = formatExamDateDisplay(rawDate);
+    const startTime = matchedAssignment.startTime || matchedAssignment.start_time || "";
+    const endTime = matchedAssignment.endTime || matchedAssignment.end_time || "";
+    const timeSlot = matchedAssignment.timeSlot || matchedAssignment.time_slot || "";
+    const durationDisplay = calculateDuration(startTime, endTime, timeSlot);
+
+    return {
+      date: dateDisplay,
+      duration: durationDisplay,
+      rawDate: rawDate,
+      startTime,
+      endTime,
+      timeSlot
+    };
+  }, [batch, selectedSemester, subject, qpSetterAssignmentsData, getSubjectCodeFrom]);
 
   // Fetch course_type_weightage for regulation-based dynamic exam categories
   useEffect(() => {
@@ -837,12 +1112,13 @@ export default function QuestionPaperGenerator() {
   }, []);
 
   const availableCategories = useMemo(() => {
-    const regSanitized = sanitizeKey(getRegulationForBatch(formatProgrammeKey(program), batch));
+    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
+    const regSanitized = sanitizeKey(regulation);
     const aySanitized = sanitizeKey(academicYear);
     const regAyKey = `${regSanitized}_${aySanitized}`;
     const regCleanNorm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const regAyCleanNorm = regCleanNorm(`${getRegulationForBatch(formatProgrammeKey(program), batch)}_${academicYear}`);
-    const regNorm = regCleanNorm(getRegulationForBatch(formatProgrammeKey(program), batch));
+    const regAyCleanNorm = regCleanNorm(`${regulation}_${academicYear}`);
+    const regNorm = regCleanNorm(regulation);
 
     let regWeightage = courseWeightageData[regAyKey];
     if (!regWeightage && regAyCleanNorm) {
@@ -873,26 +1149,47 @@ export default function QuestionPaperGenerator() {
       }
     }
 
-    const finalCategories = list.length > 0 ? list : (() => {
-      const sTypeClean = String(subjectCourseType || '').toLowerCase();
-      if (sTypeClean.includes('lab') || sTypeClean.includes('practical')) {
-        return ["PRACTICAL", "ACTIVITY"];
-      }
-      if (sTypeClean.includes('project')) {
-        return ["PROJECT"];
-      }
-      if (sTypeClean.includes('activity')) {
-        return ["ACTIVITY"];
-      }
-      return ["WRITTEN TEST", "ACTIVITY"];
-    })();
+    // Also surface categories that have exams configured in cia_configs for this
+    // regulation + course type + academic year, even if the weightage doc's
+    // _category_config only contains a subset (e.g. only "Written Test").
+    const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
+    if (ciaConfigs && ciaConfigs.length > 0) {
+      const getCategoryForCfg = (cfg) => {
+        if (cfg.isAssignment || cfg.isActivity) return "Activity";
+        if (cfg.isProject) return "Project";
+        if (cfg.isPractical) return "Practical";
+        if (cfg.isUniversity) return "ESE";
+        if (cfg.isIndirectAssessment) return "Indirect Assessment";
+        const nameClean = regCleanNorm(cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || '');
+        if (nameClean.includes('practical') || nameClean.includes('lab') || nameClean.includes('observation')) return "Practical";
+        if (nameClean.includes('project')) return "Project";
+        if (nameClean.includes('activity') || nameClean.includes('assignment')) return "Activity";
+        if (nameClean.includes('indirect') || nameClean.includes('survey') || nameClean.includes('exit')) return "Indirect Assessment";
+        return "Written Test";
+      };
+      ciaConfigs.forEach(cfg => {
+        if (!cfg || !cfg.regulation) return;
+        const cfgRegClean = regCleanNorm(cfg.regulation);
+        if (cfgRegClean !== regNorm && !cfgRegClean.includes(regNorm) && !regNorm.includes(cfgRegClean)) return;
+        const cfgAyNorm = regCleanNorm(cfg.academicYear);
+        if (cfgAyNorm && cfgAyNorm !== regCleanNorm(academicYear)) return;
+        if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+          const cfgCourseTypeNorms = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+          if (!cfgCourseTypeNorms.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypeNorms.includes('theory') || cfgCourseTypeNorms.includes('practical')))) return;
+        }
+        const cat = getCategoryForCfg(cfg);
+        if (cat && !list.includes(cat)) list.push(cat);
+      });
+    }
 
-    // Temporarily exclude ESE and Indirect Assessment as requested
+    const finalCategories = list;
+
+    // Exclude ESE and Indirect Assessment
     return finalCategories.filter(catName => {
       const cn = String(catName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       return !cn.includes('ese') && !cn.includes('indirect');
     });
-  }, [program, batch, academicYear, courseWeightageData, subjectCourseType, getRegulationForBatch, findCategoryData]);
+  }, [program, batch, academicYear, courseWeightageData, subjectCourseType, ciaConfigs, getRegulationForBatch, findCategoryData]);
 
   useEffect(() => {
     if (!availableCategories || availableCategories.length === 0) return;
@@ -1185,33 +1482,28 @@ export default function QuestionPaperGenerator() {
               const cfg = ciaConfigById.get(id);
               candidateExamsMap.set(id, { id, config: cfg, rawName: cfg ? null : id });
             });
-          } else {
-            // 2. Fallback: Matching ciaConfigs for this regulation, course type, and category ONLY if no explicit exam_weightage is set
-            ciaConfigs.forEach(cfg => {
-              if (!cfg || !cfg.regulation) return;
-              const cfgRegClean = normClean(cfg.regulation);
-              if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
-
-              // Academic Year check: if exam has a specific AY, it must match selectedAy
-              const cfgAyNorm = norm(cfg.academicYear);
-              if (cfgAyNorm && cfgAyNorm !== selectedAy) return;
-              if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
-                const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
-                if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
-              }
-
-              // Match exam using direct CIA Config flags against selected category
-              const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
-
-              if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
-                candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
-              }
-            });
           }
 
-          candidateExamsMap.forEach(({ id, config: resolvedCfg, rawName }) => {
-            if (resolvedCfg && norm(resolvedCfg.academicYear) && norm(resolvedCfg.academicYear) !== selectedAy) return;
+          // 2. ALSO include matching ciaConfigs for this regulation, course type, and category so no standard exams are missed
+          ciaConfigs.forEach(cfg => {
+            if (!cfg || !cfg.regulation) return;
+            const cfgRegClean = normClean(cfg.regulation);
+            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
 
+            if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+              const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+              if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
+            }
+
+            // Match exam using direct CIA Config flags against selected category
+            const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
+
+            if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
+              candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
+            }
+          });
+
+          candidateExamsMap.forEach(({ id, config: resolvedCfg, rawName }) => {
             const rn = resolvedCfg
               ? (resolvedCfg.examName || resolvedCfg.exam_name || resolvedCfg.title || resolvedCfg.name || resolvedCfg.exam || resolvedCfg.label || resolvedCfg.eventTitle || resolvedCfg.eventName)
               : rawName;
@@ -1228,6 +1520,28 @@ export default function QuestionPaperGenerator() {
             }
           });
         });
+
+        // If the selected category is NOT defined in _category_config (e.g. only raw CIA
+        // configs exist for it), fall back to matching raw ciaConfigs for that category so
+        // the exam dropdown is never empty for categories surfaced in the dropdown.
+        const categoryInWeightage = Object.keys(categoryData._category_config).some(cName => normClean(cName) === normClean(activeCategoryTarget));
+        if (!categoryInWeightage) {
+          ciaConfigs.forEach(cfg => {
+            const resolvedName = cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || cfg.eventTitle || cfg.eventName;
+            if (!resolvedName || isRawFirebaseId(resolvedName)) return;
+            if (!cfg || !cfg.regulation) return;
+            const cfgRegClean = normClean(cfg.regulation);
+            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
+            if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+              const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+              if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
+            }
+            if (!doesExamMatchCategory(cfg, activeCategoryTarget)) return;
+            if (disabledExamIds.has(cfg.id)) return;
+            if (disabledExamNames.has(normClean(resolvedName))) return;
+            addExam(cfg.id, resolvedName, 'cia_config');
+          });
+        }
       }
     }
 
@@ -1240,7 +1554,6 @@ export default function QuestionPaperGenerator() {
         if (norm(config.program) && norm(formatProgrammeKey(config.program)) !== selectedProg) return;
         if (norm(config.department) && norm(config.department) !== selectedDept) return;
         if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
-        if (norm(config.academicYear) && norm(config.academicYear) !== selectedAy) return;
         if (config.semester && String(config.semester) !== semNum) return;
         if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
 
@@ -1872,15 +2185,15 @@ export default function QuestionPaperGenerator() {
     <td style="padding: 4px;"><strong>Department</strong></td>
     <td style="padding: 4px;">${qp.department}</td>
     <td style="padding: 4px;"><strong>Common for</strong></td>
-    <td style="padding: 4px;">-</td>
+    <td style="padding: 4px;">${qp.common_for || qp.commonFor || commonForDisplay || 'NIL'}</td>
   </tr>
   <tr>
     <td style="padding: 4px;"><strong>Max Mark</strong></td>
     <td style="padding: 4px;">${qp.total_marks}</td>
     <td style="padding: 4px;"><strong>Duration</strong></td>
-    <td style="padding: 4px;">180 min</td>
+    <td style="padding: 4px;">${qp.duration || scheduledExamInfo.duration || '180 min'}</td>
     <td style="padding: 4px;"><strong>Date</strong></td>
-    <td style="padding: 4px;">${qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '03.10.2024'}</td>
+    <td style="padding: 4px;">${qp.exam_date_display || scheduledExamInfo.date || (qp.exam_date ? formatExamDateDisplay(qp.exam_date) : '')}</td>
   </tr>
   <tr>
     <td style="padding: 4px;"><strong>Reg. No.</strong></td>
@@ -2298,7 +2611,7 @@ export default function QuestionPaperGenerator() {
 
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam); // Use ciaConfigsMap for direct lookup
-    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
@@ -2761,6 +3074,23 @@ export default function QuestionPaperGenerator() {
       }
     }
   }, [filteredExams, searchParams, editId, compositeKey, exam]);
+
+  // Auto-select the Question Paper Set from URL param (e.g. &set=Set 2) when arriving
+  // from Faculty Dashboard QP Setter task cards — first paper opens Set 1, second opens Set 2, etc.
+  useEffect(() => {
+    if (editId || compositeKey) return;
+    const urlSet = searchParams.get('set') || searchParams.get('qpSet') || searchParams.get('setNumber');
+    if (!urlSet) return;
+
+    const setNumMatch = String(urlSet).match(/\d+/);
+    if (!setNumMatch) return;
+    const requestedNum = parseInt(setNumMatch[0], 10);
+    const effNumSets = exam && exam !== 'custom' ? getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) : 1;
+    if (effNumSets < requestedNum) return;
+
+    const target = `Set ${requestedNum}`;
+    if (qpSet !== target) setQpSet(target);
+  }, [searchParams, editId, compositeKey, exam, ciaConfigs, qpSet, getEffectiveNumSets]);
 
   // Prevent showing stale saved-summary when building a new paper context.
   useEffect(() => {
@@ -3813,7 +4143,7 @@ export default function QuestionPaperGenerator() {
     const semesterNum = deriveSemesterNumber(selectedSemester);
     const selectedConfig = ciaConfigs.find(c => c.id === exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
-    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
 
     const sanitizeKey = (key) => {
       if (!key) return '';
@@ -4126,7 +4456,7 @@ export default function QuestionPaperGenerator() {
       });
     }
 
-    const setSuffix = (selectedConfig?.numSets > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use stable composite key not including examDisplay
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
@@ -4181,6 +4511,12 @@ export default function QuestionPaperGenerator() {
       hod_comments: (status === 'recorrected') ? hodComments : null,
       assignment_kl: '',
       assignment_kl_domain: '',
+      common_for: commonForDisplay,
+      exam_date: scheduledExamInfo.rawDate || '',
+      exam_date_display: scheduledExamInfo.date || '',
+      duration: scheduledExamInfo.duration || '180 min',
+      start_time: scheduledExamInfo.startTime || '',
+      end_time: scheduledExamInfo.endTime || '',
     };
 
     try {
@@ -4987,7 +5323,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               )}
             </div>
 
-            {exam && exam !== 'custom' && ciaConfigs.find(c => c.id === exam)?.numSets > 1 && (
+            {exam && exam !== 'custom' && getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) > 1 && (
               <div className="space-y-2.5">
                 <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Choose Question Paper Set</label>
                 <div className="relative">
@@ -4996,7 +5332,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                     value={qpSet}
                     onChange={e => setQpSet(e.target.value)}
                   >
-                    {Array.from({ length: ciaConfigs.find(c => c.id === exam).numSets }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
+                    {Array.from({ length: getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
                 </div>

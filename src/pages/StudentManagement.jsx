@@ -4,7 +4,7 @@ import { doc, collection, onSnapshot, getDoc, getDocs, query, where, updateDoc }
 import { onAuthStateChanged } from "firebase/auth";
 import { Search, X, Users, AlertCircle, Eye, Pencil, Save, ToggleLeft, ToggleRight, Loader2, User, Phone, MapPin, BookOpen, Award, Heart, ChevronDown, ChevronRight } from "lucide-react";
 import Layout from "../components/Layout";
-import { formatProgDisplay, sanitizeKey, formatProgrammeKey } from "../lib/utils";
+import { formatProgDisplay, sanitizeKey, formatProgrammeKey, isMasterOrAdmin } from "../lib/utils";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const displayDept = (v) => {
@@ -170,7 +170,7 @@ export default function StudentManagement() {
     };
   }, []);
 
-  const canView = userData?.role === 'Admin' || userData?.role === 'HOD' || user?.email === import.meta.env.VITE_DEFAULT_ADMIN_EMAIL || user?.email === import.meta.env.VITE_MASTER_ADMIN_EMAIL;
+  const canView = isMasterOrAdmin(userData?.role, user?.email) || userData?.role === 'HOD';
 
   const hodScopedStudents = useMemo(() => {
     if (userData?.role !== 'HOD') return students;

@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { collection, doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import Layout from "../components/Layout";
+import { isMasterOrAdmin } from "../lib/utils";
 import {
   Plus, Megaphone, Building2, Globe, Clock, CheckCircle2,
   XCircle, AlertTriangle, Eye, X, Search, Filter,
@@ -77,7 +78,7 @@ export default function CircularList() {
     return () => unsub();
   }, []);
 
-  const isAdmin = userData?.role === "Admin";
+  const isAdmin = isMasterOrAdmin(userData?.role, auth.currentUser?.email);
   const isHod = userData?.role === "HOD";
   const userDepartment = userData?.department || userData?.assignedDepartment || "";
 

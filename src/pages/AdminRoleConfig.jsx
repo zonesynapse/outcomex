@@ -4,7 +4,7 @@ import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getD
 import { onAuthStateChanged } from "firebase/auth";
 import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search } from "lucide-react";
 import Layout from "../components/Layout";
-import { formatProgDisplay } from "../lib/utils";
+import { formatProgDisplay, isMasterOrAdmin } from "../lib/utils";
 import { useDepartments } from "../hooks/useDepartments";
 
 export default function AdminRoleConfig() {
@@ -527,7 +527,7 @@ export default function AdminRoleConfig() {
     );
   }
 
-  const isAdmin = userData?.role === 'Admin' || user?.email === defaultAdminEmail || user?.email === masterAdminEmail;
+  const isAdmin = isMasterOrAdmin(userData?.role, user?.email) || user?.email === defaultAdminEmail || user?.email === masterAdminEmail;
 
   if (!isAdmin) {
     return (

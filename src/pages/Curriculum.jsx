@@ -210,8 +210,13 @@ export default function Curriculum() {
 
   const handleUpdateNumSets = async (configId, num) => {
     setUpdatingSet(configId);
+    const parsed = parseInt(num, 10) || 1;
     try {
-      await updateDoc(doc(db, 'cia_configs', configId), { numSets: parseInt(num, 10) || 1 }); // Use updateDoc for Firestore
+      if (selectedConfigAY) {
+        await updateDoc(doc(db, 'cia_configs', configId), { [`numSetsByAy.${sanitizeKey(selectedConfigAY)}`]: parsed });
+      } else {
+        await updateDoc(doc(db, 'cia_configs', configId), { numSets: parsed });
+      }
       setSuccessMessage("Exam set count updated successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -1278,32 +1283,92 @@ export default function Curriculum() {
                               );
                              })()}
 
-                          {configType === "exam_sets" && (
+{configType === "exam_sets" && (
                             <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
+                              <div className="flex flex-wrap items-center justify-between gap-4 p-5 border-b border-slate-100 bg-slate-50/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2.5 bg-blue-50 text-[#120c7a] rounded-2xl">
+                                    <Calendar size={20} />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Academic Year</h4>
+                                    <p className="text-[11px] text-slate-500 font-medium">Set required QP sets per academic year for {selectedConfigReg}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <select
+                                    value={selectedConfigAY}
+                                    onChange={(e) => setSelectedConfigAY(e.target.value)}
+                                    className="bg-slate-50 border border-slate-300 rounded-2xl px-4 py-2 text-xs font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                                  >
+                                    <option value="">All Academic Years (Regulation Default)</option>
+                                    {availableAcademicYears.map(ay => (
+                                      <option key={ay} value={ay}>{ay}</option>
+                                    ))}
+                                  </select>
+                                  {selectedConfigAY ? (
+                                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                                      AY {selectedConfigAY} Config
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                                      Default Regulation
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                               <table className="w-full text-sm text-left">
                                 <thead className="bg-slate-50">
                                   <tr className="text-slate-500 border-b border-slate-200">
                                     <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px]">Assessment Name</th>
                                     <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px] text-center">Number of Sets Required</th>
-                                </tr>
+                                  </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                   {Object.entries(allCiaConfigs)
                                     .filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg))
-                                    .map(([id, config]) => (
+                                    .filter(([id, config]) => {
+                                      const configAY = String(config.academicYear || '').trim();
+                                      if (!selectedConfigAY) {
+                                        return configAY === '';
+                                      }
+                                      return configAY === '' || configAY === selectedConfigAY;
+                                    })
+                                    .map(([id, config]) => {
+                                      const aySetVal = selectedConfigAY ? (config.numSetsByAy?.[sanitizeKey(selectedConfigAY)] ?? config.numSets ?? 1) : (config.numSets || 1);
+                                      return (
                                     <tr key={id} className="hover:bg-blue-50/30 transition-colors">
-                                      <td className="px-8 py-4 font-bold text-slate-700">{config.examName}</td>
+                                      <td className="px-8 py-4 font-bold text-slate-700">
+                                        <div className="flex items-center gap-2">
+                                          <span>{config.examName}</span>
+                                          {config.academicYear && (
+                                            <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">{config.academicYear}</span>
+                                          )}
+                                          {!config.academicYear && !selectedConfigAY && (
+                                            <span className="text-[9px] font-black text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">Default</span>
+                                          )}
+                                        </div>
+                                      </td>
                                       <td className="px-8 py-4 text-center">
                                         <div className="flex items-center justify-center gap-3">
-                                          <input type="number" min="1" className="w-20 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500" value={config.numSets || 1} onChange={(e) => handleUpdateNumSets(id, e.target.value)} disabled={updatingSet === id} />
+                                          <input type="number" min="1" className="w-20 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500" value={aySetVal} onChange={(e) => handleUpdateNumSets(id, e.target.value)} disabled={updatingSet === id} />
                                           {updatingSet === id && <div className="w-4 h-4 border-2 border-[#120c7a] border-t-transparent rounded-full animate-spin" />}
                                         </div>
                                       </td>
                                     </tr>
-                                  ))}
-                                  {Object.entries(allCiaConfigs).filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg)).length === 0 && (
+                                      );
+                                    })}
+                                  {Object.entries(allCiaConfigs)
+                                    .filter(([id, config]) => sanitizeKey(config.regulation) === sanitizeKey(selectedConfigReg))
+                                    .filter(([id, config]) => {
+                                      const configAY = String(config.academicYear || '').trim();
+                                      if (!selectedConfigAY) {
+                                        return configAY === '';
+                                      }
+                                      return configAY === '' || configAY === selectedConfigAY;
+                                    }).length === 0 && (
                                     <tr>
-                                      <td colSpan={2} className="px-8 py-10 text-center text-slate-400 italic">No internal exams configured for this regulation.</td>
+                                      <td colSpan={2} className="px-8 py-10 text-center text-slate-400 italic">No internal exams configured for this regulation and academic year.</td>
                                     </tr>
                                   )}
                                 </tbody>

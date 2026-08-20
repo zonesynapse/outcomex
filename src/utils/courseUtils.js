@@ -24,6 +24,13 @@ export async function fetchAllCourseNamesMap(forceRefresh = false) {
             if (!map[cCode]) map[cCode] = cName;
             if (!map[cCode.toUpperCase()]) map[cCode.toUpperCase()] = cName;
 
+            // Legacy alias: old codes replaced via CourseBank "Replace Code" still resolve to this course
+            const legacyCodes = Array.isArray(item.legacy_codes) ? item.legacy_codes : [];
+            legacyCodes.forEach(lc => {
+                if (!map[lc]) map[lc] = cName;
+                if (!map[String(lc).toUpperCase()]) map[String(lc).toUpperCase()] = cName;
+            });
+
             if (dK) {
                 const cleanD = sanitizeKey(dK);
                 map[`${cleanD}_${cCode}`] = cName;

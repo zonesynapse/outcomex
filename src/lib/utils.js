@@ -261,3 +261,25 @@ export function parseSubjectField(subject) {
   return { code: raw, name: '', category: '' };
 }
 
+export function isWrittenTestQp(qp) {
+  if (!qp) return false;
+  const at = String(qp.assessment_type || qp.assessmentType || '').toLowerCase();
+  if (at) {
+    return at === 'exam' || at === 'written' || at === 'written test';
+  }
+  const cat = String(qp.category || qp.selectedCategory || qp.selected_category || qp.exam_name || qp.qpaper_name || '').toLowerCase();
+  if (cat) {
+    if (/(assignment|activity|project|practical|observation|record|survey|indirect|viva|lab)/.test(cat)) return false;
+    return true;
+  }
+  return true;
+}
+
+export function isMasterOrAdmin(role, email) {
+  const r = String(role || '').toLowerCase().trim();
+  const e = String(email || '').toLowerCase().trim();
+  if (r.includes('master') || r.includes('admin') || r === 'super admin' || r === 'system admin') return true;
+  if (e && (e.includes('admin') || e.includes('master'))) return true;
+  return false;
+}
+

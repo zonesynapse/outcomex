@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  CheckCircle2, Clock, FileText, Loader2, ShieldCheck
+  CheckCircle2, Clock, FileText, Loader2, ShieldCheck, Calendar
 } from "lucide-react";
 import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
@@ -31,7 +31,20 @@ const formatDate = (value) => {
   }
 };
 
-export default function PrincipalIAScheduleView() {
+const format12Hour = (time24) => {
+  if (!time24) return '';
+  if (time24.includes('AM') || time24.includes('PM')) return time24;
+  const [hStr, mStr] = time24.split(':');
+  let h = parseInt(hStr, 10);
+  if (isNaN(h)) return time24;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  const formattedH = String(h).padStart(2, '0');
+  return `${formattedH}:${mStr || '00'} ${ampm}`;
+};
+
+export default function PrincipalIAScheduleView({ showApproveButton = true, hideApproveButton = false }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
   const [approvingKey, setApprovingKey] = useState("");
@@ -108,6 +121,16 @@ export default function PrincipalIAScheduleView() {
   }, [allSyllabus]);
 
   const [courseBankNameMap, setCourseBankNameMap] = useState({});
+  const [batchRegulations, setBatchRegulations] = useState({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "batch_regulations"), (snap) => {
+      const data = {};
+      snap.forEach(d => { data[d.id] = d.data(); });
+      setBatchRegulations(data);
+    }, () => {});
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "courses"), (snap) => {
@@ -130,6 +153,55 @@ export default function PrincipalIAScheduleView() {
     return () => unsub();
   }, []);
 
+  const resolveBatchRegulation = (batch, progKey) => {
+    if (!batch) return "";
+    const cleanB = String(batch).trim();
+
+    if (progKey && batchRegulations?.[progKey]?.[cleanB]) {
+      return batchRegulations[progKey][cleanB];
+    }
+    if (progKey) {
+      const cleanP = String(progKey).replace(/[.#$[\]/ ]/g, '_');
+      if (batchRegulations?.[cleanP]?.[cleanB]) {
+        return batchRegulations[cleanP][cleanB];
+      }
+    }
+
+    for (const pKey of Object.keys(batchRegulations || {})) {
+      if (batchRegulations[pKey]?.[cleanB]) {
+        return batchRegulations[pKey][cleanB];
+      }
+    }
+
+    const match = allSyllabus.find(s => s.data?.batch === cleanB || s.id?.includes(cleanB));
+    if (match && match.regKey) {
+      return match.regKey.replace(/_/g, ' ').replace(/([A-Z]+)(R\d+)/i, '$1 - $2').trim();
+    }
+
+    return "";
+  };
+
+  const formatExamNameWithRegulation = (rawExamName, batch, progKey) => {
+    if (!rawExamName) return "-";
+
+    const resolvedReg = resolveBatchRegulation(batch, progKey);
+    if (!resolvedReg) return rawExamName;
+
+    let cleanReg = resolvedReg.trim();
+    const rMatch = cleanReg.match(/R\d{4}/i);
+    if (rMatch) {
+      const rCode = rMatch[0].toUpperCase();
+      cleanReg = `AU - ${rCode}`;
+    }
+
+    const regParenRegex = /\((?:AU\s*-\s*)?R\d{4}\)/i;
+    if (regParenRegex.test(rawExamName)) {
+      return rawExamName.replace(regParenRegex, `(${cleanReg})`);
+    }
+
+    return `${rawExamName} (${cleanReg})`;
+  };
+
   const getCanonicalCode = (code, name, deptKey) => {
     if (!name) return code || "";
     const normName = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -150,9 +222,9 @@ export default function PrincipalIAScheduleView() {
     const out = [];
     scheduleDocs.forEach(sDoc => {
       const assignments = sDoc.assignments || {};
-      Object.values(assignments).forEach(as => {
+      Object.entries(assignments).forEach(([assignKey, as]) => {
         if (!as?.examDate) return; // only subjects with assigned dates
-        const rawCode = String(as.code || "").trim();
+        const rawCode = String(as.code || assignKey || "").trim();
         const normKey = normCodeKey(rawCode);
 
         // Priority 1: Use explicit departments saved on the assignment
@@ -166,13 +238,29 @@ export default function PrincipalIAScheduleView() {
           depts = semMapped.length > 0 ? semMapped : allMapped;
         }
 
-        const displayCode = getCanonicalCode(as.code, as.name, depts[0]?.dept);
+        const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept);
+
+        const sTime = as.startTime || "";
+        const eTime = as.endTime || "";
+        const slot = as.slot || as.session || (sTime ? (parseInt(sTime.split(':')[0], 10) < 12 ? 'FN' : 'AN') : "");
+
+        const formattedExam = formatExamNameWithRegulation(
+          sDoc.examName || sDoc.examId || "",
+          sDoc.batch,
+          depts[0]?.progKey
+        );
 
         const row = {
           docId: sDoc.id,
-          code: displayCode || as.code || "",
+          rawKey: assignKey,
+          rawCode: as.code || assignKey || "",
+          code: displayCode || as.code || assignKey || "",
           name: as.name || "",
           examDate: as.examDate || "",
+          startTime: sTime,
+          endTime: eTime,
+          slot,
+          timeSlot: as.timeSlot || "",
           setterName: as.setterName || "-",
           numSets: as.numSets || 1,
           fromDate: as.fromDate || "",
@@ -180,7 +268,7 @@ export default function PrincipalIAScheduleView() {
           batch: sDoc.batch || "",
           academicYear: sDoc.academicYear || "",
           semester: sDoc.semester || "",
-          examName: sDoc.examName || "",
+          examName: formattedExam || sDoc.examName || "-",
           approved: as.approved === true,
           departments: depts.length ? depts : [{ progKey: "", dept: "_unmapped", key: "_unmapped" }]
         };
@@ -283,28 +371,51 @@ export default function PrincipalIAScheduleView() {
     if (!items || items.length === 0) return;
     const uid = auth.currentUser?.uid || "";
     const approvedAt = new Date().toISOString();
+
     const itemsByDoc = {};
     items.forEach(it => {
       if (!itemsByDoc[it.docId]) itemsByDoc[it.docId] = [];
-      itemsByDoc[it.docId].push(it.code);
+      itemsByDoc[it.docId].push(it);
     });
+
     const key = Object.keys(itemsByDoc).sort().join("|||");
     setApprovingKey(key);
+
     try {
-      await Promise.all(Object.entries(itemsByDoc).map(([docId, codes]) => {
+      await Promise.all(Object.entries(itemsByDoc).map(([docId, docItems]) => {
+        const sDoc = scheduleDocs.find(d => d.id === docId);
+        const existingAssignments = sDoc?.assignments || {};
         const updates = {};
-        codes.forEach(code => {
-          updates[`assignments.${code}.approved`] = true;
-          updates[`assignments.${code}.principalApprovedBy`] = uid;
-          updates[`assignments.${code}.principalApprovedByName`] = "Principal";
-          updates[`assignments.${code}.principalApprovedAt`] = approvedAt;
+
+        docItems.forEach(it => {
+          const targetKeys = new Set();
+          if (it.rawKey) targetKeys.add(it.rawKey);
+          if (it.rawCode) targetKeys.add(it.rawCode);
+          if (it.code) targetKeys.add(it.code);
+
+          const itNormCode = normCodeKey(it.code || it.rawCode || it.rawKey);
+          Object.keys(existingAssignments).forEach(existingKey => {
+            if (normCodeKey(existingKey) === itNormCode) {
+              targetKeys.add(existingKey);
+            }
+          });
+
+          targetKeys.forEach(k => {
+            updates[`assignments.${k}.approved`] = true;
+            updates[`assignments.${k}.principalApprovedBy`] = uid;
+            updates[`assignments.${k}.principalApprovedByName`] = "Principal";
+            updates[`assignments.${k}.principalApprovedAt`] = approvedAt;
+          });
         });
+
         updates["status"] = "Approved";
         updates["principalApproved"] = true;
         updates["updatedBy"] = "Principal";
         updates["updatedAt"] = approvedAt;
+
         return updateDoc(doc(db, "qp_setter_assignments", docId), updates);
       }));
+
       showToast("IA Schedule approved successfully!", "success");
     } catch (err) {
       console.error("Error approving IA schedule:", err);
@@ -371,13 +482,13 @@ export default function PrincipalIAScheduleView() {
         </div>
       )}
 
-      {filteredRows.length === 0 && (
-        <div className="rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 p-8 text-center text-zinc-500 text-sm">
-          No IA schedule subjects found {selectedBatchFilter !== "ALL" ? `for ${formatBatchDisplay(selectedBatchFilter)}` : ""}.
+      {/* Main Scheduled Items Grouped by Department & Batch */}
+      {filteredRows.length === 0 ? (
+        <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-400">
+          <Calendar size={36} className="mx-auto mb-2 opacity-50" />
+          <p className="text-sm font-semibold">No IA exam schedules found.</p>
         </div>
-      )}
-
-      {filteredRows.length > 0 && (
+      ) : (
         <div className="space-y-6">
           {filteredRows.map(group => {
             const allApproved = group.items.every(i => i.approved);
@@ -402,14 +513,16 @@ export default function PrincipalIAScheduleView() {
                         <span className="text-[11px] font-bold px-2.5 py-1.5 rounded-full bg-amber-100 text-amber-700">
                           Pending
                         </span>
-                        <button
-                          onClick={() => handleApproveDept(group.items.map(i => ({ docId: i.docId, code: i.code })))}
-                          disabled={!!approvingKey}
-                          className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-700 text-white text-[12px] font-bold shadow-sm hover:shadow-md hover:opacity-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {approvingKey === approvingKeyStr ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
-                          {approvingKey === approvingKeyStr ? "Approving..." : "Approve Department"}
-                        </button>
+                        {showApproveButton && !hideApproveButton && (
+                          <button
+                            onClick={() => handleApproveDept(group.items)}
+                            disabled={!!approvingKey}
+                            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-700 text-white text-[12px] font-bold shadow-sm hover:shadow-md hover:opacity-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {approvingKey === approvingKeyStr ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+                            {approvingKey === approvingKeyStr ? "Approving..." : "Approve Department"}
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -464,10 +577,30 @@ export default function PrincipalIAScheduleView() {
                                   <td className="px-4 py-2.5 text-sm text-zinc-800 max-w-[240px] font-medium">{r.name}</td>
                                   <td className="px-4 py-2.5 text-sm text-zinc-600">{r.examName || "-"}</td>
                                   <td className="px-4 py-2.5">
-                                    <span className="inline-flex items-center gap-1 text-sm font-semibold text-zinc-800">
-                                      <Clock size={13} className="text-emerald-600 shrink-0" />
-                                      {formatDate(r.examDate)}
-                                    </span>
+                                    <div className="space-y-0.5">
+                                      <span className="inline-flex items-center gap-1 text-sm font-semibold text-zinc-800">
+                                        <Clock size={13} className="text-emerald-600 shrink-0" />
+                                        {formatDate(r.examDate)}
+                                      </span>
+                                      {r.slot ? (
+                                        <div className="flex items-center gap-1">
+                                          <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${
+                                            r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
+                                          }`}>
+                                            {r.slot}
+                                          </span>
+                                          {r.startTime && (
+                                            <span className="text-[10px] font-bold text-zinc-600">
+                                              {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ''}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : r.startTime ? (
+                                        <div className="text-[10px] font-bold text-zinc-600">
+                                          {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ''}
+                                        </div>
+                                      ) : null}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2.5 text-sm text-zinc-700">{r.setterName}</td>
                                   <td className="px-4 py-2.5 text-sm text-zinc-600">
