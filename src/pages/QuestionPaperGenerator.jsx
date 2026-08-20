@@ -549,7 +549,11 @@ export default function QuestionPaperGenerator() {
   const [aiSyllabus, setAiSyllabus] = useState('');
   const [aiDistribution, setAiDistribution] = useState('Easy: 30%, Medium: 50%, Hard: 20%');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
-  const [qpSet, setQpSet] = useState('Set 1');
+  const [qpSet, setQpSet] = useState(() => {
+    const s = searchParams.get('set') || searchParams.get('qpSet') || searchParams.get('setNumber');
+    const m = s ? String(s).match(/\d+/) : null;
+    return m ? `Set ${m[0]}` : 'Set 1';
+  });
   const [showFinalPreview, setShowFinalPreview] = useState(false);
   const [hodComments, setHodComments] = useState('');
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
@@ -694,6 +698,28 @@ export default function QuestionPaperGenerator() {
     const parsed = parseInt(ayVal ?? cfg.numSets, 10);
     return (!isNaN(parsed) && parsed > 0) ? parsed : 1;
   }, [academicYear]);
+
+  // Resolve the selected exam's cia_config by BOTH document ID and exam name.
+  // This keeps the Sets dropdown stable even when the exam identity temporarily
+  // shifts between a name string (weightage key) and a Firebase push ID while the
+  // async `ciaConfigs` / `courseWeightageData` listeners load in different orders.
+  const getExamConfig = useCallback((examId) => {
+    if (!examId || examId === 'custom') return null;
+    let cfg = ciaConfigs.find(c => c.id === examId);
+    if (cfg) return cfg;
+    const cleanId = String(examId).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!cleanId) return null;
+    const candidates = ciaConfigs.filter(c => {
+      const n = String(c.examName || c.exam_name || c.title || c.name || c.exam || c.label || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return n && n === cleanId;
+    });
+    if (candidates.length === 0) return null;
+    const normReg = String(getRegulationForBatch(formatProgrammeKey(program), batch) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return candidates.find(c => {
+      const cr = String(c.regulation || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return cr && normReg && (cr === normReg || cr.includes(normReg) || normReg.includes(cr));
+    }) || candidates[0];
+  }, [ciaConfigs, program, batch]);
 
   const getConfiguredExamTotalMarks = useCallback((selectedConfig) => {
     const examId = exam !== 'custom' ? exam : (selectedConfig?.id || null);
@@ -956,6 +982,60 @@ export default function QuestionPaperGenerator() {
       timeSlot
     };
   }, [batch, selectedSemester, subject, qpSetterAssignmentsData, getSubjectCodeFrom]);
+
+  // Resolve the authoritative per-subject Question Paper Set count from qp_setter_assignments
+  // (set in IAScheduleCreation / QPSetterAssignment). This is keyed by the stable subject code,
+  // so it does NOT oscillate between name strings and Firebase push IDs like the cia_configs
+  // exam identity does — keeping the Sets dropdown visible across async reloads.
+  const subjectAssignmentSetCount = useMemo(() => {
+    if (!batch || !selectedSemester || !subject) return 0;
+    const subjectCode = getSubjectCodeFrom(subject);
+    if (!subjectCode) return 0;
+
+    const semNum = deriveSemesterNumber(selectedSemester);
+    const normCode = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const codeClean = normCode(subjectCode);
+    const batchNorm = normCode(batch);
+
+    let matchedAssignment = null;
+
+    Object.values(qpSetterAssignmentsData || {}).forEach(docData => {
+      if (matchedAssignment) return;
+      const dBatch = normCode(docData.batch || "");
+      const dSem = String(docData.semester || "").trim();
+
+      const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+      const targetStr = (docData.batch || "") + " " + (docData.id || "");
+      const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+
+      let yearMatches = false;
+      if (startYr1 && startYr2) {
+        const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
+        const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
+        yearMatches = (y1Clean === y2Clean);
+      }
+
+      if ((dBatch === batchNorm || dBatch.includes(batchNorm) || batchNorm.includes(dBatch) || yearMatches) && dSem === semNum) {
+        if (docData.assignments && typeof docData.assignments === "object") {
+          const found = Object.entries(docData.assignments).find(([k, v]) => normCode(k) === codeClean || normCode(v?.code || "") === codeClean);
+          if (found && found[1]) {
+            matchedAssignment = found[1];
+          }
+        }
+      }
+    });
+
+    if (!matchedAssignment) return 0;
+    const raw = matchedAssignment.numSets ?? matchedAssignment.num_set ?? matchedAssignment.sets;
+    const parsed = parseInt(raw, 10);
+    return (!isNaN(parsed) && parsed > 0) ? parsed : 0;
+  }, [batch, selectedSemester, subject, qpSetterAssignmentsData, getSubjectCodeFrom]);
+
+  const effectiveSetCount = useMemo(() => {
+    if (subjectAssignmentSetCount > 1) return subjectAssignmentSetCount;
+    const cfg = getExamConfig(exam);
+    return cfg ? Math.max(getEffectiveNumSets(cfg), subjectAssignmentSetCount) : subjectAssignmentSetCount;
+  }, [subjectAssignmentSetCount, getExamConfig, exam, getEffectiveNumSets]);
 
   // Fetch course_type_weightage for regulation-based dynamic exam categories
   useEffect(() => {
@@ -1479,8 +1559,24 @@ export default function QuestionPaperGenerator() {
 
           if (hasExplicitWeightageExams) {
             Object.keys(cConf.exam_weightage).forEach(id => {
-              const cfg = ciaConfigById.get(id);
-              candidateExamsMap.set(id, { id, config: cfg, rawName: cfg ? null : id });
+              let cfg = ciaConfigById.get(id);
+              if (!cfg) {
+                const normId = normClean(id);
+                const normReg = normClean(regulation);
+                const candidates = ciaConfigs.filter(c => {
+                  if (!c) return false;
+                  const cName = normClean(c.examName || c.exam_name || c.title || c.name || c.exam || c.label || '');
+                  return cName && cName === normId;
+                });
+                if (candidates.length > 0) {
+                  cfg = candidates.find(c => {
+                    const cr = normClean(c.regulation || '');
+                    return cr === normReg || cr.includes(normReg) || normReg.includes(cr);
+                  }) || candidates[0];
+                }
+              }
+              const resolvedId = cfg ? cfg.id : id;
+              candidateExamsMap.set(resolvedId, { id: resolvedId, config: cfg, rawName: cfg ? null : id });
             });
           }
 
@@ -2038,10 +2134,16 @@ export default function QuestionPaperGenerator() {
     return Array.from(depts);
   }, [facultyAssignPrefixes, program, programToDepartments]);
 
+  const urlProgParam = searchParams.get('prog') || searchParams.get('program') || '';
+  const urlDeptParam = searchParams.get('dept') || searchParams.get('department') || '';
+
   const filteredProgrammes = Object.keys(programToDepartments).filter(prog => {
     if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
     const progKey = formatProgrammeKey(prog);
     if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
+    // Allow URL-specified programme (e.g. navigation from QP Setter task cards) even when
+    // the user has no direct subject-handling assignment there — they may still be the setter.
+    if (urlProgParam && formatProgrammeKey(urlProgParam) === progKey) return true;
     return derivedProgs.includes(progKey);
   });
 
@@ -2090,14 +2192,31 @@ export default function QuestionPaperGenerator() {
   const filteredDepartments = useMemo(() => {
     const depts = programToDepartments[formatProgrammeKey(program)] || [];
     if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
-    if (!derivedDepts.length) return [];
-    const progKey = formatProgrammeKey(program);
-    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
-    return depts.filter(dept => {
-      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
-      return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    if (!depts.length) return [];
+    const normSpace = (v) => sanitizeKey(v).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+
+    // Include a URL-specified department (e.g. QP Setter task card navigation) even when the
+    // user has no direct subject-handling assignment there — they may still be the setter.
+    const cleanUrlDept = urlDeptParam ? sanitizeKey(urlDeptParam).replace(/[_ ]+/g, ' ').trim().toLowerCase() : '';
+    const urlDeptIsValid = cleanUrlDept && depts.some(d => {
+      const nd = normSpace(d);
+      return nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd);
     });
-  }, [program, userRole, derivedDepts, programToDepartments]);
+
+    if (!derivedDepts.length) {
+      if (urlDeptIsValid) return depts.filter(d => {
+        const nd = normSpace(d);
+        return nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd);
+      });
+      return depts;
+    }
+    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim().toLowerCase());
+    return depts.filter(dept => {
+      const nd = normSpace(dept);
+      return normalizedDepts.some(dd => dd === nd || dd.includes(nd) || nd.includes(dd)) ||
+        (urlDeptIsValid && (nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd)));
+    });
+  }, [program, userRole, derivedDepts, programToDepartments, urlDeptParam]);
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !program) return [];
@@ -2113,7 +2232,7 @@ export default function QuestionPaperGenerator() {
   useEffect(() => {
     if (isAssignmentOrProject) return; // Don't load exam parts for Activity/Project
     if (exam && exam !== 'custom') {
-      const config = ciaConfigs.find(c => c.id === exam);
+      const config = getExamConfig(exam);
       if (config && config.parts && config.parts.length > 0) {
         const parts = config.parts.map(p => ({
           numQuestions: p.numberOfQuestions || 1,
@@ -2125,7 +2244,7 @@ export default function QuestionPaperGenerator() {
         setShowParts(true);
       }
     } // No else, if config has no parts, it means it's a custom exam or assignment, handled by other logic
-  }, [exam, ciaConfigs]);
+  }, [exam, ciaConfigs, getExamConfig]);
 
   const getQuestionPaperHTML = useCallback((qp, cos = courseOutcomes, activeCOs = null, coWeightage = null, facultySignatureUrl = '') => {
     // Compute exam display name (resolve config ID to name)
@@ -2589,7 +2708,9 @@ export default function QuestionPaperGenerator() {
 
   useEffect(() => {
     hasLoadedRef.current = false;
-    // Clear previous paper states when configuration changes
+    // Clear previous paper states when configuration changes. `qpSet` is included so
+    // switching from Set 1 to Set 2 (dropdown or URL) starts a fresh paper instead of
+    // showing the previous set's questions.
     if (!editId) {
       setQpQuestions([]);
       setPartsConfig([]);
@@ -2602,16 +2723,24 @@ export default function QuestionPaperGenerator() {
       setHodComments(''); // Clear HOD comments when starting a new paper
       setLoadedExamName('');
     }
-  }, [editId, compositeKey, program, department, batch, academicYear, selectedSemester, subject, exam, customExam]);
+  }, [editId, compositeKey, program, department, batch, academicYear, selectedSemester, subject, exam, customExam, qpSet]);
 
   // Auto-load existing paper for this exam if not in explicit edit mode
   useEffect(() => {
     if (editId || compositeKey || hasLoadedRef.current) return;
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) return;
 
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    // Resolve the exam's cia_config by BOTH document ID AND name (regulation-aware) so the
+    // set suffix is computed correctly even when `exam` is a name string like "IA 1" instead
+    // of a Firebase push ID. Without this, `setSuffix` becomes '' and Set 2 loads Set 1's content.
+    const selectedConfig = getExamConfig(exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : exam); // Use ciaConfigsMap for direct lookup
-    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    // Use the set requested via URL (e.g. &set=Set 2) so the correct saved set loads even if the
+    // qpSet state update from the URL effect hasn't propagated yet (avoids loading Set 1 for Set 2).
+    const urlSetParam = searchParams.get('set') || searchParams.get('qpSet') || searchParams.get('setNumber');
+    const urlSetMatch = urlSetParam ? String(urlSetParam).match(/\d+/) : null;
+    const effectiveQpSet = urlSetMatch ? `Set ${urlSetMatch[0]}` : qpSet;
+    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${effectiveQpSet.replace(' ', '')}` : '';
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
@@ -2721,7 +2850,7 @@ export default function QuestionPaperGenerator() {
     };
 
     checkExisting();
-  }, [program, department, batch, academicYear, selectedSemester, subject, exam, qpSet, customExam, ciaConfigs, editId, compositeKey, getQuestionPaperHTML, assessmentType, getRegulationForBatch]);
+  }, [program, department, batch, academicYear, selectedSemester, subject, exam, qpSet, customExam, ciaConfigs, editId, compositeKey, getQuestionPaperHTML, assessmentType, getRegulationForBatch, searchParams, getExamConfig]);
 
   useEffect(() => {
     const loadSavedPaper = async () => {
@@ -3069,6 +3198,17 @@ export default function QuestionPaperGenerator() {
     // Fallback: If exam is empty or no longer valid in filteredExams, auto-select first available option ONLY if no urlExam was provided or if single option
     const isCurrentExamValid = filteredExams.some(e => e.id === exam);
     if (!isCurrentExamValid) {
+      // Before auto-selecting the first option, try to re-sync a stale exam NAME to its
+      // current config ID in filteredExams (the exam identity can shift between a weightage
+      // name string and a Firebase push ID while async listeners load in different orders).
+      if (exam) {
+        const cleanExam = normClean(exam);
+        const nameMatch = filteredExams.find(e => normClean(e.examName) === cleanExam);
+        if (nameMatch) {
+          if (exam !== nameMatch.id) setExam(nameMatch.id);
+          return;
+        }
+      }
       if (filteredExams.length === 1 || (!exam && filteredExams.length > 0 && !urlExam)) {
         setExam(filteredExams[0].id);
       }
@@ -3085,12 +3225,10 @@ export default function QuestionPaperGenerator() {
     const setNumMatch = String(urlSet).match(/\d+/);
     if (!setNumMatch) return;
     const requestedNum = parseInt(setNumMatch[0], 10);
-    const effNumSets = exam && exam !== 'custom' ? getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) : 1;
-    if (effNumSets < requestedNum) return;
-
+    if (!requestedNum || requestedNum < 1 || requestedNum > 99) return;
     const target = `Set ${requestedNum}`;
     if (qpSet !== target) setQpSet(target);
-  }, [searchParams, editId, compositeKey, exam, ciaConfigs, qpSet, getEffectiveNumSets]);
+  }, [searchParams, editId, compositeKey, qpSet]);
 
   // Prevent showing stale saved-summary when building a new paper context.
   useEffect(() => {
@@ -4141,7 +4279,10 @@ export default function QuestionPaperGenerator() {
     }
 
     const semesterNum = deriveSemesterNumber(selectedSemester);
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    // Resolve by BOTH doc ID and name (regulation-aware) so the set suffix is consistently
+    // applied whether `exam` is a name string or a Firebase push ID — otherwise Set 1 and
+    // Set 2 map to the same key and overwrite/load each other's content.
+    const selectedConfig = getExamConfig(exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
     const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
 
@@ -4398,7 +4539,10 @@ export default function QuestionPaperGenerator() {
     }
 
     const semesterNum = deriveSemesterNumber(selectedSemester);
-    const selectedConfig = ciaConfigs.find(c => c.id === exam);
+    // Resolve by BOTH doc ID and name (regulation-aware) so the set suffix is consistently
+    // applied whether `exam` is a name string or a Firebase push ID — otherwise Set 1 and
+    // Set 2 map to the same key and overwrite/load each other's content.
+    const selectedConfig = getExamConfig(exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
 
     const partsForPayload = [];
@@ -5323,7 +5467,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               )}
             </div>
 
-            {exam && exam !== 'custom' && getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) > 1 && (
+            {exam && exam !== 'custom' && effectiveSetCount > 1 && (
               <div className="space-y-2.5">
                 <label className="text-[11px] font-bold text-blue-600 uppercase tracking-widest ml-1">Choose Question Paper Set</label>
                 <div className="relative">
@@ -5332,7 +5476,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                     value={qpSet}
                     onChange={e => setQpSet(e.target.value)}
                   >
-                    {Array.from({ length: getEffectiveNumSets(ciaConfigs.find(c => c.id === exam)) }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
+                    {Array.from({ length: effectiveSetCount }, (_, i) => `Set ${i + 1}`).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
                 </div>

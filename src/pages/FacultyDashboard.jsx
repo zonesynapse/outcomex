@@ -144,6 +144,7 @@ export default function FacultyDashboard() {
   const [academicEvents, setAcademicEvents] = useState({});
   const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [courseNames, setCourseNames] = useState({});
+  const [courseBankNameMap, setCourseBankNameMap] = useState({});
 
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [facultyAttendanceLoading, setFacultyAttendanceLoading] = useState(false);
@@ -407,6 +408,34 @@ export default function FacultyDashboard() {
       }
     };
     fetchCourses();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "courses"), (snap) => {
+      const nameMap = {};
+      const codeToCanonical = {};
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const rawCode = String(data.code || data.subjectCode || data.courseCode || "").trim();
+        const name = String(data.name || data.courseName || data.subjectName || "").trim();
+        const normCode = String(rawCode).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (rawCode && normCode) {
+          codeToCanonical[normCode] = rawCode;
+        }
+        if (name && rawCode) {
+          const normName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          nameMap[normName] = rawCode;
+          if (data.department) {
+            const cleanD = sanitizeKey(data.department);
+            nameMap[`${cleanD}_${normName}`] = rawCode;
+          }
+        }
+      });
+      setCourseBankNameMap({ nameMap, codeToCanonical });
+    }, (err) => {
+      console.warn("[FacultyDashboard] Error listening to courses (CourseBank):", err);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -1029,16 +1058,36 @@ export default function FacultyDashboard() {
 
   const qpSetterTaskCards = useMemo(() => {
     const todayStr = formatDateKey(new Date());
+    const normBatch = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     return qpSetterTasks
       .filter(task => task.examDate && String(task.examDate).trim().length > 0)
       .map(task => {
-        const code = String(task.code || '').trim().toUpperCase();
+        const rawCode = String(task.code || '').trim().toUpperCase();
+        // Resolve to CourseBank canonical code using subject name when available.
+        // This ensures tasks saved with old/legacy codes (e.g. CS342) display the
+        // current CourseBank code (e.g. CCS342) and navigate QPG correctly.
+        const taskName = String(task.name || '').trim();
+        const normTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const codeFromName = (normTaskName && courseBankNameMap?.nameMap?.[normTaskName]) || '';
+        // Also try resolving by code directly from CourseBank (handles cases where
+        // CourseBank has updated code but the assignment still stores the old one).
+        const normRawCode = rawCode.replace(/[^A-Z0-9]/g, '');
+        const codeFromCode = (courseBankNameMap?.codeToCanonical?.[normRawCode]) || '';
+        const canonicalCode = codeFromName || codeFromCode || '';
+        const code = canonicalCode || rawCode;
+
         // Count generated sets by this faculty for this subject code — ONLY written test papers count
+        // Match against both old (rawCode) and canonical (canonicalCode) to catch all saved QPs.
         const generatedSets = (baseQps || []).filter(qp => {
           const parsedQp = parseSubjectField(qp.subject);
           const qpCode = String(parsedQp.code || qp.subject_code || '').trim().toUpperCase();
           const isMyPaper = qp.created_by === currentUid || !qp.created_by;
-          if (!isMyPaper || qpCode !== code) return false;
+          if (!isMyPaper) return false;
+          if (canonicalCode) {
+            if (qpCode !== rawCode && qpCode !== canonicalCode) return false;
+          } else {
+            if (qpCode !== rawCode) return false;
+          }
           const isWrittenTest = isWrittenTestQp(qp);
           return isWrittenTest;
         });
@@ -1064,15 +1113,28 @@ export default function FacultyDashboard() {
         const isOverdue = !isDone && task.toDate && task.toDate < todayStr;
         const isDueSoon = !isDone && task.toDate && task.toDate >= todayStr;
 
-        // Derive progKey/department from assignedGroups by matching batch+semester+code
+        // Derive progKey/department from assignedGroups by fuzzy-matching batch+semester+code,
+        // then fall back to the first department recorded on the assignment itself.
+        // Check both old and canonical code since subject_assignments may use either.
         const matchingGroup = assignedGroups.find(g =>
-          String(g.batch) === String(task.batch) &&
+          (normBatch(g.batch) === normBatch(task.batch) ||
+            normBatch(g.batch).includes(normBatch(task.batch)) ||
+            normBatch(task.batch).includes(normBatch(g.batch))) &&
           String(g.semester) === String(task.semester) &&
-          (g.codes || []).includes(task.code)
+          (g.codes || []).some(c => {
+            const cNorm = String(c).trim().toUpperCase();
+            if (canonicalCode) {
+              return cNorm === rawCode || cNorm === canonicalCode;
+            }
+            return cNorm === rawCode;
+          })
         );
+        const excelFirstDept = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments[0] : null;
 
         return {
           ...task,
+          code,
+          rawCode,
           createdCount,
           requiredSets,
           nextSetNum,
@@ -1080,11 +1142,34 @@ export default function FacultyDashboard() {
           isDone,
           isOverdue,
           isDueSoon,
-          progKey: matchingGroup?.progKey || '',
-          department: matchingGroup?.department || ''
+          progKey: (matchingGroup?.progKey || excelFirstDept?.progKey || excelFirstDept?.prog || ''),
+          department: (matchingGroup?.department || excelFirstDept?.dept || '')
         };
+      })
+      // Deduplicate by course code — prefer the card carrying the most complete navigation info
+      // (progKey + department + academicYear + semester + examDate), so the "Create Question Paper"
+      // button always opens QPG with valid auto-selectable parameters.
+      .reduce((acc, task) => {
+        const dedupCode = String(task.code || '').trim().toUpperCase();
+        const score = (t) =>
+          ((t.progKey ? 1 : 0) + (t.department ? 1 : 0)) * 100 +
+          ((t.academicYear && String(t.academicYear).trim()) ? 1 : 0) * 10 +
+          ((t.semester && String(t.semester).trim()) ? 1 : 0) * 10 +
+          ((t.examDate && String(t.examDate).trim()) ? 1 : 0);
+        const existing = acc.find(a => String(a.code || '').trim().toUpperCase() === dedupCode);
+        if (!existing || score(task) > score(existing)) {
+          acc = acc.filter(a => String(a.code || '').trim().toUpperCase() !== dedupCode);
+          acc.push(task);
+        }
+        return acc;
+      }, [])
+      .sort((a, b) => {
+        const ka = String(a.code || '').toUpperCase();
+        const kb = String(b.code || '').toUpperCase();
+        if (ka !== kb) return ka.localeCompare(kb);
+        return String(b.academicYear || '').localeCompare(String(a.academicYear || ''));
       });
-  }, [qpSetterTasks, baseQps, currentUid, assignedGroups]);
+  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap]);
 
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },
@@ -1497,7 +1582,9 @@ export default function FacultyDashboard() {
                           const taskDept = task.department || (firstDept ? firstDept.dept : '') || '';
                           const taskSec = task.section || (Array.isArray(task.sections) && task.sections[0] ? task.sections[0] : '');
                           const taskExam = task.examName || task.examId || task.exam || '';
-                          const nextSet = (!task.isDone && task.requiredSets > 1) ? `&set=${encodeURIComponent(task.nextSetLabel)}` : '';
+                          // Always pass the intended set so QPG never defaults back to Set 1 and
+                          // overwrites an already-saved Set 1 when the user clicks again after saving.
+                          const nextSet = `&set=${encodeURIComponent(task.nextSetLabel)}`;
                           navigate(`/question-paper-generator?code=${encodeURIComponent(task.code || '')}&batch=${encodeURIComponent(task.batch || '')}&sem=${encodeURIComponent(task.semester || '')}&prog=${encodeURIComponent(taskProgKey)}&dept=${encodeURIComponent(taskDept)}&ay=${encodeURIComponent(task.academicYear || '')}${taskSec ? `&sec=${encodeURIComponent(taskSec)}` : ''}${taskExam ? `&exam=${encodeURIComponent(taskExam)}` : ''}${nextSet}`);
                         }}
                         className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer ${task.isDone
@@ -1783,11 +1870,13 @@ export default function FacultyDashboard() {
                             {g.academicYear}
                           </span>
                           {(g.codes || []).map((code) => {
-                            const cName = getCourseName(courseNames, code, g.department, g.progKey);
+                            const normCode = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            const resolvedCode = (normCode && courseBankNameMap?.codeToCanonical?.[normCode]) || code;
+                            const cName = getCourseName(courseNames, resolvedCode, g.department, g.progKey) || getCourseName(courseNames, code, g.department, g.progKey);
                             return (
                               <span key={code}
                                 className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-bold border border-indigo-100">
-                                <span>{code}</span>
+                                <span>{resolvedCode}</span>
                                 {cName && <span className="text-indigo-400 font-medium">— {cName}</span>}
                               </span>
                             );
@@ -1836,12 +1925,14 @@ export default function FacultyDashboard() {
                 {attendanceTasks.map((task, idx) => {
                   const dateParts = task.date.split('-');
                   const displayDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+                  const normAttCode = String(task.code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                  const resolvedAttCode = (normAttCode && courseBankNameMap?.codeToCanonical?.[normAttCode]) || task.code;
                   return (
                     <div key={`att-${idx}`} className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <span className="text-sm font-bold text-zinc-800">{task.code}</span>
+                            <span className="text-sm font-bold text-zinc-800">{resolvedAttCode}</span>
                             {task.subjectName && <span className="text-xs font-semibold text-zinc-600 leading-snug">— {task.subjectName}</span>}
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">

@@ -1,5 +1,63 @@
 ## Summary of Changes
 
+### 177. Same-Key Set Storage/Retrieval & Previous-Set Content Leaking Into Next Set (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where after creating and saving Set 1, opening the next set (Set 2) on `QuestionPaperGenerator.jsx` loaded Set 1's questions instead of a fresh Set 2 — the "shows previous set content" symptom.
+- **Root Cause**: The auto-load effect (`checkExisting`) and both save handlers (`handleSaveAssignment`, `handleSaveQuestionPaper`) computed the set storage key via `ciaConfigs.find(c => c.id === exam)` and `getEffectiveNumSets(selectedConfig)`. When `exam` was a **name string** (e.g. `"IA 1"` from the FacultyDashboard URL `&exam=IA 1`) rather than a Firebase push ID, the strict ID lookup returned `undefined`, `getEffectiveNumSets` returned `1`, so `setSuffix` became `''`. Both Set 1 and Set 2 then mapped to the SAME key (`"IA 1"`), so opening Set 2 loaded Set 1's saved content. Additionally, the state-reset effect did not react to `qpSet` changes, so switching sets kept the previous set's questions in the editor.
+- **Changes**:
+  - **`getExamConfig(exam)` used for set-key computation everywhere**: Replaced strict `ciaConfigs.find(c => c.id === exam)` with the name+ID+regulation-aware `getExamConfig(exam)` in the auto-load effect (`checkExisting`), both save handlers (set suffix + storage key), and the exam-parts auto-load effect — so `setSuffix` (`_Set_N`) is applied consistently whether `exam` is a name string or a push ID, keeping Set 1 and Set 2 under distinct keys.
+  - **`qpSet` added to the state-reset effect**: The effect that clears previous paper states and resets `hasLoadedRef` now also fires on `qpSet` change, so switching sets (dropdown or URL) clears the old questions and reloads the correct set's content.
+- Build passes cleanly.
+
+### 176. Regulation-Aware CIA Config Resolution for Weightage Exam Lookup (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where the "Choose Question Paper Set" dropdown still did not show for specific subjects (e.g. `CS342 - Devops`, LIT 202) even after the name-based fallback from entry 175 was applied.
+- **Root Cause**: The name-based fallback in `candidateExamsMap` and `getExamConfig` searched `ciaConfigs` by exam name alone, returning the **first** matching config regardless of regulation. When multiple `cia_configs` documents named "IA 1" existed for different regulations (e.g. `AU - R2021` with `numSets: 1` and `AU - R2025` with `numSets: 2`), the fallback picked the wrong regulation's config — resolving `numSets` to `1` and hiding the Sets dropdown.
+- **Fix**:
+  - **`candidateExamsMap` name fallback**: Now collects all name-matching candidates, then selects the one whose `regulation` matches the current batch's regulation (via `getRegulationForBatch`), falling back to the first candidate only if none match.
+  - **`getExamConfig` name fallback**: Same regulation-aware resolution — prefers configs matching the current regulation over unrelated ones.
+- Build passes cleanly.
+
+### 175. Sets Dropdown Hidden for Weightage-Only Exams (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where the "Choose Question Paper Set" dropdown was not shown for certain subjects (e.g. `CS342 - Devops`, LIT 202) in `QuestionPaperGenerator.jsx`.
+- **Root Cause**: `filteredExams` built exam entries from `course_type_weightage` `exam_weightage` keys. When these keys were name strings (e.g. `"IA 1"`) instead of Firebase doc IDs, `ciaConfigById.get(id)` returned `undefined`. The exam entry got `id: "IA 1"` (the raw name). Downstream `ciaConfigs.find(c => c.id === "IA 1")` failed because the real `cia_configs` doc has a Firebase push ID — so `getEffectiveNumSets(undefined)` returned `1` and the Sets dropdown was hidden.
+- **Fix (part 1)**: Added name-based fallback in the `candidateExamsMap` construction. When `ciaConfigById.get(id)` returns `undefined`, we now also search `ciaConfigs` by normalized exam name to find the matching config and use its real doc ID as the exam entry ID. All downstream `ciaConfigs.find(c => c.id === exam)` lookups now work correctly.
+- **Fix (part 2 — "shows then suddenly hides")**: Because `ciaConfigs` and `course_type_weightage` load via separate async `onSnapshot` listeners in different orders, `filteredExams` could recompute and flip the exam identity between a name string and a config push ID, leaving the selected `exam` state stale (so `ciaConfigs.find(c => c.id === exam)` momentarily failed and the Sets dropdown hid). Added:
+  - **`getExamConfig(examId)` callback**: resolves the selected exam's `cia_configs` document by BOTH document ID and normalized exam name, used for the Sets dropdown visibility condition and option count — so the dropdown stays visible regardless of which form the exam state is in.
+  - **Name→ID resync in the exam auto-select effect**: when the current `exam` is no longer a valid ID in `filteredExams` but matches an entry by normalized exam name, the effect re-syncs `exam` to that entry's current config ID — keeping the Exam `<select>` populated and stable across async reloads.
+- Build passes cleanly.
+
+### 174. CourseBank Canonical Code Resolution on FacultyDashboard (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue where QP Setter Task cards, Assigned Subjects, and Missed Attendance sections on `FacultyDashboard.jsx` displayed stale/legacy course codes (e.g. `CS342`) instead of the current CourseBank canonical codes (e.g. `CCS342`), even though `CourseBank.jsx` and `IAScheduleCreation.jsx` showed the correct codes.
+- **Root Cause**: `qp_setter_assignments` and `subject_assignments` Firestore documents stored course codes at the time of assignment. When a code was later updated in CourseBank (via Replace Code or manual edit), the saved assignments retained the old code. FacultyDashboard displayed `task.code` / `g.codes` directly without resolving against CourseBank.
+- **Changes**:
+  - **Real-Time CourseBank Listener**: Added `onSnapshot` listener on the `courses` collection building both a `nameMap` (normalized name → canonical code, matching IAScheduleCreation's `_nameMap`) and a `codeToCanonical` map (normalized code → canonical code).
+  - **QP Setter Task Card Resolution**: `qpSetterTaskCards` memo now resolves each task's code via both name-based lookup (`courseBankNameMap.nameMap[normTaskName]`) and code-based lookup (`courseBankNameMap.codeToCanonical[normRawCode]`), using the canonical code for display and URL navigation.
+  - **Dual-ID Set Matching**: `generatedSets` filter matches QPs against both old (`rawCode`) and canonical (`canonicalCode`) codes to correctly count papers saved under either version.
+  - **Dual-ID Group Matching**: `matchingGroup` lookup checks `assignedGroups` codes against both old and canonical codes.
+  - **Assigned Subjects Resolution**: Course code pills in the Assigned Subjects section now resolve via `codeToCanonical` before display.
+  - **Missed Attendance Resolution**: Attendance task course codes resolve via `codeToCanonical` before display.
+- Build passes cleanly.
+
+### 173. Set-Overwrite Fix When Moving to the Next QP Set (`FacultyDashboard.jsx`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where after creating & saving questions for Set 1, clicking the task card's "Create Question Paper" button again to make the next set loaded the saved Set 1 questions instead of a fresh Set 2 — making it appear that the paper was being overwritten.
+- **Root Cause**: `qpSet` state in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) defaulted to `'Set 1'`, and the auto-load effect (`checkExisting`) ran *before* the URL `set`-param effect set `qpSet` to `'Set 2'`. The very first load therefore used `_Set_1` as the storage key, loaded the saved Set 1 content into the editor, and set `hasLoadedRef`, so the Set 2 slot was never loaded fresh — saving then wrote Set 1's questions into Set 2 (or overwrote Set 1).
+- **Changes**:
+  - **URL-Driven Initialization**: `qpSet` state is now initialized directly from the URL (`&set=Set 2`) via its `useState` initializer, so the correct set is active on the very first render.
+  - **URL-Effective Set in Auto-Load**: `checkExisting` now derives the effective set from the URL params (falling back to `qpSet`), and `searchParams` was added to its dependency array — covering in-SPA URL changes without remount.
+  - **Relaxed Set Guard**: The URL set auto-select effect no longer blocks a requested set that exceeds the configured set count, so "Generate Additional Set" (e.g. Set 3 of 2) opens an empty paper instead of defaulting back to Set 1.
+  - **Always-Pass Set in Task Button** (`FacultyDashboard.jsx`): The dashboard button now always appends `&set=Set N` (using `task.nextSetLabel`, which already points to the first not-yet-created set), so the next click never falls back to Set 1.
+- Build passes cleanly.
+
+### 172. QP Setter Task "Create Question Paper" Auto-Selection Fix (`FacultyDashboard.jsx`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where clicking "Create Question Paper" from a QP Setter task card on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) failed to auto-select all dropdowns in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) — previously when a common subject showed two cards (same code, different batches), only the second card auto-selected correctly.
+- **Root Causes**:
+  1. `qpSetterTaskCards` derived `progKey`/`department` only from `assignedGroups` (the faculty's *handling* assignments) using an exact batch match; for a QP Setter who is not the handling faculty for that batch the values were empty, so the URL carried empty `prog`/`dept`.
+  2. Deduplication by course code kept the *first* card blindly, which could be the card with empty navigation info.
+  3. QPG's `filteredProgrammes`/`filteredDepartments` only offered programmes/departments the Faculty *teaches* (`derivedProgs`/`derivedDepts`), so a valid URL `prog`/`dept` from a setter task was rejected and the auto-select cascade stalled.
+- **Changes**:
+  - `FacultyDashboard.jsx`: `progKey`/`department` per task are now resolved via fuzzy batch matching (`normBatch`), falling back to the assignment's own `departments[0]`; dedup now keeps the card with the most complete navigation info (progKey, department, academicYear, semester, examDate).
+  - `QuestionPaperGenerator.jsx`: `filteredProgrammes` includes a URL-specified programme even when the faculty has no direct subject-handling assignment there; `filteredDepartments` includes a URL-specified department when valid for the selected programme and no longer returns an empty list for faculty with empty `derivedDepts`.
+- Build passes cleanly.
+
 ### 171. Pre-selection & Default Setter Resolution for Common Subjects (`QPSetterAssignment.jsx`, `IAScheduleCreation.jsx`)
 - **Goal**: Resolve issue where common subjects shared across multiple departments (e.g. `GE3791`, `OML351`, `OSF352`, `GE3751`, `ICL`) displayed `— Assign Setter —` when unassigned, whereas single-faculty subjects auto-selected their handling faculty.
 - **Changes**:

@@ -233,7 +233,7 @@ export default function AdminRoleConfig() {
       const rolesFromDb = Array.from(new Set(snapshot.docs.map(doc => doc.id)));
       
       // Ensure base roles are represented if the collection is empty
-      setAvailableRoles(rolesFromDb.length > 0 ? rolesFromDb : ["Admin", "Principal", "HOD", "Faculty"]);
+      setAvailableRoles(rolesFromDb.length > 0 ? rolesFromDb : ["Admin", "Principal", "HOD", "Academic Coordinator", "Faculty"]);
       setRolePermissions(formatted);
     }, (error) => {
       console.error("Error fetching permissions:", error);
@@ -312,7 +312,7 @@ export default function AdminRoleConfig() {
   };
 
   const handleDeleteRole = async (roleName) => {
-    if (["Admin", "Faculty", "HOD", "Principal"].includes(roleName)) {
+    if (["Admin", "Faculty", "HOD", "Principal", "Academic Coordinator"].includes(roleName)) {
       showNotification("Core roles cannot be deleted");
       return;
     }
