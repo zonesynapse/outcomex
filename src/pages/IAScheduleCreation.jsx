@@ -677,27 +677,41 @@ export default function IAScheduleCreation({ embedded = false }) {
     const cBatch = cleanStr(batch);
     const cAy = cleanStr(academicYear);
     const cSem = String(semester).trim();
+    const batchYear = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
 
     allAssignments.forEach(a => {
-      const matchBatch = !a.batch || cleanStr(a.batch) === cBatch || cleanStr(a.batch).includes(cBatch) || cBatch.includes(cleanStr(a.batch));
+      let matchBatch = !a.batch;
+      if (a.batch) {
+        const aNorm = cleanStr(a.batch);
+        const aYear = a.batch.match(/20\d{2}/)?.[0] || a.batch.match(/\b\d{2}\b/)?.[0] || "";
+        matchBatch = aNorm === cBatch || aNorm.includes(cBatch) || cBatch.includes(aNorm) || (batchYear && aYear && batchYear === aYear);
+      }
+
       const matchAy = !a.academicYear || cleanStr(a.academicYear) === cAy || cleanStr(a.academicYear).includes(cAy) || cAy.includes(cleanStr(a.academicYear));
-      const matchSem = String(a.semester).trim() === cSem;
+      const matchSem = !a.semester || String(a.semester).trim() === cSem;
 
       if (!matchBatch || !matchAy || !matchSem) return;
 
-      const normCode = normCodeKey(a.code);
-      if (!map[normCode]) map[normCode] = [];
-      const exists = map[normCode].find(h => h.uid === a.uid && h.dept === a.dept && h.progKey === a.progKey);
-      if (!exists) {
-        map[normCode].push({ uid: a.uid, dept: a.dept, progKey: a.progKey, prog: a.progKey });
-      }
+      const rawNorm = normCodeKey(a.code);
+      const canonicalCode = getCanonicalCode(a.code, a.courseName || a.subjectName || a.name, a.dept);
+      const canonicalNorm = normCodeKey(canonicalCode);
+
+      const keysToAdd = new Set([rawNorm, canonicalNorm].filter(Boolean));
+
+      keysToAdd.forEach(k => {
+        if (!map[k]) map[k] = [];
+        const exists = map[k].find(h => h.uid === a.uid && h.dept === a.dept && h.progKey === a.progKey);
+        if (!exists) {
+          map[k].push({ uid: a.uid, dept: a.dept, progKey: a.progKey, prog: a.progKey });
+        }
+      });
     });
 
     Object.keys(map).forEach(code => {
       map[code].sort((x, y) => (getFacultyName(x.uid) || '').localeCompare(getFacultyName(y.uid) || ''));
     });
     return map;
-  }, [allAssignments, batch, academicYear, semester, usersMap]);
+  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode]);
 
   // Combine rows with handling faculty (respecting the multi-select course type filter)
   const rows = useMemo(() => {

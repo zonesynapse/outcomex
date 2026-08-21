@@ -219,21 +219,44 @@ export default function QPSetterAssignment() {
   const codeHandlers = useMemo(() => {
     if (!batch || !academicYear || !semester) return {};
     const map = {};
+    const cBatch = normClean(batch);
+    const cAy = normClean(academicYear);
+    const cSem = String(semester).trim();
+    const batchYear = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+
     allAssignments.forEach(a => {
-      if (a.batch !== batch) return;
-      if (a.academicYear !== academicYear) return;
-      if (String(a.semester) !== String(semester)) return;
-      if (!map[a.code]) map[a.code] = [];
-      const exists = map[a.code].find(h => h.uid === a.uid && h.dept === a.dept && h.progKey === a.progKey);
-      if (!exists) {
-        map[a.code].push({ uid: a.uid, dept: a.dept, progKey: a.progKey, prog: a.progKey });
+      let matchBatch = !a.batch;
+      if (a.batch) {
+        const aNorm = normClean(a.batch);
+        const aYear = a.batch.match(/20\d{2}/)?.[0] || a.batch.match(/\b\d{2}\b/)?.[0] || "";
+        matchBatch = aNorm === cBatch || aNorm.includes(cBatch) || cBatch.includes(aNorm) || (batchYear && aYear && batchYear === aYear);
       }
+
+      const matchAy = !a.academicYear || normClean(a.academicYear) === cAy || normClean(a.academicYear).includes(cAy) || cAy.includes(normClean(a.academicYear));
+      const matchSem = !a.semester || String(a.semester).trim() === cSem;
+
+      if (!matchBatch || !matchAy || !matchSem) return;
+
+      const rawNorm = normCodeKey(a.code);
+      const canonicalCode = getCanonicalCode(a.code, a.courseName || a.subjectName || a.name, a.dept);
+      const canonicalNorm = normCodeKey(canonicalCode);
+
+      const keysToAdd = new Set([rawNorm, canonicalNorm].filter(Boolean));
+
+      keysToAdd.forEach(k => {
+        if (!map[k]) map[k] = [];
+        const exists = map[k].find(h => h.uid === a.uid && h.dept === a.dept && h.progKey === a.progKey);
+        if (!exists) {
+          map[k].push({ uid: a.uid, dept: a.dept, progKey: a.progKey, prog: a.progKey });
+        }
+      });
     });
+
     Object.keys(map).forEach(code => {
       map[code].sort((x, y) => (getFacultyName(x.uid) || '').localeCompare(getFacultyName(y.uid) || ''));
     });
     return map;
-  }, [allAssignments, batch, academicYear, semester, usersMap]);
+  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode]);
 
   const rows = useMemo(() => {
     if (!syllabusSubjects.length) return [];

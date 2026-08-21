@@ -1,5 +1,15 @@
 ## Summary of Changes
 
+### 180. Canonical Course Code Resolution & Start-Year Batch Matching (`IAScheduleCreation.jsx`, `QPSetterAssignment.jsx`)
+- **Goal**: Fix issue where subjects (such as `BM3301` and `BM3352` under `B.E. Bio Medical Engineering`) displayed `No faculty allocated` and `-- Select Setter --` in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) even though subject handling faculty (`Jainith K` and `Mahalakshmi`) were assigned on [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx).
+- **Root Cause**:
+  1. `subject_assignments` stored legacy course codes or codes without canonical resolution. When `IAScheduleCreation.jsx` mapped subjects by `canonicalCode` (e.g. `CCS342` or `BM3301`), `codeHandlers` only keyed by `a.code`, causing the lookup to fail and return an empty `handlers` array (`No faculty allocated`).
+  2. Batch string comparison (`cleanStr(a.batch) === cBatch`) failed when batch names differed slightly (e.g. `25 Batch (2025-29)` vs `25 Batch`).
+- **Changes**:
+  - **Canonical Code Mapping**: Updated `codeHandlers` in both [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) and [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx) to resolve both `rawNorm` and `canonicalNorm` (via `getCanonicalCode`), mapping handling faculty under both keys.
+  - **Start-Year Batch Matching**: Updated batch matching in `codeHandlers` to extract start years (e.g. `2025`), ensuring handling faculty are resolved regardless of batch formatting variations.
+- Build passes cleanly.
+
 ### 179. PG & UG Batch Duration Validation (`PrincipalIAScheduleView.jsx`)
 - **Goal**: Resolve issue where PG batches (e.g. `25 Batch (2025-27)` with 2-year duration) appeared as duplicate cards under UG departments (e.g. `B.E. Bio Medical Engineering`), resulting in two `25 Batch` cards showing in the timetable schedule view.
 - **Root Cause**: `PrincipalIAScheduleView.jsx` grouped schedule items by department label without verifying whether the batch's total duration (2-year PG vs 4-year UG) matched the department type (UG vs PG). A PG batch (2025-2027) was thus rendered under UG departments (B.E. Bio Medical Engineering), creating duplicate `25 Batch (2025-29)` and `25 Batch (2025-27)` cards.
