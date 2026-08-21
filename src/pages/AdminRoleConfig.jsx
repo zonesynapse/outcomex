@@ -146,7 +146,7 @@ export default function AdminRoleConfig() {
   }, [ALL_PAGES]);
 
   useEffect(() => {
-    let unsubscribeUserData = () => {};
+    let unsubscribeUserData = () => { };
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -230,10 +230,9 @@ export default function AdminRoleConfig() {
       });
 
       // Dynamically set available roles based on document IDs in role_permissions
-      const rolesFromDb = Array.from(new Set(snapshot.docs.map(doc => doc.id)));
-      
-      // Ensure base roles are represented if the collection is empty
-      setAvailableRoles(rolesFromDb.length > 0 ? rolesFromDb : ["Admin", "Principal", "HOD", "Academic Coordinator", "Faculty"]);
+      const coreRoles = ["Admin", "Principal", "HOD", "Academic Coordinator", "Faculty"];
+      const combinedRoles = Array.from(new Set([...coreRoles, ...rolesFromDb]));
+      setAvailableRoles(combinedRoles);
       setRolePermissions(formatted);
     }, (error) => {
       console.error("Error fetching permissions:", error);
@@ -266,7 +265,7 @@ export default function AdminRoleConfig() {
     setSavingPermissions(true);
     try {
       const normalized = {};
-      
+
       // Use availableRoles as the source of truth to ensure 
       // every role (including newly created ones) is persisted.
       availableRoles.forEach(role => {
@@ -275,8 +274,8 @@ export default function AdminRoleConfig() {
         perms.forEach(p => permsMap[p] = true);
         normalized[role] = permsMap;
       });
-      
-      await Promise.all(Object.entries(normalized).map(([role, map]) => 
+
+      await Promise.all(Object.entries(normalized).map(([role, map]) =>
         setDoc(doc(db, 'role_permissions', role), map)
       ));
 
@@ -292,9 +291,12 @@ export default function AdminRoleConfig() {
   const handleCreateRole = async () => {
     const roleName = newRoleInput.trim();
     if (!roleName) return;
-    
-    const normalizedRole = roleName.charAt(0).toUpperCase() + roleName.slice(1).toLowerCase();
-    if (availableRoles.includes(normalizedRole)) {
+
+    const normalizedRole = roleName
+      .split(/\s+/)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+    if (availableRoles.some(r => r.toLowerCase() === normalizedRole.toLowerCase())) {
       showNotification("Role already exists");
       return;
     }
@@ -385,7 +387,7 @@ export default function AdminRoleConfig() {
       return;
     }
     try {
-      await updateDoc(doc(db, "users", userToRevoke.uid), { 
+      await updateDoc(doc(db, "users", userToRevoke.uid), {
         isApproved: false,
         revocationReason: revokeReason,
         role: "Faculty",
@@ -545,14 +547,14 @@ export default function AdminRoleConfig() {
     <Layout title="Admin Role Configuration">
       <div className="p-4 md:p-8 w-full space-y-6">
         <div className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div className="flex items-center gap-4 flex-1">
+          <div className="flex items-center gap-4 flex-1">
             <div className="p-3 bg-[#120c7a] rounded-xl text-white shadow-lg shrink-0">
               <Shield size={25} />
             </div>
             {activeTab === "users" && (
               <div className="relative max-w-md w-full">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#120c7a] transition-colors" size={18} />
-                <input 
+                <input
                   type="text"
                   placeholder="Search users by name, email, or faculty ID..."
                   value={userSearchTerm}
@@ -567,11 +569,11 @@ export default function AdminRoleConfig() {
               </div>
             )}
           </div>
-          
+
           <div className="flex flex-wrap items-center gap-3">
             {isAddingRole ? (
               <div className="flex items-center gap-2 bg-white p-1 pr-2 rounded-xl border border-zinc-200 shadow-sm animate-in fade-in slide-in-from-right-2">
-                <input 
+                <input
                   type="text"
                   value={newRoleInput}
                   onChange={(e) => setNewRoleInput(e.target.value)}
@@ -580,13 +582,13 @@ export default function AdminRoleConfig() {
                   autoFocus
                   onKeyDown={(e) => e.key === 'Enter' && handleCreateRole()}
                 />
-                <button 
+                <button
                   onClick={handleCreateRole}
                   className="p-1.5 bg-[#120c7a] text-white rounded-lg hover:bg-blue-800"
                 >
                   <Plus size={16} />
                 </button>
-                <button 
+                <button
                   onClick={() => setIsAddingRole(false)}
                   className="p-1.5 text-zinc-400 hover:text-zinc-600"
                 >
@@ -594,7 +596,7 @@ export default function AdminRoleConfig() {
                 </button>
               </div>
             ) : (
-              <button 
+              <button
                 onClick={() => setIsAddingRole(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:border-[#120c7a] hover:text-[#120c7a] transition-all shadow-sm"
               >
@@ -603,13 +605,13 @@ export default function AdminRoleConfig() {
             )}
 
             <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-              <button 
+              <button
                 onClick={() => setActiveTab("users")}
                 className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "users" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
               >
                 User Management
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab("permissions")}
                 className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${activeTab === "permissions" ? "bg-white text-[#120c7a] shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}
               >
@@ -786,8 +788,8 @@ export default function AdminRoleConfig() {
                         <th key={role} className="px-6 py-4 text-sm font-bold text-zinc-600 text-center min-w-[120px]">
                           <div className="flex flex-col items-center gap-1">
                             <span>{role}</span>
-                            {!["Admin", "Faculty", "HOD", "Principal"].includes(role) && (
-                              <button 
+                            {!["Admin", "Faculty", "HOD", "Principal", "Academic Coordinator"].includes(role) && (
+                              <button
                                 onClick={() => handleDeleteRole(role)}
                                 className="text-[9px] text-red-400 hover:text-red-600 uppercase tracking-tighter"
                               >
@@ -804,8 +806,8 @@ export default function AdminRoleConfig() {
                       <React.Fragment key={moduleName}>
                         {/* Module category spacer heading row */}
                         <tr className="bg-indigo-50/20">
-                          <td 
-                            colSpan={availableRoles.length + 1} 
+                          <td
+                            colSpan={availableRoles.length + 1}
                             className="px-6 py-2.5 text-[10px] font-black uppercase text-indigo-900 tracking-wider font-sans bg-indigo-50/25 sticky left-0"
                           >
                             Module: {moduleName}
@@ -822,8 +824,8 @@ export default function AdminRoleConfig() {
                             {availableRoles.map(role => (
                               <td key={`${role}-${page.id}`} className="px-6 py-3.5 text-center">
                                 <label className="relative inline-flex items-center cursor-pointer">
-                                  <input 
-                                    type="checkbox" 
+                                  <input
+                                    type="checkbox"
                                     className="sr-only peer"
                                     checked={rolePermissions[role]?.includes(page.id) || false}
                                     onChange={() => handleTogglePermission(role, page.id)}
@@ -839,9 +841,9 @@ export default function AdminRoleConfig() {
                   </tbody>
                 </table>
               </div>
-              
+
               <div className="p-6 bg-zinc-50 border-t border-zinc-200 flex justify-end">
-                <button 
+                <button
                   onClick={savePermissions}
                   disabled={savingPermissions}
                   className="bg-[#120c7a] text-white px-8 py-3 rounded-xl font-bold hover:bg-[#0e0960] transition-colors shadow-lg shadow-blue-900/20 disabled:opacity-50 flex items-center gap-2"

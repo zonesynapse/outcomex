@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X, Bookmark, Save } from 'lucide-react';
 import Layout from '../components/Layout';
 import MathTemplateToolbar from '../components/MathTemplateToolbar';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
-import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query } from 'firebase/firestore'; // Firestore imports
+import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query, addDoc, serverTimestamp } from 'firebase/firestore'; // Firestore imports
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { uploadFile, userStoragePath } from '../utils/fileUpload'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
@@ -15,6 +15,13 @@ import { useSemesterType } from '../hooks/useSemesterType';
 import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay } from '../lib/utils';
 import useUnsavedChanges from '../hooks/useUnsavedChanges';
 import { typesetMath } from '../utils/mathJaxUtils';
+
+const getQuestionByQNo = (questions, targetQNo) => {
+  if (!questions || !targetQNo) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetNorm = norm(targetQNo);
+  return questions.find(q => norm(q?.qno) === targetNorm) || null;
+};
 
 function deriveSemesterNumber(semStr) {
   if (!semStr) return '';
@@ -119,7 +126,7 @@ const formatExamDateDisplay = (dateVal) => {
       const year = d.getFullYear();
       return `${day}.${month}.${year}`;
     }
-  } catch (e) {}
+  } catch (e) { }
   return String(dateVal);
 };
 
@@ -229,7 +236,7 @@ export default function QuestionPaperGenerator() {
   }, []);
 
   const handleCkImageUpload = (editor) => {
-    editor.on('fileUploadRequest', function(evt) {
+    editor.on('fileUploadRequest', function (evt) {
       const fileLoader = evt.data.fileLoader;
       const file = fileLoader.file;
       if (!file) return;
@@ -557,6 +564,8 @@ export default function QuestionPaperGenerator() {
   const [showFinalPreview, setShowFinalPreview] = useState(false);
   const [hodComments, setHodComments] = useState('');
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [loadedPaperStatus, setLoadedPaperStatus] = useState('');
 
   // Trigger MathJax typesetting whenever question list, editor, or preview state changes
   useEffect(() => {
@@ -1478,7 +1487,7 @@ export default function QuestionPaperGenerator() {
 
     const findCategoryData = (reg) => {
       if (!reg || !subjectCourseType) return null;
-      
+
       const cleanSubjType = normClean(subjectCourseType);
 
       // 1. Direct exact key match (e.g. reg["Theory"] or reg["Laboratory"])
@@ -2722,6 +2731,7 @@ export default function QuestionPaperGenerator() {
       setQbAvailableQNos([]); // Clear available Q.Nos when config changes
       setHodComments(''); // Clear HOD comments when starting a new paper
       setLoadedExamName('');
+      setLoadedPaperStatus('');
     }
   }, [editId, compositeKey, program, department, batch, academicYear, selectedSemester, subject, exam, customExam, qpSet]);
 
@@ -2740,7 +2750,7 @@ export default function QuestionPaperGenerator() {
     const urlSetParam = searchParams.get('set') || searchParams.get('qpSet') || searchParams.get('setNumber');
     const urlSetMatch = urlSetParam ? String(urlSetParam).match(/\d+/) : null;
     const effectiveQpSet = urlSetMatch ? `Set ${urlSetMatch[0]}` : qpSet;
-    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${effectiveQpSet.replace(' ', '')}` : '';
+    const setSuffix = (effectiveSetCount > 1) ? `_Set_${effectiveQpSet.replace(' ', '')}` : '';
     // Use a stable composite key that does NOT include the human-editable exam display name.
     // This prevents creating a new DB node when exam display changes after recorrection.
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
@@ -2755,6 +2765,7 @@ export default function QuestionPaperGenerator() {
 
         if (qp && !hasLoadedRef.current) {
           hasLoadedRef.current = true;
+          setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
 
           // Resolve kldomain: if saved as name, convert to key; strip <p> tags
           const resolveConfig = (config) => (config || []).map(q => ({
@@ -2863,6 +2874,7 @@ export default function QuestionPaperGenerator() {
         const qp = snapshot.data()?.[editId]; // Read from field in parent doc
 
         if (qp) {
+          setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
           setAssessmentType(qp.assessment_type || 'Exam');
           setProgram(qp.programme || '');
           setDepartment(qp.department || '');
@@ -3145,13 +3157,13 @@ export default function QuestionPaperGenerator() {
 
       // Convert Roman numerals to digits
       s = s.replace(/\bviii\b/g, '8')
-           .replace(/\bvii\b/g, '7')
-           .replace(/\bvi\b/g, '6')
-           .replace(/\biv\b/g, '4')
-           .replace(/\bv\b/g, '5')
-           .replace(/\biii\b/g, '3')
-           .replace(/\bii\b/g, '2')
-           .replace(/\bi\b/g, '1');
+        .replace(/\bvii\b/g, '7')
+        .replace(/\bvi\b/g, '6')
+        .replace(/\biv\b/g, '4')
+        .replace(/\bv\b/g, '5')
+        .replace(/\biii\b/g, '3')
+        .replace(/\bii\b/g, '2')
+        .replace(/\bi\b/g, '1');
 
       return s.replace(/[^a-z0-9]/g, '');
     };
@@ -3359,7 +3371,7 @@ export default function QuestionPaperGenerator() {
                   break;
                 }
               }
-            } catch (e) {}
+            } catch (e) { }
           }
         }
 
@@ -4284,7 +4296,7 @@ export default function QuestionPaperGenerator() {
     // Set 2 map to the same key and overwrite/load each other's content.
     const selectedConfig = getExamConfig(exam);
     const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
-    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    const setSuffix = (effectiveSetCount > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
 
     const sanitizeKey = (key) => {
       if (!key) return '';
@@ -4326,6 +4338,7 @@ export default function QuestionPaperGenerator() {
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
+      faculty_signature_url: currentUserSignatureUrl || null,
       hod_comments: (status === 'recorrected') ? hodComments : null // Clear HOD comments if status changes from recorrected
     };
 
@@ -4600,7 +4613,7 @@ export default function QuestionPaperGenerator() {
       });
     }
 
-    const setSuffix = (getEffectiveNumSets(selectedConfig) > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+    const setSuffix = (effectiveSetCount > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
     // Use stable composite key not including examDisplay
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
     const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
@@ -4652,6 +4665,7 @@ export default function QuestionPaperGenerator() {
       forwarded_to: forwardedToUid,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
+      faculty_signature_url: currentUserSignatureUrl || null,
       hod_comments: (status === 'recorrected') ? hodComments : null,
       assignment_kl: '',
       assignment_kl_domain: '',
@@ -4683,13 +4697,309 @@ export default function QuestionPaperGenerator() {
     }
   };
 
+  const handleSaveDraft = async () => {
+    if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
+      showToast("Please fill in the required header fields (Programme, Department, Batch, Semester, Subject, Exam) before saving draft.", "error");
+      return false;
+    }
+
+    setIsSavingDraft(true);
+    try {
+      // 1. Capture in-progress question from qbEditor if user was in the middle of typing
+      let currentQuestions = [...qpQuestions];
+      try {
+        let currentEditorText = '';
+        const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+        if (inst && typeof inst.getData === 'function') {
+          currentEditorText = inst.getData().trim();
+        } else {
+          const el = document.getElementById('qbEditor');
+          if (el) currentEditorText = el.value.trim();
+        }
+
+        if (currentEditorText && qbQNo) {
+          const existingIdx = currentQuestions.findIndex(q => String(q.qno || '').trim() === String(qbQNo).trim());
+          const newQ = {
+            qno: qbQNo,
+            question: currentEditorText,
+            kl: qbKL || 'L1',
+            kldomain: qbKLDomain || '',
+            co: qbCO || '',
+            pi: qbPI || '',
+            marks: qbMarks || 2,
+            sub: qbQNo.toLowerCase().endsWith('a') ? 'a' : qbQNo.toLowerCase().endsWith('b') ? 'b' : '',
+            either_or: qbQNo.toLowerCase().endsWith('a') || qbQNo.toLowerCase().endsWith('b') || qbQNo.includes('(a)') || qbQNo.includes('(b)')
+          };
+          if (existingIdx !== -1) {
+            currentQuestions[existingIdx] = newQ;
+          } else {
+            currentQuestions.push(newQ);
+          }
+          setQpQuestions(currentQuestions);
+        }
+      } catch (e) {
+        console.warn("Could not capture in-progress qbEditor question:", e);
+      }
+
+      // 2. Extract HTML table data if preview CKEditor is active
+      const extractedData = {};
+      if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
+        try {
+          const content = window.CKEDITOR.instances.questionEditor.getData();
+          if (content && content.trim()) {
+            const parser = new DOMParser();
+            const contentDoc = parser.parseFromString(content, 'text/html');
+            const tables = contentDoc.querySelectorAll('table');
+            tables.forEach(table => {
+              const headers = table.querySelectorAll('th');
+              if (headers.length >= 4 && headers[0].textContent.includes('Q. No.')) {
+                const rows = table.querySelectorAll('tbody tr');
+                let questionIndex = -1, klIndex = -1, coIndex = -1, piIndex = -1;
+                headers.forEach((h, idx) => {
+                  const txt = (h.textContent || '').trim().toLowerCase();
+                  if (txt.includes('question')) questionIndex = idx;
+                  if (txt === 'kl') klIndex = idx;
+                  if (txt === 'co') coIndex = idx;
+                  if (txt === 'pi') piIndex = idx;
+                });
+                const getCellValue = (cell) => {
+                  const select = cell.querySelector('select');
+                  if (select) {
+                    try { if (select.value && select.value.trim() !== '') return select.value; } catch { }
+                    const selectedOption = select.querySelector('option[selected]') || select.querySelector('option[selected="selected"]');
+                    if (selectedOption && selectedOption.value) return selectedOption.value;
+                    const firstOption = select.querySelector('option');
+                    if (firstOption) return firstOption.value || firstOption.textContent.trim();
+                  }
+                  return cell.textContent.trim();
+                };
+                rows.forEach(row => {
+                  const cells = row.querySelectorAll('td');
+                  if (cells.length === 0) return;
+                  const texts = Array.from(cells).map(c => c.textContent.trim());
+                  if (texts.some(t => t.toLowerCase() === '(or)')) return;
+                  const firstCellText = (texts[0] || '').trim();
+                  const cleanCellText = firstCellText.replace(/\s+/g, '');
+                  const m = cleanCellText.match(/^(\d+)(?:\(?([a-zA-Z])\)?)?$/i) || firstCellText.match(/^(\d+)\s*(?:\(?([a-zA-Z])\)?)?$/i);
+                  let rowQ = '';
+                  if (m && m[1]) rowQ = m[2] ? `${m[1]}(${m[2].toLowerCase()})` : `${m[1]}`;
+                  if (!rowQ) return;
+                  let questionText = questionIndex >= 0 && cells.length > questionIndex ? cells[questionIndex].textContent.trim() : (cells[1]?.textContent.trim() || '');
+                  let kl = klIndex >= 0 && cells.length > klIndex ? getCellValue(cells[klIndex]) : '';
+                  let co = coIndex >= 0 && cells.length > coIndex ? getCellValue(cells[coIndex]) : '';
+                  let pi = piIndex >= 0 && cells.length > piIndex ? getCellValue(cells[piIndex]) : '';
+                  for (let i = 0; i < cells.length; i++) {
+                    const val = getCellValue(cells[i]);
+                    if (!kl && /^L[1-6]$/i.test(val)) kl = val;
+                    if (!co && /^CO\d+/i.test(val)) co = val;
+                    if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
+                  }
+                  extractedData[rowQ] = { question: questionText || '', kl: kl || '', co: co || '', pi: pi || '' };
+                });
+              }
+            });
+          }
+        } catch (e) {
+          console.warn("Error reading from questionEditor for draft:", e);
+        }
+      }
+
+      // 3. Build parts payload
+      const partsForPayload = [];
+      let overallTotal = 0;
+      let payloadQuestionCounter = 1;
+
+      if (assessmentType === 'Exam') {
+        (partsConfig || []).forEach((part, index) => {
+          const partLetter = String.fromCharCode(64 + index + 1);
+          const qs = [];
+          const count = parseInt(part?.numQuestions, 10) || 0;
+          const marks = parseInt(part?.marksPerQuestion, 10) || 0;
+
+          for (let j = 0; j < count; j++) {
+            if (part?.isEitherOr) {
+              const qnoA = `${payloadQuestionCounter}(a)`;
+              const qnoAAlt = `${payloadQuestionCounter}a`;
+              const qnoB = `${payloadQuestionCounter}(b)`;
+              const qnoBAlt = `${payloadQuestionCounter}b`;
+
+              const qa = getQuestionByQNo(currentQuestions, `${payloadQuestionCounter}a`) || getQuestionByQNo(currentQuestions, qnoA);
+              const qb = getQuestionByQNo(currentQuestions, `${payloadQuestionCounter}b`) || getQuestionByQNo(currentQuestions, qnoB);
+
+              const dataA = extractedData[qnoA] || extractedData[qnoAAlt] || {};
+              const dataB = extractedData[qnoB] || extractedData[qnoBAlt] || {};
+
+              qs.push({
+                qno: qnoA,
+                sub: "a",
+                either_or: true,
+                marks: qa?.marks || marks,
+                question: dataA.question || qa?.question || "",
+                co: dataA.co || qa?.co || "",
+                kl: dataA.kl || qa?.kl || "",
+                kldomain: qa?.kldomain || "",
+                pi: (dataA.pi && dataA.pi.toUpperCase() !== 'PI') ? dataA.pi : (qa?.pi || "")
+              });
+
+              qs.push({
+                qno: qnoB,
+                sub: "b",
+                either_or: true,
+                marks: qb?.marks || marks,
+                question: dataB.question || qb?.question || "",
+                co: dataB.co || qb?.co || "",
+                kl: dataB.kl || qb?.kl || "",
+                kldomain: qb?.kldomain || "",
+                pi: (dataB.pi && dataB.pi.toUpperCase() !== 'PI') ? dataB.pi : (qb?.pi || "")
+              });
+            } else {
+              const qno = `${payloadQuestionCounter}`;
+              const q = getQuestionByQNo(currentQuestions, `${payloadQuestionCounter}`) || getQuestionByQNo(currentQuestions, qno);
+              const dataQ = extractedData[qno] || {};
+
+              qs.push({
+                qno: qno,
+                either_or: false,
+                marks: q?.marks || marks,
+                question: dataQ.question || q?.question || "",
+                co: dataQ.co || q?.co || "",
+                kl: dataQ.kl || q?.kl || "",
+                kldomain: q?.kldomain || "",
+                pi: (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI') ? dataQ.pi : (q?.pi || "")
+              });
+            }
+            payloadQuestionCounter++;
+          }
+
+          overallTotal += count * marks;
+
+          partsForPayload.push({
+            part: partLetter,
+            num_questions: count,
+            marks_per_question: marks,
+            isEitherOr: !!part?.isEitherOr,
+            questions: qs
+          });
+        });
+      } else if (isAssignmentOrProject || assessmentType === 'Indirect') {
+        (assignmentConfig || []).forEach(q => {
+          overallTotal += (parseInt(q?.marks, 10) || 0);
+        });
+      }
+
+      const semesterNum = deriveSemesterNumber(selectedSemester);
+      const selectedConfig = getExamConfig(exam);
+      const examDisplay = exam === 'custom' ? customExam : (selectedConfig ? selectedConfig.examName : (loadedExamName || exam));
+      const setSuffix = (effectiveSetCount > 1) ? `_Set_${qpSet.replace(' ', '')}` : '';
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const key = `${sanitizeKey(department)}_${sanitizeKey(academicYear)}_${sanitizeKey(subjectCode)}${sectionSuffix}`;
+      const qpDocId = exam === 'custom' ? (isAssignmentOrProject ? (assessmentType === 'Project' ? 'Project' : assessmentType === 'Practical' ? 'Practical' : 'Assignment') : assessmentType === 'Indirect' ? 'Indirect' : 'Exam') : `${exam}${setSuffix}`;
+
+      const selectedSub = subjects.find(s => s.value === subject);
+      const subjectName = selectedSub ? selectedSub.text.split(' - ')[1] : '';
+
+      // Calculate co_weightage
+      const co_weightage = {};
+      if (assessmentType === 'Exam') {
+        partsForPayload.forEach(p => {
+          (p.questions || []).forEach(q => {
+            if (q.co && q.marks) {
+              co_weightage[q.co] = (co_weightage[q.co] || 0) + (parseInt(q.marks, 10) || 0);
+            }
+          });
+        });
+      } else {
+        (assignmentConfig || []).forEach(q => {
+          (q.mappings || []).forEach(m => {
+            if (m.co && m.marks) {
+              co_weightage[m.co] = (co_weightage[m.co] || 0) + (parseInt(m.marks, 10) || 0);
+            }
+          });
+        });
+      }
+
+      const payload = {
+        academic_year: academicYear,
+        department: department,
+        programme: program,
+        batch: batch,
+        section: section || '',
+        qp_set: qpSet,
+        parts: partsForPayload,
+        assignment_config: (isAssignmentOrProject || assessmentType === 'Indirect') ? assignmentConfig : [],
+        assessment_type: assessmentType,
+        qpaper_name: exam === 'custom' ? examDisplay : exam,
+        exam_name: examDisplay,
+        saved_at: new Date().toISOString(),
+        semester: String(semesterNum || ''),
+        subject: subject,
+        subject_name: subjectName,
+        total_marks: overallTotal,
+        co_weightage: co_weightage,
+        created_by: auth.currentUser?.uid || null,
+        updated_by: auth.currentUser?.uid || null,
+        updated_at: new Date().toISOString(),
+        status: 'draft',
+        is_draft: true,
+        forwarded_to: null,
+        forwarded_by: null,
+        forwarded_at: null,
+        faculty_signature_url: currentUserSignatureUrl || null,
+        hod_comments: hodComments || null,
+        assignment_kl: '',
+        assignment_kl_domain: '',
+        common_for: commonForDisplay || 'NIL',
+        exam_date: scheduledExamInfo?.rawDate || '',
+        exam_date_display: scheduledExamInfo?.date || '',
+        duration: scheduledExamInfo?.duration || '180 min',
+        start_time: scheduledExamInfo?.startTime || '',
+        end_time: scheduledExamInfo?.endTime || '',
+      };
+
+      if (editId && compositeKey) {
+        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: payload }, { merge: true });
+      }
+
+      if (assessmentType === 'Exam') {
+        setSavedExamParts(partsForPayload || []);
+      } else {
+        setSavedAssignmentConfig(assignmentConfig || []);
+      }
+
+      setLoadedPaperStatus('draft');
+      showToast("Draft saved successfully! You can resume editing anytime.", "success");
+      return true;
+    } catch (error) {
+      console.error('Error saving draft:', error);
+      showToast('Failed to save draft.', 'error');
+      return false;
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   const handleForwardPaper = async () => {
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam) {
       showToast("Please fill in all required fields before forwarding.", "error");
       return;
     }
 
-    if (!currentUserSignatureUrl) {
+    let sigUrl = currentUserSignatureUrl;
+    if (!sigUrl && auth.currentUser?.uid) {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+        if (userSnap.exists()) {
+          sigUrl = userSnap.data()?.signatureUrl || '';
+          if (sigUrl) setCurrentUserSignatureUrl(sigUrl);
+        }
+      } catch (e) {
+        console.error("Error fetching live user signature:", e);
+      }
+    }
+
+    if (!sigUrl) {
       showToast("Please upload your digital signature in your profile before forwarding.", "error");
       return;
     }
@@ -4755,7 +5065,7 @@ export default function QuestionPaperGenerator() {
       assignment_kl_domain: ''
     };
 
-    const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, currentUserSignatureUrl);
+    const contentWithSignature = getQuestionPaperHTML(qpDataForForward, courseOutcomes, null, null, sigUrl);
 
     // 2. Find Academic Coordinator for the paper (department-based for non-common, setter-based for common)
     let acUid = null;
@@ -4765,8 +5075,8 @@ export default function QuestionPaperGenerator() {
       const usersSnapshot = await getDocs(usersRef);
       if (!usersSnapshot.empty) {
         const allUsers = {};
-        usersSnapshot.forEach(d => { allUsers[d.id] = d.data(); });
-        const norm = (v) => String(v || '').toLowerCase().replace(/[._\s]+/g, ' ').trim();
+        usersSnapshot.forEach(d => { allUsers[d.id] = { uid: d.id, ...d.data() }; });
+        const norm = (v) => String(v || '').toLowerCase().replace(/[._\s\-]+/g, ' ').trim();
 
         // Common subjects (shared across departments in IAScheduleCreation) route to the
         // Academic Coordinator of the department whose faculty was set as the QP setter.
@@ -4787,12 +5097,30 @@ export default function QuestionPaperGenerator() {
 
         const targetNorm = norm(targetDept);
         const acs = Object.values(allUsers).filter(
-          user => user.role === 'Academic Coordinator' && user.isApproved
+          user => norm(user.role) === 'academic coordinator' && user.isApproved !== false
         );
-        const matchedAc = acs.find(u => norm(u.department) === targetNorm) ||
-          acs.find(u => norm(u.department).includes(targetNorm) || targetNorm.includes(norm(u.department)));
+
+        const isDeptMatch = (userDept, target) => {
+          const uNorm = norm(userDept);
+          const tNorm = norm(target);
+          if (!uNorm || !tNorm) return false;
+          if (uNorm === tNorm) return true;
+          if (uNorm.includes(tNorm) || tNorm.includes(uNorm)) return true;
+          const uClean = uNorm.replace(/[^a-z0-9]/g, '');
+          const tClean = tNorm.replace(/[^a-z0-9]/g, '');
+          if (uClean === tClean || uClean.includes(tClean) || tClean.includes(uClean)) return true;
+          const getAcronym = (s) => s.split(/\s+/).filter(w => !['and', '&', 'of', 'in', 'the', 'b.e.', 'b.tech', 'm.e.', 'm.tech', 'department'].includes(w)).map(w => w[0]).join('');
+          const uAcro = getAcronym(uNorm);
+          const tAcro = getAcronym(tNorm);
+          if (uAcro && tAcro && (uAcro === tAcro || uAcro === tClean || tAcro === uClean)) return true;
+          return false;
+        };
+
+        const matchedAc = acs.find(u => isDeptMatch(u.department, targetDept)) ||
+          (acs.length === 1 ? acs[0] : null);
+
         if (matchedAc) {
-          acUid = matchedAc.uid;
+          acUid = matchedAc.uid || matchedAc.id;
         }
       }
     } catch (error) {
@@ -4812,13 +5140,34 @@ export default function QuestionPaperGenerator() {
         // 4. Save the paper with 'forwarded' status
         const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid) : await handleSaveQuestionPaper(true, 'forwarded', acUid);
         if (isSaved) {
+          try {
+            await addDoc(collection(db, 'notifications'), {
+              type: 'qp_forwarded',
+              targetUid: acUid,
+              targetName: "Academic Coordinator",
+              subjectCode: subjectCode || '',
+              subjectName: subjects.find(s => s.value === subject)?.text.split(' - ')[1] || '',
+              examName: exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || exam),
+              forwardedBy: auth.currentUser?.uid,
+              forwardedByName: auth.currentUser?.displayName || "Faculty",
+              createdAt: serverTimestamp(),
+              read: false
+            });
+          } catch (notifErr) {
+            console.error("Error sending forward notification:", notifErr);
+          }
           showToast("Question paper forwarded to Academic Coordinator successfully!", "success");
         } else {
           showToast("Failed to forward question paper.", "error");
         }
       });
     } else {
-      showToast("Editor not ready. Please finalize the paper first.", "error");
+      const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid) : await handleSaveQuestionPaper(true, 'forwarded', acUid);
+      if (isSaved) {
+        showToast("Question paper forwarded to Academic Coordinator successfully!", "success");
+      } else {
+        showToast("Failed to forward question paper.", "error");
+      }
     }
   };
 
@@ -5280,6 +5629,17 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
       <div className="question-paper-page container mx-auto p-6 max-w-7xl">
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-bold text-slate-800">Assessment & Subject Configuration</h2>
+              {loadedPaperStatus === 'draft' && (
+                <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full border border-amber-300 flex items-center gap-1.5 shadow-sm">
+                  <Bookmark size={13} className="text-amber-600" />
+                  Draft Saved
+                </span>
+              )}
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
             <div className="space-y-2.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Program</label>
@@ -5901,7 +6261,16 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               })}
             </div>
 
-            <div className="flex flex-wrap justify-center gap-4 mt-8">
+            <div className="flex flex-wrap justify-center items-center gap-4 mt-8">
+              <button
+                type="button"
+                disabled={isSavingDraft}
+                onClick={handleSaveDraft}
+                className="px-8 py-3 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-xl transition-all shadow-lg shadow-amber-900/20 flex items-center gap-2 text-sm disabled:opacity-50"
+              >
+                <Bookmark size={18} />
+                {isSavingDraft ? "Saving Draft..." : "Save as Draft"}
+              </button>
               <button
                 onClick={handleFinalizeQuestions}
                 className="px-8 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
@@ -6188,7 +6557,16 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                       </table>
                     </div>
                   </div>
-                  <div className="mt-8 flex justify-center">
+                  <div className="mt-8 flex flex-wrap justify-center items-center gap-4">
+                    <button
+                      type="button"
+                      disabled={isSavingDraft}
+                      onClick={handleSaveDraft}
+                      className="px-8 py-3.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold rounded-xl transition-all shadow-lg shadow-amber-900/20 flex items-center gap-2 text-xs uppercase tracking-wider disabled:opacity-50"
+                    >
+                      <Bookmark size={18} />
+                      {isSavingDraft ? "Saving Draft..." : "Save as Draft"}
+                    </button>
                     <button
                       onClick={handleFinalizeQuestions}
                       className="px-10 py-3.5 bg-blue-700 text-white font-black rounded-xl hover:bg-blue-800 transition-all shadow-xl shadow-blue-900/30 flex items-center gap-3 uppercase tracking-widest text-xs"
@@ -6228,6 +6606,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
               Refresh Outcomes
+            </button>
+            <button
+              type="button"
+              disabled={isSavingDraft}
+              onClick={handleSaveDraft}
+              className="px-8 py-3 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition-all shadow-lg shadow-amber-900/20 flex items-center gap-2 disabled:opacity-50"
+            >
+              <Bookmark size={18} />
+              {isSavingDraft ? "Saving Draft..." : "Save Draft"}
             </button>
             <button
               onClick={() => {

@@ -1,7 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  CheckCircle2, Clock, FileText, Loader2, ShieldCheck, Calendar
+  CheckCircle2, Clock, FileText, Loader2, ShieldCheck, Calendar,
+  FileDown, Printer, X, Download, Eye, Sparkles
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
 import { formatDepartmentDisplay, formatBatchDisplay } from "../lib/utils";
@@ -31,6 +34,19 @@ const formatDate = (value) => {
   }
 };
 
+const formatDateWithDay = (value) => {
+  if (!value) return "-";
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    const dayName = d.toLocaleDateString("en-IN", { weekday: "short" });
+    const dateStr = d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
+    return `${dateStr} (${dayName})`;
+  } catch {
+    return String(value);
+  }
+};
+
 const format12Hour = (time24) => {
   if (!time24) return '';
   if (time24.includes('AM') || time24.includes('PM')) return time24;
@@ -44,15 +60,576 @@ const format12Hour = (time24) => {
   return `${formattedH}:${mStr || '00'} ${ampm}`;
 };
 
+const getLogoDataUrl = async () => {
+  // First try fetching and FileReader
+  try {
+    const resp = await fetch('/logo.png');
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+      if (dataUrl) return dataUrl;
+    }
+  } catch (e) {
+    console.warn("fetch /logo.png failed:", e);
+  }
+
+  // Second try Image + Canvas
+  try {
+    const dataUrl = await new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width || 754;
+          canvas.height = img.naturalHeight || img.height || 60;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = "/logo.png";
+    });
+    if (dataUrl) return dataUrl;
+  } catch (e) {
+    console.warn("Image canvas /logo.png failed:", e);
+  }
+
+  // Third try fallback URL
+  try {
+    const resp = await fetch('https://i.postimg.cc/QdgcKs7s/ckcet-logo.png');
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const dataUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+      if (dataUrl) return dataUrl;
+    }
+  } catch (e) {
+    console.warn("fetch fallback logo failed:", e);
+  }
+
+  return null;
+};
+
+const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
+  const targetBatchGroups = selectedBatchKey === "ALL"
+    ? deptGroup.batchGroups
+    : deptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === selectedBatchKey);
+
+  const firstItem = targetBatchGroups[0]?.items[0];
+  const academicYearStr = firstItem?.academicYear ? `Academic Year: ${firstItem.academicYear}` : "";
+  const examStr = firstItem?.examName ? `Exam: ${firstItem.examName}` : "";
+  const metaLine = [academicYearStr, examStr].filter(Boolean).join(" &nbsp;|&nbsp; ");
+
+  const tablesHtml = targetBatchGroups.map((bg) => {
+    const rowsHtml = bg.items.map((r, i) => {
+      const dateStr = formatDateWithDay(r.examDate);
+      const timeStr = r.slot
+        ? `<span class="slot-badge">${r.slot}</span> ${r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : ""}`
+        : (r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : "-");
+
+      return `
+        <tr>
+          <td class="center font-bold">${i + 1}</td>
+          <td class="font-medium">${dateStr}</td>
+          <td class="center">${timeStr}</td>
+          <td class="center font-bold code-cell">${r.code}</td>
+          <td class="font-bold">${r.name}</td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <div class="batch-section">
+        <div class="batch-banner">
+          Batch: ${formatBatchDisplay(bg.batch)} &nbsp;|&nbsp; Semester: ${bg.semester} ${bg.academicYear ? `(${bg.academicYear})` : ""}
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 6%;">#</th>
+              <th style="width: 22%;">Date &amp; Day</th>
+              <th style="width: 25%;">Session &amp; Time</th>
+              <th style="width: 15%;">Course Code</th>
+              <th style="width: 32%;">Course Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join("");
+
+  const logoImgHtml = logoUrl
+    ? `<img src="${logoUrl}" class="header-logo" alt="C.K. College of Engineering & Technology" />`
+    : `<div style="font-size: 16px; font-weight: bold; color: #120c7a; margin-bottom: 6px;">C.K. COLLEGE OF ENGINEERING &amp; TECHNOLOGY</div>`;
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>Timetable - Department of ${deptGroup.dept}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 12mm 14mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            color: #1e293b;
+            background: #ffffff;
+          }
+          .page-container {
+            width: 100%;
+            max-width: 190mm;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            min-height: 268mm;
+            justify-content: space-between;
+          }
+          .header-container {
+            text-align: center;
+            border-bottom: 2px solid #120c7a;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+          }
+          .header-logo {
+            display: block;
+            max-height: 56px;
+            max-width: 100%;
+            margin: 0 auto 6px auto;
+            object-fit: contain;
+          }
+          .dept-title {
+            font-size: 13.5px;
+            font-weight: 800;
+            color: #120c7a;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin: 0 0 2px 0;
+          }
+          .doc-title {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            margin: 0 0 3px 0;
+          }
+          .meta-title {
+            font-size: 9.5px;
+            color: #475569;
+            font-weight: 600;
+            margin: 0;
+          }
+          .batch-section {
+            margin-bottom: 14px;
+            page-break-inside: avoid;
+          }
+          .batch-banner {
+            background-color: #f1f5f9 !important;
+            border-left: 4px solid #120c7a;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #120c7a;
+            margin-bottom: 6px;
+            border-radius: 0 3px 3px 0;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10.5px;
+            page-break-inside: auto;
+          }
+          tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+          }
+          thead {
+            display: table-header-group;
+          }
+          th, td {
+            border: 1px solid #cbd5e1;
+            padding: 6px 8px;
+            vertical-align: middle;
+            text-align: left;
+          }
+          th {
+            background-color: #120c7a !important;
+            color: #ffffff !important;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            text-align: center;
+            letter-spacing: 0.2px;
+          }
+          tbody tr:nth-child(even) {
+            background-color: #f8fafc !important;
+          }
+          .center {
+            text-align: center;
+          }
+          .font-bold {
+            font-weight: 700;
+          }
+          .font-medium {
+            font-weight: 500;
+          }
+          .code-cell {
+            color: #120c7a;
+          }
+          .slot-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            font-size: 9px;
+            font-weight: 800;
+            background-color: #e0e7ff !important;
+            color: #3730a3 !important;
+            border: 1px solid #c7d2fe;
+            border-radius: 3px;
+            margin-right: 4px;
+            text-transform: uppercase;
+          }
+          .signatures-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: 36px;
+            padding: 0 16px 8px 16px;
+            page-break-inside: avoid;
+          }
+          .sig-box {
+            width: 190px;
+            text-align: center;
+          }
+          .sig-line {
+            border-top: 1px dashed #475569;
+            padding-top: 5px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #0f172a;
+          }
+          .sig-sub {
+            font-size: 9px;
+            color: #64748b;
+            margin-top: 2px;
+          }
+          @media print {
+            body {
+              padding: 0;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page-container">
+          <div>
+            <div class="header-container">
+              ${logoImgHtml}
+              <div class="dept-title">DEPARTMENT OF ${deptGroup.dept.toUpperCase()}</div>
+              <div class="doc-title">INTERNAL ASSESSMENT EXAMINATION TIMETABLE</div>
+              ${metaLine ? `<div class="meta-title">${metaLine}</div>` : ""}
+            </div>
+            ${tablesHtml}
+          </div>
+
+          <div class="signatures-container">
+            <div class="sig-box">
+              <div class="sig-line">Exam Cell Coordinator</div>
+              <div class="sig-sub">(Signature &amp; Date)</div>
+            </div>
+            <div class="sig-box">
+              <div class="sig-line">Principal</div>
+              <div class="sig-sub">(Signature &amp; Seal)</div>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+};
+
 export default function PrincipalIAScheduleView({ showApproveButton = true, hideApproveButton = false }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
   const [approvingKey, setApprovingKey] = useState("");
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
+  const [logoBase64, setLogoBase64] = useState(null);
+
+  // PDF Preview & Export state
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewDeptGroup, setPreviewDeptGroup] = useState(null);
+  const [previewSelectedBatch, setPreviewSelectedBatch] = useState("ALL");
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // Preload logo on mount
+  useEffect(() => {
+    getLogoDataUrl().then((url) => {
+      if (url) setLogoBase64(url);
+    });
+  }, []);
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
+  };
+
+  const handleOpenPreviewModal = (group, specificBg = null) => {
+    setPreviewDeptGroup(group);
+    setPreviewSelectedBatch(specificBg ? `${specificBg.batch}___${specificBg.semester}` : "ALL");
+    setPreviewModalOpen(true);
+  };
+
+  const handleClosePreviewModal = () => {
+    setPreviewModalOpen(false);
+    setPreviewDeptGroup(null);
+  };
+
+  const downloadDepartmentTimetablePDF = async (deptGroup, selectedBatchKey = "ALL") => {
+    if (!deptGroup) return;
+    setIsGeneratingPdf(true);
+    try {
+      let activeLogo = logoBase64;
+      if (!activeLogo) {
+        activeLogo = await getLogoDataUrl();
+        if (activeLogo) setLogoBase64(activeLogo);
+      }
+
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
+      const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
+      const marginLeft = 12;
+      const marginRight = 12;
+      const contentWidth = pageWidth - marginLeft - marginRight; // 186mm
+      let yPos = 10;
+
+      // Filter items based on selectedBatchKey
+      const targetBatchGroups = selectedBatchKey === "ALL"
+        ? deptGroup.batchGroups
+        : deptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === selectedBatchKey);
+
+      if (!targetBatchGroups.length) {
+        showToast("No schedule items found for the selected batch", "error");
+        setIsGeneratingPdf(false);
+        return;
+      }
+
+      // ── 1. Logo ──
+      if (activeLogo) {
+        try {
+          const logoH = 14;
+          const logoW = Math.min(130, contentWidth);
+          const logoX = marginLeft + (contentWidth - logoW) / 2;
+          doc.addImage(activeLogo, "PNG", logoX, yPos, logoW, logoH);
+          yPos += logoH + 3;
+        } catch (e) {
+          console.warn("Logo add image error in PDF:", e);
+        }
+      }
+
+      // ── 2. Header Box & Titles ──
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(18, 12, 122); // #120c7a
+      doc.text(`DEPARTMENT OF ${deptGroup.dept.toUpperCase()}`, pageWidth / 2, yPos, { align: "center" });
+      yPos += 5;
+
+      doc.setFontSize(10);
+      doc.setTextColor(30, 41, 59);
+      doc.text("INTERNAL ASSESSMENT EXAMINATION TIMETABLE", pageWidth / 2, yPos, { align: "center" });
+      yPos += 4.5;
+
+      // Academic Year / Exam meta
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      const firstItem = targetBatchGroups[0]?.items[0];
+      const academicYearStr = firstItem?.academicYear ? `Academic Year: ${firstItem.academicYear}` : "";
+      const examStr = firstItem?.examName ? `Exam: ${firstItem.examName}` : "";
+      const metaLine = [academicYearStr, examStr].filter(Boolean).join("   |   ");
+      if (metaLine) {
+        doc.text(metaLine, pageWidth / 2, yPos, { align: "center" });
+        yPos += 4;
+      }
+
+      // Header divider line
+      doc.setDrawColor(18, 12, 122);
+      doc.setLineWidth(0.5);
+      doc.line(marginLeft, yPos, pageWidth - marginRight, yPos);
+      yPos += 5;
+
+      // ── 3. Tables for each Batch Group ──
+      for (let bgIdx = 0; bgIdx < targetBatchGroups.length; bgIdx++) {
+        const bg = targetBatchGroups[bgIdx];
+
+        // Check if we need a new page for this batch table
+        if (yPos > pageHeight - 65) {
+          doc.addPage();
+          yPos = 15;
+        }
+
+        // Batch subheader banner
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(18, 12, 122);
+        const batchTitle = `Batch: ${formatBatchDisplay(bg.batch)}   |   Semester: ${bg.semester}${bg.academicYear ? `   (${bg.academicYear})` : ""}`;
+        doc.text(batchTitle, marginLeft, yPos);
+        yPos += 3.5;
+
+        // Headers without Exam and QP Setter columns
+        const headers = [["#", "Date & Day", "Session & Time", "Course Code", "Course Name"]];
+        const tableRows = bg.items.map((r, i) => {
+          const dateStr = formatDateWithDay(r.examDate);
+          const timeStr = r.slot
+            ? `${r.slot}${r.startTime ? `\n(${format12Hour(r.startTime)} - ${format12Hour(r.endTime)})` : ""}`
+            : (r.startTime ? `${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}` : "-");
+          return [
+            String(i + 1),
+            dateStr,
+            timeStr,
+            r.code,
+            r.name
+          ];
+        });
+
+        autoTable(doc, {
+          head: headers,
+          body: tableRows,
+          startY: yPos,
+          margin: { left: marginLeft, right: marginRight },
+          tableWidth: contentWidth,
+          styles: {
+            fontSize: 8,
+            cellPadding: 2.5,
+            textColor: [30, 30, 30],
+            lineWidth: 0.1,
+            lineColor: [203, 213, 225],
+            valign: "middle"
+          },
+          headStyles: {
+            fillColor: [18, 12, 122],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+            fontSize: 8,
+            halign: "center",
+            valign: "middle"
+          },
+          alternateRowStyles: {
+            fillColor: [248, 250, 252]
+          },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 10, fontStyle: "bold" },
+            1: { halign: "left", cellWidth: 38 },
+            2: { halign: "center", cellWidth: 38 },
+            3: { halign: "center", cellWidth: 26, fontStyle: "bold", textColor: [18, 12, 122] },
+            4: { halign: "left", cellWidth: "auto", fontStyle: "bold" }
+          },
+          didDrawPage: () => {
+            const pageNum = doc.internal.getNumberOfPages();
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7);
+            doc.setTextColor(148, 163, 184);
+            doc.text("C.K. College of Engineering & Technology — IA Examination Timetable", marginLeft, pageHeight - 6);
+            doc.text(`Page ${pageNum}`, pageWidth - marginRight, pageHeight - 6, { align: "right" });
+          }
+        });
+
+        yPos = (doc.lastAutoTable?.finalY || yPos) + 6;
+      }
+
+      // ── 4. Signatures (Exam Cell Coordinator & Principal) ──
+      const requiredSigSpace = 32;
+      if (yPos + requiredSigSpace > pageHeight - 14) {
+        doc.addPage();
+        yPos = 25;
+      } else {
+        yPos = Math.max(yPos + 12, pageHeight - 36);
+      }
+
+      const sigColWidth = 55;
+      const ecCoordX = marginLeft + 10;
+      const principalX = pageWidth - marginRight - sigColWidth - 10;
+
+      // Dashed signature lines
+      doc.setDrawColor(71, 85, 105);
+      doc.setLineWidth(0.2);
+      doc.setLineDashPattern([1.5, 1], 0);
+      doc.line(ecCoordX, yPos, ecCoordX + sigColWidth, yPos);
+      doc.line(principalX, yPos, principalX + sigColWidth, yPos);
+      doc.setLineDashPattern([], 0); // reset to solid
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Exam Cell Coordinator", ecCoordX + sigColWidth / 2, yPos + 4, { align: "center" });
+      doc.text("Principal", principalX + sigColWidth / 2, yPos + 4, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text("(Signature & Date)", ecCoordX + sigColWidth / 2, yPos + 7.5, { align: "center" });
+      doc.text("(Signature & Seal)", principalX + sigColWidth / 2, yPos + 7.5, { align: "center" });
+
+      const safeDeptName = deptGroup.dept.replace(/[^a-zA-Z0-9]/g, "_");
+      doc.save(`Timetable_${safeDeptName}.pdf`);
+      showToast("Timetable PDF downloaded successfully!", "success");
+    } catch (err) {
+      console.error("Error generating timetable PDF:", err);
+      showToast("Failed to generate PDF. Please try again.", "error");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handlePrintModal = async () => {
+    if (!previewDeptGroup) return;
+    let activeLogo = logoBase64;
+    if (!activeLogo) {
+      activeLogo = await getLogoDataUrl();
+      if (activeLogo) setLogoBase64(activeLogo);
+    }
+    const htmlContent = buildPrintHtml(previewDeptGroup, previewSelectedBatch, activeLogo);
+    const win = window.open("", "_blank");
+    if (!win) {
+      showToast("Please allow popups to print the timetable", "error");
+      return;
+    }
+    win.document.open();
+    win.document.write(htmlContent);
+    win.document.close();
+    win.focus();
+    setTimeout(() => {
+      try {
+        win.print();
+      } catch (e) {
+        console.warn("Print error:", e);
+      }
+    }, 400);
   };
 
   // 1. Read all saved QP Setter Assignments / IA Schedules (all batches)
@@ -128,7 +705,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setBatchRegulations(data);
-    }, () => {});
+    }, () => { });
     return () => unsub();
   }, []);
 
@@ -149,7 +726,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
         }
       });
       setCourseBankNameMap(nameMap);
-    }, () => {});
+    }, () => { });
     return () => unsub();
   }, []);
 
@@ -455,11 +1032,10 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider px-2">Filter Batch:</span>
           <button
             onClick={() => setSelectedBatchFilter("ALL")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              selectedBatchFilter === "ALL"
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedBatchFilter === "ALL"
                 ? "bg-blue-600 text-white shadow-sm"
                 : "bg-white text-zinc-600 hover:bg-zinc-200/70 border border-zinc-200"
-            }`}
+              }`}
           >
             All Batches ({totalScheduled})
           </button>
@@ -469,11 +1045,10 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
               <button
                 key={b}
                 onClick={() => setSelectedBatchFilter(b)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  selectedBatchFilter === b
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedBatchFilter === b
                     ? "bg-blue-600 text-white shadow-sm"
                     : "bg-white text-zinc-600 hover:bg-zinc-200/70 border border-zinc-200"
-                }`}
+                  }`}
               >
                 {formatBatchDisplay(b)} ({count})
               </button>
@@ -525,6 +1100,17 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                         )}
                       </>
                     )}
+
+                    {/* Export PDF Button (Next to Approved / Pending status) */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPreviewModal(group)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[12px] font-bold shadow-sm transition-all cursor-pointer"
+                      title="Preview and Export Department Timetable as PDF"
+                    >
+                      <FileDown size={14} />
+                      <span>Export PDF</span>
+                    </button>
                   </div>
                 </div>
 
@@ -584,9 +1170,8 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                                       </span>
                                       {r.slot ? (
                                         <div className="flex items-center gap-1">
-                                          <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${
-                                            r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
-                                          }`}>
+                                          <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
+                                            }`}>
                                             {r.slot}
                                           </span>
                                           {r.startTime && (
@@ -631,6 +1216,252 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           })}
         </div>
       )}
+
+      {/* Timetable PDF Preview & Export Modal */}
+      {previewModalOpen && previewDeptGroup && (() => {
+        const targetBatchGroups = previewSelectedBatch === "ALL"
+          ? previewDeptGroup.batchGroups
+          : previewDeptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === previewSelectedBatch);
+
+        const totalItemsInPreview = targetBatchGroups.reduce((acc, bg) => acc + bg.items.length, 0);
+        const firstItem = targetBatchGroups[0]?.items[0];
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-start p-2 sm:p-4 md:p-6 overflow-y-auto">
+            <div className="relative w-full max-w-5xl bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              {/* Modal Top Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 bg-slate-900 border-b border-slate-800 text-white">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                    <FileDown size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base text-slate-100">Timetable PDF Preview & Export</h3>
+                      <span className="px-2 py-0.5 rounded-md text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        {previewDeptGroup.dept}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Preview the A4 formatted institutional timetable with college logo and signature lines
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintModal}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-colors shadow-sm cursor-pointer"
+                    title="Print directly or save via browser print dialog"
+                  >
+                    <Printer size={14} />
+                    <span>Print / Save</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => downloadDepartmentTimetablePDF(previewDeptGroup, previewSelectedBatch)}
+                    disabled={isGeneratingPdf}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-bold shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isGeneratingPdf ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    <span>{isGeneratingPdf ? "Generating PDF..." : "Download PDF"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClosePreviewModal}
+                    className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors ml-1 cursor-pointer"
+                    title="Close Preview"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Batch Switcher Tabs (if department has multiple batches) */}
+              {previewDeptGroup.batchGroups.length > 1 && (
+                <div className="flex items-center gap-2 px-5 py-2.5 bg-slate-950 border-b border-slate-800/80 overflow-x-auto">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-1">Include in PDF:</span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewSelectedBatch("ALL")}
+                    className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${previewSelectedBatch === "ALL"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+                      }`}
+                  >
+                    All Batches ({previewDeptGroup.items.length} subjects)
+                  </button>
+                  {previewDeptGroup.batchGroups.map(bg => {
+                    const key = `${bg.batch}___${bg.semester}`;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setPreviewSelectedBatch(key)}
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${previewSelectedBatch === key
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+                          }`}
+                      >
+                        {formatBatchDisplay(bg.batch)} (Sem {bg.semester}) ({bg.items.length})
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* A4 Preview Container */}
+              <div className="bg-slate-950/70 p-4 sm:p-8 flex justify-center overflow-x-auto max-h-[72vh] overflow-y-auto">
+                <div
+                  id="timetable-a4-preview-sheet"
+                  className="bg-white text-slate-900 w-full max-w-[210mm] min-h-[297mm] p-6 sm:p-10 shadow-2xl rounded-sm border border-slate-200 font-sans flex flex-col justify-between"
+                  style={{ boxSizing: "border-box" }}
+                >
+                  <div>
+                    {/* Header Section with College Logo */}
+                    <div className="header-title text-center pb-3 border-b-2 border-[#120c7a] mb-4">
+                      {logoBase64 ? (
+                        <img
+                          src={logoBase64}
+                          alt="C.K. College of Engineering & Technology"
+                          className="header-img max-h-14 w-auto mx-auto object-contain mb-2"
+                        />
+                      ) : (
+                        <img
+                          src="/logo.png"
+                          alt="C.K. College of Engineering & Technology"
+                          className="header-img max-h-14 w-auto mx-auto object-contain mb-2"
+                          onError={(e) => {
+                            e.currentTarget.src = "https://i.postimg.cc/QdgcKs7s/ckcet-logo.png";
+                          }}
+                        />
+                      )}
+                      <div className="dept-name text-center text-sm sm:text-base font-black text-[#120c7a] tracking-wide uppercase">
+                        DEPARTMENT OF {previewDeptGroup.dept}
+                      </div>
+                      <div className="sub-title text-center text-xs sm:text-sm font-bold text-slate-800 tracking-wider uppercase mt-0.5">
+                        INTERNAL ASSESSMENT EXAMINATION TIMETABLE
+                      </div>
+                      <div className="meta-info text-center text-xs text-slate-600 mt-1">
+                        {[
+                          firstItem?.academicYear ? `Academic Year: ${firstItem.academicYear}` : "",
+                          firstItem?.examName ? `Exam: ${firstItem.examName}` : ""
+                        ].filter(Boolean).join("   |   ")}
+                      </div>
+                    </div>
+
+                    {/* Batch Tables */}
+                    {targetBatchGroups.map((bg, bIdx) => (
+                      <div key={`modal_bg_${bg.batch}_${bg.semester}_${bIdx}`} className="mb-6">
+                        <div className="batch-banner bg-slate-100 border-l-4 border-[#120c7a] px-3 py-1 text-xs font-bold text-[#120c7a] mb-2 rounded-r">
+                          Batch: {formatBatchDisplay(bg.batch)} &nbsp;|&nbsp; Semester: {bg.semester} {bg.academicYear ? `(${bg.academicYear})` : ""}
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
+                            <thead>
+                              <tr className="bg-[#120c7a] text-white">
+                                <th className="border border-slate-300 px-3 py-2 text-center w-10 font-bold">#</th>
+                                <th className="border border-slate-300 px-4 py-2 font-bold w-44">Date & Day</th>
+                                <th className="border border-slate-300 px-4 py-2 font-bold text-center w-48">Session & Time</th>
+                                <th className="border border-slate-300 px-3 py-2 font-bold text-center w-28">Course Code</th>
+                                <th className="border border-slate-300 px-4 py-2 font-bold">Course Name</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {bg.items.map((r, rIdx) => {
+                                const isEven = rIdx % 2 === 0;
+                                return (
+                                  <tr key={`modal_row_${r.code}_${rIdx}`} className={isEven ? "bg-white" : "bg-slate-50/70"}>
+                                    <td className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-500">
+                                      {rIdx + 1}
+                                    </td>
+                                    <td className="border border-slate-300 px-4 py-2 font-medium text-slate-800">
+                                      {formatDateWithDay(r.examDate)}
+                                    </td>
+                                    <td className="border border-slate-300 px-4 py-2 text-center">
+                                      {r.slot && (
+                                        <span className="slot-badge inline-block px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200 mr-1.5">
+                                          {r.slot}
+                                        </span>
+                                      )}
+                                      {r.startTime && (
+                                        <span className="text-[11px] font-semibold text-slate-700">
+                                          {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ""}
+                                        </span>
+                                      )}
+                                      {!r.slot && !r.startTime && <span className="text-slate-400">-</span>}
+                                    </td>
+                                    <td className="border border-slate-300 px-3 py-2 text-center font-bold text-[#120c7a]">
+                                      {r.code}
+                                    </td>
+                                    <td className="border border-slate-300 px-4 py-2 font-semibold text-slate-900">
+                                      {r.name}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Signatures Space at Bottom */}
+                  <div className="sig-row mt-12 pt-8 border-t border-slate-200 flex items-end justify-between px-6 pb-2">
+                    <div className="sig-box w-48 text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-xs font-bold uppercase text-slate-900">
+                        Exam Cell Coordinator
+                      </div>
+                      <div className="sig-sub text-[10px] text-slate-500 mt-0.5">
+                        (Signature & Date)
+                      </div>
+                    </div>
+
+                    <div className="sig-box w-48 text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-xs font-bold uppercase text-slate-900">
+                        Principal
+                      </div>
+                      <div className="sig-sub text-[10px] text-slate-500 mt-0.5">
+                        (Signature & Seal)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-5 py-3.5 bg-slate-900 border-t border-slate-800">
+                <span className="text-xs text-slate-400">
+                  Ready to export <strong className="text-slate-200">{totalItemsInPreview} subjects</strong> for {previewDeptGroup.dept}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleClosePreviewModal}
+                    className="px-4 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadDepartmentTimetablePDF(previewDeptGroup, previewSelectedBatch)}
+                    disabled={isGeneratingPdf}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-bold shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isGeneratingPdf ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    <span>{isGeneratingPdf ? "Generating..." : "Download PDF"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
