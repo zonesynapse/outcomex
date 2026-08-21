@@ -1,5 +1,16 @@
 ## Summary of Changes
 
+### 181. Preservation of Saved Assignments across Canonical Code Keys (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where after saving QP Setter assignments, exam dates, times, and set counts in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx), re-opening the page caused some subjects to lose their saved data and revert to blank/default states.
+- **Root Cause**:
+  1. `useEffect` auto-select rule performed direct property lookup `next[r.code]`. When `r.code` (canonical code, e.g. `CCS342`) differed from the raw Firestore assignment key (e.g. `CS342`), `next[r.code]` evaluated to `undefined`. `if (!existing)` triggered and replaced the saved assignment with a blank initial object, wiping out saved Firestore data.
+  2. `handleApplyBulkDates`, `handleApplyBulkTiming`, and `handleApplyBulkSets` similarly accessed `next[r.code]` directly instead of fuzzy-matching via `getAssignmentForCode(r.code, next)`.
+- **Changes**:
+  - **Multi-Key Mapping in Firestore Listener**: Updated `onSnapshot` in `IAScheduleCreation.jsx` to map saved assignment objects under raw key, `rawNorm`, AND `canonicalNorm`.
+  - **Fuzzy Assignment Lookup**: Updated `useEffect` auto-select rule and all bulk handler functions to use `getAssignmentForCode(r.code, next)`, preserving existing saved Firestore data.
+  - **Clean Payload Serialization**: Updated `handleSave` to serialize `payloadAssignments` using `getAssignmentForCode`, preserving all saved fields (`examDate`, `startTime`, `endTime`, `slot`, `session`, `setterUid`, `setterName`, `numSets`, `fromDate`, `toDate`, `approved`).
+- Build passes cleanly.
+
 ### 180. Canonical Course Code Resolution & Start-Year Batch Matching (`IAScheduleCreation.jsx`, `QPSetterAssignment.jsx`)
 - **Goal**: Fix issue where subjects (such as `BM3301` and `BM3352` under `B.E. Bio Medical Engineering`) displayed `No faculty allocated` and `-- Select Setter --` in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) even though subject handling faculty (`Jainith K` and `Mahalakshmi`) were assigned on [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx).
 - **Root Cause**:

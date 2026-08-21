@@ -741,11 +741,11 @@ export default function IAScheduleCreation({ embedded = false }) {
       let changed = false;
 
       rows.forEach(r => {
-        const existing = next[r.code];
+        const existing = getAssignmentForCode(r.code, next);
         const singleHandlerUid = r.handlers.length >= 1 ? r.handlers[0].uid : "";
         const singleHandlerName = r.handlers.length >= 1 ? r.handlers[0].name : "";
 
-        if (!existing) {
+        if (!existing || (!existing.code && !existing.setterUid && !existing.examDate)) {
           next[r.code] = {
             code: r.code,
             name: r.name,
@@ -776,7 +776,7 @@ export default function IAScheduleCreation({ embedded = false }) {
 
       return changed ? next : prev;
     });
-  }, [rows]);
+  }, [rows, getAssignmentForCode, usersMap]);
 
   // Helper to normalize any date format (ISO, Timestamp object, DD/MM/YYYY, YYYY-MM-DD) to YYYY-MM-DD
   const getEffectiveExamDate = useCallback((as) => {
@@ -867,10 +867,17 @@ export default function IAScheduleCreation({ embedded = false }) {
             Object.entries(data.assignments).forEach(([k, item]) => {
               if (!item) return;
               const effectiveDate = getEffectiveExamDate(item);
-              combinedAssignments[k] = {
+              const assignObj = {
                 ...item,
                 examDate: effectiveDate || item.examDate || ""
               };
+              const rawNorm = normCodeKey(k);
+              const canonicalCode = item.code ? getCanonicalCode(item.code, item.name, item.departments?.[0]?.dept) : "";
+              const canonicalNorm = normCodeKey(canonicalCode);
+
+              combinedAssignments[k] = assignObj;
+              if (rawNorm) combinedAssignments[rawNorm] = assignObj;
+              if (canonicalNorm) combinedAssignments[canonicalNorm] = assignObj;
             });
           }
           if (data.examId) foundExamId = data.examId;
@@ -956,8 +963,8 @@ export default function IAScheduleCreation({ embedded = false }) {
     setAssignments(prev => {
       const next = { ...prev };
       rows.forEach(r => {
-        const cur = next[r.code] || { code: r.code, name: r.name, setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
-        next[r.code] = { ...cur, fromDate: from, toDate: to };
+        const cur = getAssignmentForCode(r.code, next);
+        next[r.code] = { ...cur, code: r.code, name: r.name, fromDate: from, toDate: to };
       });
       return next;
     });
@@ -970,10 +977,12 @@ export default function IAScheduleCreation({ embedded = false }) {
     setAssignments(prev => {
       const next = { ...prev };
       rows.forEach(r => {
-        const cur = next[r.code] || { code: r.code, name: r.name, setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
+        const cur = getAssignmentForCode(r.code, next);
         const slot = deriveSlotFromTime(sTime);
         next[r.code] = {
           ...cur,
+          code: r.code,
+          name: r.name,
           startTime: sTime,
           endTime: eTime || "",
           slot,
@@ -993,8 +1002,8 @@ export default function IAScheduleCreation({ embedded = false }) {
     setAssignments(prev => {
       const next = { ...prev };
       rows.forEach(r => {
-        const cur = next[r.code] || { code: r.code, name: r.name, setterUid: "", setterName: "", numSets: 1, fromDate: "", toDate: "" };
-        next[r.code] = { ...cur, numSets: num };
+        const cur = getAssignmentForCode(r.code, next);
+        next[r.code] = { ...cur, code: r.code, name: r.name, numSets: num };
       });
       return next;
     });
@@ -1196,6 +1205,28 @@ export default function IAScheduleCreation({ embedded = false }) {
         }
       }
 
+      const payloadAssignments = {};
+      rows.forEach(r => {
+        const as = getAssignmentForCode(r.code, assignments);
+        payloadAssignments[r.code] = {
+          code: r.code,
+          name: r.name,
+          departments: r.departments || [],
+          setterUid: as.setterUid || "",
+          setterName: as.setterName || "",
+          numSets: as.numSets || 1,
+          fromDate: as.fromDate || "",
+          toDate: as.toDate || "",
+          examDate: as.examDate || "",
+          startTime: as.startTime || "",
+          endTime: as.endTime || "",
+          slot: as.slot || "",
+          session: as.session || "",
+          timeSlot: as.timeSlot || "",
+          approved: as.approved === true
+        };
+      });
+
       const payload = {
         batch,
         academicYear,
@@ -1207,7 +1238,7 @@ export default function IAScheduleCreation({ embedded = false }) {
         updatedBy: currentUserData?.facultyName || auth.currentUser?.email || "Exam Cell",
         updatedById: auth.currentUser?.uid || "",
         updatedAt: new Date().toISOString(),
-        assignments
+        assignments: payloadAssignments
       };
 
       await setDoc(doc(db, "qp_setter_assignments", docKey), payload, { merge: true });
