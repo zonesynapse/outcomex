@@ -577,8 +577,10 @@ export default function IAScheduleCreation({ embedded = false }) {
 
   // 7. Aggregate Subjects across ALL Departments (Common vs Department-Specific)
   const syllabusSubjects = useMemo(() => {
-    if (!batch || !semester) return [];
-    const byCode = {};
+    // Restrict departments strictly to the selected programme if specified
+    const allowedDeptsForProg = selectedProgramme && deptMap[selectedProgramme]
+      ? new Set(deptMap[selectedProgramme].map(d => sanitizeKey(d)))
+      : null;
 
     activeProgrammes.forEach(prog => {
       const progKey = formatProgrammeKey(prog);
@@ -589,6 +591,7 @@ export default function IAScheduleCreation({ embedded = false }) {
 
       const matching = allSyllabus.filter(s => s.progKey === progKey && normClean(s.regKey) === regNorm);
       matching.forEach(sDoc => {
+        if (allowedDeptsForProg && !allowedDeptsForProg.has(sanitizeKey(sDoc.deptKey))) return;
         const subs = toArray(sDoc.data?.semesters?.[semester]);
         subs.forEach(sub => {
           if (!sub || sub.isNonOBE === true || sub.isActive === false) return;

@@ -1,5 +1,23 @@
 ## Summary of Changes
 
+### 179. PG & UG Batch Duration Validation (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Resolve issue where PG batches (e.g. `25 Batch (2025-27)` with 2-year duration) appeared as duplicate cards under UG departments (e.g. `B.E. Bio Medical Engineering`), resulting in two `25 Batch` cards showing in the timetable schedule view.
+- **Root Cause**: `PrincipalIAScheduleView.jsx` grouped schedule items by department label without verifying whether the batch's total duration (2-year PG vs 4-year UG) matched the department type (UG vs PG). A PG batch (2025-2027) was thus rendered under UG departments (B.E. Bio Medical Engineering), creating duplicate `25 Batch (2025-29)` and `25 Batch (2025-27)` cards.
+- **Fix**: Added `isValidDeptBatch(progKey, dept, batch)` helper in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) that validates batch duration against department type:
+  - UG departments (`B.E.`, `B.Tech.`) strictly match 4-year UG batches (e.g. `2025-2029`).
+  - PG departments (`M.E.`, `M.Tech.`, `MBA`, `MCA`) strictly match 2-year PG batches (e.g. `2025-2027`).
+- Build passes cleanly.
+
+### 178. Programme-Department Scoping & Batch-Semester Validation (`IAScheduleCreation.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where creating an IA Schedule programme-wise displayed departments from unrelated programmes and listed invalid batch-semester cards (e.g. `23 Batch Semester 3` listing Semester 3 subjects when `23 Batch` in 2026-2027 is Semester 7).
+- **Root Cause**:
+  1. `IAScheduleCreation.jsx` aggregated subjects across `allSyllabus` without verifying if `sDoc.deptKey` actually belonged to `selectedProgramme`, allowing departments from other programmes (e.g., B.Tech / M.E.) to mix into `selectedProgramme`'s schedule.
+  2. `PrincipalIAScheduleView.jsx` rendered schedule documents from `qp_setter_assignments` without validating whether `semester` was valid for that `batch` and `academicYear`, causing legacy or invalid test documents (e.g. Batch 23 with Semester 3) to render as duplicate cards.
+- **Changes**:
+  - **Programme Department Scoping**: Updated `syllabusSubjects` in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to filter `sDoc.deptKey` against `allowedDeptsForProg` (`deptMap[selectedProgramme]`), guaranteeing only departments belonging to the selected programme are included.
+  - **Batch-Semester Validation**: Added `isValidBatchSemester` helper in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) that calculates the exact expected semester range for a batch and academic year, filtering out invalid/mismatched schedule cards.
+- Build passes cleanly.
+
 ### 177. Same-Key Set Storage/Retrieval & Previous-Set Content Leaking Into Next Set (`QuestionPaperGenerator.jsx`)
 - **Goal**: Fix issue where after creating and saving Set 1, opening the next set (Set 2) on `QuestionPaperGenerator.jsx` loaded Set 1's questions instead of a fresh Set 2 — the "shows previous set content" symptom.
 - **Root Cause**: The auto-load effect (`checkExisting`) and both save handlers (`handleSaveAssignment`, `handleSaveQuestionPaper`) computed the set storage key via `ciaConfigs.find(c => c.id === exam)` and `getEffectiveNumSets(selectedConfig)`. When `exam` was a **name string** (e.g. `"IA 1"` from the FacultyDashboard URL `&exam=IA 1`) rather than a Firebase push ID, the strict ID lookup returned `undefined`, `getEffectiveNumSets` returned `1`, so `setSuffix` became `''`. Both Set 1 and Set 2 then mapped to the SAME key (`"IA 1"`), so opening Set 2 loaded Set 1's saved content. Additionally, the state-reset effect did not react to `qpSet` changes, so switching sets kept the previous set's questions in the editor.

@@ -230,6 +230,7 @@ export default function AdminRoleConfig() {
       });
 
       // Dynamically set available roles based on document IDs in role_permissions
+      const rolesFromDb = Array.from(new Set(snapshot.docs.map(doc => doc.id)));
       const coreRoles = ["Admin", "Principal", "HOD", "Academic Coordinator", "Faculty"];
       const combinedRoles = Array.from(new Set([...coreRoles, ...rolesFromDb]));
       setAvailableRoles(combinedRoles);

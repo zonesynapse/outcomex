@@ -794,10 +794,47 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     return code || "";
   };
 
+  const isValidBatchSemester = (batch, academicYear, semester) => {
+    if (!batch || !academicYear || !semester) return true;
+    const matchB = String(batch).match(/\b(20\d{2})\b/);
+    const matchAY = String(academicYear).match(/\b(20\d{2})\b/);
+    if (!matchB || !matchAY) return true;
+    const batchStart = parseInt(matchB[1], 10);
+    const yearStart = parseInt(matchAY[1], 10);
+    const yearIndex = yearStart - batchStart;
+    if (yearIndex < 0 || yearIndex > 4) return false;
+    const validSem1 = String(yearIndex * 2 + 1);
+    const validSem2 = String(yearIndex * 2 + 2);
+    const semStr = String(semester).trim();
+    return semStr === validSem1 || semStr === validSem2;
+  };
+
+  const isValidDeptBatch = (progKey, dept, batch) => {
+    if (!batch) return true;
+    const match = String(batch).match(/(\d{4})\s*-\s*(\d{2,4})/);
+    if (!match) return true;
+    const startYr = parseInt(match[1], 10);
+    let endYr = parseInt(match[2], 10);
+    if (endYr < 100) endYr += 2000;
+    const duration = endYr - startYr;
+
+    const normProg = String(progKey || "").toLowerCase();
+    const normDept = String(dept || "").toLowerCase();
+
+    const isPG = normProg.includes("pg") || normProg.startsWith("m_") || normDept.startsWith("m.e.") || normDept.startsWith("m.tech.") || normDept.startsWith("m.b.a.") || normDept.startsWith("m.c.a.");
+
+    if (isPG) {
+      return duration === 2;
+    } else {
+      return duration === 4;
+    }
+  };
+
   // Flatten only subjects that have an assigned exam date, grouped by department
   const rows = useMemo(() => {
     const out = [];
     scheduleDocs.forEach(sDoc => {
+      if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
       const assignments = sDoc.assignments || {};
       Object.entries(assignments).forEach(([assignKey, as]) => {
         if (!as?.examDate) return; // only subjects with assigned dates
@@ -856,6 +893,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     const grouped = {};
     out.forEach(r => {
       r.departments.forEach(d => {
+        if (!isValidDeptBatch(d.progKey, d.dept, r.batch)) return;
         const label = d.dept === "_unmapped"
           ? "Unknown Department"
           : formatDepartmentDisplay(d.dept, d.progKey);
