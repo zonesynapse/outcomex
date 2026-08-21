@@ -577,6 +577,9 @@ export default function IAScheduleCreation({ embedded = false }) {
 
   // 7. Aggregate Subjects across ALL Departments (Common vs Department-Specific)
   const syllabusSubjects = useMemo(() => {
+    if (!batch || !semester) return [];
+    const byCode = {};
+
     // Restrict departments strictly to the selected programme if specified
     const allowedDeptsForProg = selectedProgramme && deptMap[selectedProgramme]
       ? new Set(deptMap[selectedProgramme].map(d => sanitizeKey(d)))
