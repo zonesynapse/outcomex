@@ -5,13 +5,13 @@ import { doc, collection, onSnapshot, getDoc, getDocs, query, where, deleteDoc, 
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
-  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2
+  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2, Layers
 } from "lucide-react";
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField, isWrittenTestQp } from "../lib/utils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay } from "../lib/utils";
 
 const progPrefixMap = [
   { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
@@ -116,12 +116,26 @@ const EVENT_STYLES = {
 };
 const getEventStyle = (type) => EVENT_STYLES[type]?.bg || 'bg-zinc-100 text-zinc-700 border-zinc-300';
 
-const statusConfig = {
-  draft: { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock },
-  forwarded: { label: "Pending HOD Review", bg: "bg-blue-100", text: "text-blue-700", icon: Clock },
-  approved_by_hod: { label: "Approved by HOD", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 },
-  approved_by_coe: { label: "Approved & Published", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 },
-  recorrected: { label: "Recorrect", bg: "bg-amber-100", text: "text-amber-700", icon: AlertCircle },
+const getQPWorkflowStatus = (qp) => {
+  if (!qp) return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
+  const st = qp.status;
+
+  if (st === 'draft') {
+    return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
+  }
+  if (st === 'recorrected') {
+    return { label: "Returned for Recorrection", bg: "bg-amber-100", text: "text-amber-700", icon: AlertCircle };
+  }
+  if (st === 'approved_by_hod' || st === 'approved_by_coe' || st === 'approved') {
+    return { label: "Approved by HOD", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 };
+  }
+  if (st === 'forwarded') {
+    if (qp.ac_approved) {
+      return { label: "Pending HOD Review", bg: "bg-purple-100", text: "text-purple-700", icon: Clock };
+    }
+    return { label: "Pending Academic Coordinator Review", bg: "bg-blue-100", text: "text-blue-700", icon: Clock };
+  }
+  return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
 };
 
 export default function FacultyDashboard() {
@@ -2464,7 +2478,7 @@ export default function FacultyDashboard() {
           ) : (
             <div className="divide-y divide-zinc-100">
               {filteredQps.map((qp) => {
-                const stat = statusConfig[qp.status] || statusConfig.draft;
+                const stat = getQPWorkflowStatus(qp);
                 const StatusIcon = stat.icon;
                 return (
                   <div key={`${qp.compositeKey}-${qp.id}`}
@@ -2485,7 +2499,7 @@ export default function FacultyDashboard() {
                             <StatusIcon size={10} /> {stat.label}
                           </span>
                           <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
-                            <FileText size={10} /> {qp.exam_name || qp.qpaper_name}
+                            <FileText size={10} /> {qp.exam_name || qp.qpaper_name} ({formatQPSetDisplay(qp)})
                           </span>
                           <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
                             <GraduationCap size={10} /> {qp.batch || "-"}
@@ -2497,6 +2511,28 @@ export default function FacultyDashboard() {
                             {qp.academic_year || "-"}
                           </span>
                         </div>
+                        {qp.status === 'forwarded' && (
+                          <div className="mt-2.5 flex items-center gap-2 text-xs font-medium text-zinc-700 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5 w-fit">
+                            <span className="text-zinc-500 font-semibold">Current Status Level:</span>
+                            {qp.ac_approved ? (
+                              <span className="text-purple-700 font-bold flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
+                                Waiting for HOD Approval
+                              </span>
+                            ) : (
+                              <span className="text-blue-700 font-bold flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                                Waiting for Academic Coordinator Review
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {qp.status === 'approved_by_hod' && (
+                          <div className="mt-2.5 flex items-center gap-2 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-xl px-3 py-1.5 w-fit">
+                            <CheckCircle2 size={13} className="text-emerald-600" />
+                            <span>Approved by HOD & Workflow Completed</span>
+                          </div>
+                        )}
                         {qp.status === 'recorrected' && qp.hod_comments && (
                           <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
                             <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
@@ -2511,15 +2547,17 @@ export default function FacultyDashboard() {
                         {qp.status === 'recorrected' ? <Edit2 size={14} /> : <Eye size={14} />}
                         {qp.status === 'recorrected' ? 'Edit' : 'Open'}
                       </button>
-                      <button
-                        onClick={() => handleDeleteQp(qp)}
-                        disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-100 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Delete question paper"
-                      >
-                        {deletingQp === `${qp.compositeKey}-${qp.id}` ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        Delete
-                      </button>
+                      {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                        <button
+                          onClick={() => handleDeleteQp(qp)}
+                          disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
+                          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-100 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete question paper"
+                        >
+                          {deletingQp === `${qp.compositeKey}-${qp.id}` ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

@@ -15,6 +15,7 @@ import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatPr
 import { sanitizeKey } from "../../lib/utils";
 
 const normClean = (s) => String(s || "").replace(/[._\s\-/]/g, "").toLowerCase();
+const normCodeKey = (code) => String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 const parseSyllabusDocId = (id) => {
   const parts = id.split('_');
@@ -41,8 +42,60 @@ export default function QPSetterAssignment() {
   const [usersMap, setUsersMap] = useState({});
   const [allSyllabus, setAllSyllabus] = useState([]);
   const [allAssignments, setAllAssignments] = useState([]);
+  const [courseBankMap, setCourseBankMap] = useState({});
 
   const [selectedProgramme, setSelectedProgramme] = useState("");
+
+  useEffect(() => {
+    const unsubCourseBank = onSnapshot(collection(db, "courses"), (snap) => {
+      const map = {};
+      const nameMap = {};
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const rawCode = String(data.code || data.subjectCode || data.courseCode || "").trim();
+        const code = normCodeKey(rawCode);
+        const name = String(data.name || data.courseName || data.subjectName || "").trim();
+        if (code) {
+          if (!map[code]) map[code] = {};
+          if (name) map[code].name = name;
+          map[code].canonicalCode = rawCode;
+        }
+        if (name && rawCode) {
+          const normName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          nameMap[normName] = rawCode;
+          if (data.department) {
+            const cleanD = sanitizeKey(data.department);
+            nameMap[`${cleanD}_${normName}`] = rawCode;
+          }
+        }
+      });
+      setCourseBankMap({ ...map, _nameMap: nameMap });
+    }, (err) => {
+      console.warn("Error listening to courses:", err);
+      setCourseBankMap({});
+    });
+    return () => unsubCourseBank();
+  }, []);
+
+  const getCanonicalCode = useCallback((rawCode, name, deptKey) => {
+    if (!name && !rawCode) return rawCode || "";
+    const nameMap = courseBankMap._nameMap || {};
+    const normName = String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (deptKey && normName) {
+      const cleanD = sanitizeKey(deptKey);
+      if (nameMap[`${cleanD}_${normName}`]) {
+        return nameMap[`${cleanD}_${normName}`];
+      }
+    }
+    if (normName && nameMap[normName]) {
+      return nameMap[normName];
+    }
+    const normC = normCodeKey(rawCode);
+    if (courseBankMap[normC]?.canonicalCode) {
+      return courseBankMap[normC].canonicalCode;
+    }
+    return rawCode || "";
+  }, [courseBankMap]);
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
@@ -216,24 +269,35 @@ export default function QPSetterAssignment() {
     return u?.facultyName || u?.displayName || u?.name || u?.email || "Unknown Faculty";
   };
 
+  const extractStartYear = useCallback((str) => {
+    if (!str) return "";
+    const s = String(str);
+    const m4 = s.match(/20(\d{2})/);
+    if (m4) return `20${m4[1]}`;
+    const m2 = s.match(/\d{2}/);
+    if (m2) return `20${m2[0]}`;
+    return "";
+  }, []);
+
   const codeHandlers = useMemo(() => {
     if (!batch || !academicYear || !semester) return {};
     const map = {};
     const cBatch = normClean(batch);
     const cAy = normClean(academicYear);
-    const cSem = String(semester).trim();
-    const batchYear = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+    const cSem = String(semester).replace(/[^0-9]/g, '');
+    const batchYear = extractStartYear(batch);
 
     allAssignments.forEach(a => {
       let matchBatch = !a.batch;
       if (a.batch) {
         const aNorm = normClean(a.batch);
-        const aYear = a.batch.match(/20\d{2}/)?.[0] || a.batch.match(/\b\d{2}\b/)?.[0] || "";
+        const aYear = extractStartYear(a.batch || a.docId);
         matchBatch = aNorm === cBatch || aNorm.includes(cBatch) || cBatch.includes(aNorm) || (batchYear && aYear && batchYear === aYear);
       }
 
       const matchAy = !a.academicYear || normClean(a.academicYear) === cAy || normClean(a.academicYear).includes(cAy) || cAy.includes(normClean(a.academicYear));
-      const matchSem = !a.semester || String(a.semester).trim() === cSem;
+      const aSemClean = String(a.semester || "").replace(/[^0-9]/g, '');
+      const matchSem = !aSemClean || aSemClean === cSem;
 
       if (!matchBatch || !matchAy || !matchSem) return;
 
@@ -256,7 +320,7 @@ export default function QPSetterAssignment() {
       map[code].sort((x, y) => (getFacultyName(x.uid) || '').localeCompare(getFacultyName(y.uid) || ''));
     });
     return map;
-  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode]);
+  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode, extractStartYear]);
 
   const rows = useMemo(() => {
     if (!syllabusSubjects.length) return [];

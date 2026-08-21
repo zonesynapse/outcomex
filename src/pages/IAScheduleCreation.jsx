@@ -36,6 +36,40 @@ const parseSyllabusDocId = (id) => {
   return { progKey, deptKey, regKey };
 };
 
+// Parse a flat subject_assignments doc ID: {progKey}_{dept...}_{batch...}_{ay}_{sem}[_{section}]
+// Tolerates batch tokens containing underscores (e.g. "25_Batch") and multi-word departments,
+// which break naive position-based splitting.
+const parseAssignmentDocId = (id) => {
+  const parts = id.split('_');
+  let section = "";
+  let end = parts.length;
+  const lastPart = parts[end - 1] || "";
+  if (end > 1 && !/^\d+$/.test(lastPart)) {
+    section = lastPart;
+    end -= 1;
+  }
+  const sem = String(parts[end - 1] || "").replace(/[^0-9]/g, "");
+  let ay = "";
+  let idx = end - 2;
+  if (idx >= 0 && /^\d{4}-\d{2,4}$/.test(parts[idx])) {
+    ay = parts[idx];
+    idx -= 1;
+  }
+  const batchTokens = [];
+  while (idx >= 0 && (/\d/.test(parts[idx]) || /batch/i.test(parts[idx]))) {
+    batchTokens.unshift(parts[idx]);
+    idx -= 1;
+  }
+  let progKey = parts[0] || "";
+  let deptStartIdx = 1;
+  if (parts.length > 1 && ['B', 'M'].includes(parts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(parts[1])) {
+    progKey = `${parts[0]}_${parts[1]}`;
+    deptStartIdx = 2;
+  }
+  const dept = parts.slice(deptStartIdx, Math.max(deptStartIdx, idx + 1)).join('_');
+  return { progKey, dept, batch: batchTokens.join('_'), ay, sem, section };
+};
+
 // Convert 24h string ("09:30" or "14:00") to 12h formatted string ("09:30 AM" or "02:00 PM")
 const format12Hour = (time24) => {
   if (!time24) return '';
@@ -111,6 +145,32 @@ const toArray = (v) => {
     return vals;
   }
   return [];
+};
+
+// Deep-ish field-level merge of two assignment items. Non-empty incoming values win,
+// booleans OR together (approved: true is never downgraded to false), department arrays
+// are de-duplicated by their key. Prevents stale/partial documents from wiping saved
+// exam dates & timings when multiple qp_setter_assignments docs match a batch/semester.
+const mergeAssignmentItems = (base, incoming) => {
+  if (!base || typeof base !== "object") return { ...(incoming || {}) };
+  const out = { ...base };
+  Object.entries(incoming || {}).forEach(([f, v]) => {
+    if (typeof v === "boolean") {
+      out[f] = out[f] === true ? true : v;
+      return;
+    }
+    if (Array.isArray(v)) {
+      const baseArr = Array.isArray(out[f]) ? out[f] : [];
+      const sig = (x) => JSON.stringify(x && typeof x === "object" ? (x.key ?? x) : x);
+      const seen = new Set(baseArr.map(sig));
+      out[f] = [...baseArr, ...v.filter(x => !seen.has(sig(x)))];
+      return;
+    }
+    const isEmpty = v === undefined || v === null || v === "";
+    if (!isEmpty) out[f] = v;
+    else if (!(f in out)) out[f] = v;
+  });
+  return out;
 };
 
 // Map a derived subject course type (e.g. "Theory Cum Lab") to the closest course type
@@ -196,25 +256,29 @@ export default function IAScheduleCreation({ embedded = false }) {
   const [bulkSetsVal, setBulkSetsVal] = useState("2");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [firestoreAssignLoaded, setFirestoreAssignLoaded] = useState(false);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // 1. Authenticate user
+  // 1. Authenticate user (with 5s timeout so page never hangs on offline/slow Firestore)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
-          const userDoc = await getDoc(doc(db, "users", user.uid));
+          const userDoc = await Promise.race([
+            getDoc(doc(db, "users", user.uid)),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("Firestore timeout")), 5000))
+          ]);
           if (userDoc.exists()) {
             const data = userDoc.data();
             setCurrentUserData(data);
             setUserRole(data.role || "");
           }
         } catch (err) {
-          console.error("Error loading user profile:", err);
+          console.warn("Error loading user profile:", err);
         }
       }
       setLoadingUser(false);
@@ -228,6 +292,8 @@ export default function IAScheduleCreation({ embedded = false }) {
       const map = {};
       snap.forEach(d => { map[d.id] = d.data(); });
       setUsersMap(map);
+    }, (err) => {
+      console.warn("Error listening to users:", err);
     });
     return () => unsub();
   }, []);
@@ -250,57 +316,42 @@ export default function IAScheduleCreation({ embedded = false }) {
     const unsub = onSnapshot(collection(db, "subject_assignments"), (snap) => {
       const entries = [];
       snap.forEach(docSnap => {
-        const idParts = docSnap.id.split('_');
-        if (idParts.length < 5) return;
-
-        let sectionExtracted = '';
-        let semKey = idParts.pop();
-        if (!/^\d+$/.test(semKey) && idParts.length >= 4) {
-          sectionExtracted = semKey;
-          semKey = idParts.pop();
-        }
-        const ayKey = idParts.pop();
-        const batchKey = idParts.pop();
-
-        let progKeyExtracted = idParts[0];
-        let deptStartIdx = 1;
-        if (['B', 'M'].includes(idParts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(idParts[1])) {
-          progKeyExtracted = `${idParts[0]}_${idParts[1]}`;
-          deptStartIdx = 2;
-        }
-        let deptKey = idParts.slice(deptStartIdx).join('_');
-        if (deptKey.startsWith('_')) deptKey = deptKey.slice(1);
-
         const docData = docSnap.data() || {};
+        const meta = docData._meta || {};
+        const parsedId = parseAssignmentDocId(docSnap.id);
+
+        const explicitBatch = meta.batch || docData.batch || parsedId.batch || docSnap.id;
+        const explicitAy = meta.academicYear || docData.academicYear || parsedId.ay || docSnap.id;
+        const explicitSem = meta.semester || docData.semester || parsedId.sem || "";
+        const progKeyExtracted = meta.programmeKey || meta.progKey || parsedId.progKey;
+        const deptKey = String(meta.department || meta.deptKey || parsedId.dept || "").replace(/^_+|_+$/g, "");
+        const sectionExtracted = parsedId.section;
+
         Object.entries(docData).forEach(([uid, val]) => {
           if (uid === '_meta' || uid.startsWith('_')) return;
 
           const addCode = (c) => {
+            let codeStr = "";
+            let cName = "";
             if (typeof c === 'string' && c.trim()) {
+              codeStr = c.trim().toUpperCase();
+            } else if (typeof c === 'object' && c !== null) {
+              codeStr = (c.code || c.subjectCode || c.courseCode || "").trim().toUpperCase();
+              cName = c.name || c.subjectName || c.courseName || "";
+            }
+            if (codeStr) {
               entries.push({
-                code: c.trim().toUpperCase(),
+                docId: docSnap.id,
+                code: codeStr,
+                name: cName,
                 uid,
                 progKey: progKeyExtracted,
                 dept: deptKey,
-                batch: batchKey,
-                academicYear: ayKey,
-                semester: String(semKey),
+                batch: explicitBatch,
+                academicYear: explicitAy,
+                semester: String(explicitSem).replace(/[^0-9]/g, ''),
                 section: sectionExtracted
               });
-            } else if (typeof c === 'object' && c !== null) {
-              const codeStr = c.code || c.subjectCode || c.courseCode;
-              if (codeStr && typeof codeStr === 'string' && codeStr.trim()) {
-                entries.push({
-                  code: codeStr.trim().toUpperCase(),
-                  uid,
-                  progKey: progKeyExtracted,
-                  dept: deptKey,
-                  batch: batchKey,
-                  academicYear: ayKey,
-                  semester: String(semKey),
-                  section: sectionExtracted
-                });
-              }
             }
           };
 
@@ -344,12 +395,16 @@ export default function IAScheduleCreation({ embedded = false }) {
       exams.sort((a, b) => new Date(a.fromDate) - new Date(b.fromDate));
       setExamEvents(exams);
       setHolidayDates(hDays);
+    }, (err) => {
+      console.warn("Error listening to academic_calendar_events:", err);
     });
 
     const unsubCia = onSnapshot(collection(db, "cia_configs"), (snap) => {
       const list = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() }));
       setCiaConfigs(list);
+    }, (err) => {
+      console.warn("Error listening to cia_configs:", err);
     });
 
     const unsubCType = onSnapshot(collection(db, "course_type_configs"), (snap) => {
@@ -607,10 +662,14 @@ export default function IAScheduleCreation({ embedded = false }) {
           const codeKey = normCodeKey(code);
 
           if (!byCode[codeKey]) {
-            byCode[codeKey] = { code, name, courseTypes: [], departments: [] };
+            byCode[codeKey] = { code, name, courseTypes: [], departments: [], rawCodes: [] };
           }
           if (name && !byCode[codeKey].name) byCode[codeKey].name = name;
           if (code && byCode[codeKey].code !== code) byCode[codeKey].code = code;
+          const rawNormLocal = normCodeKey(rawCode);
+          if (rawNormLocal && !byCode[codeKey].rawCodes.some(rc => normCodeKey(rc) === rawNormLocal)) {
+            byCode[codeKey].rawCodes.push(rawCode);
+          }
 
           const bankEntry = courseBankMap[codeKey];
           const deptCleanKey = sanitizeKey(sDoc.deptKey);
@@ -671,29 +730,44 @@ export default function IAScheduleCreation({ embedded = false }) {
   };
 
   // 8. Map Handling Faculty for each Course Code across departments
+  const extractStartYear = useCallback((str) => {
+    if (!str) return "";
+    const s = String(str);
+    const m4 = s.match(/20(\d{2})/);
+    if (m4) return `20${m4[1]}`;
+    const m2 = s.match(/\d{2}/);
+    if (m2) return `20${m2[0]}`;
+    return "";
+  }, []);
+
   const codeHandlers = useMemo(() => {
     if (!batch || !academicYear || !semester) return {};
     const map = {};
     const cBatch = cleanStr(batch);
     const cAy = cleanStr(academicYear);
-    const cSem = String(semester).trim();
-    const batchYear = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+    const cSem = String(semester).replace(/[^0-9]/g, '');
+    const batchYear = extractStartYear(batch);
 
     allAssignments.forEach(a => {
       let matchBatch = !a.batch;
       if (a.batch) {
         const aNorm = cleanStr(a.batch);
-        const aYear = a.batch.match(/20\d{2}/)?.[0] || a.batch.match(/\b\d{2}\b/)?.[0] || "";
+        const aYear = extractStartYear(a.batch || a.docId);
         matchBatch = aNorm === cBatch || aNorm.includes(cBatch) || cBatch.includes(aNorm) || (batchYear && aYear && batchYear === aYear);
       }
 
-      const matchAy = !a.academicYear || cleanStr(a.academicYear) === cAy || cleanStr(a.academicYear).includes(cAy) || cAy.includes(cleanStr(a.academicYear));
-      const matchSem = !a.semester || String(a.semester).trim() === cSem;
+      const aAyClean = cleanStr(a.academicYear);
+      const aAyYear = extractStartYear(a.academicYear);
+      const selAyYear = extractStartYear(academicYear);
+      const matchAy = !a.academicYear || aAyClean === cAy || aAyClean.includes(cAy) || cAy.includes(aAyClean) ||
+        (aAyYear && selAyYear && aAyYear === selAyYear);
+      const aSemClean = String(a.semester || "").replace(/[^0-9]/g, '');
+      const matchSem = !aSemClean || aSemClean === cSem;
 
       if (!matchBatch || !matchAy || !matchSem) return;
 
       const rawNorm = normCodeKey(a.code);
-      const canonicalCode = getCanonicalCode(a.code, a.courseName || a.subjectName || a.name, a.dept);
+      const canonicalCode = getCanonicalCode(a.code, a.name || a.courseName || a.subjectName, a.dept);
       const canonicalNorm = normCodeKey(canonicalCode);
 
       const keysToAdd = new Set([rawNorm, canonicalNorm].filter(Boolean));
@@ -711,7 +785,7 @@ export default function IAScheduleCreation({ embedded = false }) {
       map[code].sort((x, y) => (getFacultyName(x.uid) || '').localeCompare(getFacultyName(y.uid) || ''));
     });
     return map;
-  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode]);
+  }, [allAssignments, batch, academicYear, semester, usersMap, getCanonicalCode, extractStartYear]);
 
   // Combine rows with handling faculty (respecting the multi-select course type filter)
   const rows = useMemo(() => {
@@ -721,8 +795,27 @@ export default function IAScheduleCreation({ embedded = false }) {
     );
     if (!source.length) return [];
     return source.map(s => {
-      const normCode = normCodeKey(s.code);
-      const handlers = (codeHandlers[normCode] || []).map(h => ({
+      const canonicalCode = getCanonicalCode(s.code, s.name, s.departments?.[0]?.dept);
+      // Candidate keys: display/canonical code + every raw syllabus code (covers CourseBank
+      // code replacements where HOD allocations still reference the old code)
+      const candidateNorms = Array.from(new Set(
+        [s.code, canonicalCode, ...(s.rawCodes || [])]
+          .map(v => normCodeKey(v))
+          .filter(Boolean)
+      ));
+
+      let handlerList = [];
+      for (const cand of candidateNorms) {
+        if (codeHandlers[cand]) { handlerList = codeHandlers[cand]; break; }
+      }
+      if (!handlerList.length) {
+        const matchedKey = Object.keys(codeHandlers).find(k =>
+          candidateNorms.some(c => k === c || (c.length >= 4 && (k.includes(c) || c.includes(k))))
+        );
+        if (matchedKey) handlerList = codeHandlers[matchedKey] || [];
+      }
+
+      const handlers = handlerList.map(h => ({
         uid: h.uid,
         name: getFacultyName(h.uid),
         dept: h.dept,
@@ -731,21 +824,53 @@ export default function IAScheduleCreation({ embedded = false }) {
       }));
       return { ...s, handlers };
     });
-  }, [syllabusSubjects, codeHandlers, usersMap, selectedCourseTypes]);
+  }, [syllabusSubjects, codeHandlers, usersMap, selectedCourseTypes, getCanonicalCode]);
+
+  // Fuzzy assignment lookup: exact key → exact normalized → guarded substring (prevents
+  // short-code false positives like "BM3" matching "BM3352").
+  const getAssignmentForCode = useCallback((code, assignObj) => {
+    if (!code || !assignObj) return {};
+    if (assignObj[code]) return assignObj[code];
+    const targetNorm = normCodeKey(code);
+    // Exact normalized match
+    const exactKey = Object.keys(assignObj).find(k => normCodeKey(k) === targetNorm);
+    if (exactKey && assignObj[exactKey]) return assignObj[exactKey];
+    // Guarded fuzzy: both strings >= 4 chars, length overlap >= 60%
+    const fuzzyKey = Object.keys(assignObj).find(k => {
+      const kNorm = normCodeKey(k);
+      if (!kNorm || !targetNorm || kNorm === targetNorm) return false;
+      const shorter = Math.min(kNorm.length, targetNorm.length);
+      const longer = Math.max(kNorm.length, targetNorm.length);
+      if (shorter < 4 || shorter / longer < 0.6) return false;
+      return kNorm.includes(targetNorm) || targetNorm.includes(kNorm);
+    });
+    if (fuzzyKey && assignObj[fuzzyKey]) return assignObj[fuzzyKey];
+    return {};
+  }, []);
 
   // Auto-Select Rule: Pre-select QP Setter if exactly 1 handling faculty exists
+  // Gate: only run AFTER Firestore assignments have loaded to avoid overwriting saved data
   useEffect(() => {
-    if (!rows.length) return;
+    if (!rows.length || !firestoreAssignLoaded) return;
     setAssignments(prev => {
       const next = { ...prev };
       let changed = false;
 
       rows.forEach(r => {
         const existing = getAssignmentForCode(r.code, next);
+        const hasSavedData = existing && (existing.examDate || existing.setterUid || existing.fromDate || existing.toDate || existing.startTime || existing.endTime || existing.timeSlot);
         const singleHandlerUid = r.handlers.length >= 1 ? r.handlers[0].uid : "";
         const singleHandlerName = r.handlers.length >= 1 ? r.handlers[0].name : "";
 
-        if (!existing || (!existing.code && !existing.setterUid && !existing.examDate)) {
+        if (hasSavedData) {
+          if (!existing.departments || existing.departments.length === 0) {
+            next[r.code] = { ...existing, departments: r.departments || [] };
+            changed = true;
+          }
+          return;
+        }
+
+        if (!existing || (!existing.code && !existing.setterUid)) {
           next[r.code] = {
             code: r.code,
             name: r.name,
@@ -757,26 +882,12 @@ export default function IAScheduleCreation({ embedded = false }) {
             toDate: ""
           };
           changed = true;
-        } else if (!existing.setterUid && r.handlers.length >= 1) {
-          next[r.code] = {
-            ...existing,
-            departments: r.departments || existing.departments || [],
-            setterUid: singleHandlerUid,
-            setterName: singleHandlerName
-          };
-          changed = true;
-        } else if (!existing.departments || existing.departments.length === 0) {
-          next[r.code] = {
-            ...existing,
-            departments: r.departments || []
-          };
-          changed = true;
         }
       });
 
       return changed ? next : prev;
     });
-  }, [rows, getAssignmentForCode, usersMap]);
+  }, [rows, getAssignmentForCode, usersMap, firestoreAssignLoaded]);
 
   // Helper to normalize any date format (ISO, Timestamp object, DD/MM/YYYY, YYYY-MM-DD) to YYYY-MM-DD
   const getEffectiveExamDate = useCallback((as) => {
@@ -842,15 +953,13 @@ export default function IAScheduleCreation({ embedded = false }) {
         const dSem = String(data.semester || "").trim();
         const dAY = normCodeKey(data.academicYear || "");
 
-        const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
+        const startYr1 = extractStartYear(batch);
         const targetStr = (data.batch || "") + " " + d.id;
-        const startYr2 = targetStr.match(/20\d{2}/)?.[0] || targetStr.match(/\b\d{2}\b/)?.[0] || "";
+        const startYr2 = extractStartYear(targetStr);
 
         let yearMatches = false;
         if (startYr1 && startYr2) {
-          const y1Clean = startYr1.length === 2 ? `20${startYr1}` : startYr1;
-          const y2Clean = startYr2.length === 2 ? `20${startYr2}` : startYr2;
-          yearMatches = (y1Clean === y2Clean);
+          yearMatches = (startYr1 === startYr2);
         }
 
         const isBatchMatch =
@@ -875,9 +984,14 @@ export default function IAScheduleCreation({ embedded = false }) {
               const canonicalCode = item.code ? getCanonicalCode(item.code, item.name, item.departments?.[0]?.dept) : "";
               const canonicalNorm = normCodeKey(canonicalCode);
 
-              combinedAssignments[k] = assignObj;
-              if (rawNorm) combinedAssignments[rawNorm] = assignObj;
-              if (canonicalNorm) combinedAssignments[canonicalNorm] = assignObj;
+              // Merge across ALL matching docs (aliases share the same merged object ref)
+              // so a stale/partial doc can never wipe saved dates or timings.
+              const baseItem = combinedAssignments[k] || combinedAssignments[rawNorm] || combinedAssignments[canonicalNorm] || null;
+              const mergedItem = mergeAssignmentItems(baseItem, assignObj);
+
+              combinedAssignments[k] = mergedItem;
+              if (rawNorm) combinedAssignments[rawNorm] = mergedItem;
+              if (canonicalNorm) combinedAssignments[canonicalNorm] = mergedItem;
             });
           }
           if (data.examId) foundExamId = data.examId;
@@ -885,10 +999,13 @@ export default function IAScheduleCreation({ embedded = false }) {
       });
 
       setAssignments(prev => ({ ...prev, ...combinedAssignments }));
+      setFirestoreAssignLoaded(true);
 
       if (foundExamId) {
         setSelectedExamId(prev => prev || foundExamId);
       }
+    }, (err) => {
+      console.warn("Error listening to qp_setter_assignments:", err);
     });
     return () => unsub();
   }, [batch, academicYear, semester, getEffectiveExamDate]);
@@ -912,17 +1029,6 @@ export default function IAScheduleCreation({ embedded = false }) {
   const commonCount = rows.filter(r => r.departments.length > 1).length;
   const assignedCount = Object.values(assignments).filter(a => a.setterUid).length;
 
-  const getAssignmentForCode = useCallback((code, assignObj) => {
-    if (!code || !assignObj) return {};
-    if (assignObj[code]) return assignObj[code];
-    const targetNorm = normCodeKey(code);
-    const matchedKey = Object.keys(assignObj).find(k => normCodeKey(k) === targetNorm);
-    if (matchedKey && assignObj[matchedKey]) {
-      return assignObj[matchedKey];
-    }
-    return {};
-  }, []);
-
   const handleAssignmentChange = (code, field, value) => {
     setAssignments(prev => {
       const targetNorm = normCodeKey(code);
@@ -936,6 +1042,15 @@ export default function IAScheduleCreation({ embedded = false }) {
         if (field === "setterUid") {
           const handlerObj = usersMap[value];
           updated.setterName = handlerObj ? (handlerObj.facultyName || handlerObj.displayName || handlerObj.name || handlerObj.email) : "";
+        }
+        if (field === "examDate" && value) {
+          if (!updated.startTime && !updated.endTime) {
+            updated.startTime = "09:30";
+            updated.endTime = "11:30";
+            updated.slot = "FN";
+            updated.session = "FN";
+            updated.timeSlot = buildTimeSlotString("09:30", "11:30");
+          }
         }
         if (field === "startTime" || field === "endTime") {
           const sTime = field === "startTime" ? value : (cur.startTime || "");
@@ -1701,7 +1816,7 @@ export default function IAScheduleCreation({ embedded = false }) {
                       const activeSlot = as.slot || as.session || (as.startTime ? deriveSlotFromTime(as.startTime) : "");
 
                       return (
-                        <tr key={r.code} className="hover:bg-slate-50 transition-colors">
+                        <tr key={`${r.code}_${idx}`} className="hover:bg-slate-50 transition-colors">
                           {/* 1st Col: Department (Center Aligned) */}
                           {isCommon ? (
                             <td className="p-3.5 align-middle text-center border border-slate-200 bg-purple-50/20 min-w-[200px]">
@@ -1757,7 +1872,7 @@ export default function IAScheduleCreation({ embedded = false }) {
                             {r.handlers.length > 0 ? (
                               <div className="flex flex-wrap gap-1">
                                 {r.handlers.map((h, i) => (
-                                  <span key={i} className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                                  <span key={`${h.uid}_${i}`} className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
                                     {h.label}
                                   </span>
                                 ))}
@@ -1782,16 +1897,16 @@ export default function IAScheduleCreation({ embedded = false }) {
                             >
                               <option value="">-- Select Setter --</option>
                               {r.handlers.length > 0 ? (
-                                r.handlers.map((h) => (
-                                  <option key={h.uid} value={h.uid}>
+                                r.handlers.map((h, hIdx) => (
+                                  <option key={`h_${h.uid}_${hIdx}`} value={h.uid}>
                                     {h.label} {hasSingleHandler ? "(Auto Selected)" : ""}
                                   </option>
                                 ))
                               ) : (
                                 Object.values(usersMap)
                                   .filter(u => u.role === "Faculty" || u.role === "HOD")
-                                  .map(u => (
-                                    <option key={u.uid || u.id} value={u.uid || u.id}>
+                                  .map((u, uIdx) => (
+                                    <option key={`fac_${u.uid || u.id || uIdx}`} value={u.uid || u.id}>
                                       {u.facultyName || u.displayName || u.email}
                                     </option>
                                   ))

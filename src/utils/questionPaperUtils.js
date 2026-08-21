@@ -81,7 +81,16 @@ const formatExamDateDisplay = (dateVal) => {
   return String(dateVal);
 };
 
-export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hodSignatureUrl = '', ciaConfigs = {}, poMarks = null, coeSignatureUrl = '') => {
+export const getQuestionPaperHTML = (
+  qp,
+  cos = [],
+  facultySignatureUrl = '',
+  hodSignatureUrl = '',
+  ciaConfigs = {},
+  poMarks = null,
+  coeSignatureUrl = '',
+  acSignatureUrl = ''
+) => {
   // Compute exam display name (resolve config ID to name)
   let examDisplay = qp.exam_name;
   if (!examDisplay) {
@@ -99,27 +108,22 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
   const subjectName = parsedSubject.name || qp.subject_name || '';
   const subjectDisplay = subjectName ? `${subjectCode} - ${subjectName}` : subjectCode;
 
-  // Prepare signature HTML
-  let facultySignatureHtml = '';
-  if (facultySignatureUrl) {
-    facultySignatureHtml = `<img src="${facultySignatureUrl}" alt="Faculty Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
-  } else {
-    facultySignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`; // Placeholder if no signature
-  }
+  // Prepare signature HTMLs (resolving explicitly passed args or internal qp object fields)
+  const facultySig = facultySignatureUrl || qp?.faculty_signature_url || qp?.facultySignatureUrl || '';
+  const acSig = acSignatureUrl || qp?.ac_signature_url || qp?.academic_coordinator_signature_url || qp?.acSignatureUrl || '';
+  const hodSig = hodSignatureUrl || qp?.hod_signature_url || qp?.hodSignatureUrl || '';
 
-  let hodSignatureHtml = '';
-  if (hodSignatureUrl) {
-    hodSignatureHtml = `<img src="${hodSignatureUrl}" alt="HOD Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
-  } else {
-    hodSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
-  }
+  let facultySignatureHtml = facultySig
+    ? `<img src="${facultySig}" alt="Subject Faculty Signature" style="height: 48px; max-width: 130px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`
+    : `<div style="height: 48px; width: 100%;"></div>`;
 
-  let coeSignatureHtml = '';
-  if (coeSignatureUrl) {
-    coeSignatureHtml = `<img src="${coeSignatureUrl}" alt="COE Signature" style="height: 50px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`;
-  } else {
-    coeSignatureHtml = `<div style="height: 50px; width: 150px; margin: 0 auto; border-bottom: 1px solid #000;"></div>`;
-  }
+  let acSignatureHtml = acSig
+    ? `<img src="${acSig}" alt="Academic Coordinator Signature" style="height: 48px; max-width: 130px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`
+    : `<div style="height: 48px; width: 100%;"></div>`;
+
+  let hodSignatureHtml = hodSig
+    ? `<img src="${hodSig}" alt="HOD Signature" style="height: 48px; max-width: 130px; width: auto; display: block; margin: 0 auto; border-bottom: 1px solid #000;" />`
+    : `<div style="height: 48px; width: 100%;"></div>`;
 
   let html = `
 <div class="qp-preview-container" style="font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.4;">
@@ -231,6 +235,36 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
           !(q.question && q.question.trim().toLowerCase() === '(or)')
         );
 
+        const formatMathText = (qStr) => {
+          if (!qStr) return '';
+          let str = String(qStr);
+
+          // 0. Remove any leftover error markers like [Math Processing Error]
+          str = str.replace(/\[Math Processing Error\]/gi, '');
+
+          // 1. Auto-wrap matrix environments (\begin{bmatrix} ... \end{bmatrix}), including optional equation prefix like A=, B=, X=
+          str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
+            const cleanPrefix = prefix ? prefix.trim() : '';
+            const cleanInner = innerText ? innerText.trim() : '';
+            return `\\(${cleanPrefix ? `${cleanPrefix} ` : ''}\\begin{${envName}} ${cleanInner} \\end{${envName}}\\)`;
+          });
+
+          // 2. Auto-wrap exponent / power expressions like A^{4} or A^{-1} if not wrapped in \(...\)
+          str = str.replace(/(?:\\\()?([A-Za-z]\^\{[^{}]+\})(?:\\\))?/gi, (match, powerExp) => {
+            return `\\(${powerExp}\\)`;
+          });
+
+          // Clean up any double-wrapped \(\( ... \)\)
+          str = str.replace(/\\\(\s*\\\(/g, '\\(').replace(/\\\)\s*\\\)/g, '\\)');
+
+          // 3. Wrap any \(...\) or \[...\] math blocks in <span class="math-tex">...</span> if not already wrapped
+          str = str.replace(/(?:<span class="math-tex">)?(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])(?:<\/span>)?/gi, (match, mathContent) => {
+            return `<span class="math-tex">${mathContent}</span>`;
+          });
+
+          return str;
+        };
+
         filteredQuestions.forEach((q, qIdx) => {
           if (q.either_or) {
             if (q.sub === 'a') {
@@ -238,7 +272,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
               html += `
                 <tr>
                   <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                  <td style="padding: 4px;">${q.question || ''}</td>
+                  <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
@@ -252,7 +286,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
                 </tr>
                 <tr>
                   <td style="text-align: center; padding: 4px;">${nextQ?.qno || ""}</td>
-                  <td style="padding: 4px;">${nextQ?.question || ""}</td>
+                  <td style="padding: 4px;">${formatMathText(nextQ?.question || "")}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.kl || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.co || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.pi || ''}</td>
@@ -263,7 +297,7 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
             html += `
               <tr>
                 <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                <td style="padding: 4px;">${q.question || ''}</td>
+                <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
                 <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
                 <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
                 <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
@@ -356,27 +390,52 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
     });
   }
 
+  // Resolve Course Outcomes list robustly (from passed cos, qp.course_outcomes, qp.courseOutcomes, or activeCOs)
+  let effectiveCos = [];
+  if (cos && Array.isArray(cos) && cos.length > 0) {
+    effectiveCos = cos;
+  } else if (qp?.course_outcomes && Array.isArray(qp.course_outcomes) && qp.course_outcomes.length > 0) {
+    effectiveCos = qp.course_outcomes;
+  } else if (qp?.courseOutcomes && Array.isArray(qp.courseOutcomes) && qp.courseOutcomes.length > 0) {
+    effectiveCos = qp.courseOutcomes;
+  } else if (activeCOs.size > 0) {
+    effectiveCos = Array.from(activeCOs).sort().map(c => ({
+      code: c,
+      description: `${c} Course Outcome`
+    }));
+  }
+
+  // Filter effectiveCos so only covered COs in this paper are shown in the summary table (matching QuestionPaperGenerator)
+  const coveredCos = effectiveCos.filter((co) => {
+    const coCode = (co.code || co.co_code || co.co || '').toUpperCase();
+    return activeCOs.has(coCode) || (coWeightage[coCode] && coWeightage[coCode] > 0) || (co.weightage && co.weightage > 0) || co.tick === '✓';
+  });
+
+  const listToRender = coveredCos.length > 0 ? coveredCos : effectiveCos;
+
   let coRows = '';
-  if (cos && cos.length > 0) {
-    coRows = cos.map((co) => {
-      const tick = activeCOs.has(co.code) ? '✓' : '';
-      const w = coWeightage[co.code] || '';
+  if (listToRender && listToRender.length > 0) {
+    coRows = listToRender.map((co) => {
+      const coCode = co.code || co.co_code || co.co || '';
+      const coDesc = co.description || co.desc || co.co_description || '-';
+      const tick = activeCOs.has(coCode) || (coWeightage[coCode] && coWeightage[coCode] > 0) || co.tick === '✓' ? '✓' : '';
+      const w = coWeightage[coCode] || co.weightage || '';
       return `
         <tr>
-          <td style="padding: 4px;">${co.code}</td>
-          <td style="padding: 4px;">${co.description}</td>
-          <td style="text-align: center; padding: 4px;">${tick}</td>
-          <td style="text-align: center; padding: 4px;">${w || ''}</td>
+          <td style="padding: 6px; border: 1px solid #000; text-align: center;">${coCode}</td>
+          <td style="padding: 6px; border: 1px solid #000; text-align: left;">${coDesc}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #000;">${tick}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #000;">${w || ''}</td>
         </tr>
       `;
     }).join('');
   } else {
     coRows = `
       <tr>
-        <td style="padding: 4px;">-</td>
-        <td style="padding: 4px;">-</td>
-        <td style="text-align: center; padding: 4px;">-</td>
-        <td style="padding: 4px;"></td>
+        <td style="padding: 6px; border: 1px solid #000; text-align: center;">-</td>
+        <td style="padding: 6px; border: 1px solid #000; text-align: center;">-</td>
+        <td style="padding: 6px; border: 1px solid #000; text-align: center;">-</td>
+        <td style="padding: 6px; border: 1px solid #000; text-align: center;">-</td>
       </tr>
     `;
   }
@@ -387,10 +446,10 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
         <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px; border: 1px solid #000;">
             <thead>
                 <tr>
-                    <th style="padding: 6px; border: 1px solid #000;">Outcome Code</th>
-                    <th style="padding: 6px; border: 1px solid #000;">Description</th>
-                    <th style="padding: 6px; border: 1px solid #000;">Tick Covered COs</th>
-                    <th style="padding: 6px; border: 1px solid #000;">Weightage</th>
+                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Course Outcome Code</th>
+                    <th style="padding: 6px; border: 1px solid #000; text-align: left;">Description</th>
+                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Tick the CO's covered in this QP</th>
+                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Weightage of marks allotted to each CO</th>
                 </tr>
             </thead>
             <tbody>
@@ -399,18 +458,16 @@ export const getQuestionPaperHTML = (qp, cos = [], facultySignatureUrl = '', hod
         </table>
       </div>
 
-<table border="1" style="width: 100%; border-collapse: collapse; margin-top: 40px; font-size: 11px; border: 1.5px solid #000;">
+<table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px; border: 1.5px solid #000;">
   <tr>
-    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>
-    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${hodSignatureHtml}</td>
-    <td style="height: 80px; width: 25%; text-align: center; vertical-align: bottom; padding: 5px;">${coeSignatureHtml}</td>
-    <td style="height: 80px; width: 25%;"></td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${acSignatureHtml}</td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${hodSignatureHtml}</td>
   </tr>
   <tr>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Subject Faculty</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">HOD</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">COE</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Principal</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Subject Faculty Signature</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Academic Coordinator Signature</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">HOD Signature</td>
   </tr>
 </table>
 </div>

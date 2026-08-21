@@ -261,6 +261,24 @@ export function parseSubjectField(subject) {
   return { code: raw, name: '', category: '' };
 }
 
+/**
+ * Format Question Paper Set display (e.g., "Set 1", "Set 2", "Set A").
+ */
+export function formatQPSetDisplay(qp) {
+  if (!qp) return "Set 1";
+  const s = qp.qp_set || qp.qpSet || qp.set || qp.selectedSet || qp.set_name || qp.setName;
+  if (s && String(s).trim()) {
+    const val = String(s).trim();
+    return val.toLowerCase().startsWith('set') ? val : `Set ${val}`;
+  }
+  const idStr = String(qp.id || qp.docId || qp.compositeKey || "");
+  const matchSet = idStr.match(/_Set_Set(\d+|[A-Z]+)/i) || idStr.match(/_Set_(\d+|[A-Z]+)/i) || idStr.match(/Set_(\d+|[A-Z]+)/i) || idStr.match(/Set(\d+|[A-Z]+)/i);
+  if (matchSet && matchSet[1]) {
+    return `Set ${matchSet[1]}`;
+  }
+  return "Set 1";
+}
+
 export function isWrittenTestQp(qp) {
   if (!qp) return false;
   const at = String(qp.assessment_type || qp.assessmentType || '').toLowerCase();

@@ -21,7 +21,7 @@ import {
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay } from "../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay, parseSubjectField } from "../lib/utils";
 
 import Layout from "../components/Layout";
 
@@ -2381,7 +2381,14 @@ export default function Dashboard() {
                         return ciaConfigs[configId]?.examName || configId;
                       })()}
                     </h3>
-                    <p className="text-xs text-zinc-500">{selectedQP.subject} • {selectedQP.subject_name}</p>
+                    <p className="text-xs text-zinc-500">
+                      {(() => {
+                        const p = parseSubjectField(selectedQP.subject);
+                        const code = p.code || selectedQP.subject;
+                        const name = p.name || selectedQP.subject_name;
+                        return name ? `${code} • ${name}` : code;
+                      })()}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">

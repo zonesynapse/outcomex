@@ -18,7 +18,7 @@ import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField, formatQPSetDisplay } from "../lib/utils";
 import { typesetMath } from "../utils/mathJaxUtils";
 
 function bsKey(key) {
@@ -1941,6 +1941,14 @@ export default function HODDashboard() {
       // Full data already in selectedQP (parent doc stores full payload)
       setFullQPForModal({ ...selectedQP });
 
+      // First priority for COs: use saved course_outcomes stored directly on the paper
+      const savedCos = selectedQP.course_outcomes || selectedQP.courseOutcomes;
+      if (Array.isArray(savedCos) && savedCos.length > 0) {
+        setModalCourseOutcomes(savedCos);
+      } else {
+        setModalCourseOutcomes([]);
+      }
+
       const progKey = formatProgrammeKey(selectedQP.programme);
       const regulation = getRegulationForBatch(progKey, selectedQP.batch);
       if (regulation) {
@@ -1951,9 +1959,12 @@ export default function HODDashboard() {
         if (coSnap.exists()) {
           const data = coSnap.data();
           const loadedCOs = Object.entries(data)
-            .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
+            .filter(([k]) => k.startsWith('CO') || k.startsWith('co'))
+            .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
             .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
-          setModalCourseOutcomes(loadedCOs);
+          if (loadedCOs.length > 0) {
+            setModalCourseOutcomes(loadedCOs);
+          }
         }
       }
       if (selectedQP.forwarded_by) {
@@ -1969,7 +1980,7 @@ export default function HODDashboard() {
     if (!qp) return "-";
     const examName = (qp.exam_name || "").toString().trim();
     const qpaperName = (qp.qpaper_name || "").toString().trim();
-    const qpSet = (qp.qp_set || "").toString().trim();
+    const setLabel = formatQPSetDisplay(qp);
     let display = examName;
     if (!display) {
       if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
@@ -1978,10 +1989,7 @@ export default function HODDashboard() {
         display = qpaperName;
       }
     }
-    if (qpSet && qpSet !== "Set 1") {
-      display = `${display} (${qpSet})`;
-    }
-    return display || '-';
+    return `${display} (${setLabel})`;
   };
 
   const resolveForwardedByName = (uid) => {

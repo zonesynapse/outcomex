@@ -8,7 +8,7 @@ import {
   ShieldCheck, ScrollText, CalendarCheck2, ClipboardList, CheckCircle2,
   Clock3, RefreshCw, ArrowRight, Landmark, Sparkles, TrendingUp, Award, PenLine
 } from "lucide-react";
-import { formatProgrammeKey } from "../../lib/utils";
+import { formatProgrammeKey, formatQPSetDisplay, parseSubjectField } from "../../lib/utils";
 
 export default function ExamCellDashboard() {
   const navigate = useNavigate();
@@ -86,10 +86,9 @@ export default function ExamCellDashboard() {
     if (!qp) return "-";
     const examName = (qp.exam_name || "").toString().trim();
     const qpaperName = (qp.qpaper_name || "").toString().trim();
+    const setLabel = formatQPSetDisplay(qp);
     let display = examName || qpaperName || "-";
-    const qpSet = (qp.qp_set || "").toString().trim();
-    if (qpSet && qpSet !== "Set 1") display = `${display} (${qpSet})`;
-    return display;
+    return `${display} (${setLabel})`;
   };
 
   const stats = [
@@ -252,6 +251,10 @@ export default function ExamCellDashboard() {
                   const initial = (facName || "?").charAt(0).toUpperCase();
                   const colorIdx = Math.abs((qp.subject || "").length) % 6;
                   const dotColors = ["bg-blue-500", "bg-amber-500", "bg-emerald-500", "bg-violet-500", "bg-rose-500", "bg-indigo-500"];
+                  const parsedSubj = parseSubjectField(qp.subject);
+                  const subjCode = parsedSubj.code || qp.subject;
+                  const subjName = parsedSubj.name || qp.subject_name;
+
                   return (
                     <div key={`${qp.compositeKey}-${qp.id}`}
                       className="flex items-start justify-between gap-3 bg-zinc-50/40 rounded-2xl border border-zinc-150 p-4 hover:shadow-md hover:bg-white transition-all">
@@ -266,8 +269,8 @@ export default function ExamCellDashboard() {
                             <span className="text-[10px] text-zinc-400">{timeAgo(qp.updated_at || qp.approved_at || qp.forwarded_at)}</span>
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            <span className="text-xs font-black text-zinc-800 truncate">{qp.subject}</span>
-                            {qp.subject_name && <span className="text-[10px] text-zinc-400 truncate max-w-[150px] font-medium">{qp.subject_name}</span>}
+                            <span className="text-xs font-black text-zinc-800 truncate">{subjCode}</span>
+                            {subjName && <span className="text-[10px] text-zinc-600 truncate max-w-[180px] font-semibold">• {subjName}</span>}
                           </div>
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             <span className="inline-flex items-center rounded-md bg-blue-50/50 text-blue-700 px-1.5 py-0.5 text-[9px] font-extrabold">{resolveExamDisplay(qp)}</span>
@@ -298,15 +301,20 @@ export default function ExamCellDashboard() {
                 <p className="text-[11px] text-zinc-400">No papers published yet by the Exam Cell.</p>
               ) : (
                 <div className="space-y-2">
-                  {publishedQps.slice(0, 4).map((qp) => (
-                    <div key={`${qp.compositeKey}-${qp.id}`} className="flex items-center justify-between gap-3 py-2 border-b border-zinc-50 last:border-0">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-bold text-zinc-800 truncate">{qp.subject}{qp.subject_name ? ` - ${qp.subject_name}` : ""}</p>
-                        <p className="text-[10px] text-zinc-400">{resolveExamDisplay(qp)} · {qp.batch || "-"} · Sem {qp.semester || "-"}</p>
+                  {publishedQps.slice(0, 4).map((qp) => {
+                    const pSubj = parseSubjectField(qp.subject);
+                    const pCode = pSubj.code || qp.subject;
+                    const pName = pSubj.name || qp.subject_name;
+                    return (
+                      <div key={`${qp.compositeKey}-${qp.id}`} className="flex items-center justify-between gap-3 py-2 border-b border-zinc-50 last:border-0">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-bold text-zinc-800 truncate">{pCode}{pName ? ` - ${pName}` : ""}</p>
+                          <p className="text-[10px] text-zinc-400">{resolveExamDisplay(qp)} · {qp.batch || "-"} · Sem {qp.semester || "-"}</p>
+                        </div>
+                        <span className="shrink-0 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">PUBLISHED</span>
                       </div>
-                      <span className="shrink-0 text-[9px] font-extrabold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">PUBLISHED</span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

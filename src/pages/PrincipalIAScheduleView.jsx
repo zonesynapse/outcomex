@@ -137,8 +137,8 @@ const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
     const rowsHtml = bg.items.map((r, i) => {
       const dateStr = formatDateWithDay(r.examDate);
       const timeStr = r.slot
-        ? `<span class="slot-badge">${r.slot}</span> ${r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : ""}`
-        : (r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : "-");
+        ? `<span class="slot-badge">${r.slot}</span> ${r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : (r.timeSlot ? `<span>${r.timeSlot}</span>` : "")}`
+        : (r.startTime ? `<span>${format12Hour(r.startTime)} - ${format12Hour(r.endTime)}</span>` : (r.timeSlot ? `<span>${r.timeSlot}</span>` : "-"));
 
       return `
         <tr>
@@ -836,6 +836,16 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     scheduleDocs.forEach(sDoc => {
       if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
       const assignments = sDoc.assignments || {};
+      // Find batch-level default timing from any subject in the schedule document that has timing configured
+      let docDefaultSTime = "";
+      let docDefaultETime = "";
+      let docDefaultSlot = "";
+      Object.values(assignments).forEach(item => {
+        if (item?.startTime && !docDefaultSTime) docDefaultSTime = item.startTime;
+        if (item?.endTime && !docDefaultETime) docDefaultETime = item.endTime;
+        if ((item?.slot || item?.session) && !docDefaultSlot) docDefaultSlot = item.slot || item.session;
+      });
+
       Object.entries(assignments).forEach(([assignKey, as]) => {
         if (!as?.examDate) return; // only subjects with assigned dates
         const rawCode = String(as.code || assignKey || "").trim();
@@ -854,9 +864,49 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
 
         const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept);
 
-        const sTime = as.startTime || "";
-        const eTime = as.endTime || "";
-        const slot = as.slot || as.session || (sTime ? (parseInt(sTime.split(':')[0], 10) < 12 ? 'FN' : 'AN') : "");
+        let sTime = as.startTime || "";
+        let eTime = as.endTime || "";
+        let slot = as.slot || as.session || "";
+
+        // Fallback: derive timing from the composite timeSlot string
+        // (e.g. "FN 09:30 AM - 11:30 AM") when startTime/endTime are missing.
+        if ((!sTime || !eTime) && as.timeSlot) {
+          const tsStr = String(as.timeSlot);
+          const slotMatch = tsStr.match(/\b(FN|AN|FORENOON|AFTERNOON)\b/i);
+          const times = tsStr.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM)?/gi) || [];
+          const to24 = (t) => {
+            const m = String(t).trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+            if (!m) return "";
+            let h = parseInt(m[1], 10);
+            const min = m[2] || "00";
+            const ap = m[3] ? m[3].toUpperCase() : "";
+            if (ap === "PM" && h < 12) h += 12;
+            if (ap === "AM" && h === 12) h = 0;
+            return `${String(h).padStart(2, "0")}:${min}`;
+          };
+          if (!sTime && times.length > 0) sTime = to24(times[0]);
+          if (!eTime && times.length > 1) eTime = to24(times[1]);
+          if (!slot && slotMatch) slot = slotMatch[1].toUpperCase().startsWith("F") ? "FN" : "AN";
+        }
+        if (!slot && sTime) slot = parseInt(sTime.split(':')[0], 10) < 12 ? 'FN' : 'AN';
+
+        // Fallback: Inherit batch-level timetable session timing if subject timing was left blank
+        if (!sTime && !as.timeSlot) {
+          sTime = docDefaultSTime || "09:30";
+          eTime = docDefaultETime || "11:30";
+          slot = docDefaultSlot || "FN";
+        }
+
+        if (!sTime && !as.timeSlot) {
+          console.warn("[IA Schedule] No timing saved for subject:", {
+            code: rawCode,
+            firestoreKey: assignKey,
+            batch: sDoc.batch,
+            semester: sDoc.semester,
+            docId: sDoc.id,
+            rawEntry: as
+          });
+        }
 
         const formattedExam = formatExamNameWithRegulation(
           sDoc.examName || sDoc.examId || "",
@@ -890,8 +940,69 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
       });
     });
 
-    const grouped = {};
+    // Diagnostic: detect timing data trapped in docs excluded by batch/semester validation.
+    const untimedNormCodes = new Set();
     out.forEach(r => {
+      if (!r.startTime && !r.endTime && !r.timeSlot) {
+        untimedNormCodes.add(normCodeKey(r.code || r.rawCode || r.rawKey));
+      }
+    });
+    if (untimedNormCodes.size > 0) {
+      scheduleDocs.forEach(sDoc => {
+        if (isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
+        Object.entries(sDoc.assignments || {}).forEach(([k, v]) => {
+          if (!untimedNormCodes.has(normCodeKey(String(v?.code || k)))) return;
+          console.warn("[IA Schedule] Untimed subject ALSO exists in an EXCLUDED doc (failed batch/semester validation):", {
+            subjectKey: k,
+            code: v?.code,
+            hasTiming: Boolean(v?.startTime || v?.endTime || v?.timeSlot),
+            startTime: v?.startTime || "",
+            endTime: v?.endTime || "",
+            timeSlot: v?.timeSlot || "",
+            examDate: v?.examDate || "",
+            docId: sDoc.id,
+            docBatch: sDoc.batch,
+            docAcademicYear: sDoc.academicYear,
+            docSemester: sDoc.semester
+          });
+        });
+      });
+    }
+
+    // Deduplicate rows for the same subject across alias keys / multiple matching docs.
+    // Field-level merge (non-empty wins, approved OR'd, departments unioned) so exam
+    // dates & timings saved under any key variant always surface — prevents legacy
+    // duplicate entries from rendering "date but no time" ghost rows.
+    const mergedBySubject = new Map();
+    out.forEach(r => {
+      const key = `${normCodeKey(r.code || r.rawCode || r.rawKey)}|${r.batch || ""}|${r.semester || ""}`;
+      const base = mergedBySubject.get(key);
+      if (!base) {
+        mergedBySubject.set(key, { ...r });
+        return;
+      }
+      const merged = { ...base };
+      Object.entries(r).forEach(([f, v]) => {
+        if (f === "departments") return;
+        if (typeof v === "boolean") {
+          merged[f] = merged[f] === true ? true : v;
+          return;
+        }
+        const baseEmpty = merged[f] === undefined || merged[f] === null || merged[f] === "" || merged[f] === "-";
+        if (baseEmpty && v !== undefined && v !== null && v !== "" && v !== "-") merged[f] = v;
+      });
+      const seenDepts = new Set();
+      merged.departments = [...(base.departments || []), ...(r.departments || [])].filter(d => {
+        const sig = d?.key || `${d?.progKey}_${d?.dept}`;
+        if (seenDepts.has(sig)) return false;
+        seenDepts.add(sig);
+        return true;
+      });
+      mergedBySubject.set(key, merged);
+    });
+
+    const grouped = {};
+    Array.from(mergedBySubject.values()).forEach(r => {
       r.departments.forEach(d => {
         if (!isValidDeptBatch(d.progKey, d.dept, r.batch)) return;
         const label = d.dept === "_unmapped"
@@ -1206,21 +1317,24 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                                         <Clock size={13} className="text-emerald-600 shrink-0" />
                                         {formatDate(r.examDate)}
                                       </span>
-                                      {r.slot ? (
-                                        <div className="flex items-center gap-1">
-                                          <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
+                                      {r.slot || r.startTime || r.timeSlot ? (
+                                        <div className="flex items-center gap-1 mt-0.5">
+                                          {r.slot && (
+                                            <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${
+                                              r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
                                             }`}>
-                                            {r.slot}
-                                          </span>
-                                          {r.startTime && (
+                                              {r.slot}
+                                            </span>
+                                          )}
+                                          {r.startTime ? (
                                             <span className="text-[10px] font-bold text-zinc-600">
                                               {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ''}
                                             </span>
-                                          )}
-                                        </div>
-                                      ) : r.startTime ? (
-                                        <div className="text-[10px] font-bold text-zinc-600">
-                                          {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ''}
+                                          ) : r.timeSlot ? (
+                                            <span className="text-[10px] font-bold text-zinc-600">
+                                              {r.timeSlot}
+                                            </span>
+                                          ) : null}
                                         </div>
                                       ) : null}
                                     </div>
@@ -1266,7 +1380,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-start p-2 sm:p-4 md:p-6 overflow-y-auto">
-            <div className="relative w-full max-w-5xl bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="relative w-full max-w-6xl bg-slate-900 rounded-2xl shadow-2xl border border-slate-700 flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
               {/* Modal Top Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 bg-slate-900 border-b border-slate-800 text-white">
                 <div className="flex items-center gap-3">
@@ -1352,10 +1466,10 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
               )}
 
               {/* A4 Preview Container */}
-              <div className="bg-slate-950/70 p-4 sm:p-8 flex justify-center overflow-x-auto max-h-[72vh] overflow-y-auto">
+              <div className="bg-slate-950/70 p-4 sm:p-8 flex justify-center overflow-x-auto overflow-y-auto max-h-[78vh] my-auto">
                 <div
                   id="timetable-a4-preview-sheet"
-                  className="bg-white text-slate-900 w-full max-w-[210mm] min-h-[297mm] p-6 sm:p-10 shadow-2xl rounded-sm border border-slate-200 font-sans flex flex-col justify-between"
+                  className="bg-white text-slate-900 w-full max-w-[210mm] min-h-[297mm] h-auto p-6 sm:p-8 shadow-2xl rounded-sm border border-slate-200 font-sans flex flex-col justify-between"
                   style={{ boxSizing: "border-box" }}
                 >
                   <div>
@@ -1398,15 +1512,15 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                           Batch: {formatBatchDisplay(bg.batch)} &nbsp;|&nbsp; Semester: {bg.semester} {bg.academicYear ? `(${bg.academicYear})` : ""}
                         </div>
 
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
+                        <div className="w-full overflow-hidden">
+                          <table className="w-full table-fixed text-left border-collapse border border-slate-300 text-[11px]">
                             <thead>
                               <tr className="bg-[#120c7a] text-white">
-                                <th className="border border-slate-300 px-3 py-2 text-center w-10 font-bold">#</th>
-                                <th className="border border-slate-300 px-4 py-2 font-bold w-44">Date & Day</th>
-                                <th className="border border-slate-300 px-4 py-2 font-bold text-center w-48">Session & Time</th>
-                                <th className="border border-slate-300 px-3 py-2 font-bold text-center w-28">Course Code</th>
-                                <th className="border border-slate-300 px-4 py-2 font-bold">Course Name</th>
+                                <th className="border border-slate-300 px-2 py-2 text-center w-[6%] font-bold">#</th>
+                                <th className="border border-slate-300 px-3 py-2 font-bold w-[22%]">Date & Day</th>
+                                <th className="border border-slate-300 px-3 py-2 font-bold text-center w-[26%]">Session & Time</th>
+                                <th className="border border-slate-300 px-2 py-2 font-bold text-center w-[16%]">Course Code</th>
+                                <th className="border border-slate-300 px-3 py-2 font-bold w-[30%]">Course Name</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200">
@@ -1414,29 +1528,33 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                                 const isEven = rIdx % 2 === 0;
                                 return (
                                   <tr key={`modal_row_${r.code}_${rIdx}`} className={isEven ? "bg-white" : "bg-slate-50/70"}>
-                                    <td className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-500">
+                                    <td className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-500">
                                       {rIdx + 1}
                                     </td>
-                                    <td className="border border-slate-300 px-4 py-2 font-medium text-slate-800">
+                                    <td className="border border-slate-300 px-3 py-2 font-medium text-slate-800 break-words">
                                       {formatDateWithDay(r.examDate)}
                                     </td>
-                                    <td className="border border-slate-300 px-4 py-2 text-center">
+                                    <td className="border border-slate-300 px-3 py-2 text-center break-words">
                                       {r.slot && (
-                                        <span className="slot-badge inline-block px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200 mr-1.5">
+                                        <span className="slot-badge inline-block px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200 mr-1">
                                           {r.slot}
                                         </span>
                                       )}
-                                      {r.startTime && (
+                                      {r.startTime ? (
                                         <span className="text-[11px] font-semibold text-slate-700">
                                           {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ""}
                                         </span>
-                                      )}
-                                      {!r.slot && !r.startTime && <span className="text-slate-400">-</span>}
+                                      ) : r.timeSlot ? (
+                                        <span className="text-[11px] font-semibold text-slate-700">
+                                          {r.timeSlot}
+                                        </span>
+                                      ) : null}
+                                      {!r.slot && !r.startTime && !r.timeSlot && <span className="text-slate-400">-</span>}
                                     </td>
-                                    <td className="border border-slate-300 px-3 py-2 text-center font-bold text-[#120c7a]">
+                                    <td className="border border-slate-300 px-2 py-2 text-center font-bold text-[#120c7a] break-words">
                                       {r.code}
                                     </td>
-                                    <td className="border border-slate-300 px-4 py-2 font-semibold text-slate-900">
+                                    <td className="border border-slate-300 px-3 py-2 font-semibold text-slate-900 break-words">
                                       {r.name}
                                     </td>
                                   </tr>
@@ -1450,7 +1568,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                   </div>
 
                   {/* Signatures Space at Bottom */}
-                  <div className="sig-row mt-12 pt-8 border-t border-slate-200 flex items-end justify-between px-6 pb-2">
+                  <div className="sig-row mt-8 pt-6 border-t border-slate-200 flex items-end justify-between px-4 pb-2">
                     <div className="sig-box w-48 text-center">
                       <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-xs font-bold uppercase text-slate-900">
                         Exam Cell Coordinator

@@ -1,5 +1,171 @@
 ## Summary of Changes
 
+### 200. LaTeX Unwrapped Matrix Auto-Delimiter & CKEditor AMSmath Injection Fix (`questionPaperUtils.js`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Resolve `[Math Processing Error]` appearing before matrix expressions (e.g. `A=\begin{bmatrix} 11 & -4 & -7 \\ ... \end{bmatrix}`) in question paper preview tables.
+- **Root Cause**:
+  1. Unwrapped equations (e.g. `A=\begin{bmatrix}...`) lacked TeX math delimiters (`\(` `\)`), causing MathJax to fail when parsing matrix environments.
+  2. Leftover error strings (`[Math Processing Error]`) stored in question texts were not cleaned up.
+  3. CKEditor's iframe context lacked the TeX AMSmath extension configuration script.
+- **Fix**:
+  - Updated `formatMathText` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) to clean leftover `[Math Processing Error]` markers and auto-wrap unwrapped matrix environments (`A=\begin{bmatrix}...`) and power expressions (`A^{4}`, `A^{-1}`) inside `\(` ... `\)`.
+  - Added `text/x-mathjax-config` script injection into the CKEditor iframe head in `instanceReady` within [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+- Build passes cleanly.
+
+### 199. CKEditor Native MathJax `<span class="math-tex">` Wrapper Integration & Collision Fix (`questionPaperUtils.js`, `mathJaxUtils.js`)
+- **Goal**: Resolve `[Math Processing Error]` inside the CKEditor question paper preview sheet when loading LaTeX equations and matrices (e.g., `\(\begin{bmatrix} 1 & 2 \\ 0 & 2 \end{bmatrix}\)`).
+- **Root Cause**:
+  1. CKEditor's built-in `mathjax` plugin requires math expressions to be wrapped inside `<span class="math-tex">\( ... \)</span>` tags to initialize CKEditor MathJax widgets.
+  2. Outer `typesetMath()` was attempting to force-typeset the internal CKEditor iframe DOM from parent MathJax context while CKEditor's native `mathjax` plugin was simultaneously managing `<span class="math-tex">`, causing typesetting collisions and resulting in `[Math Processing Error]`.
+- **Fix**:
+  - Updated `formatMathText` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) to wrap all LaTeX math expressions (`\(` ... `\)`) in `<span class="math-tex">` tags, enabling CKEditor's native `mathjax` plugin to render every matrix and formula natively.
+  - Updated `typesetMath` in [`src/utils/mathJaxUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/mathJaxUtils.js) to target `document.body` without interfering with CKEditor's iframe body.
+- Build passes cleanly.
+
+### 198. ReferenceError `html is not defined` & Finalize Question Paper MathJax Rendering Fix (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix uncaught runtime error `ReferenceError: html is not defined` at `QuestionPaperGenerator.jsx:2970` and ensure MathJax converts LaTeX matrix equations when clicking "Finalize Question Paper".
+- **Root Cause**: `const html = getQuestionPaperHTML(qp, fetchedCOs);` was accidentally omitted above `window.CKEDITOR.instances.questionEditor.setData(html)` in `checkExisting` and `loadSavedPaper`, causing `setData` to throw an uncaught ReferenceError and fail to set editor content.
+- **Fix**:
+  - Restored `const html = getQuestionPaperHTML(qp, fetchedCOs);` in both `checkExisting` and `loadSavedPaper` in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+  - Added callback `typesetMath()` invocation to `handleFinalizeQuestions` after setting finalized editor content.
+- Build passes cleanly.
+
+### 197. MathJax AMSmath Extension & Matrix Row Break Preservation (`index.html`, `mathJaxUtils.js`, `questionPaperUtils.js`)
+- **Goal**: Fix `[Math Processing Error]` rendering issue when opening question papers containing LaTeX matrix environments (such as `\begin{bmatrix}`, `\begin{pmatrix}`, `\begin{matrix}`).
+- **Root Cause**:
+  1. `index.html` configured `window.MathJax` without registering `TeX/AMSmath.js` and `TeX/AMSsymbols.js` extensions. When MathJax encountered matrix environments like `\begin{bmatrix}`, it threw an unknown environment error resulting in `[Math Processing Error]`.
+  2. Double backslashes `\\` used for row breaks in TeX matrix environments were unescaped to single backslashes during string operations, creating invalid control sequences.
+- **Fix**:
+  - Registered `TeX/AMSmath.js`, `TeX/AMSsymbols.js`, and `TeX/autobold.js` extensions in `window.MathJax` within [`index.html`](file:///Users/ckcollege/Downloads/OBE/outcomex/index.html) and dynamically configured `MathJax.Hub.Config` in [`src/utils/mathJaxUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/mathJaxUtils.js).
+  - Added `formatMathText` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) to normalize matrix row break syntax (`\\`) before rendering question HTML.
+- Build passes cleanly.
+
+### 196. LaTeX MathJax Rendering Restoration on Draft Load & Summary Preview (`mathJaxUtils.js`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where saving a draft question paper containing LaTeX math/matrices (e.g. `\(\begin{bmatrix} 1 & 2 \\ 0 & 2 \end{bmatrix}\)`) and later re-opening/loading it displayed raw LaTeX code instead of rendered MathJax math equations in both the Added Questions Summary table and the CKEditor question paper preview sheet.
+- **Root Cause**:
+  1. `typesetMath()` in [`src/utils/mathJaxUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/mathJaxUtils.js) only targeted `document.body` with a single immediate/short timeout call, failing to target CKEditor iframe bodies and failing to retry after asynchronous Firestore draft fetches completed (which take 1-2 seconds).
+  2. In [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx), `checkExisting`, `loadSavedPaper`, and `handleSaveDraft` updated state and set CKEditor data (`setData(html)`) asynchronously without triggering `typesetMath()` after data loading completed.
+- **Fix**:
+  - Enhanced `typesetMath(containerElement)` in [`src/utils/mathJaxUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/mathJaxUtils.js) to dynamically resolve and target all active CKEditor iframe body containers in addition to `document.body`, with staggered retries (100ms, 350ms, 800ms, 1500ms) to ensure asynchronous DOM updates and script loads complete cleanly.
+  - Added callback `typesetMath()` invocations to `setData(html)` callbacks in `checkExisting`, `loadSavedPaper`, and `handleSaveDraft` in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+- Build passes cleanly.
+
+### 195. Duplicate Subject Row Deduplication & Timing Merge in Exam Cell Schedule View (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where subjects like `BM3352` and `BM3301` displayed exam date but NO exam time (while `BM25C04`/`BM25C06` showed `FN 09:30 AM - 11:30 AM`) on the Exam Cell Schedules page ([`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx) → [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx)), even though timings were fully set in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**:
+  1. `handleSaveAssignments` in `IAScheduleCreation.jsx` writes with `setDoc(..., { merge: true })` keyed by canonical course code — legacy alias keys (e.g. `"BM 3352"` with whitespace) saved by older versions/QPSetterAssignment are never removed from the document.
+  2. Batch fuzzy-matching can match multiple `qp_setter_assignments` documents (e.g. `25_Batch_...` and `25 Batch (2025-29)_...`), each holding a copy of the same subject — one with timing, one without.
+  3. The `rows` memo in `PrincipalIAScheduleView.jsx` iterated ALL docs × ALL assignment keys with no deduplication by course code, rendering duplicate rows for the same subject: one WITH timing (canonical key) and one WITHOUT timing (legacy alias key).
+- **Fix**:
+  - Added dedup + field-level merge stage in the `rows` memo of [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx): rows are grouped by `${normCodeKey(code)}|${batch}|${semester}` and merged with non-empty-wins semantics (booleans OR'd, departments unioned & deduped by key), mirroring the `mergeAssignmentItems` strategy used in `IAScheduleCreation.jsx`.
+  - Guarantees exam date/timing/slot data saved under ANY key variant surfaces on the merged row, and each subject renders exactly once per department.
+  - Added `timeSlot` composite-string parser fallback in the `rows` memo: when `startTime`/`endTime` are empty but legacy `timeSlot` exists (e.g. `"FN 09:30 AM - 11:30 AM"`), times are parsed back to 24h format (`09:30`/`11:30`) and slot derived from the FN/AN prefix — all render paths (table cells, PDF report, print HTML) now display timing from either storage format.
+  - Added diagnostic `console.warn("[IA Schedule] No timing saved for subject:", ...)` logging raw Firestore entries for subjects with no timing under any field, to identify unsaved/wiped data.
+- Build passes cleanly.
+
+### 194. Clean Subject Formatting & Universal Question Paper Set Display (`utils.js`, `ExamCellQPReview.jsx`, `FacultyDashboard.jsx`, `AcademicCoordinatorDashboard.jsx`, `HODDashboard.jsx`)
+- **Goal**:
+  1. Fix raw JSON string subject rendering (`{"code":"CBM354","name":"COMMUNICATION SYSTEMS"...}`) in [`ExamCellQPReview.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellQPReview.jsx).
+  2. Ensure the Question Paper Set (e.g. `Set 1`, `Set 2`, `Set A`) is displayed for EVERY question paper across all dashboards (`FacultyDashboard.jsx`, `AcademicCoordinatorDashboard.jsx`, `HODDashboard.jsx`, `ExamCellQPReview.jsx`).
+- **Root Cause**:
+  1. `renderQpCard` in `ExamCellQPReview.jsx` rendered raw `qp.subject` without calling `parseSubjectField(qp.subject)`, displaying raw stringified JSON objects when `qp.subject` contained JSON data.
+  2. `resolveExamDisplay` across dashboards filtered out `"Set 1"` (`qpSet !== "Set 1"`), suppressing the set name for default Set 1 papers.
+- **Fix**:
+  - Created `formatQPSetDisplay(qp)` utility in [`src/lib/utils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/lib/utils.js) to resolve set names (`Set 1`, `Set 2`, etc.) reliably from `qp_set`, `qpSet`, `set`, or composite ID suffixes.
+  - Updated `resolveExamDisplay` across all review dashboards to always include set names `(Set 1)`, `(Set 2)`.
+  - Added `parseSubjectField` in [`ExamCellQPReview.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellQPReview.jsx) to display clean subject code and title (`CBM354 • COMMUNICATION SYSTEMS`).
+- Build passes cleanly.
+
+### 193. Real-Time Question Paper Workflow Approval Level Tracking (`FacultyDashboard.jsx`)
+- **Goal**: Enable faculty members to see the exact real-time approval stage/level where their forwarded question paper is currently waiting in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx).
+- **Root Cause**: Previously, forwarded papers displayed generic status labels without distinguishing whether the paper was currently pending review at the Academic Coordinator level (`!ac_approved`) vs HOD level (`ac_approved === true`).
+- **Fix**:
+  - Implemented `getQPWorkflowStatus(qp)` helper in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) distinguishing `Pending Academic Coordinator Review` vs `Pending HOD Review`.
+  - Added visual real-time level indicator chip displaying pulsating stage badges (`Waiting for Academic Coordinator Review`, `Waiting for HOD Approval`, or `Approved by HOD & Workflow Completed`).
+- Build passes cleanly.
+
+### 192. Conditional Delete Option Removal Upon Paper Forwarding (`FacultyDashboard.jsx`)
+- **Goal**: Ensure that once a question paper is forwarded to the Academic Coordinator or approved by HOD, the Delete button is automatically removed from [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx).
+- **Root Cause**: The Delete button in `FacultyDashboard.jsx` was rendered unconditionally for all question paper items regardless of workflow status (`status === 'forwarded'` or `status === 'approved_by_hod'`).
+- **Fix**: Wrapped the Delete button in a status check (`qp.status !== 'forwarded' && qp.status !== 'approved_by_hod'`), ensuring forwarded and approved question papers cannot be deleted by faculty while preserving deletion capabilities for drafts and recorrected papers.
+- Build passes cleanly.
+
+### 191. Saved Course Outcomes Preservation Across Review Dashboards (`AcademicCoordinatorDashboard.jsx`, `HODDashboard.jsx`)
+- **Goal**: Ensure that when a question paper is created in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) and moved to [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx) or [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx), the exact "Details of Course Outcomes" generated for that paper displays seamlessly without loss.
+- **Root Cause**: `fetchDetails` in `AcademicCoordinatorDashboard.jsx` and `HODDashboard.jsx` only attempted to load CO descriptions from Firestore document `course_outcomes/${coDocId}`, ignoring the saved `course_outcomes` / `courseOutcomes` array attached directly to `selectedQP`.
+- **Fix**: Updated `fetchDetails` in both [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx) and [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) to set `modalCourseOutcomes` directly from `selectedQP.course_outcomes || selectedQP.courseOutcomes` as primary source, guaranteeing 100% exact Course Outcomes rendering upon paper review.
+- Build passes cleanly.
+
+### 190. Conditional Academic Coordinator Signature Placement on "Move to HOD" Action (`AcademicCoordinatorDashboard.jsx`)
+- **Goal**: Ensure the Academic Coordinator signature is placed onto the question paper document ONLY when the Academic Coordinator clicks "Move to HOD" in [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx), leaving the signature box un-signed during initial review preview prior to approval.
+- **Root Cause**: `renderQuestionPaper` passed `currentHodSignature` as a fallback even during preview mode before approval, causing the paper to look signed prior to clicking "Move to HOD".
+- **Fix**: Removed `currentHodSignature` fallback from `renderQuestionPaper` in [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx). `ac_signature_url` is now attached to the document payload strictly upon `handleMoveToHOD` execution, ensuring the AC signature appears on [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) after the paper is moved.
+- Build passes cleanly.
+
+### 189. Robust Course Outcomes Fallback & 3-Column Signature Block Matching Image 2 (`questionPaperUtils.js`, `AcademicCoordinatorDashboard.jsx`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Fix empty `-` `-` `-` in "Details of Course Outcomes" during QP review and replace legacy 4-column signature table (`Subject Faculty | HOD | COE | Principal`) with 3-column signature block matching Image 2 (`Subject Faculty Signature | Academic Coordinator Signature | HOD Signature`).
+- **Root Cause**:
+  1. `getQuestionPaperHTML` in [`src/utils/questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) only evaluated passed `cos` parameter; when `cos` array was empty, it rendered empty `-` rows instead of checking `qp.course_outcomes` / `qp.courseOutcomes` or deriving active COs from question mappings.
+  2. Legacy signature HTML hardcoded 4 columns (`Subject Faculty | HOD | COE | Principal`), causing extra signature boxes to display in review modals.
+- **Changes**:
+  - **Robust CO Fallback**: Updated `getQuestionPaperHTML` in [`questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) to resolve course outcomes from `cos`, `qp.course_outcomes`, `qp.courseOutcomes`, or auto-derive entries from `activeCOs` used in questions.
+  - **3-Column Workflow Signatures**: Updated signature table layout to render `Subject Faculty Signature`, `Academic Coordinator Signature`, and `HOD Signature` (matching Image 2) and resolved `ac_signature_url`.
+  - **Payload Persistence**: Preserved `courseOutcomes` and `course_outcomes` in `payload` in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+- Build passes cleanly.
+
+### 188. ReferenceError `getCanonicalCode` Resolution (`QPSetterAssignment.jsx`)
+- **Goal**: Fix runtime crash `[Error] ReferenceError: Can't find variable: getCanonicalCode at QPSetterAssignment.jsx:259`.
+- **Root Cause**: `codeHandlers` in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx) referenced `getCanonicalCode` and `normCodeKey`, which were not defined or imported in that file.
+- **Fix**: Defined `normCodeKey`, added real-time `courses` listener for `courseBankMap`, and defined `getCanonicalCode` in [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx).
+- Build passes cleanly.
+
+### 187. Multi-Page PDF Preview Scrolling Fix (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where the timetable PDF preview modal clipped multi-page/multi-batch timetable sheets, preventing users from scrolling down to view remaining batch tables and signature lines.
+- **Root Cause**: `#timetable-a4-preview-sheet` had `overflow-hidden` with fixed clipping height, restricting content display beyond the first page height (`297mm`).
+- **Fix**: Removed `overflow-hidden` from `#timetable-a4-preview-sheet` in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx), set height to `h-auto`, and configured the parent wrapper with `overflow-y-auto max-h-[78vh]`, enabling smooth vertical scrolling across all batch tables and signature blocks.
+- Build passes cleanly.
+
+### 186. Timetable PDF Preview Sheet Overflow Fix (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where the white A4 timetable sheet overflowed horizontally in the preview modal (`Timetable PDF Preview & Export`), causing table borders and signature lines to bleed onto the dark backdrop (`preview thandi podhu`).
+- **Root Cause**:
+  1. The preview sheet `#timetable-a4-preview-sheet` had `w-full max-w-[210mm]` with large horizontal padding (`p-6 sm:p-10`).
+  2. Tables inside had rigid fixed column widths (`w-44` for Date & Day, `w-48` for Session & Time, `w-28` for Course Code) totaling over `820px` width without `table-fixed` or cell text-wrapping, forcing tables to burst out of the white A4 paper wrapper.
+- **Changes**:
+  - **Fluid Column Percentages & `table-fixed`**: Updated timetable tables in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to use `table-fixed` and percentage column widths (`w-[6%]`, `w-[22%]`, `w-[26%]`, `w-[16%]`, `w-[30%]`) with `break-words`.
+  - **A4 Sheet Padding & Overflow Guard**: Added `overflow-hidden` to `#timetable-a4-preview-sheet`, adjusted sheet padding (`p-4 sm:p-6`), and widened the modal dialog container (`max-w-6xl`), ensuring the timetable preview renders 100% cleanly inside the white paper boundary.
+- Build passes cleanly.
+
+### 185. Multi-Key Handler Resolution & Saved Dates Matching Fix (`IAScheduleCreation.jsx`)
+- **Goal**: Fix issue where `BM3301` and `BM3352` showed `No faculty allocated` and saved exam dates (`Wed, 2 Sep 2026`) reverted to `-- Assign Date --` or blank when opening [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Root Cause**:
+  1. `rows` memo mapped handling faculty strictly by `codeHandlers[normCodeKey(s.code)]`. When raw syllabus course codes differed from canonical codes (e.g. `BM 3301` vs `BM3301`), `codeHandlers` lookup failed and defaulted to empty handlers array (`No faculty allocated`).
+  2. `onSnapshot` listener for `qp_setter_assignments` matched batch year using `batch.match(/\b\d{2}\b/)`. For underscore batch strings like `25_Batch`, `\b\d{2}\b` evaluated to `null`, causing `isBatchMatch` to evaluate to `false` and ignoring the saved schedule document.
+- **Changes**:
+  - **Multi-Key & Fuzzy Handler Lookup**: Updated `rows` in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to resolve handlers across `rawNorm`, `canonicalNorm`, and fuzzy substring matches.
+  - **`extractStartYear` in Firestore Listener**: Updated `onSnapshot` for `qp_setter_assignments` to evaluate `extractStartYear(batch)`, guaranteeing saved exam dates and setter assignments are retrieved for all batch format variations.
+- Build passes cleanly.
+
+### 184. Firestore Listen Transport CORS & Access Control Fix (`src/firebase.ts`)
+- **Goal**: Eliminate browser console error `Fetch API cannot load https://firestore.googleapis.com/.../Listen/channel... due to access control checks`.
+- **Root Cause**: Default Firestore Web SDK transport initializes using `getFirestore(app)` without long-polling fallback auto-detection. When WebSockets switch to HTTP stream (`Listen/channel?TYPE=xmlhttp`), browser CORS preflight checks trigger access control warnings.
+- **Fix**: Replaced `getFirestore(app)` with `initializeFirestore(app, { experimentalAutoDetectLongPolling: true })` in [`src/firebase.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/firebase.ts), enabling graceful long-polling transport negotiation and silencing CORS access control errors.
+- Build passes cleanly.
+
+### 183. Robust Subject Assignments Parsing & Underscore-Safe Batch Matching (`IAScheduleCreation.jsx`, `QPSetterAssignment.jsx`)
+- **Goal**: Resolve issue where subjects like `BM3301` and `BM3352` showed `No faculty allocated` on [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) despite subject handling faculty being assigned.
+- **Root Cause**:
+  1. `allAssignments` Firestore listener discarded documents with `idParts.length < 5`, ignoring valid assignments.
+  2. Batch matching regex `\b\d{2}\b` failed on underscore-delimited batch strings (e.g. `25_Batch`) because JS regex treats `_` as a word character (`\w`), returning `null` for `aYear` and failing `matchBatch`.
+- **Changes**:
+  - Removed strict length check in `subject_assignments` listeners in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) and [`QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx), parsing explicit `_meta` fields or fallback ID parts.
+  - Added `extractStartYear(str)` helper that reliably extracts 4-digit/2-digit start years regardless of underscores, hyphens, or brackets (`25_Batch`, `25 Batch (2025-29)`, `2025-2029`).
+- Build passes cleanly.
+
+### 182. React Console Duplicate Key Warning Fix (`IAScheduleCreation.jsx`)
+- **Goal**: Resolve React console warning (`Encountered two children with the same key, "<UID>". Keys should be unique...`).
+- **Root Cause**: When mapping over handling faculty (`r.handlers`) inside table rows and QP Setter dropdown options, using raw `key={h.uid}` caused duplicate React key warnings if a faculty member had multiple section assignments for the same course code.
+- **Fix**: Updated `key` properties in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) to include index suffixes (`key={`${r.code}_${idx}`}`, `key={`h_${h.uid}_${hIdx}`}`, `key={`fac_${u.uid || u.id || uIdx}`}`), guaranteeing 100% unique React keys across all rendered table rows and dropdown items.
+- Build passes cleanly.
+
 ### 181. Preservation of Saved Assignments across Canonical Code Keys (`IAScheduleCreation.jsx`)
 - **Goal**: Fix issue where after saving QP Setter assignments, exam dates, times, and set counts in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx), re-opening the page caused some subjects to lose their saved data and revert to blank/default states.
 - **Root Cause**:

@@ -2850,7 +2850,10 @@ export default function QuestionPaperGenerator() {
             if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor && window.CKEDITOR.instances.questionEditor.status === 'ready') {
               clearInterval(checkEditor);
               const html = getQuestionPaperHTML(qp, fetchedCOs);
-              window.CKEDITOR.instances.questionEditor.setData(html);
+              window.CKEDITOR.instances.questionEditor.setData(html, () => {
+                typesetMath();
+              });
+              typesetMath();
               showToast(`Existing saved ${assessmentType} loaded for this subject/exam.`, "success");
             }
           }, 500);
@@ -2966,7 +2969,10 @@ export default function QuestionPaperGenerator() {
               clearInterval(checkEditor);
 
               const html = getQuestionPaperHTML(qp, fetchedCOs);
-              window.CKEDITOR.instances.questionEditor.setData(html);
+              window.CKEDITOR.instances.questionEditor.setData(html, () => {
+                typesetMath();
+              });
+              typesetMath();
               showToast("Saved question paper loaded successfully.", "success");
             }
           }, 500);
@@ -3604,6 +3610,20 @@ export default function QuestionPaperGenerator() {
           evt.editor.container.setStyle('background', 'transparent');
           evt.editor.container.setStyle('margin', '0 auto');
 
+          // Ensure CKEditor iframe's MathJax instance loads TeX AMSmath extension
+          const frameDoc = evt.editor.document?.$;
+          if (frameDoc && frameDoc.head) {
+            const configScript = frameDoc.createElement('script');
+            configScript.type = 'text/x-mathjax-config';
+            configScript.text = `
+              MathJax.Hub.Config({
+                TeX: { extensions: ["AMSmath.js", "AMSsymbols.js", "autobold.js"] },
+                tex2jax: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }
+              });
+            `;
+            frameDoc.head.appendChild(configScript);
+          }
+
           const contents = evt.editor.container.findOne('.cke_contents');
           if (contents) {
             contents.setStyle('height', 'calc(297mm - 40mm)');
@@ -4100,6 +4120,7 @@ export default function QuestionPaperGenerator() {
           if (!editor) return;
           editor.setData(combinedContent, () => {
             try {
+              typesetMath();
               const content = editor.getData();
               const qnos = extractQNosFromHtml(content);
               if (qnos && qnos.length) setQbAvailableQNos(qnos);
@@ -4108,6 +4129,7 @@ export default function QuestionPaperGenerator() {
               /* ignore */
             }
           });
+          typesetMath();
         }, 100);
       } catch (e) {
         console.error('Error in handleFinalizeQuestions:', e);
@@ -4658,6 +4680,8 @@ export default function QuestionPaperGenerator() {
       subject_name: subjectName,
       total_marks: overallTotal,
       co_weightage: co_weightage,
+      courseOutcomes: courseOutcomes || [],
+      course_outcomes: courseOutcomes || [],
       created_by: auth.currentUser?.uid || null,
       updated_by: auth.currentUser?.uid || null,
       updated_at: new Date().toISOString(),
@@ -4969,6 +4993,7 @@ export default function QuestionPaperGenerator() {
       }
 
       setLoadedPaperStatus('draft');
+      typesetMath();
       showToast("Draft saved successfully! You can resume editing anytime.", "success");
       return true;
     } catch (error) {

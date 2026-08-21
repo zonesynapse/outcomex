@@ -10,7 +10,7 @@ import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
 import { getQuestionPaperHTML } from "../../utils/questionPaperUtils";
 import { useRegulations } from "../../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey } from "../../lib/utils";
+import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay } from "../../lib/utils";
 import { typesetMath } from "../../utils/mathJaxUtils";
 
 const timeAgo = (dateStr) => {
@@ -50,14 +50,15 @@ export default function ExamCellQPReview() {
   const { getRegulationForBatch } = useRegulations();
 
   const [currentUid, setCurrentUid] = useState(auth.currentUser?.uid || null);
-  const [coeSignature, setCoeSignature] = useState("");
   const [coeName, setCoeName] = useState("");
+  const [coeSignature, setCoeSignature] = useState("");
   const [usersMap, setUsersMap] = useState({});
   const [ciaConfigs, setCiaConfigs] = useState({});
+  const [rawQps, setRawQps] = useState({});
   const [allQps, setAllQps] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState(searchParams.get("tab") === "published" ? "published" : "review");
+  const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "pending");
   const [searchQuery, setSearchQuery] = useState("");
 
   const [selectedQP, setSelectedQP] = useState(null);
@@ -65,14 +66,15 @@ export default function ExamCellQPReview() {
   const [fullQPForModal, setFullQPForModal] = useState(null);
   const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
   const [facultySignatureForQP, setFacultySignatureForQP] = useState("");
+  const [selectedQPHodSignature, setSelectedQPHodSignature] = useState("");
 
   const [showRecorrectModal, setShowRecorrectModal] = useState(false);
   const [recorrectComments, setRecorrectComments] = useState("");
 
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
-  const showToast = (message, type = 'success') => {
+  const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: "", type: "success" }), 5000);
+    setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
   };
 
   useEffect(() => {
@@ -137,6 +139,7 @@ export default function ExamCellQPReview() {
     if (!qp) return "-";
     const examName = (qp.exam_name || "").toString().trim();
     const qpaperName = (qp.qpaper_name || "").toString().trim();
+    const setLabel = formatQPSetDisplay(qp);
     let display = examName;
     if (!display) {
       if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
@@ -145,9 +148,7 @@ export default function ExamCellQPReview() {
         display = qpaperName;
       }
     }
-    const qpSet = (qp.qp_set || "").toString().trim();
-    if (qpSet && qpSet !== "Set 1") display = `${display} (${qpSet})`;
-    return display || '-';
+    return `${display} (${setLabel})`;
   };
 
   const filteredPending = useMemo(() => {
@@ -291,6 +292,10 @@ export default function ExamCellQPReview() {
     const dotColor = dotColors[colorIdx];
     const examDisplay = resolveExamDisplay(qp);
 
+    const parsedSubj = parseSubjectField(qp.subject);
+    const subjCode = parsedSubj.code || qp.subject;
+    const subjName = parsedSubj.name || qp.subject_name;
+
     return (
       <div key={`${qp.compositeKey}-${qp.id}`}
         className="group bg-white/60 rounded-2xl border border-zinc-150 p-4 hover:shadow-md hover:bg-white transition-all duration-200">
@@ -306,9 +311,12 @@ export default function ExamCellQPReview() {
                 <span className="text-[10px] text-zinc-400">{timeAgo(qp.updated_at || qp.approved_at || qp.forwarded_at)}</span>
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                <span className="text-xs font-black text-zinc-800 truncate">{qp.subject}</span>
-                {qp.subject_name && (
-                  <span className="text-[10px] text-zinc-400 truncate max-w-[130px] font-medium">{qp.subject_name}</span>
+                <span className="text-xs font-black text-zinc-800 truncate">{subjCode}</span>
+                {subjName && (
+                  <>
+                    <span className="text-[10px] text-zinc-300">•</span>
+                    <span className="text-[10px] text-zinc-600 truncate max-w-[200px] font-semibold">{subjName}</span>
+                  </>
                 )}
               </div>
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -466,7 +474,14 @@ export default function ExamCellQPReview() {
                 </div>
                 <div>
                   <h3 className="font-bold text-white leading-tight">{resolveExamDisplay(selectedQP)}</h3>
-                  <p className="text-xs text-blue-200">{selectedQP.subject} &middot; {selectedQP.subject_name}</p>
+                  <p className="text-xs text-blue-200">
+                    {(() => {
+                      const p = parseSubjectField(selectedQP.subject);
+                      const code = p.code || selectedQP.subject;
+                      const name = p.name || selectedQP.subject_name;
+                      return name ? `${code} · ${name}` : code;
+                    })()}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">

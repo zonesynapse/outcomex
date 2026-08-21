@@ -13,13 +13,16 @@
           processEscapes: true,
           skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
         },
-        TeX: { equationNumbers: { autoNumber: 'none' } },
+        TeX: {
+          extensions: ["AMSmath.js", "AMSsymbols.js", "autobold.js"],
+          equationNumbers: { autoNumber: 'none' }
+        },
         showProcessingMessages: false,
         showMathMenu: false,
         messageStyle: 'none'
       };
     </script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
   </head>
   <body>
     <div id="root"></div>
