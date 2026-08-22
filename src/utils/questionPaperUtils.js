@@ -238,6 +238,8 @@ export const getQuestionPaperHTML = (
         const formatMathText = (qStr) => {
           if (!qStr) return '';
           let str = String(qStr);
+          // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>
+          str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
 
           // 0. Remove any leftover error markers like [Math Processing Error]
           str = str.replace(/\[Math Processing Error\]/gi, '');
@@ -416,8 +418,9 @@ export const getQuestionPaperHTML = (
   let coRows = '';
   if (listToRender && listToRender.length > 0) {
     coRows = listToRender.map((co) => {
-      const coCode = co.code || co.co_code || co.co || '';
-      const coDesc = co.description || co.desc || co.co_description || '-';
+      const coCode = (co.code || co.co_code || co.co || '').toUpperCase();
+      const rawDesc = co.description || co.desc || co.co_description || '';
+      const coDesc = (rawDesc && rawDesc.trim() && rawDesc.trim().toUpperCase() !== coCode) ? rawDesc : '—';
       const tick = activeCOs.has(coCode) || (coWeightage[coCode] && coWeightage[coCode] > 0) || co.tick === '✓' ? '✓' : '';
       const w = coWeightage[coCode] || co.weightage || '';
       return `

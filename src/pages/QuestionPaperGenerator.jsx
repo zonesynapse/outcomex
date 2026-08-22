@@ -318,10 +318,11 @@ export default function QuestionPaperGenerator() {
   useEffect(() => {
     if (isEditingQbRef.current) return;
 
-    // Prioritize the expected list of Q.Nos from the layout
+    // Prioritize the expected list of Q.Nos from the layout (normalize "(a)" vs "a")
     if (qbAvailableQNos && qbAvailableQNos.length > 0) {
-      const existingQnosSet = new Set(qpQuestions.map(q => q.qno));
-      const nextAvailable = qbAvailableQNos.find(qno => !existingQnosSet.has(qno));
+      const norm = s => String(s || '').toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
+      const existingQnosSet = new Set(qpQuestions.map(q => norm(q.qno)));
+      const nextAvailable = qbAvailableQNos.find(qno => !existingQnosSet.has(norm(qno)));
       if (nextAvailable) {
         setQbQNo(nextAvailable);
         return;
@@ -448,7 +449,10 @@ export default function QuestionPaperGenerator() {
     } catch (_err) {
       console.warn('Could not read qbEditor content', _err);
     }
-    const text = (editorText || qbQuestion || '').trim();
+    let text = (editorText || qbQuestion || '').trim();
+    if (!text) return showToast('Please enter a question.', 'error');
+    // Preserve CKEditor paragraph line breaks as <br> before stripping wrappers
+    text = text.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '').replace(/(<br\s*\/?>\s*)+/gi, '<br>').replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
     if (!text) return showToast('Please enter a question.', 'error');
     const marks = parseInt(qbMarks, 10) || 0;
     if (marks <= 0) return showToast('Marks must be greater than zero.', 'error');
@@ -460,10 +464,10 @@ export default function QuestionPaperGenerator() {
     if ((!newQ.pi || String(newQ.pi).trim() === '') && qbCO && coPiMapping && Array.isArray(coPiMapping[qbCO]) && coPiMapping[qbCO].length > 0) {
       newQ.pi = coPiMapping[qbCO][0];
     }
-    const normalize = s => String(s || '').trim().toLowerCase();
+    const normalize = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
     console.debug('[QB] handleAddQuestion qnoVal ->', qnoVal, 'isEditing ->', isEditingQbRef.current);
     setQpQuestions(prev => {
-      // if a question with same normalized qno exists, replace it; otherwise add
+      // if a question with same normalized qno exists, replace it; otherwise add (handles "11(b)" vs "11b")
       const updated = prev ? prev.slice() : [];
       try {
         const existingQnos = (prev || []).map(p => p && p.qno);
@@ -525,7 +529,11 @@ export default function QuestionPaperGenerator() {
     if (!q) return;
     isEditingQbRef.current = true;  // Mark that we're in edit mode
     setShowQbEditor(true);
-    setQbQNo(String(q.qno || (index + 1)).trim());
+    // Normalize parenthesis format: stored qno is "11(b)" but builder options are "11b"; keep select in sync
+    const rawEditQno = String(q.qno || (index + 1)).trim();
+    const normEditQno = rawEditQno.toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
+    const matchedQno = (qbAvailableQNos || []).find(v => String(v).toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1') === normEditQno);
+    setQbQNo(matchedQno || normEditQno || rawEditQno);
     const domainKey = Object.keys(bloomsDomains || {}).find(k => k === q.kldomain || (bloomsDomains[k]?.name === q.kldomain)) || '';
     setQbKLDomain(domainKey);
     setQbKL(q.kl || 'Select');
@@ -549,7 +557,7 @@ export default function QuestionPaperGenerator() {
         console.error('handleEditQuestion', e);
       }
     }, 60);
-  }, [qpQuestions, bloomsDomains, coPiMapping]);
+  }, [qpQuestions, bloomsDomains, coPiMapping, qbAvailableQNos]);
 
   // AI Modal States
   const [showAIModal, setShowAIModal] = useState(false);
@@ -2350,6 +2358,8 @@ export default function QuestionPaperGenerator() {
         const formatMathTextAssign = (qStr) => {
           if (!qStr) return '';
           let str = String(qStr);
+          // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>, strip remaining wrappers but keep breaks
+          str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
           str = str.replace(/\[Math Processing Error\]/gi, '');
           str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
             const cleanPrefix = prefix ? prefix.trim() : '';
@@ -2416,6 +2426,8 @@ export default function QuestionPaperGenerator() {
           const formatMathText = (qStr) => {
             if (!qStr) return '';
             let str = String(qStr);
+            // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>
+            str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
             str = str.replace(/\[Math Processing Error\]/gi, '');
             str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
               const cleanPrefix = prefix ? prefix.trim() : '';
@@ -2530,11 +2542,13 @@ export default function QuestionPaperGenerator() {
         .map((co) => {
           const tick = activeSet.has(co.code) ? '✓' : '';
           const w = weightMap && Object.prototype.hasOwnProperty.call(weightMap, co.code) ? weightMap[co.code] : '';
+          const coCode = (co.code || '').toUpperCase();
+          const coDesc = (co.description && co.description.trim() && co.description.trim().toUpperCase() !== coCode) ? co.description : '—';
 
           return `
           <tr>
             <td style="padding: 4px;">${co.code}</td>
-            <td style="padding: 4px;">${co.description}</td>
+            <td style="padding: 4px;">${coDesc}</td>
             <td style="text-align: center; padding: 4px;">${tick}</td>
             <td style="text-align: center; padding: 4px;">${w ? String(w) : ''}</td>
           </tr>
@@ -2637,7 +2651,12 @@ export default function QuestionPaperGenerator() {
           });
       }
 
-      if (loadedCOs.length === 0) {
+      const hasPlaceholderDescs = loadedCOs.length > 0 && loadedCOs.every(co => {
+        const d = (co.description || '').trim();
+        return !d || d.toUpperCase() === co.code.toUpperCase();
+      });
+
+      if (loadedCOs.length === 0 || hasPlaceholderDescs) {
         // Fallback 1: Check alternative doc ID keys in course_outcomes collection
         try {
           const fallbackDeptKey = sanitizeKey(department);
@@ -2671,20 +2690,38 @@ export default function QuestionPaperGenerator() {
         } catch (e) { console.warn("Error fetching alt course_outcomes:", e); }
       }
 
-      if (loadedCOs.length === 0) {
+      const hasPlaceholderAfterFallback1 = loadedCOs.length > 0 && loadedCOs.every(co => {
+        const d = (co.description || '').trim();
+        return !d || d.toUpperCase() === co.code.toUpperCase();
+      });
+
+      if (loadedCOs.length === 0 || hasPlaceholderAfterFallback1) {
         // Fallback 2: Check courses collection (Course Bank)
+        // CourseBank saves with key: {progKey}_{dept}_{regulation}_{code}
+        // CourseBank uses lib/utils sanitizeKey which strips spaces — use sanitizeKeyStrict to match
         try {
-          const fallbackDeptKey = sanitizeKey(department);
-          const fallbackStrictDept = sanitizeKeyStrict(department);
-          const fallbackSubjKey = sanitizeKey(subjectCode);
-          let courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackDeptKey}_${fallbackSubjKey}`));
-          if (!courseSnap.exists() && fallbackStrictDept !== fallbackDeptKey) {
-            courseSnap = await getDoc(doc(db, 'courses', `${progKey}_${fallbackStrictDept}_${fallbackSubjKey}`));
+          const fbDept = sanitizeKey(department);
+          const fbDeptStrict = sanitizeKeyStrict(department);
+          const fbSubj = sanitizeKey(subjectCode);
+          const fbSubjStrict = sanitizeKeyStrict(subjectCode);
+          const fbReg = sanitizeKey(regulation);
+          const fbRegStrict = sanitizeKeyStrict(regulation);
+          const courseKeyCandidates = [
+            `${progKey}_${fbDeptStrict}_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_${fbDept}_${fbReg}_${fbSubj}`,
+            `${progKey}_${fbDeptStrict}_${fbReg}_${fbSubjStrict}`,
+            `${progKey}_${fbDept}_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_Overall_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_Overall_${fbReg}_${fbSubj}`,
+          ];
+          let courseSnap = null;
+          for (const key of courseKeyCandidates) {
+            try {
+              const snap = await getDoc(doc(db, 'courses', key));
+              if (snap.exists()) { courseSnap = snap; break; }
+            } catch (_) { /* skip invalid keys */ }
           }
-          if (!courseSnap.exists()) {
-            courseSnap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${fallbackSubjKey}`));
-          }
-          if (courseSnap.exists()) {
+          if (courseSnap && courseSnap.exists()) {
             const bankData = courseSnap.data();
             if (bankData.co && Array.isArray(bankData.co)) {
               loadedCOs = bankData.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) => {
@@ -2697,18 +2734,25 @@ export default function QuestionPaperGenerator() {
         } catch (e) { console.error("Error fetching COs from course bank:", e); }
       }
 
-      if (loadedCOs.length === 0) {
+      const hasPlaceholderAfterFallback2 = loadedCOs.length > 0 && loadedCOs.every(co => {
+        const d = (co.description || '').trim();
+        return !d || d.toUpperCase() === co.code.toUpperCase();
+      });
+
+      if (loadedCOs.length === 0 || hasPlaceholderAfterFallback2) {
         // Fallback 3: Provide standard CO1 - CO5 default so the faculty is NEVER blocked
+        // Leave description empty — CO descriptions should be configured in COConfiguration
         loadedCOs = [
-          { code: 'CO1', description: 'CO1' },
-          { code: 'CO2', description: 'CO2' },
-          { code: 'CO3', description: 'CO3' },
-          { code: 'CO4', description: 'CO4' },
-          { code: 'CO5', description: 'CO5' }
+          { code: 'CO1', description: '' },
+          { code: 'CO2', description: '' },
+          { code: 'CO3', description: '' },
+          { code: 'CO4', description: '' },
+          { code: 'CO5', description: '' }
         ];
       }
 
       setCourseOutcomes(loadedCOs);
+      console.log(`[CO Load] ${subjectCode}: ${loadedCOs.length} COs loaded, sample desc: "${loadedCOs[0]?.description || ''}"`);
       if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
         setNumParts(String(loadedCOs.length));
       }
@@ -2800,7 +2844,7 @@ export default function QuestionPaperGenerator() {
           hasLoadedRef.current = true;
           setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
 
-          // Resolve kldomain: if saved as name, convert to key; strip <p> tags
+          // Resolve kldomain: if saved as name, convert to key; keep line breaks from <p> as <br>
           const resolveConfig = (config) => (config || []).map(q => ({
             ...q,
             kldomain: (() => {
@@ -2809,7 +2853,7 @@ export default function QuestionPaperGenerator() {
               const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
               return foundKey || '';
             })(),
-            question: (q.question || '').replace(/<\/?p>/g, '')
+            question: (q.question || '').replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '')
           }));
 
           // Apply state updates
@@ -2827,6 +2871,7 @@ export default function QuestionPaperGenerator() {
               isEitherOr: p.questions?.some(q => q.either_or) || false
             })) || [];
             setPartsConfig(config);
+            setQbAvailableQNos(buildExpectedQNosFromParts(config));
             setSavedExamParts(qp.parts || []);
             const qList = [];
             qp.parts?.forEach(p => {
@@ -2932,7 +2977,7 @@ export default function QuestionPaperGenerator() {
                 const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
                 return foundKey || '';
               })(),
-              question: (q.question || '').replace(/<\/?p>/g, '')
+              question: (q.question || '').replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '')
             }));
             setAssignmentConfig(resolved);
             setSavedAssignmentConfig(resolved);
@@ -2946,6 +2991,7 @@ export default function QuestionPaperGenerator() {
               isEitherOr: p.questions?.some(q => q.either_or) || false
             })) || [];
             setPartsConfig(config);
+            setQbAvailableQNos(buildExpectedQNosFromParts(config));
             setSavedExamParts(qp.parts || []);
             const qList = [];
             qp.parts?.forEach(p => {
@@ -3566,7 +3612,7 @@ export default function QuestionPaperGenerator() {
 
           editor.on('change', function () {
             try {
-              const data = editor.getData().replace(/<\/?p>/g, '');
+              const data = editor.getData().replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '');
               setAssignmentConfig(prev => {
                 const updated = [...prev];
                 if (updated[qIdx]) updated[qIdx] = { ...updated[qIdx], question: data };
@@ -4478,6 +4524,19 @@ export default function QuestionPaperGenerator() {
           return cell.textContent.trim();
         };
 
+        const getQuestionHtml = (cell) => {
+          if (!cell) return '';
+          // Preserve line breaks from CKEditor: <p> blocks and <br> inside the paper table cell
+          let html = cell.innerHTML || '';
+          // Keep math spans intact, convert block boundaries to <br>
+          html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+          // Normalize multiple <br> to single
+          html = html.replace(/(<br\s*\/?>\s*)+/gi, '<br>');
+          // Trim leading/trailing <br>
+          html = html.replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+          return html;
+        };
+
         rows.forEach(row => {
           const cells = row.querySelectorAll('td');
           if (cells.length === 0) return;
@@ -4505,9 +4564,9 @@ export default function QuestionPaperGenerator() {
           // Heuristics to find question text, KL, CO, PI within the row
           let questionText = '';
           if (questionIndex >= 0 && cells.length > questionIndex) {
-            questionText = cells[questionIndex].textContent.trim();
+            questionText = getQuestionHtml(cells[questionIndex]);
           } else if (cells.length >= 2) {
-            questionText = cells[1].textContent.trim();
+            questionText = getQuestionHtml(cells[1]);
           }
           // fallback: pick the longest text cell that doesn't look like KL/CO/PI
           if (!questionText) {
@@ -4775,7 +4834,10 @@ export default function QuestionPaperGenerator() {
         }
 
         if (currentEditorText && qbQNo) {
-          const existingIdx = currentQuestions.findIndex(q => String(q.qno || '').trim() === String(qbQNo).trim());
+          // Preserve line breaks from CKEditor <p> blocks as <br>
+          currentEditorText = currentEditorText.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '').replace(/(<br\s*\/?>\s*)+/gi, '<br>').replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+          const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
+          const existingIdx = currentQuestions.findIndex(q => norm(q.qno || '') === norm(qbQNo));
           const newQ = {
             qno: qbQNo,
             question: currentEditorText,
@@ -4784,8 +4846,8 @@ export default function QuestionPaperGenerator() {
             co: qbCO || '',
             pi: qbPI || '',
             marks: qbMarks || 2,
-            sub: qbQNo.toLowerCase().endsWith('a') ? 'a' : qbQNo.toLowerCase().endsWith('b') ? 'b' : '',
-            either_or: qbQNo.toLowerCase().endsWith('a') || qbQNo.toLowerCase().endsWith('b') || qbQNo.includes('(a)') || qbQNo.includes('(b)')
+            sub: qbQNo.toLowerCase().replace(/\s+/g,'').replace(/\(([a-z])\)$/i,'$1').endsWith('a') ? 'a' : qbQNo.toLowerCase().replace(/\s+/g,'').replace(/\(([a-z])\)$/i,'$1').endsWith('b') ? 'b' : '',
+            either_or: (()=>{ const n = qbQNo.toLowerCase().replace(/\s+/g,'').replace(/\(([a-z])\)$/i,'$1'); return n.endsWith('a') || n.endsWith('b'); })()
           };
           if (existingIdx !== -1) {
             currentQuestions[existingIdx] = newQ;
@@ -4830,6 +4892,12 @@ export default function QuestionPaperGenerator() {
                   }
                   return cell.textContent.trim();
                 };
+                const getQuestionHtml = (cell) => {
+                  if (!cell) return '';
+                  let html = cell.innerHTML || '';
+                  html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '').replace(/(<br\s*\/?>\s*)+/gi, '<br>').replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+                  return html;
+                };
                 rows.forEach(row => {
                   const cells = row.querySelectorAll('td');
                   if (cells.length === 0) return;
@@ -4841,7 +4909,7 @@ export default function QuestionPaperGenerator() {
                   let rowQ = '';
                   if (m && m[1]) rowQ = m[2] ? `${m[1]}(${m[2].toLowerCase()})` : `${m[1]}`;
                   if (!rowQ) return;
-                  let questionText = questionIndex >= 0 && cells.length > questionIndex ? cells[questionIndex].textContent.trim() : (cells[1]?.textContent.trim() || '');
+                  let questionText = questionIndex >= 0 && cells.length > questionIndex ? getQuestionHtml(cells[questionIndex]) : (getQuestionHtml(cells[1]) || '');
                   let kl = klIndex >= 0 && cells.length > klIndex ? getCellValue(cells[klIndex]) : '';
                   let co = coIndex >= 0 && cells.length > coIndex ? getCellValue(cells[coIndex]) : '';
                   let pi = piIndex >= 0 && cells.length > piIndex ? getCellValue(cells[piIndex]) : '';
@@ -6439,9 +6507,15 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                           <>
                             <option value="">Select</option>
                             {qbAvailableQNos.map(v => <option key={v} value={v}>{v}</option>)}
+                            {qbQNo && !qbAvailableQNos.includes(qbQNo) && !qbAvailableQNos.some(v => String(v).toLowerCase().replace(/\s+/g,'').replace(/\(([a-z])\)$/i,'$1') === String(qbQNo).toLowerCase().replace(/\s+/g,'').replace(/\(([a-z])\)$/i,'$1')) ? (
+                              <option value={qbQNo}>{qbQNo}</option>
+                            ) : null}
                           </>
                         ) : (
-                          <option value="">Generate Layout First</option>
+                          <>
+                            <option value="">Generate Layout First</option>
+                            {qbQNo ? <option value={qbQNo}>{qbQNo}</option> : null}
+                          </>
                         )}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />

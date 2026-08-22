@@ -297,12 +297,15 @@ export async function scanCourseCodeUsage(oldCode) {
 //  5. course_enrolments: copy doc to new key, delete old.
 //  6. qp_setter_assignments: reassign key in `assignments`, keep old key data too
 //     (so past schedules remain intact) but new schedules use new code.
+//  6. syllabus_data: update subject code inside semester arrays so QPG dropdown
+//     shows the new code and auto-select works.
+//  7. Notifications: update subject references.
 //  Historical records (marks, attendance, generated_qps, co_attainment,
-//  mapping_summary, syllabus_data) are intentionally NOT rewritten - they keep
-//  the old code and remain queryable & resolvable via legacy alias lookups.
+//  mapping_summary) are intentionally NOT rewritten - they keep the old code
+//  and remain queryable & resolvable via legacy alias lookups.
 export async function replaceCourseCode(oldCode, newCode, opts = {}) {
   const { onProgress = () => {}, batchSize = 400 } = opts;
-  const total = 8;
+  const total = 9;
   let step = 0;
   const bump = (msg) => onProgress(++step, total, msg);
 
@@ -426,7 +429,34 @@ export async function replaceCourseCode(oldCode, newCode, opts = {}) {
     }
   }
 
-  // 6. Notifications ---------------------------------------------------------
+  // 6. syllabus_data (subject code inside semester arrays) -------------------
+  bump('Updating syllabus_data (subject codes in curriculum)...');
+  {
+    const snap = await getDocs(collection(db, 'syllabus_data'));
+    const batchOps = writeBatch(db);
+    let ops = 0;
+    snap.forEach(d => {
+      const data = d.data() || {};
+      if (!data.semesters || typeof data.semesters !== 'object') return;
+      let docChanged = false;
+      Object.entries(data.semesters).forEach(([semKey, subjects]) => {
+        if (!Array.isArray(subjects)) return;
+        subjects.forEach(s => {
+          if (s && typeof s === 'object' && norm(s.code) === norm(oldCode)) {
+            s.code = newCode;
+            docChanged = true;
+          }
+        });
+      });
+      if (docChanged) {
+        batchOps.update(d.ref, { semesters: data.semesters });
+        ops += 1;
+      }
+    });
+    if (ops > 0) await batchOps.commit();
+  }
+
+  // 7. Notifications ---------------------------------------------------------
   bump('Updating notifications references...');
   {
     try {
