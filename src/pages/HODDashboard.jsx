@@ -1909,6 +1909,28 @@ export default function HODDashboard() {
     return [...new Set(tasks.map(t => t.semester).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
   }, [tasks]);
 
+  const resolveForwardedByName = (uid) => {
+    if (!uid) return "-";
+    const u = usersMap?.[uid];
+    return u?.facultyName || u?.displayName || u?.email || uid;
+  };
+
+  const resolveExamDisplay = (qp) => {
+    if (!qp) return "-";
+    const examName = (qp.exam_name || "").toString().trim();
+    const qpaperName = (qp.qpaper_name || "").toString().trim();
+    const setLabel = formatQPSetDisplay(qp);
+    let display = examName;
+    if (!display) {
+      if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
+        display = ciaConfigs[qpaperName].examName;
+      } else {
+        display = qpaperName;
+      }
+    }
+    return `${display} (${setLabel})`;
+  };
+
   const filteredTasks = useMemo(() => {
     let result = tasks;
     if (searchQuery.trim()) {
@@ -1975,28 +1997,6 @@ export default function HODDashboard() {
     };
     fetchDetails();
   }, [selectedQP, getRegulationForBatch]);
-
-  const resolveExamDisplay = (qp) => {
-    if (!qp) return "-";
-    const examName = (qp.exam_name || "").toString().trim();
-    const qpaperName = (qp.qpaper_name || "").toString().trim();
-    const setLabel = formatQPSetDisplay(qp);
-    let display = examName;
-    if (!display) {
-      if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
-        display = ciaConfigs[qpaperName].examName;
-      } else {
-        display = qpaperName;
-      }
-    }
-    return `${display} (${setLabel})`;
-  };
-
-  const resolveForwardedByName = (uid) => {
-    if (!uid) return "-";
-    const u = usersMap?.[uid];
-    return u?.facultyName || u?.displayName || u?.email || uid;
-  };
 
   const renderQuestionPaper = useCallback((qp) => {
     if (!qp) return "";
