@@ -130,7 +130,7 @@ export const getQuestionPaperHTML = (
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; width:100%; border:1.5px solid #000; margin-bottom: 10px;">
   <tbody>
     <tr>
-      <td style="height:80px; text-align:center; width:100%; padding: 5px;"><img alt="logo" class="logo-img" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="height:70px; max-width:100%; width:auto;" /></td>
+      <td style="height:70px; text-align:center; width:100%;"><img alt="logo" class="logo-img" src="/logo.png" style="height:60px; max-width:100%; width:754px;" /></td>
     </tr>
   </tbody>
 </table>
@@ -214,7 +214,7 @@ export const getQuestionPaperHTML = (
       html += `
 <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1.5px solid black; margin-top: 15px;">
   <tr>
-    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter}</td>
+    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
     <td style="width: 50%; padding: 6px; border: none; text-align: right;">${totalMarks} Marks</td>
   </tr>
 </table>

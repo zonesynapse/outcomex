@@ -185,7 +185,7 @@ export default function QuestionPaperGenerator() {
   const [qbQuestion, setQbQuestion] = useState('');
   const [qbQNo, setQbQNo] = useState('');
   const [qbAvailableQNos, setQbAvailableQNos] = useState([]);
-  const [qbKL, setQbKL] = useState('L1');
+  const [qbKL, setQbKL] = useState('Select');
   // stores selected Bloom domain id (key from RTDB)
   const [qbKLDomain, setQbKLDomain] = useState('');
   const [qbCO, setQbCO] = useState('');
@@ -455,7 +455,7 @@ export default function QuestionPaperGenerator() {
 
     const domainName = (bloomsDomains && qbKLDomain && bloomsDomains[qbKLDomain]) ? bloomsDomains[qbKLDomain].name : '';
     const qnoVal = (qbQNo && String(qbQNo).trim()) ? String(qbQNo).trim() : String((qpQuestions && qpQuestions.length) ? qpQuestions.length + 1 : 1);
-    const newQ = { qno: qnoVal, question: text, kl: qbKL || 'L1', kldomain: domainName || '', co: qbCO || '', pi: qbPI || '', marks };
+    const newQ = { qno: qnoVal, question: text, kl: qbKL === 'Select' ? '' : (qbKL || ''), kldomain: domainName || '', co: qbCO || '', pi: qbPI || '', marks };
     // If PI is not explicitly selected but mapping exists for the selected CO, default to first PI
     if ((!newQ.pi || String(newQ.pi).trim() === '') && qbCO && coPiMapping && Array.isArray(coPiMapping[qbCO]) && coPiMapping[qbCO].length > 0) {
       newQ.pi = coPiMapping[qbCO][0];
@@ -528,7 +528,7 @@ export default function QuestionPaperGenerator() {
     setQbQNo(String(q.qno || (index + 1)).trim());
     const domainKey = Object.keys(bloomsDomains || {}).find(k => k === q.kldomain || (bloomsDomains[k]?.name === q.kldomain)) || '';
     setQbKLDomain(domainKey);
-    setQbKL(q.kl || 'L1');
+    setQbKL(q.kl || 'Select');
     setQbCO(q.co || '');
     // If the question has no PI but mapping is present, prefill the first PI option
     setQbPI(q.pi || ((q.co && coPiMapping[q.co] && coPiMapping[q.co][0]) ? coPiMapping[q.co][0] : ''));
@@ -2347,13 +2347,27 @@ export default function QuestionPaperGenerator() {
   </thead>
   <tbody>`;
       if (qp.assignment_config && qp.assignment_config.length > 0) {
+        const formatMathTextAssign = (qStr) => {
+          if (!qStr) return '';
+          let str = String(qStr);
+          str = str.replace(/\[Math Processing Error\]/gi, '');
+          str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
+            const cleanPrefix = prefix ? prefix.trim() : '';
+            const cleanInner = innerText ? innerText.trim() : '';
+            return `\\(${cleanPrefix ? `${cleanPrefix} ` : ''}\\begin{${envName}} ${cleanInner} \\end{${envName}}\\)`;
+          });
+          str = str.replace(/(?:\\\()?([A-Za-z]\^\{[^{}]+\})(?:\\\))?/gi, (match, powerExp) => `\\(${powerExp}\\)`);
+          str = str.replace(/\\\(\s*\\\(/g, '\\(').replace(/\\\)\s*\\\)/g, '\\)');
+          str = str.replace(/(?:<span class="math-tex">)?(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])(?:<\/span>)?/gi, (match, mathContent) => `<span class="math-tex">${mathContent}</span>`);
+          return str;
+        };
         qp.assignment_config.forEach((q, idx) => {
           const allCOs = (q.mappings || []).map(m => `${m.co} (${m.marks || 0})`).join(', ');
           const allPIs = (q.mappings || []).map(m => (m.pis || []).map((pi, i) => `${pi}${m.piMarks && m.piMarks[i] != null ? ` (${m.piMarks[i]})` : ''}`).join(', ')).join(', ');
           html += `
             <tr>
               <td style="text-align: center; padding: 4px;">${idx + 1}</td>
-              <td style="padding: 4px;">${q.question || ''}</td>
+              <td style="padding: 4px;">${formatMathTextAssign(q.question || '')}</td>
               <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
               <td contenteditable="true" style="text-align: center; padding: 4px;">${allCOs}</td>
               <td contenteditable="true" style="text-align: center; padding: 4px;">${allPIs}</td>
@@ -2378,7 +2392,7 @@ export default function QuestionPaperGenerator() {
         html += `
 <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 16px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
   <tr>
-    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter}</td>
+    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
     <td style="width: 50%; padding: 6px; border: none; text-align: right;">${totalMarks} Marks</td>
   </tr>
 </table>
@@ -2399,6 +2413,25 @@ export default function QuestionPaperGenerator() {
             !(q.question && q.question.trim().toLowerCase() === '(or)')
           );
 
+          const formatMathText = (qStr) => {
+            if (!qStr) return '';
+            let str = String(qStr);
+            str = str.replace(/\[Math Processing Error\]/gi, '');
+            str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
+              const cleanPrefix = prefix ? prefix.trim() : '';
+              const cleanInner = innerText ? innerText.trim() : '';
+              return `\\(${cleanPrefix ? `${cleanPrefix} ` : ''}\\begin{${envName}} ${cleanInner} \\end{${envName}}\\)`;
+            });
+            str = str.replace(/(?:\\\()?([A-Za-z]\^\{[^{}]+\})(?:\\\))?/gi, (match, powerExp) => {
+              return `\\(${powerExp}\\)`;
+            });
+            str = str.replace(/\\\(\s*\\\(/g, '\\(').replace(/\\\)\s*\\\)/g, '\\)');
+            str = str.replace(/(?:<span class="math-tex">)?(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])(?:<\/span>)?/gi, (match, mathContent) => {
+              return `<span class="math-tex">${mathContent}</span>`;
+            });
+            return str;
+          };
+
           filteredQuestions.forEach((q, qIdx) => {
             if (q.either_or) {
               if (q.sub === 'a') {
@@ -2406,7 +2439,7 @@ export default function QuestionPaperGenerator() {
                 html += `
                   <tr>
                     <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                    <td style="padding: 4px;">${q.question || ''}</td>
+                    <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
@@ -2420,7 +2453,7 @@ export default function QuestionPaperGenerator() {
                   </tr>
                   <tr>
                     <td style="text-align: center; padding: 4px;">${nextQ?.qno || ""}</td>
-                    <td style="padding: 4px;">${nextQ?.question || ""}</td>
+                    <td style="padding: 4px;">${formatMathText(nextQ?.question || "")}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.kl || ''}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.co || ''}</td>
                     <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.pi || ''}</td>
@@ -2431,7 +2464,7 @@ export default function QuestionPaperGenerator() {
               html += `
                 <tr>
                   <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                  <td style="padding: 4px;">${q.question || ''}</td>
+                  <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>

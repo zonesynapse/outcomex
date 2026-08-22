@@ -491,7 +491,7 @@ export default function Dashboard() {
     ` : (qp.parts || []).map(part => `
       <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
         <tr>
-          <td style="width: 50%; padding: 6px; border: none;">Part ${part.part}</td>
+          <td style="width: 50%; padding: 6px; border: none;">Part ${part.part} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
           <td style="width: 50%; padding: 6px; border: none; text-align: right;">
             ${part.num_questions} &times; ${part.marks_per_question} = <strong>${part.num_questions * part.marks_per_question}</strong> Marks
           </td>

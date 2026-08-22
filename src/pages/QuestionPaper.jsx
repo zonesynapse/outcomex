@@ -367,7 +367,7 @@ export default function QuestionPaper() {
       combinedContent += `
         <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 16px; margin-top: 15px; margin-bottom: 6px; border: 1px solid black;">
           <tr>
-            <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter}</td>
+            <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
             <td style="width: 50%; padding: 6px; border: none; text-align: right;">${numQuestions} &times; ${marksPerQuestion} = ${numQuestions * marksPerQuestion} Marks</td>
           </tr>
         </table>

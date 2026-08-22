@@ -3383,7 +3383,7 @@ export default function AcademicCoordinatorDashboard() {
               <style>{`
                 .qp-print-wrapper table { border-collapse: collapse; width: 100%; border-color: #000 !important; }
                 .qp-print-wrapper td, .qp-print-wrapper th { border: 1px solid #000 !important; padding: 6px; font-family: 'Times New Roman', serif; }
-                .qp-print-wrapper .logo-img { max-width: 100%; height: 70px !important; }
+                .qp-print-wrapper .logo-img { max-width: 100%; width: 754px !important; height: 60px !important; object-fit: contain; }
                 .qp-print-wrapper p { margin: 0 0 5px 0; }
               `}</style>
               <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
