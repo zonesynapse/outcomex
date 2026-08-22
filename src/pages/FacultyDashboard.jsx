@@ -11,7 +11,10 @@ import {
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay } from "../lib/utils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
+import { typesetMath } from "../utils/mathJaxUtils";
+import { useRegulations } from "../hooks/useRegulations";
 
 const progPrefixMap = [
   { key: 'B_E', display: 'B.E.' }, { key: 'B_Tech', display: 'B.Tech.' },
@@ -140,6 +143,7 @@ const getQPWorkflowStatus = (qp) => {
 
 export default function FacultyDashboard() {
   const navigate = useNavigate();
+  const { getRegulationForBatch } = useRegulations();
   const [currentUid, setCurrentUid] = useState(auth.currentUser?.uid || null);
   const [facultyName, setFacultyName] = useState("");
   const [facultyDept, setFacultyDept] = useState("");
@@ -170,6 +174,12 @@ export default function FacultyDashboard() {
   const [codeOwners, setCodeOwners] = useState({});   // code → [uid, ...]
   const [facultyNames, setFacultyNames] = useState({}); // uid → display name
   const [draftActivities, setDraftActivities] = useState([]);
+
+  const [showQPModal, setShowQPModal] = useState(false);
+  const [selectedQP, setSelectedQP] = useState(null);
+  const [fullQPForModal, setFullQPForModal] = useState(null);
+  const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
+  const [facultySignatureForQP, setFacultySignatureForQP] = useState("");
 
   // Fetch draft activities for current user
   useEffect(() => {
@@ -249,11 +259,6 @@ export default function FacultyDashboard() {
     });
     return () => unsub();
   }, [currentUid, facultyName]);
-
-  const sanitizeKey = (key) => {
-    if (!key) return '';
-    return String(key).replace(/[.#$[\]]/g, '_');
-  };
 
   const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -875,6 +880,62 @@ export default function FacultyDashboard() {
     }
   };
   const totalRecorrectCount = useMemo(() => pendingQps.filter(q => q.status === 'recorrected').length, [pendingQps]);
+
+  // QP modal — fetch COs & signature when opening a paper for preview
+  useEffect(() => {
+    const fetchDetails = async () => {
+      if (!selectedQP) {
+        setModalCourseOutcomes([]);
+        setFacultySignatureForQP('');
+        setFullQPForModal(null);
+        return;
+      }
+      setFullQPForModal({ ...selectedQP });
+      const savedCos = selectedQP.course_outcomes || selectedQP.courseOutcomes;
+      if (Array.isArray(savedCos) && savedCos.length > 0) {
+        setModalCourseOutcomes(savedCos);
+      } else {
+        const progKey = formatProgrammeKey(selectedQP.programme);
+        const regulation = getRegulationForBatch(progKey, selectedQP.batch);
+        if (regulation) {
+          const parsedSubj = parseSubjectField(selectedQP.subject);
+          const subjCode = parsedSubj.code || selectedQP.subject || '';
+          const coDocId = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(subjCode)}_${sanitizeKey(selectedQP.academic_year)}`;
+          try {
+            const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId));
+            if (coSnap.exists()) {
+              const data = coSnap.data();
+              const loadedCOs = Object.entries(data)
+                .filter(([k]) => k.startsWith('CO') || k.startsWith('co'))
+                .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
+                .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+              if (loadedCOs.length > 0) setModalCourseOutcomes(loadedCOs);
+            }
+          } catch (e) { /* ignore */ }
+        }
+      }
+      if (selectedQP.forwarded_by) {
+        try {
+          const snap = await getDoc(doc(db, 'users', selectedQP.forwarded_by));
+          if (snap.exists()) setFacultySignatureForQP(snap.data().signatureUrl || '');
+        } catch (e) { /* ignore */ }
+      }
+    };
+    fetchDetails();
+  }, [selectedQP, getRegulationForBatch]);
+
+  const renderQuestionPaper = useCallback((qp) => {
+    if (!qp) return "";
+    const acSig = qp?.ac_signature_url || '';
+    const hodSig = qp?.hod_signature_url || '';
+    return getQuestionPaperHTML(qp, modalCourseOutcomes, facultySignatureForQP, hodSig, null, null, '', acSig);
+  }, [modalCourseOutcomes, facultySignatureForQP]);
+
+  useEffect(() => {
+    if (!showQPModal || !(fullQPForModal || selectedQP)) return;
+    const container = document.querySelector('.qp-print-wrapper');
+    typesetMath(container);
+  }, [showQPModal, fullQPForModal, selectedQP]);
 
   const currentWeekDates = useMemo(() => {
     const now = new Date();
@@ -2540,24 +2601,34 @@ export default function FacultyDashboard() {
                           </div>
                         )}
                       </div>
-                      <button
-                        onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95"
-                      >
-                        {qp.status === 'recorrected' ? <Edit2 size={14} /> : <Eye size={14} />}
-                        {qp.status === 'recorrected' ? 'Edit' : 'Open'}
-                      </button>
-                      {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                      <div className="shrink-0 flex items-center gap-1.5">
                         <button
-                          onClick={() => handleDeleteQp(qp)}
-                          disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
-                          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-100 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Delete question paper"
+                          onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
+                          className="p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 transition-all shadow-sm active:scale-95"
+                          title="Open"
                         >
-                          {deletingQp === `${qp.compositeKey}-${qp.id}` ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                          Delete
+                          <Eye size={16} />
                         </button>
-                      )}
+                        {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                          <button
+                            onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
+                            className="p-2 rounded-lg bg-[#120c7a]/10 border border-[#120c7a]/20 text-[#120c7a] hover:bg-[#120c7a]/20 transition-all shadow-sm active:scale-95"
+                            title="Edit"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                        )}
+                        {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                          <button
+                            onClick={() => handleDeleteQp(qp)}
+                            disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
+                            className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Delete"
+                          >
+                            {deletingQp === `${qp.compositeKey}-${qp.id}` ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -2566,6 +2637,61 @@ export default function FacultyDashboard() {
           )}
         </div>
       </div>
+
+      {/* QP Review Modal (Read-Only) */}
+      {showQPModal && selectedQP && (
+        <div className="fixed inset-0 bg-black/60 z-[180] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="bg-white px-6 py-4 border-b border-zinc-200 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="bg-[#120c7a]/10 p-2.5 rounded-xl text-[#120c7a]">
+                  <FileText size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-zinc-900 leading-tight">
+                    {(() => {
+                      const examName = (selectedQP.exam_name || '').trim();
+                      const qpaperName = (selectedQP.qpaper_name || '').trim();
+                      const label = examName || qpaperName || 'Question Paper';
+                      return `${label} (${formatQPSetDisplay(selectedQP)})`;
+                    })()}
+                  </h3>
+                  <p className="text-xs text-zinc-500">
+                    {(() => { const p = parseSubjectField(selectedQP.subject); return p.code || selectedQP.subject; })()} &middot; {(() => { const p = parseSubjectField(selectedQP.subject); return p.name || selectedQP.subject_name; })()}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedQP.status !== 'forwarded' && selectedQP.status !== 'approved_by_hod' && (
+                  <button
+                    onClick={() => { setShowQPModal(false); navigate(`/question-paper-generator?id=${selectedQP.id}&compositeKey=${selectedQP.compositeKey}`); }}
+                    className="inline-flex items-center gap-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
+                  >
+                    <Edit2 size={16} /> Edit Paper
+                  </button>
+                )}
+                <button onClick={() => { setShowQPModal(false); setSelectedQP(null); }}
+                  className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-xl transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 bg-zinc-50">
+              <style>{`
+                .qp-print-wrapper table { border-collapse: collapse; width: 100%; border-color: #000 !important; }
+                .qp-print-wrapper td, .qp-print-wrapper th { border: 1px solid #000 !important; padding: 6px; font-family: 'Times New Roman', serif; }
+                .qp-print-wrapper .logo-img { max-width: 100%; width: 754px !important; height: 60px !important; object-fit: contain; }
+                .qp-print-wrapper p { margin: 0 0 5px 0; }
+              `}</style>
+              <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
+                style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}>
+                <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(fullQPForModal || selectedQP) }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </Layout>
   );
 }
