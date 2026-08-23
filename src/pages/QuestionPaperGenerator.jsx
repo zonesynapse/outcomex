@@ -557,22 +557,59 @@ export default function QuestionPaperGenerator() {
     }
   }, [qbQNo, partsConfig, assessmentType]);
 
-  // Ensure editor initializes as soon as modal opens (wait for DOM & CKEditor)
+  // Ensure qbEditor initializes whenever the question builder becomes visible
+  // Re-init on subject / category / assessmentType change — switching subjects (e.g.
+  // to CE3035) may destroy/recreate the textarea DOM, leaving the old
+  // CKEDITOR instance detached. Watching subject/assessmentType guarantees a
+  // fresh init after the new DOM is mounted.
   useEffect(() => {
     if (!showQbEditor) return;
+    if (assessmentType !== 'Exam') return;
     let cancelled = false;
+    let retries = 0;
+    // Force-destroy any stale qbEditor instance left over from the previous subject
+    // (CE3035 etc.) — its DOM was removed when the subject changed, but the
+    // CKEditor instance may still be cached as "ready".
+    try {
+      if (window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor) {
+        const stale = window.CKEDITOR.instances.qbEditor;
+        const el = document.getElementById('qbEditor');
+        // If textarea is fresh (no cke class) but instance still exists, it's stale
+        if (el && !el.classList.contains('cke_hidden')) {
+          try { stale.destroy(true); } catch (_) { /* ignore */ }
+          delete window.CKEDITOR.instances.qbEditor;
+        }
+      }
+    } catch (_) { /* ignore */ }
     const attemptInit = () => {
       if (cancelled) return;
       const el = document.getElementById('qbEditor');
-      if (el && window.CKEDITOR) {
+      const ckReady = window.CKEDITOR && typeof window.CKEDITOR.replace === 'function';
+      if (el && ckReady) {
         initInlineQbEditor();
+        // Verify init succeeded — retry once if toolbar missing (race with React re-render)
+        setTimeout(() => {
+          if (cancelled) return;
+          const stillEl = document.getElementById('qbEditor');
+          const inst = window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances.qbEditor;
+          if (stillEl && (!inst || inst.status !== 'ready')) {
+            if (retries < 2) { retries += 1; initInlineQbEditor(); }
+          }
+        }, 600);
       } else {
-        setTimeout(attemptInit, 120);
+        if (retries < 30) {
+          retries += 1;
+          setTimeout(attemptInit, 120);
+        }
       }
     };
-    attemptInit();
-    return () => { cancelled = true; };
-  }, [showQbEditor]);
+    // Small delay so React finishes mounting the new subject's DOM
+    const timer = setTimeout(attemptInit, 80);
+    return () => { cancelled = true; clearTimeout(timer); };
+  // initInlineQbEditor is intentionally excluded — its identity changes on every
+  // qbQuestion keystroke; including it would re-init CKEditor on every keystroke
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showQbEditor, assessmentType, subject]);
 
   const extractQNosFromHtml = (html) => {
     try {
@@ -6667,7 +6704,12 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
               <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 w-full mb-8">
                 <div className="mb-4 bg-white rounded-xl overflow-hidden border border-slate-200">
                   <MathTemplateToolbar editorId="qbEditor" />
-                  <textarea id="qbEditor" ref={qbQuestionRef} style={{ width: '100%' }} />
+                  <textarea
+                    id="qbEditor"
+                    ref={qbQuestionRef}
+                    style={{ width: '100%', minHeight: '140px', display: 'block' }}
+                    placeholder="Type your question here — use the Math templates above for equations…"
+                  />
                 </div>
               </div>
             )}
