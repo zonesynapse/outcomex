@@ -1967,25 +1967,106 @@ export default function HODDashboard() {
       const savedCos = selectedQP.course_outcomes || selectedQP.courseOutcomes;
       if (Array.isArray(savedCos) && savedCos.length > 0) {
         setModalCourseOutcomes(savedCos);
-      } else {
-        setModalCourseOutcomes([]);
       }
 
+      // Try to get/refresh CO descriptions — mirrors QPG's 3-level fallback:
+      // 1. course_outcomes collection  2. alt doc ID keys  3. courses (CourseBank)
+      const sanitizeKeyStrict = (k) => k ? String(k).replace(/[.#$[\]/ ]/g, '_') : '';
       const progKey = formatProgrammeKey(selectedQP.programme);
       const regulation = getRegulationForBatch(progKey, selectedQP.batch);
       if (regulation) {
         const parsedSubj = parseSubjectField(selectedQP.subject);
         const subjCode = parsedSubj.code || selectedQP.subject || '';
-        const coDocId = `${sanitizeKey(selectedQP.department)}_${sanitizeKey(regulation)}_${sanitizeKey(subjCode)}_${sanitizeKey(selectedQP.academic_year)}`;
-        const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId));
-        if (coSnap.exists()) {
-          const data = coSnap.data();
-          const loadedCOs = Object.entries(data)
-            .filter(([k]) => k.startsWith('CO') || k.startsWith('co'))
-            .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
-            .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
-          if (loadedCOs.length > 0) {
-            setModalCourseOutcomes(loadedCOs);
+        const deptKey = sanitizeKey(selectedQP.department);
+        const regKey = sanitizeKey(regulation);
+        const subjKey = sanitizeKey(subjCode);
+        const ayKey = sanitizeKey(selectedQP.academic_year);
+        let fetchedCOs = [];
+
+        // Level 1: primary course_outcomes doc
+        try {
+          const coDocId = `${deptKey}_${regKey}_${subjKey}_${ayKey}`;
+          const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId));
+          if (coSnap.exists()) {
+            const data = coSnap.data();
+            fetchedCOs = Object.entries(data)
+              .filter(([k]) => k.toUpperCase().startsWith('CO'))
+              .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
+              .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+          }
+        } catch (e) { /* ignore */ }
+
+        const hasPlaceholder = fetchedCOs.length > 0 && fetchedCOs.every(co => {
+          const d = (co.description || '').trim();
+          return !d || d.toUpperCase() === co.code.toUpperCase();
+        });
+
+        // Level 2: try alternative course_outcomes doc ID keys
+        if (fetchedCOs.length === 0 || hasPlaceholder) {
+          const altKeys = [
+            `${deptKey}_${regKey}_${subjKey}`,
+            `${deptKey}_${subjKey}_${ayKey}`,
+            `${regKey}_${subjKey}`,
+            `${subjKey}`
+          ];
+          for (const key of altKeys) {
+            try {
+              const altSnap = await getDoc(doc(db, 'course_outcomes', key));
+              if (altSnap.exists()) {
+                const altData = altSnap.data();
+                const altCOs = Object.entries(altData)
+                  .filter(([k]) => k.toUpperCase().startsWith('CO'))
+                  .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
+                  .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+                if (altCOs.length > 0) { fetchedCOs = altCOs; break; }
+              }
+            } catch (_) { /* skip */ }
+          }
+        }
+
+        const hasPlaceholder2 = fetchedCOs.length > 0 && fetchedCOs.every(co => {
+          const d = (co.description || '').trim();
+          return !d || d.toUpperCase() === co.code.toUpperCase();
+        });
+
+        // Level 3: courses collection (CourseBank) — has real CO descriptions
+        if (fetchedCOs.length === 0 || hasPlaceholder2) {
+          const fbDeptStrict = sanitizeKeyStrict(selectedQP.department);
+          const fbSubjStrict = sanitizeKeyStrict(subjCode);
+          const fbRegStrict = sanitizeKeyStrict(regulation);
+          const courseKeyCandidates = [
+            `${progKey}_${fbDeptStrict}_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_${deptKey}_${regKey}_${subjKey}`,
+            `${progKey}_${fbDeptStrict}_${regKey}_${fbSubjStrict}`,
+            `${progKey}_${deptKey}_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_Overall_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_Overall_${regKey}_${subjKey}`,
+          ];
+          try {
+            for (const key of courseKeyCandidates) {
+              try {
+                const cSnap = await getDoc(doc(db, 'courses', key));
+                if (cSnap.exists()) {
+                  const bd = cSnap.data();
+                  if (bd.co && Array.isArray(bd.co)) {
+                    fetchedCOs = bd.co.map(c => ({ code: c.id, description: c.description || '' }))
+                      .sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.code || '').replace(/\D/g, ''), 10) || 0));
+                    break;
+                  }
+                }
+              } catch (_) { /* skip invalid keys */ }
+            }
+          } catch (e) { /* ignore */ }
+        }
+
+        // Only overwrite saved COs if fetched COs have REAL descriptions (not just placeholders matching code names)
+        if (fetchedCOs.length > 0) {
+          const fetchedHasRealDescs = fetchedCOs.some(co => {
+            const d = (co.description || '').trim();
+            return d && d.toUpperCase() !== co.code.toUpperCase();
+          });
+          if (fetchedHasRealDescs) {
+            setModalCourseOutcomes(fetchedCOs);
           }
         }
       }

@@ -257,6 +257,35 @@ export async function scanCourseCodeUsage(oldCode) {
     return { docCount: docs.length, fieldCount, docs };
   });
 
+  // timetable_allocations (subjectAllocation nested object contains "CODE|span" strings)
+  await tryRun('timetable_allocations (weekly timetable)', async () => {
+    const snap = await getDocs(collection(db, 'timetable_allocations'));
+    const docs = [];
+    let fieldCount = 0;
+    snap.forEach(d => {
+      const data = d.data() || {};
+      const alloc = data.subjectAllocation || {};
+      let hit = false;
+      Object.values(alloc).forEach(periods => {
+        if (!periods || typeof periods !== 'object') return;
+        Object.values(periods).forEach(entries => {
+          if (!Array.isArray(entries)) return;
+          entries.forEach(e => {
+            if (typeof e === 'string') {
+              const codePart = e.split('|')[0].trim();
+              if (norm(codePart) === oldNorm) hit = true;
+            }
+          });
+        });
+      });
+      if (hit) {
+        docs.push({ id: d.id });
+        fieldCount += 1;
+      }
+    });
+    return { docCount: docs.length, fieldCount, docs };
+  });
+
   // syllabus_data (subject codes inside semester objects)
   await tryRun('syllabus_data (curriculum)', async () => {
     const snap = await getDocs(collection(db, 'syllabus_data'));
@@ -297,15 +326,17 @@ export async function scanCourseCodeUsage(oldCode) {
 //  5. course_enrolments: copy doc to new key, delete old.
 //  6. qp_setter_assignments: reassign key in `assignments`, keep old key data too
 //     (so past schedules remain intact) but new schedules use new code.
-//  6. syllabus_data: update subject code inside semester arrays so QPG dropdown
+//  7. syllabus_data: update subject code inside semester arrays so QPG dropdown
 //     shows the new code and auto-select works.
-//  7. Notifications: update subject references.
-//  Historical records (marks, attendance, generated_qps, co_attainment,
+//  8. timetable_allocations: update "CODE|span" strings inside subjectAllocation.
+//  9. attendance: copy doc to new key with new subject code, delete old.
+//  10. Notifications: update subject references.
+//  Historical records (marks, generated_qps, co_attainment,
 //  mapping_summary) are intentionally NOT rewritten - they keep the old code
 //  and remain queryable & resolvable via legacy alias lookups.
 export async function replaceCourseCode(oldCode, newCode, opts = {}) {
   const { onProgress = () => {}, batchSize = 400 } = opts;
-  const total = 9;
+  const total = 11;
   let step = 0;
   const bump = (msg) => onProgress(++step, total, msg);
 
@@ -476,6 +507,77 @@ export async function replaceCourseCode(oldCode, newCode, opts = {}) {
         if (changed) await updateDoc(d.ref, next);
       }
     } catch (e) { /* notifications missing collection is non-fatal */ }
+  }
+
+  // 8. timetable_allocations (subjectAllocation nested object) ----------------
+  bump('Updating timetable allocations (weekly schedule grid)...');
+  {
+    const snap = await getDocs(collection(db, 'timetable_allocations'));
+    const batchOps = writeBatch(db);
+    let ops = 0;
+    snap.forEach(d => {
+      const data = d.data() || {};
+      const alloc = data.subjectAllocation || {};
+      let docChanged = false;
+      Object.entries(alloc).forEach(([day, periods]) => {
+        if (!periods || typeof periods !== 'object') return;
+        Object.entries(periods).forEach(([pNum, entries]) => {
+          if (!Array.isArray(entries)) return;
+          let periodChanged = false;
+          const next = entries.map(e => {
+            if (typeof e !== 'string') return e;
+            const pipeIdx = e.indexOf('|');
+            const codePart = pipeIdx >= 0 ? e.substring(0, pipeIdx) : e;
+            if (norm(codePart) === norm(oldCode)) {
+              periodChanged = true;
+              return pipeIdx >= 0 ? `${newCode}${e.substring(pipeIdx)}` : newCode;
+            }
+            return e;
+          });
+          if (periodChanged) {
+            periods[pNum] = next;
+            docChanged = true;
+          }
+        });
+      });
+      if (docChanged) {
+        batchOps.update(d.ref, { subjectAllocation: alloc });
+        ops += 1;
+      }
+    });
+    if (ops > 0) await batchOps.commit();
+  }
+
+  // 9. attendance (doc IDs contain the subject code as suffix) ----------------
+  bump('Migrating attendance records to new course code...');
+  {
+    const snap = await getDocs(collection(db, 'attendance'));
+    const targets = [];
+    snap.forEach(d => {
+      const parts = d.id.split('_');
+      const last = parts[parts.length - 1];
+      const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
+      if (norm(last) === norm(oldCode) || norm(secondLast) === norm(oldCode)) {
+        targets.push({ id: d.id, data: d.data() });
+      }
+    });
+    for (const t of targets) {
+      let newId = t.id;
+      const parts = t.id.split('_');
+      const last = parts[parts.length - 1];
+      if (norm(last) === norm(oldCode)) {
+        newId = [...parts.slice(0, -1), sanitizeKey(newCode)].join('_');
+      } else {
+        const secondLast = parts[parts.length - 2];
+        if (norm(secondLast) === norm(oldCode)) {
+          newId = [...parts.slice(0, -2), sanitizeKey(newCode), ...parts.slice(-1)].join('_');
+        }
+      }
+      if (newId !== t.id) {
+        await setDoc(doc(db, 'attendance', newId), t.data);
+        try { await deleteDoc(doc(db, 'attendance', t.id)); } catch (e) { /* best effort */ }
+      }
+    }
   }
 
   bump('Done.');

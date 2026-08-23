@@ -15,7 +15,7 @@ import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
 import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils } from "../lib/utils";
+import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils, getAttendanceRecords } from "../lib/utils";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -781,7 +781,8 @@ export default function PrincipalDashboard() {
       const docInfos = []; // { enrolDocId, deptLabel, regNo }
       snap.forEach(docSnap => {
         const data = docSnap.data();
-        if (!data?.records) return;
+        const records = getAttendanceRecords(data);
+        if (!records || Object.keys(records).length === 0) return;
 
         const parsed = parseAttendanceDocId(docSnap.id);
         if (!parsed || !activeBatches.has(parsed.batch)) return;
@@ -797,7 +798,7 @@ export default function PrincipalDashboard() {
 
         const enrolDocId = `${parsed.progKey || ''}_${sanitizeKey(parsed.deptKey)}_${sanitizeKey(parsed.batch)}_${sanitizeKey(ay)}_${semNum}_${sanitizeKey(subjectCode)}`;
 
-        Object.entries(data.records).forEach(([recordKey, record]) => {
+        Object.entries(records).forEach(([recordKey, record]) => {
           const datePart = recordKey.includes('_P') ? recordKey.split('_P')[0] : recordKey;
           if (datePart !== date) return;
 

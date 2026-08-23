@@ -307,22 +307,19 @@ export default function CreateCourse() {
 
   // Fetch existing courses for selected Programme + Department + Regulation.
   useEffect(() => {
-      console.log('[COURSES] Effect fired with:', { programme, regulation, department, progKey: sanitizeKey(programme) });
     if (!programme || !regulation) {
       setExistingCourses([]);
       setSelectedExistingCourseKey("");
       return;
     }
 
-    const progKey = sanitizeKey(programme);
-    const normalize = (v) => String(v ?? '').replace(/[.#$[\]/ ]/g, '_');
+    const progKey = String(sanitizeKey(programme) || '').toLowerCase();
+    const normalize = (v) => String(v ?? '').toLowerCase().replace(/[.#$[\]/ ]/g, '_');
 
     const unsub = onSnapshot(collection(db, 'courses'), (snap) => {
-      console.log('[COURSES] snapshot received, size:', snap.size);
       const data = {};
       snap.forEach(d => {
         const docData = d.data();
-        console.log('[COURSES] doc.id:', d.id, '| fields:', Object.keys(docData));
         const hasDirectCourseFields = docData?.code || docData?.programme;
         if (hasDirectCourseFields) {
           data[d.id] = { ...docData, _outerKey: d.id };
@@ -344,24 +341,23 @@ export default function CreateCourse() {
           });
         }
       });
-      console.log('[DBG] Total flattened courses:', Object.keys(data).length, '| progKey:', progKey, '| regulation:', regulation, '| department:', department);
-      if (Object.keys(data).length > 0) {
-        const sample = data[Object.keys(data)[0]];
-        console.log('[DBG] Sample course:', { programme: sample.programme, regulation: sample.regulation, department: sample.department, _outerKey: sample._outerKey, keys: Object.keys(sample) });
-      }
       const filtered = Object.entries(data)
-        .filter(([, course]) => {
+        .filter(([key, course]) => {
           const courseProg = normalize(course?.programme || '');
           const courseReg = normalize(course?.regulation || '');
           const courseDept = normalize(course?.department || '');
           const matchProg = courseProg === progKey;
           const matchReg = courseReg === normalize(regulation);
           const normDept = normalize(department || '');
+          const outerKey = String(course?._outerKey || key || '').toLowerCase();
+          const keyLc = String(key||'').toLowerCase();
+          const isOverallKey = outerKey.includes('overall') || keyLc.includes('overall');
           const matchDept = department
-            ? courseDept === normDept || courseDept === "Overall" || (normDept && courseDept.endsWith("_" + normDept))
-            : courseDept === "Overall" || !courseDept;
+            ? courseDept === normDept || courseDept === "overall" || isOverallKey || (normDept && courseDept.endsWith("_" + normDept))
+            : courseDept === "overall" || !courseDept || isOverallKey;
           return matchProg && matchReg && matchDept;
-        })
+        });
+      const mapped = filtered
         .map(([key, course]) => ({
           key,
           code: course?.code || key,
@@ -372,7 +368,7 @@ export default function CreateCourse() {
           co: Array.isArray(course?.co) ? course.co : [],
           _sourceDept: course?.department || "Overall",
         }));
-      setExistingCourses(filtered);
+      setExistingCourses(mapped);
     });
 
     return () => unsub();

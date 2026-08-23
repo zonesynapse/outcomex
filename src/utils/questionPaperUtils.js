@@ -393,13 +393,22 @@ export const getQuestionPaperHTML = (
   }
 
   // Resolve Course Outcomes list robustly (from passed cos, qp.course_outcomes, qp.courseOutcomes, or activeCOs)
+  const hasRealDescs = (arr) => Array.isArray(arr) && arr.length > 0 && arr.some(co => {
+    const d = (co.description || '').trim();
+    return d && d.toUpperCase() !== (co.code || '').toUpperCase();
+  });
+
   let effectiveCos = [];
-  if (cos && Array.isArray(cos) && cos.length > 0) {
+  const qpSavedCos = qp?.course_outcomes || qp?.courseOutcomes;
+  // Prefer saved COs from the QP payload if they have real descriptions
+  if (hasRealDescs(qpSavedCos)) {
+    effectiveCos = qpSavedCos;
+  } else if (cos && Array.isArray(cos) && cos.length > 0 && hasRealDescs(cos)) {
     effectiveCos = cos;
-  } else if (qp?.course_outcomes && Array.isArray(qp.course_outcomes) && qp.course_outcomes.length > 0) {
-    effectiveCos = qp.course_outcomes;
-  } else if (qp?.courseOutcomes && Array.isArray(qp.courseOutcomes) && qp.courseOutcomes.length > 0) {
-    effectiveCos = qp.courseOutcomes;
+  } else if (cos && Array.isArray(cos) && cos.length > 0) {
+    effectiveCos = cos;
+  } else if (qpSavedCos && Array.isArray(qpSavedCos) && qpSavedCos.length > 0) {
+    effectiveCos = qpSavedCos;
   } else if (activeCOs.size > 0) {
     effectiveCos = Array.from(activeCOs).sort().map(c => ({
       code: c,

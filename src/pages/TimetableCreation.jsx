@@ -6,7 +6,7 @@ import { doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, getOrdinal, getAcademicYears } from "../lib/utils";
+import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, getOrdinal, getAcademicYears, sanitizeKey } from "../lib/utils";
 import {
   Calendar,
   Clock,
@@ -27,10 +27,7 @@ const toArray = (val) => {
   return [val]
 }
 
-function sanitizeKey(key) {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
-}
+
 
 function formatTime(date) {
   let hours = date.getHours();
@@ -69,6 +66,7 @@ export default function TimetableCreation() {
   const [courseNames, setCourseNames] = useState({});
   const [userProgramme, setUserProgramme] = useState("");
   const [userDepartment, setUserDepartment] = useState("");
+  const [effectiveKey, setEffectiveKey] = useState("");
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
@@ -170,26 +168,34 @@ export default function TimetableCreation() {
       const ayKey = sanitizeKey(academicYear);
       const semNum = String(semester).match(/\d+/)?.[0] || "1";
       const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+      const legacyCompositeKey = `${progKey}_${(department||'').replace(/[.#$[\]]/g,'_')}_${(batch||'').replace(/[.#$[\]]/g,'_')}_${(academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}`;
 
-      const snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
+      let snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
+      let usedKey = compositeKey;
+      if (!snap.exists() && legacyCompositeKey !== compositeKey) {
+        snap = await getDoc(doc(db, 'timetable_allocations', legacyCompositeKey));
+        if (snap.exists()) usedKey = legacyCompositeKey;
+      }
       if (!snap.exists()) {
         showToast("No allocated timetable found for this combination.", "error");
         setAllocatedTemplate(null);
         setSubjectAllocation({});
         setAllocatedSubjects([]);
+        setEffectiveKey("");
         return;
       }
       const data = snap.data();
       setAllocatedTemplate(data);
       setSubjectAllocation(data.subjectAllocation || {});
+      setEffectiveKey(usedKey);
 
       // Fetch subject assignments — match by prefix (may have section suffix like _Sec-A)
       const allAssignSnap = await getDocs(collection(db, 'subject_assignments'));
       const subjects = [];
       const fMap = {};
 
-      // Filter docs whose ID starts with compositeKey (exact or with section suffix)
-      const matchingDocs = allAssignSnap.docs.filter(d => d.id === compositeKey || d.id.startsWith(compositeKey + '_'));
+      // Filter docs whose ID matches the effective key or starts with it + underscore (section suffix)
+      const matchingDocs = allAssignSnap.docs.filter(d => d.id === usedKey || d.id.startsWith(usedKey + '_'));
 
       // Merge all matching docs (e.g. multiple sections)
       const mergedAssignmentData = {};
@@ -343,11 +349,22 @@ export default function TimetableCreation() {
       const ayKey = sanitizeKey(academicYear);
       const semNum = String(semester).match(/\d+/)?.[0] || "1";
       const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+      const legacyCompositeKey = `${progKey}_${(department||'').replace(/[.#$[\]]/g,'_')}_${(batch||'').replace(/[.#$[\]]/g,'_')}_${(academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}`;
 
-      await setDoc(doc(db, 'timetable_allocations', compositeKey), {
+      const saveKey = effectiveKey || compositeKey;
+
+      await setDoc(doc(db, 'timetable_allocations', saveKey), {
         ...allocatedTemplate,
         subjectAllocation
       }, { merge: true });
+
+      if (saveKey === legacyCompositeKey && compositeKey !== legacyCompositeKey) {
+        await setDoc(doc(db, 'timetable_allocations', compositeKey), {
+          ...allocatedTemplate,
+          subjectAllocation
+        }, { merge: true });
+      }
+
       showToast("Timetable saved successfully!");
     } catch (err) {
       console.error(err);

@@ -241,8 +241,12 @@ export default function Attendance() {
         Object.values(entriesByRecordKey).forEach(group => {
           if (group.length === 1) {
             resolvedEntries.push(group[0]);
+          } else if (new Set(group.map(e => e.subjectCode)).size === 1) {
+            // Same subject from multiple docs (sectioned + unsectioned) — keep only one to avoid double-counting
+            const best = group.find(e => e.docId.includes('_Sec-')) || group[0];
+            resolvedEntries.push(best);
           } else {
-            // Multiple subjects for same period — try to keep only enrolled subjects
+            // Multiple different subjects for same period — try to keep only enrolled subjects
             const enrolledInGroup = group.filter(e => {
               const ek = enrolKeyMap[e.docId];
               const enrolledSet = enrolMap[ek];

@@ -632,9 +632,13 @@ export default function Attendance() {
       const ayKey = sanitizeKey(academicYear);
       const semNum = String(semester).match(/\d+/)?.[0] || "1";
       const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+      const legacyCompositeKey = `${progKey}_${department.replace(/[.#$[\]]/g,'_')}_${batch.replace(/[.#$[\]]/g,'_')}_${academicYear.replace(/[.#$[\]]/g,'_')}_${semNum}`;
 
       try {
-        const allocationSnap = await getDoc(doc(db, "timetable_allocations", compositeKey));
+        let allocationSnap = await getDoc(doc(db, "timetable_allocations", compositeKey));
+        if (!allocationSnap.exists() && legacyCompositeKey !== compositeKey) {
+          allocationSnap = await getDoc(doc(db, "timetable_allocations", legacyCompositeKey));
+        }
         if (allocationSnap.exists()) {
           const allocationData = allocationSnap.data();
           setTimetableConfig(allocationData);

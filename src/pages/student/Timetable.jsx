@@ -7,12 +7,7 @@ import {
   Calendar, Clock, AlertCircle, Loader2, BookOpen, Coffee, UtensilsCrossed,
   ShieldCheck, CheckCircle2, FileText, Filter, Sparkles, Check
 } from "lucide-react";
-import { getAcademicYears, formatBatchDisplay, formatProgrammeKey } from "../../lib/utils";
-
-const sanitizeKey = (key) => {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
-};
+import { getAcademicYears, formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
 
 const normKey = (key) => {
   if (!key) return '';
@@ -129,6 +124,8 @@ export default function Timetable() {
         const progKey = formatProgrammeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
+        const legacyDeptKey = (department||'').replace(/[.#$[\]/ ]/g, '_');
+        const legacyBatchKey = (batch||'').replace(/[.#$[\]/ ]/g, '_');
         const years = getAcademicYears(batch);
         if (years.length === 0) { setLoading(false); return; }
 
@@ -146,10 +143,24 @@ export default function Timetable() {
         const semNum = String(ayIndex * 2 + (isOddSem ? 1 : 2));
         const otherSem = String(ayIndex * 2 + (isOddSem ? 2 : 1));
         const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
+        const legacyKey = `${progKey}_${legacyDeptKey}_${legacyBatchKey}_${ayKey}_${semNum}`;
 
         const allocationSnap = await getDoc(doc(db, "timetable_allocations", compositeKey));
         if (allocationSnap.exists()) {
           setTimetable(allocationSnap.data());
+        } else if (legacyKey !== compositeKey) {
+          const legSnap = await getDoc(doc(db, "timetable_allocations", legacyKey));
+          if (legSnap.exists()) { setTimetable(legSnap.data()); }
+          else {
+            const compositeKey2 = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${otherSem}`;
+            const legacyKey2 = `${progKey}_${legacyDeptKey}_${legacyBatchKey}_${ayKey}_${otherSem}`;
+            const allocationSnap2 = await getDoc(doc(db, "timetable_allocations", compositeKey2));
+            if (allocationSnap2.exists()) setTimetable(allocationSnap2.data());
+            else {
+              const legSnap2 = await getDoc(doc(db, "timetable_allocations", legacyKey2));
+              setTimetable(legSnap2.exists() ? legSnap2.data() : null);
+            }
+          }
         } else {
           const compositeKey2 = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${otherSem}`;
           const allocationSnap2 = await getDoc(doc(db, "timetable_allocations", compositeKey2));

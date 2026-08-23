@@ -4,7 +4,7 @@ import { db } from "../firebase"; // Import db for Firestore
 import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, deleteDoc } from "firebase/firestore"; // Firestore imports
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, getOrdinal, getAcademicYears } from "../lib/utils";
+import { formatBatchDisplay, formatProgrammeKey, formatProgDisplay, getOrdinal, getAcademicYears, sanitizeKey } from "../lib/utils";
 import { 
   Calendar, 
   Clock, 
@@ -21,12 +21,6 @@ import {
   AlertCircle,
   X
 } from "lucide-react";
-
-// Sanitize key consistent with other pages
-function sanitizeKey(key) {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
-}
 
 function formatTime(date) {
   let hours = date.getHours();
