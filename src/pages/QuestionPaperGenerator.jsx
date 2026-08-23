@@ -211,7 +211,7 @@ const getNormalizedCourseType = (typeStr) => {
   if (!typeStr) return 'theory';
   const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
   if (s.includes('lab') && s.includes('theory')) return 'integrated';
-  if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit101') || s.includes('lit102')) return 'integrated';
+  if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit')) return 'integrated';
   if (s.includes('practical') || s.includes('lab')) return 'practical';
   if (s.includes('project')) return 'project';
   if (s.includes('activity')) return 'activity';
@@ -505,12 +505,25 @@ export default function QuestionPaperGenerator() {
       }
     }
 
-    // Fallback: if no expected Q.Nos (e.g., before "Generate Layout" is clicked)
-    // or if qbAvailableQNos is empty, calculate based on existing qpQuestions
+    // Fallback: qbAvailableQNos is empty — try to rebuild from partsConfig first
+    if (partsConfig && partsConfig.length > 0) {
+      const rebuilt = buildExpectedQNosFromParts(partsConfig);
+      if (rebuilt.length > 0) {
+        setQbAvailableQNos(rebuilt);
+        // re-run effect will pick the next available from the rebuilt list
+        return;
+      }
+    }
+
+    // No layout and no questions — default to "1"
     if (!qpQuestions || qpQuestions.length === 0) { setQbQNo('1'); return; }
+    // Questions exist but no parts layout — build sequential Q.No list so dropdown isn't empty
     const maxNum = qpQuestions.reduce((max, q) => { const m = String(q?.qno || '').match(/\d+/); return m ? Math.max(max, parseInt(m[0], 10)) : max; }, 0);
+    const fallbackNos = [];
+    for (let n = 1; n <= maxNum + 1; n++) fallbackNos.push(String(n));
+    setQbAvailableQNos(fallbackNos);
     setQbQNo(String(maxNum + 1));
-  }, [qpQuestions, qbAvailableQNos, isEditingQbRef]); // Add qbAvailableQNos to dependencies
+  }, [qpQuestions, qbAvailableQNos, partsConfig, isEditingQbRef]); // Add qbAvailableQNos and partsConfig to dependencies
 
   // Clear CKEditor & reset question text state whenever qbQNo changes (unless in edit mode)
   useEffect(() => {
@@ -751,50 +764,65 @@ export default function QuestionPaperGenerator() {
 
   const [subjectCourseDetails, setSubjectCourseDetails] = useState(null);
 
-  // Derives subject's course type (Theory, Laboratory, Theory Cum Lab, Project, Activity)
+  // Derives subject's course type — authoritative CourseBank type takes precedence over name-guessing
   const subjectCourseType = useMemo(() => {
     if (!subject && !subjectCourseDetails) return '';
 
     let explicitType = '';
+    let explicitFromCourseBank = '';
     let nameStr = '';
     let codeStr = '';
+
+    if (subjectCourseDetails) {
+      const detailsType = subjectCourseDetails.category || subjectCourseDetails.type || subjectCourseDetails.courseType || subjectCourseDetails.course_type || '';
+      if (detailsType) explicitFromCourseBank = String(detailsType).trim();
+      if (!nameStr) nameStr = subjectCourseDetails.name || subjectCourseDetails.title || subjectCourseDetails.course_name || '';
+      if (!codeStr) codeStr = subjectCourseDetails.code || subjectCourseDetails.course_code || '';
+    }
 
     if (subject) {
       try {
         const p = typeof subject === 'string' && subject.startsWith('{')
           ? JSON.parse(subject)
           : (typeof subject === 'object' ? subject : {});
-        explicitType = p.category || p.type || p.courseType || p.course_type || p.subjectType || '';
-        nameStr = p.name || p.subjectName || p.courseName || p.title || p.text || '';
-        codeStr = p.code || p.subjectCode || p.courseCode || '';
+        const jsonType = p.category || p.type || p.courseType || p.course_type || p.subjectType || '';
+        if (jsonType && !explicitFromCourseBank) explicitType = String(jsonType).trim();
+        const jsonName = p.name || p.subjectName || p.courseName || p.title || p.text || '';
+        if (jsonName && !nameStr) nameStr = jsonName;
+        const jsonCode = p.code || p.subjectCode || p.courseCode || '';
+        if (jsonCode && !codeStr) codeStr = jsonCode;
       } catch {
-        if (typeof subject === 'string') nameStr = subject;
+        if (typeof subject === 'string' && !nameStr) nameStr = subject;
       }
     }
 
     if (!nameStr && typeof subject === 'string') nameStr = subject;
-    if (subjectCourseDetails) {
-      const detailsType = subjectCourseDetails.category || subjectCourseDetails.type || subjectCourseDetails.courseType || subjectCourseDetails.course_type || '';
-      if (detailsType) explicitType = detailsType;
-      if (!nameStr) nameStr = subjectCourseDetails.name || subjectCourseDetails.title || subjectCourseDetails.course_name || '';
-      if (!codeStr) codeStr = subjectCourseDetails.code || subjectCourseDetails.course_code || '';
+
+    // 1. Authoritative CourseBank type wins — CourseBank (courses collection) is single source of truth
+    if (explicitFromCourseBank) {
+      return explicitFromCourseBank;
     }
 
+    // 2. Explicit type from syllabus_data only if not the generic default 'Theory' fallback
+    //    (syllabus stamps 'Theory' when category missing — don't let it hide a lab name)
+    if (explicitType && String(explicitType).trim() && String(explicitType).trim().toLowerCase() !== 'theory') {
+      return String(explicitType).trim();
+    }
+
+    // 3. Name-based inference as last resort (only when no CourseBank record exists)
     const normName = String(nameStr || '').toUpperCase();
     const isLabByName = normName.includes('LABORATORY') || normName.includes(' LAB') || normName.endsWith('LAB') || normName.includes('PRACTICAL') || normName.includes('WORKSHOP') || normName.includes('DRAWING');
     const isIntegratedByName = normName.includes('THEORY CUM LAB') || normName.includes('INTEGRATED') || normName.includes('WITH LAB') || normName.includes('WITH LABORATORY');
     const isProjectByName = normName.includes('PROJECT') || normName.includes('VIVA') || normName.includes('DISSERTATION') || normName.includes('THESIS');
     const isActivityByName = normName.includes('ACTIVITY') || normName.includes('VALUE ADDED') || normName.includes('SEMINAR');
 
-    // 1. If subject name clearly indicates Lab/Project/Activity/Integrated, override default:
     if (isIntegratedByName) return 'Theory Cum Lab';
     if (isLabByName) return 'Laboratory';
     if (isProjectByName) return 'Project Work';
     if (isActivityByName) return 'Activity';
 
-    // 2. If explicit type from Firestore (courses/course_bank/syllabus_data) is present and valid:
     if (explicitType && String(explicitType).trim()) {
-      return explicitType.trim();
+      return String(explicitType).trim();
     }
 
     return 'Theory';
@@ -1271,8 +1299,22 @@ export default function QuestionPaperGenerator() {
 
       let courseData = null;
       try {
-        let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${subjectKey}`);
+        // CourseBank saves as {prog}_{dept}_{reg}_{code} — try regulation-inclusive keys first
+        let courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${regKey}_${subjectKey}`);
         let snap = await getDoc(courseRef);
+        if (!snap.exists() && deptKeyStrict !== deptKey) {
+          courseRef = doc(db, 'courses', `${progKey}_${deptKeyStrict}_${regKey}_${subjectKey}`);
+          snap = await getDoc(courseRef);
+        }
+        if (!snap.exists()) {
+          courseRef = doc(db, 'courses', `${progKey}_Overall_${regKey}_${subjectKey}`);
+          snap = await getDoc(courseRef);
+        }
+        // Legacy fallback — docs saved without regulation segment
+        if (!snap.exists()) {
+          courseRef = doc(db, 'courses', `${progKey}_${deptKey}_${subjectKey}`);
+          snap = await getDoc(courseRef);
+        }
         if (!snap.exists() && deptKeyStrict !== deptKey) {
           courseRef = doc(db, 'courses', `${progKey}_${deptKeyStrict}_${subjectKey}`);
           snap = await getDoc(courseRef);
@@ -1350,7 +1392,7 @@ export default function QuestionPaperGenerator() {
 
     const getNormType = (typeStr) => {
       const s = normClean(typeStr);
-      if (s.includes('cum') || s.includes('integrated') || s.includes('withlab')) return 'integrated';
+      if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit')) return 'integrated';
       if (s.includes('practical') || s.includes('lab')) return 'practical';
       if (s.includes('project')) return 'project';
       if (s.includes('activity')) return 'activity';
@@ -1361,12 +1403,12 @@ export default function QuestionPaperGenerator() {
     const catKey = keys.find(k => {
       const kn = normClean(k);
       if (targetNorm === 'theory' && (kn === 'theory' || kn.includes('theory') || kn.includes('lecture'))) {
-        return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum');
+        return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum') && !kn.includes('lit');
       }
       if (targetNorm === 'practical' && (kn === 'laboratory' || kn === 'practical' || kn.includes('lab') || kn.includes('practical'))) {
-        return !kn.includes('theory');
+        return !kn.includes('theory') && !kn.includes('lit');
       }
-      if (targetNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || (kn.includes('theory') && kn.includes('lab')))) {
+      if (targetNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || kn.includes('lit') || (kn.includes('theory') && kn.includes('lab')))) {
         return true;
       }
       if (targetNorm === 'project' && (kn.includes('project') || kn.includes('viva'))) return true;
@@ -1684,12 +1726,12 @@ export default function QuestionPaperGenerator() {
           return true;
         }
         if (targetCourseTypeNorm === 'theory' && (kn === 'theory' || kn.includes('theory') || kn.includes('lecture'))) {
-          return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum') && !kn.includes('mandatory');
+          return !kn.includes('lab') && !kn.includes('practical') && !kn.includes('integrated') && !kn.includes('cum') && !kn.includes('lit') && !kn.includes('mandatory');
         }
         if (targetCourseTypeNorm === 'practical' && (kn === 'laboratory' || kn === 'practical' || kn.includes('lab') || kn.includes('practical'))) {
-          return !kn.includes('theory');
+          return !kn.includes('theory') && !kn.includes('lit');
         }
-        if (targetCourseTypeNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || (kn.includes('theory') && kn.includes('lab')))) {
+        if (targetCourseTypeNorm === 'integrated' && (kn.includes('cum') || kn.includes('integrated') || kn.includes('withlab') || kn.includes('lit') || (kn.includes('theory') && kn.includes('lab')))) {
           return true;
         }
         if (targetCourseTypeNorm === 'project' && (kn.includes('project') || kn.includes('viva'))) {
