@@ -101,6 +101,13 @@ import ExamCellDashboard from "./pages/ExamCell/ExamCellDashboard";
 import ExamCellQPReview from "./pages/ExamCell/ExamCellQPReview";
 import ExamCellSchedules from "./pages/ExamCell/ExamCellSchedules";
 import QPSetterAssignment from "./pages/ExamCell/QPSetterAssignment";
+import RoomMasterPage from "./pages/ExamCell/RoomMasterPage";
+import SeatAllocationPage from "./pages/ExamCell/SeatAllocationPage";
+import FacultyDutyPage from "./pages/ExamCell/FacultyDutyPage";
+import DutyAlterationPage from "./pages/ExamCell/DutyAlterationPage";
+import HallReportsPage from "./pages/ExamCell/HallReportsPage";
+import LiveExamDashboardPage from "./pages/ExamCell/LiveExamDashboardPage";
+import ExamHallSuitePage from "./pages/ExamCell/ExamHallSuitePage";
 import ResourceHubDashboard from "./pages/resourceHub/ResourceHubDashboard";
 import ResourceManagement from "./pages/resourceHub/ResourceManagement";
 import ResourceBooking from "./pages/resourceHub/ResourceBooking";
@@ -255,6 +262,14 @@ export default function App() {
         <Route path="/exam-cell/qp-review" element={<ProtectedRoute><ExamCellQPReview /></ProtectedRoute>} />
         <Route path="/exam-cell/schedules" element={<ProtectedRoute><ExamCellSchedules /></ProtectedRoute>} />
         <Route path="/exam-cell/qp-assignment" element={<ProtectedRoute><QPSetterAssignment /></ProtectedRoute>} />
+        <Route path="/exam-cell/room-master" element={<ProtectedRoute><RoomMasterPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/rooms" element={<ProtectedRoute><RoomMasterPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/seat-allocation" element={<ProtectedRoute><SeatAllocationPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/faculty-duty" element={<ProtectedRoute><FacultyDutyPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/duty-alteration" element={<ProtectedRoute><DutyAlterationPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/hall-reports" element={<ProtectedRoute><HallReportsPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/live-dashboard" element={<ProtectedRoute><LiveExamDashboardPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/exam-hall-suite" element={<ProtectedRoute><ExamHallSuitePage /></ProtectedRoute>} />
 
         {/* Resource Hub Routes */}
         <Route path="/resource-hub" element={<ProtectedRoute><ResourceHubDashboard /></ProtectedRoute>} />

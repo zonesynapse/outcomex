@@ -1136,6 +1136,10 @@ export default function FacultyDashboard() {
         if (isHoliday) return;
 
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+        // Sundays are not working days — TimetableCreation only configures Mon-Sat,
+        // so no faculty timetable exists for Sunday. Skip to stay consistent with the
+        // timetable and avoid spurious "missed attendance" entries for Sundays.
+        if (dayName === 'Sunday') return;
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
 
         // Robust timetable lookup matching

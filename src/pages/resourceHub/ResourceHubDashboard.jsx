@@ -93,7 +93,7 @@ export default function ResourceHubDashboard() {
           {/* Action Card 1: Request Booking (Featured Brand Gradient) */}
           <Link
             to="/resource-hub/booking"
-            className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#120c7a] via-[#1a10a0] to-[#100b6e] p-6 text-white shadow-lg shadow-blue-950/20 hover:shadow-2xl hover:shadow-blue-900/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between border border-blue-400/30"
+            className="group relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#120c7a] via-[#1a10a0] to-[#100b6e] p-6 text-white shadow-lg shadow-blue-950/20 hover:shadow-2xl hover:shadow-blue-900/40 hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between border border-blue-400/30 no-underline [&_*]:!no-underline"
           >
             <div className="flex items-center justify-between">
               <div className="p-3.5 bg-white/20 backdrop-blur-md rounded-2xl border border-white/20 shadow-inner">
@@ -114,7 +114,7 @@ export default function ResourceHubDashboard() {
           {/* Action Card 2: My Requests */}
           <Link
             to="/resource-hub/my-bookings"
-            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between"
+            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between no-underline [&_*]:!no-underline"
           >
             <div className="flex items-center justify-between">
               <div className="p-3.5 bg-indigo-50 text-indigo-600 rounded-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300">
@@ -137,7 +137,7 @@ export default function ResourceHubDashboard() {
           {/* Action Card 3: Approvals & FCFS Queue */}
           <Link
             to="/resource-hub/approvals"
-            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between"
+            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between no-underline [&_*]:!no-underline"
           >
             <div className="flex items-center justify-between">
               <div className="p-3.5 bg-amber-50 text-amber-600 rounded-2xl group-hover:bg-amber-500 group-hover:text-white transition-colors duration-300 relative">
@@ -165,7 +165,7 @@ export default function ResourceHubDashboard() {
           {/* Action Card 4: Resource Config */}
           <Link
             to="/resource-hub/manage"
-            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between"
+            className="group rounded-3xl bg-white p-6 shadow-sm hover:shadow-xl hover:-translate-y-1 border border-slate-200/80 transition-all duration-300 flex flex-col justify-between no-underline [&_*]:!no-underline"
           >
             <div className="flex items-center justify-between">
               <div className="p-3.5 bg-slate-100 text-slate-700 rounded-2xl group-hover:bg-slate-900 group-hover:text-white transition-colors duration-300">

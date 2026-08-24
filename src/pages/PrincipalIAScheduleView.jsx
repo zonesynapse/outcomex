@@ -319,23 +319,26 @@ const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
             justify-content: space-between;
             align-items: flex-end;
             margin-top: 36px;
-            padding: 0 16px 8px 16px;
+            padding: 0 8px 8px 8px;
             page-break-inside: avoid;
+            gap: 12px;
           }
           .sig-box {
-            width: 190px;
+            flex: 1;
+            max-width: 150px;
             text-align: center;
           }
           .sig-line {
             border-top: 1px dashed #475569;
             padding-top: 5px;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 700;
             text-transform: uppercase;
             color: #0f172a;
+            line-height: 1.2;
           }
           .sig-sub {
-            font-size: 9px;
+            font-size: 8.5px;
             color: #64748b;
             margin-top: 2px;
           }
@@ -361,6 +364,14 @@ const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
           <div class="signatures-container">
             <div class="sig-box">
               <div class="sig-line">Exam Cell Coordinator</div>
+              <div class="sig-sub">(Signature &amp; Date)</div>
+            </div>
+            <div class="sig-box">
+              <div class="sig-line">Controller of Examinations</div>
+              <div class="sig-sub">(Signature &amp; Date)</div>
+            </div>
+            <div class="sig-box">
+              <div class="sig-line">Vice Principal</div>
               <div class="sig-sub">(Signature &amp; Date)</div>
             </div>
             <div class="sig-box">
@@ -426,7 +437,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
       const marginLeft = 12;
       const marginRight = 12;
       const contentWidth = pageWidth - marginLeft - marginRight; // 186mm
-      let yPos = 10;
+      let yPos = 8;
 
       // Filter items based on selectedBatchKey
       const targetBatchGroups = selectedBatchKey === "ALL"
@@ -446,7 +457,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           const logoW = Math.min(130, contentWidth);
           const logoX = marginLeft + (contentWidth - logoW) / 2;
           doc.addImage(activeLogo, "PNG", logoX, yPos, logoW, logoH);
-          yPos += logoH + 3;
+          yPos += logoH + 6;
         } catch (e) {
           console.warn("Logo add image error in PDF:", e);
         }
@@ -454,19 +465,19 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
 
       // ── 2. Header Box & Titles ──
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
+      doc.setFontSize(10.5);
       doc.setTextColor(18, 12, 122); // #120c7a
       doc.text(`DEPARTMENT OF ${deptGroup.dept.toUpperCase()}`, pageWidth / 2, yPos, { align: "center" });
       yPos += 5;
 
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(30, 41, 59);
       doc.text("INTERNAL ASSESSMENT EXAMINATION TIMETABLE", pageWidth / 2, yPos, { align: "center" });
       yPos += 4.5;
 
       // Academic Year / Exam meta
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
+      doc.setFontSize(8);
       doc.setTextColor(71, 85, 105);
       const firstItem = targetBatchGroups[0]?.items[0];
       const academicYearStr = firstItem?.academicYear ? `Academic Year: ${firstItem.academicYear}` : "";
@@ -479,7 +490,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
 
       // Header divider line
       doc.setDrawColor(18, 12, 122);
-      doc.setLineWidth(0.5);
+      doc.setLineWidth(0.4);
       doc.line(marginLeft, yPos, pageWidth - marginRight, yPos);
       yPos += 5;
 
@@ -488,18 +499,18 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
         const bg = targetBatchGroups[bgIdx];
 
         // Check if we need a new page for this batch table
-        if (yPos > pageHeight - 65) {
+        if (yPos > pageHeight - 45) {
           doc.addPage();
-          yPos = 15;
+          yPos = 12;
         }
 
         // Batch subheader banner
         doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
+        doc.setFontSize(8.5);
         doc.setTextColor(18, 12, 122);
         const batchTitle = `Batch: ${formatBatchDisplay(bg.batch)}   |   Semester: ${bg.semester}${bg.academicYear ? `   (${bg.academicYear})` : ""}`;
         doc.text(batchTitle, marginLeft, yPos);
-        yPos += 3.5;
+        yPos += 2.5;
 
         // Headers without Exam and QP Setter columns
         const headers = [["#", "Date & Day", "Session & Time", "Course Code", "Course Name"]];
@@ -524,8 +535,8 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           margin: { left: marginLeft, right: marginRight },
           tableWidth: contentWidth,
           styles: {
-            fontSize: 8,
-            cellPadding: 2.5,
+            fontSize: 7.5,
+            cellPadding: 1.5,
             textColor: [30, 30, 30],
             lineWidth: 0.1,
             lineColor: [203, 213, 225],
@@ -535,7 +546,8 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
             fillColor: [18, 12, 122],
             textColor: [255, 255, 255],
             fontStyle: "bold",
-            fontSize: 8,
+            fontSize: 7.5,
+            cellPadding: 1.8,
             halign: "center",
             valign: "middle"
           },
@@ -552,48 +564,74 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           didDrawPage: () => {
             const pageNum = doc.internal.getNumberOfPages();
             doc.setFont("helvetica", "normal");
-            doc.setFontSize(7);
+            doc.setFontSize(6.5);
             doc.setTextColor(148, 163, 184);
-            doc.text("C.K. College of Engineering & Technology — IA Examination Timetable", marginLeft, pageHeight - 6);
-            doc.text(`Page ${pageNum}`, pageWidth - marginRight, pageHeight - 6, { align: "right" });
+            doc.text("C.K. College of Engineering & Technology — IA Examination Timetable", marginLeft, pageHeight - 5);
+            doc.text(`Page ${pageNum}`, pageWidth - marginRight, pageHeight - 5, { align: "right" });
           }
         });
 
-        yPos = (doc.lastAutoTable?.finalY || yPos) + 6;
+        yPos = (doc.lastAutoTable?.finalY || yPos) + 3;
       }
 
-      // ── 4. Signatures (Exam Cell Coordinator & Principal) ──
-      const requiredSigSpace = 32;
-      if (yPos + requiredSigSpace > pageHeight - 14) {
+      // ── 4. Signatures (Exam Cell Coordinator, Controller of Examinations, Vice Principal, Principal) ──
+      const requiredSigSpace = 20;
+      if (yPos + requiredSigSpace > pageHeight - 12) {
         doc.addPage();
-        yPos = 25;
+        yPos = 18;
       } else {
-        yPos = Math.max(yPos + 12, pageHeight - 36);
+        yPos = Math.max(yPos + 6, pageHeight - 26);
       }
 
-      const sigColWidth = 55;
-      const ecCoordX = marginLeft + 10;
-      const principalX = pageWidth - marginRight - sigColWidth - 10;
+      const sigColWidth = 40;
+      const totalSigWidth = pageWidth - marginLeft - marginRight;
+      const gap = (totalSigWidth - (sigColWidth * 4)) / 3;
+
+      const xPositions = [
+        marginLeft,
+        marginLeft + sigColWidth + gap,
+        marginLeft + (sigColWidth + gap) * 2,
+        pageWidth - marginRight - sigColWidth
+      ];
+
+      const sigTitles = [
+        "Exam Cell Coordinator",
+        "Controller of Examinations",
+        "Vice Principal",
+        "Principal"
+      ];
+
+      const sigSubs = [
+        "(Signature & Date)",
+        "(Signature & Date)",
+        "(Signature & Date)",
+        "(Signature & Seal)"
+      ];
 
       // Dashed signature lines
       doc.setDrawColor(71, 85, 105);
       doc.setLineWidth(0.2);
       doc.setLineDashPattern([1.5, 1], 0);
-      doc.line(ecCoordX, yPos, ecCoordX + sigColWidth, yPos);
-      doc.line(principalX, yPos, principalX + sigColWidth, yPos);
+
+      xPositions.forEach((xPos) => {
+        doc.line(xPos, yPos, xPos + sigColWidth, yPos);
+      });
       doc.setLineDashPattern([], 0); // reset to solid
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text("Exam Cell Coordinator", ecCoordX + sigColWidth / 2, yPos + 4, { align: "center" });
-      doc.text("Principal", principalX + sigColWidth / 2, yPos + 4, { align: "center" });
+      sigTitles.forEach((title, idx) => {
+        const xPos = xPositions[idx];
+        const centerX = xPos + sigColWidth / 2;
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(100, 116, 139);
-      doc.text("(Signature & Date)", ecCoordX + sigColWidth / 2, yPos + 7.5, { align: "center" });
-      doc.text("(Signature & Seal)", principalX + sigColWidth / 2, yPos + 7.5, { align: "center" });
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text(title, centerX, yPos + 4, { align: "center" });
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text(sigSubs[idx], centerX, yPos + 7.5, { align: "center" });
+      });
 
       const safeDeptName = deptGroup.dept.replace(/[^a-zA-Z0-9]/g, "_");
       doc.save(`Timetable_${safeDeptName}.pdf`);
@@ -1568,22 +1606,40 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                   </div>
 
                   {/* Signatures Space at Bottom */}
-                  <div className="sig-row mt-8 pt-6 border-t border-slate-200 flex items-end justify-between px-4 pb-2">
-                    <div className="sig-box w-48 text-center">
-                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-xs font-bold uppercase text-slate-900">
+                  <div className="sig-row mt-8 pt-6 border-t border-slate-200 grid grid-cols-4 gap-2 px-2 pb-2">
+                    <div className="sig-box text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-[10px] sm:text-[11px] font-bold uppercase text-slate-900 leading-tight">
                         Exam Cell Coordinator
                       </div>
-                      <div className="sig-sub text-[10px] text-slate-500 mt-0.5">
-                        (Signature & Date)
+                      <div className="sig-sub text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
+                        (Signature &amp; Date)
                       </div>
                     </div>
 
-                    <div className="sig-box w-48 text-center">
-                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-xs font-bold uppercase text-slate-900">
+                    <div className="sig-box text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-[10px] sm:text-[11px] font-bold uppercase text-slate-900 leading-tight">
+                        Controller of Examinations
+                      </div>
+                      <div className="sig-sub text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
+                        (Signature &amp; Date)
+                      </div>
+                    </div>
+
+                    <div className="sig-box text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-[10px] sm:text-[11px] font-bold uppercase text-slate-900 leading-tight">
+                        Vice Principal
+                      </div>
+                      <div className="sig-sub text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
+                        (Signature &amp; Date)
+                      </div>
+                    </div>
+
+                    <div className="sig-box text-center">
+                      <div className="sig-line border-t border-dashed border-slate-600 pt-1.5 text-[10px] sm:text-[11px] font-bold uppercase text-slate-900 leading-tight">
                         Principal
                       </div>
-                      <div className="sig-sub text-[10px] text-slate-500 mt-0.5">
-                        (Signature & Seal)
+                      <div className="sig-sub text-[9px] sm:text-[10px] text-slate-500 mt-0.5">
+                        (Signature &amp; Seal)
                       </div>
                     </div>
                   </div>

@@ -132,7 +132,14 @@ export default function AdminRoleConfig() {
     { id: "exam-cell-dashboard", label: "Exam Cell — Dashboard", path: "/exam-cell", module: "Exam Cell" },
     { id: "exam-cell-qp-review", label: "Exam Cell — QP Final Review", path: "/exam-cell/qp-review", module: "Exam Cell" },
     { id: "exam-cell-schedules", label: "Exam Cell — Schedule Approvals", path: "/exam-cell/schedules", module: "Exam Cell" },
-    { id: "exam-cell-qp-assignment", label: "Exam Cell — QP Setter Assignment", path: "/exam-cell/qp-assignment", module: "Exam Cell" }
+    { id: "exam-cell-qp-assignment", label: "Exam Cell — QP Setter Assignment", path: "/exam-cell/qp-assignment", module: "Exam Cell" },
+    { id: "exam-cell-room-master", label: "Exam Cell — Room & Hall Master", path: "/exam-cell/room-master", module: "Exam Cell" },
+    { id: "exam-cell-seat-allocation", label: "Exam Cell — Seat Allocation Engine", path: "/exam-cell/seat-allocation", module: "Exam Cell" },
+    { id: "exam-cell-faculty-duty", label: "Exam Cell — Faculty Duty Roster", path: "/exam-cell/faculty-duty", module: "Exam Cell" },
+    { id: "exam-cell-duty-alteration", label: "Exam Cell — Duty Alteration & Swaps", path: "/exam-cell/duty-alteration", module: "Exam Cell" },
+    { id: "exam-cell-hall-reports", label: "Exam Cell — Seating Charts & Reports", path: "/exam-cell/hall-reports", module: "Exam Cell" },
+    { id: "exam-cell-live-dashboard", label: "Exam Cell — Live Exam Control Desk", path: "/exam-cell/live-dashboard", module: "Exam Cell" },
+    { id: "exam-cell-exam-hall-suite", label: "Exam Cell — Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite", module: "Exam Cell" }
   ];
 
   const groupedPages = useMemo(() => {

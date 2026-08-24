@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Print Optimization */
+  @media print {
+    body {
+      background: white !important;
+      color: black !important;
+      font-size: 11pt !important;
+    }
+    
+    header, footer, nav, button, .print\:hidden {
+      display: none !important;
+    }
+    
+    .print\:block {
+      display: block !important;
+    }
+
+    table {
+      page-break-inside: auto;
+    }
+
+    tr {
+      page-break-inside: avoid;
+      page-break-after: auto;
+    }
+
+    thead {
+      display: table-header-group;
+    }
+
+    tfoot {
+      display: table-footer-group;
+    }
+  }
+}
+

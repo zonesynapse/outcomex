@@ -43,13 +43,18 @@ import {
   ShieldAlert,
   Layers,
   Package,
+  Grid3X3,
+  UserCheck,
+  RefreshCw,
+  Printer,
+  Activity,
+  ShieldCheck,
   Send,
   ClipboardCheck,
   PackageCheck,
   Download,
   Plus,
   Megaphone,
-  UserCheck,
   Loader2,
   Landmark,
   ScrollText,
@@ -156,7 +161,14 @@ const allPossibleItems = [
   { id: "exam-cell-dashboard", icon: Landmark, label: "Exam Cell Dashboard", path: "/exam-cell" },
   { id: "exam-cell-qp-review", icon: ScrollText, label: "QP Final Review", path: "/exam-cell/qp-review" },
   { id: "exam-cell-schedules", icon: CalendarCheck2, label: "Schedule Approvals", path: "/exam-cell/schedules" },
-  { id: "exam-cell-qp-assignment", icon: PenLine, label: "QP Setter Assignment", path: "/exam-cell/qp-assignment" }
+  { id: "exam-cell-qp-assignment", icon: PenLine, label: "QP Setter Assignment", path: "/exam-cell/qp-assignment" },
+  { id: "exam-cell-room-master", icon: Building2, label: "Room & Hall Master", path: "/exam-cell/room-master" },
+  { id: "exam-cell-seat-allocation", icon: Grid3X3, label: "Seat Allocation Engine", path: "/exam-cell/seat-allocation" },
+  { id: "exam-cell-faculty-duty", icon: UserCheck, label: "Faculty Duty Roster", path: "/exam-cell/faculty-duty" },
+  { id: "exam-cell-duty-alteration", icon: RefreshCw, label: "Duty Alterations & Swaps", path: "/exam-cell/duty-alteration" },
+  { id: "exam-cell-hall-reports", icon: Printer, label: "Seating Charts & Reports", path: "/exam-cell/hall-reports" },
+  { id: "exam-cell-live-dashboard", icon: Activity, label: "Live Exam Control Desk", path: "/exam-cell/live-dashboard" },
+  { id: "exam-cell-exam-hall-suite", icon: ShieldCheck, label: "Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite" }
 ];
 
 const modules = [
@@ -255,7 +267,20 @@ const modules = [
     id: "exam_cell",
     label: "Exam Cell",
     icon: Landmark,
-    itemIds: ["exam-cell-dashboard", "exam-cell-qp-review", "exam-cell-schedules", "exam-cell-qp-assignment", "ia-schedule-creation"]
+    itemIds: [
+      "exam-cell-dashboard", 
+      "exam-cell-qp-review", 
+      "exam-cell-schedules", 
+      "exam-cell-qp-assignment", 
+      "exam-cell-room-master", 
+      "exam-cell-seat-allocation",
+      "exam-cell-faculty-duty",
+      "exam-cell-duty-alteration",
+      "exam-cell-hall-reports",
+      "exam-cell-live-dashboard",
+      "exam-cell-exam-hall-suite",
+      "ia-schedule-creation"
+    ]
   }
 ];
 
@@ -538,7 +563,21 @@ export default function Layout({ children, title }) {
     }
     if (rolePermissions === null) return null;
     if (userRole === 'Admin') {
-      const adminPerms = new Set([...(rolePermissions || []), 'activity-settings', 'exam-cell-dashboard', 'exam-cell-qp-review', 'exam-cell-schedules', 'exam-cell-qp-assignment']);
+      const adminPerms = new Set([
+        ...(rolePermissions || []), 
+        'activity-settings', 
+        'exam-cell-dashboard', 
+        'exam-cell-qp-review', 
+        'exam-cell-schedules', 
+        'exam-cell-qp-assignment', 
+        'exam-cell-room-master',
+        'exam-cell-seat-allocation',
+        'exam-cell-faculty-duty',
+        'exam-cell-duty-alteration',
+        'exam-cell-hall-reports',
+        'exam-cell-live-dashboard',
+        'exam-cell-exam-hall-suite'
+      ]);
       return Array.from(adminPerms);
     }
     if (userRole === 'HOD' && hasAssignments) {

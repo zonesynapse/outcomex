@@ -1,0 +1,6 @@
+{
+  "name": "ExamHall Allocation & Invigilation Suite",
+  "description": "Comprehensive Internal Examination System for Room & Seating Layout Allocation, Desk Grid Management, Faculty Duty Scheduling, Duty Alteration & Emergency Substitution Approvals, and Printable Seating & Oversight Reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

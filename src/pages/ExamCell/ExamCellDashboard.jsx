@@ -6,7 +6,8 @@ import { db, auth } from "../../firebase";
 import Layout from "../../components/Layout";
 import {
   ShieldCheck, ScrollText, CalendarCheck2, ClipboardList, CheckCircle2,
-  Clock3, RefreshCw, ArrowRight, Landmark, Sparkles, TrendingUp, Award, PenLine
+  Clock3, RefreshCw, ArrowRight, Landmark, Sparkles, TrendingUp, Award, PenLine, Building2,
+  Grid3X3, UserCheck, Printer, Activity
 } from "lucide-react";
 import { formatProgrammeKey, formatQPSetDisplay, parseSubjectField } from "../../lib/utils";
 
@@ -153,6 +154,18 @@ export default function ExamCellDashboard() {
               <button onClick={() => navigate("/exam-cell/qp-assignment")}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">
                 <PenLine size={14} /> Setter Assign
+              </button>
+              <button onClick={() => navigate("/exam-cell/room-master")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">
+                <Building2 size={14} /> Room Master
+              </button>
+              <button onClick={() => navigate("/exam-cell/seat-allocation")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">
+                <Grid3X3 size={14} /> Seat Allocation
+              </button>
+              <button onClick={() => navigate("/exam-cell/exam-hall-suite")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">
+                <ShieldCheck size={14} /> Exam Hall OS
               </button>
             </div>
           </div>
