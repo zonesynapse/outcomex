@@ -24,14 +24,10 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, sanitizeKey } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
-// Sanitize key matching HODRoleConfig's local version
-function sanitizeKey(key) {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
-}
+// Sanitize key — imported from lib/utils to match system-wide format
 
 function extractPureDate(key) {
   if (!key) return '';

@@ -3,12 +3,7 @@ import { db, auth } from "../../firebase";
 import { doc, collection, getDoc, getDocs, query, where, documentId } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { CalendarCheck2, AlertCircle, Loader2, Check, X } from "lucide-react";
-import { getAttendanceRecords, parseStudentAttendanceVal } from "../../lib/utils";
-
-const sanitizeKey = (key) => {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
-};
+import { getAttendanceRecords, parseStudentAttendanceVal, sanitizeKey, formatProgrammeKey } from "../../lib/utils";
 
 const getStudentValFromRec = (studentsObj, studentIds) => {
   if (!studentsObj) return undefined;
@@ -84,27 +79,58 @@ export default function Attendance() {
 
   useEffect(() => {
     if (!studentData) return;
-    const { regNo, programme, department, batch } = studentData;
-    if (!regNo || !programme || !department || !batch) {
+    const { programme, department, batch } = studentData;
+    if (!programme || !department || !batch) {
       setTimeout(() => setLoading(false), 0);
       return;
     }
 
     const fetchAttendance = async () => {
-      try {
-        const progKey = sanitizeKey(programme);
-        const deptKey = sanitizeKey(department);
-        const batchKey = sanitizeKey(batch);
+      const progKey = formatProgrammeKey(programme);
+      const deptKey = sanitizeKey(department);
+      const batchKey = sanitizeKey(batch);
 
+      console.log('[Student Attendance] Fetching for:', { programme, department, batch, progKey, deptKey, batchKey });
+
+      try {
         const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
         const batchPrefixEnd = `${batchPrefix}\uf8ff`;
 
-        const [attSnapshot, batchRegSnap, assignSnap, usersSnap] = await Promise.all([
+        let attSnapshot;
+        let batchRegSnap;
+        let assignSnap;
+        let usersSnap;
+
+        const [brSnap, brRegSnap, brAssignSnap, brUsersSnap] = await Promise.all([
           getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
           getDocs(query(collection(db, "subject_assignments"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDocs(collection(db, "users")),
         ]);
+
+        attSnapshot = brSnap;
+        batchRegSnap = brRegSnap;
+        assignSnap = brAssignSnap;
+        usersSnap = brUsersSnap;
+
+        // Broad fallback: if prefix query returned 0 attendance docs, scan ALL and match by batchKey
+        if (attSnapshot.size === 0) {
+          console.log('[Student Attendance] Prefix query returned 0 docs, trying broad scan...');
+          const allAttSnap = await getDocs(collection(db, "attendance"));
+          const matched = [];
+          allAttSnap.forEach(d => {
+            const id = d.id;
+            if (id.includes(`_${batchKey}_`) || id.includes(`_${sanitizeKey(batch)}_`)) {
+              matched.push(d);
+            }
+          });
+          if (matched.length > 0) {
+            console.log('[Student Attendance] Broad scan found', matched.length, 'matching docs');
+            attSnapshot = { size: matched.length, forEach: (cb) => matched.forEach(cb) };
+          }
+        }
+
+        console.log('[Student Attendance] Firestore results:', { attDocs: attSnapshot.size, assignDocs: assignSnap.size });
 
         let regulation = "";
         if (batchRegSnap?.exists()) {
@@ -139,9 +165,17 @@ export default function Attendance() {
           facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
         });
 
-        const studentIds = [regNo, studentData.admissionNo, studentData.admNo, studentData.id]
+        const regNo = studentData.regNo || studentData.examNumber || '';
+        const admissionNo = studentData.admissionNo || studentData.admNo || '';
+        const profileData = studentData._profile_data || studentData._student_data || {};
+        const profileRegNo = profileData.regNo || profileData.examNumber || '';
+        const profileAdmNo = profileData.admissionNo || profileData.admNo || '';
+
+        const studentIds = [regNo, profileRegNo, admissionNo, profileAdmNo, studentData.id, studentData.email]
           .filter(Boolean)
           .map(x => String(x).trim());
+
+        console.log('[Student Attendance] Student IDs:', studentIds);
 
         // Collect raw entries where this student is enrolled or period is marked
         const rawEntries = [];

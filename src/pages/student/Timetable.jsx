@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../firebase";
-import { doc, getDoc, collection, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, getDocs, collection, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useLocation } from "react-router-dom";
 import {
@@ -117,56 +117,117 @@ export default function Timetable() {
   useEffect(() => {
     if (!studentData) return;
     const { programme, department, batch } = studentData;
-    if (!programme || !department || !batch) { setLoading(false); return; }
+    if (!batch) { setLoading(false); return; }
 
     const fetchTimetable = async () => {
       try {
+        const batchNorm = normKey(batch);
         const progKey = formatProgrammeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
         const legacyDeptKey = (department||'').replace(/[.#$[\]/ ]/g, '_');
         const legacyBatchKey = (batch||'').replace(/[.#$[\]/ ]/g, '_');
         const years = getAcademicYears(batch);
-        if (years.length === 0) { setLoading(false); return; }
 
         const currentYear = new Date().getFullYear();
         const month = new Date().getMonth();
-        const activeAy = years.find((y) => {
-          const [start] = y.split('-').map(Number);
-          if (month >= 6) return start === currentYear;
-          return start + 1 === currentYear;
-        }) || years[0];
-
-        const ayKey = sanitizeKey(activeAy);
-        const ayIndex = years.indexOf(activeAy);
         const isOddSem = month >= 6;
-        const semNum = String(ayIndex * 2 + (isOddSem ? 1 : 2));
-        const otherSem = String(ayIndex * 2 + (isOddSem ? 2 : 1));
-        const compositeKey = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${semNum}`;
-        const legacyKey = `${progKey}_${legacyDeptKey}_${legacyBatchKey}_${ayKey}_${semNum}`;
 
-        const allocationSnap = await getDoc(doc(db, "timetable_allocations", compositeKey));
-        if (allocationSnap.exists()) {
-          setTimetable(allocationSnap.data());
-        } else if (legacyKey !== compositeKey) {
-          const legSnap = await getDoc(doc(db, "timetable_allocations", legacyKey));
-          if (legSnap.exists()) { setTimetable(legSnap.data()); }
-          else {
-            const compositeKey2 = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${otherSem}`;
-            const legacyKey2 = `${progKey}_${legacyDeptKey}_${legacyBatchKey}_${ayKey}_${otherSem}`;
-            const allocationSnap2 = await getDoc(doc(db, "timetable_allocations", compositeKey2));
-            if (allocationSnap2.exists()) setTimetable(allocationSnap2.data());
-            else {
-              const legSnap2 = await getDoc(doc(db, "timetable_allocations", legacyKey2));
-              setTimetable(legSnap2.exists() ? legSnap2.data() : null);
+        let foundTimetable = null;
+
+        // Try exact composite key lookup if we have all fields
+        if (programme && department && years.length > 0) {
+          const activeAy = years.find((y) => {
+            const [start] = y.split('-').map(Number);
+            if (month >= 6) return start === currentYear;
+            return start + 1 === currentYear;
+          }) || years[0];
+          const ayKey = sanitizeKey(activeAy);
+          const ayIndex = years.indexOf(activeAy);
+          const semNum = String(ayIndex * 2 + (isOddSem ? 1 : 2));
+          const otherSem = String(ayIndex * 2 + (isOddSem ? 2 : 1));
+
+          // Build ALL dept format variants: sanitized, legacy, raw (for students whose
+          // users doc has department stored as display format vs key format)
+          const deptVariants = [deptKey, legacyDeptKey];
+          // Also try raw department value as-is (e.g. "CSE" or "Computer_Science_and_Engineering")
+          if (department && !deptVariants.includes(sanitizeKey(department))) {
+            deptVariants.push(sanitizeKey(department));
+          }
+
+          const keys = [];
+          for (const dv of deptVariants) {
+            for (const bv of [batchKey, legacyBatchKey]) {
+              for (const sem of [semNum, otherSem]) {
+                keys.push(`${progKey}_${dv}_${bv}_${ayKey}_${sem}`);
+              }
             }
           }
-        } else {
-          const compositeKey2 = `${progKey}_${deptKey}_${batchKey}_${ayKey}_${otherSem}`;
-          const allocationSnap2 = await getDoc(doc(db, "timetable_allocations", compositeKey2));
-          if (allocationSnap2.exists()) setTimetable(allocationSnap2.data());
-          else setTimetable(null);
+          for (const k of keys) {
+            if (foundTimetable) break;
+            try {
+              const snap = await getDoc(doc(db, "timetable_allocations", k));
+              if (snap.exists()) {
+                const data = snap.data();
+                // Prefer docs with subjectAllocation (actual subject assignments)
+                if (!foundTimetable || (data.subjectAllocation && Object.keys(data.subjectAllocation).length > 0)) {
+                  foundTimetable = data;
+                }
+              }
+            } catch {}
+          }
         }
+
+        // Broad fallback: scan timetable_allocations for matching batch
+        if (!foundTimetable) {
+          const allSnap = await getDocs(collection(db, "timetable_allocations"));
+          const candidates = [];
+          allSnap.forEach((d) => {
+            const data = d.data();
+            const docBatch = normKey(data.batch || "");
+            const docBatchId = normKey(d.id);
+            if (!docBatch.includes(batchNorm) && !docBatchId.includes(batchNorm)) return;
+            candidates.push({ id: d.id, data });
+          });
+          if (candidates.length === 1) {
+            foundTimetable = candidates[0].data;
+          } else if (candidates.length > 1) {
+            const progNorm = normKey(programme || "");
+            const deptNorm = normKey(department || "");
+            // Score each candidate: prefer programme/dept match + has subjectAllocation
+            const scored = candidates.map((c) => {
+              const cProg = normKey(c.data.progKey || c.data.programme || "");
+              const cDept = normKey(c.data.deptKey || c.data.department || "");
+              const cId = c.id;
+              const progOk = progNorm && (cProg.includes(progNorm) || progNorm.includes(cProg));
+              const deptOk = deptNorm && (cDept.includes(deptNorm) || deptNorm.includes(cDept));
+              const hasSubjects = c.data.subjectAllocation && Object.keys(c.data.subjectAllocation).length > 0;
+              let score = 0;
+              if (progOk) score += 10;
+              if (deptOk) score += 10;
+              if (hasSubjects) score += 50; // Strongly prefer docs with actual subject data
+              // Also check if dept appears in doc ID
+              if (deptNorm && cId.includes(deptNorm)) score += 5;
+              return { ...c, score };
+            });
+            scored.sort((a, b) => b.score - a.score);
+            foundTimetable = scored[0].data;
+          }
+        }
+
+        if (foundTimetable) {
+          const saKeys = Object.keys(foundTimetable.subjectAllocation || {});
+          const saCount = saKeys.reduce((sum, day) => {
+            const periods = foundTimetable.subjectAllocation[day] || {};
+            return sum + Object.keys(periods).length;
+          }, 0);
+          console.log("[StudentTimetable] Found timetable:", foundTimetable.timetableName, "| subjectAllocation days:", saKeys.length, "| total period entries:", saCount);
+          if (saCount === 0) console.warn("[StudentTimetable] subjectAllocation is EMPTY — the doc has no subject data. Teacher may not have saved subjects yet.");
+        } else {
+          console.log("[StudentTimetable] No timetable doc found for batch:", batch);
+        }
+
+        setTimetable(foundTimetable);
       } catch (err) { console.error(err); }
       setLoading(false);
     };
