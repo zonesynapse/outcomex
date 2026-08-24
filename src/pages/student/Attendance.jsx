@@ -79,8 +79,14 @@ export default function Attendance() {
 
   useEffect(() => {
     if (!studentData) return;
-    const { programme, department, batch } = studentData;
+    // programme/department/batch may be at top-level or inside _profile_data / _student_data (admission flow)
+    const profData = studentData._profile_data || {};
+    const stuData = studentData._student_data || {};
+    const programme = studentData.programme || profData.programme || stuData.programme || studentData.programmeKey || "";
+    const department = studentData.department || profData.department || stuData.department || studentData.dept || studentData.deptKey || "";
+    const batch = studentData.batch || profData.batch || stuData.batch || studentData.batchKey || "";
     if (!programme || !department || !batch) {
+      console.warn('[Student Attendance] Missing student identity fields', { programme, department, batch, studentData });
       setTimeout(() => setLoading(false), 0);
       return;
     }
@@ -89,6 +95,10 @@ export default function Attendance() {
       const progKey = formatProgrammeKey(programme);
       const deptKey = sanitizeKey(department);
       const batchKey = sanitizeKey(batch);
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normProg = norm(programme) + norm(progKey);
+      const normDept = norm(department) + norm(deptKey);
+      const normBatch = norm(batch) + norm(batchKey);
 
       console.log('[Student Attendance] Fetching for:', { programme, department, batch, progKey, deptKey, batchKey });
 
@@ -96,39 +106,73 @@ export default function Attendance() {
         const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
         const batchPrefixEnd = `${batchPrefix}\uf8ff`;
 
-        let attSnapshot;
-        let batchRegSnap;
-        let assignSnap;
-        let usersSnap;
+        let batchRegSnap = null;
+        let usersSnap = null;
+        // Attendance and assignment — try exact prefix first, then lenient broad scan
+        let attendanceDocs = [];
+        let assignDocs = [];
 
-        const [brSnap, brRegSnap, brAssignSnap, brUsersSnap] = await Promise.all([
-          getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
-          getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
-          getDocs(query(collection(db, "subject_assignments"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
-          getDocs(collection(db, "users")),
-        ]);
+        try {
+          const [brSnap, brRegSnap, brAssignSnap, brUsersSnap] = await Promise.all([
+            getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))).catch(() => ({ size: 0, forEach: () => {}, docs: [] })),
+            getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
+            getDocs(query(collection(db, "subject_assignments"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))).catch(() => ({ size: 0, forEach: () => {}, docs: [] })),
+            getDocs(collection(db, "users")).catch(() => ({ forEach: () => {} })),
+          ]);
+          batchRegSnap = brRegSnap;
+          usersSnap = brUsersSnap;
+          // collect prefix-matched docs
+          brSnap.forEach(d => attendanceDocs.push(d));
+          brAssignSnap.forEach(d => assignDocs.push(d));
+        } catch (e) {
+          console.warn('[Student Attendance] prefix query error', e);
+        }
 
-        attSnapshot = brSnap;
-        batchRegSnap = brRegSnap;
-        assignSnap = brAssignSnap;
-        usersSnap = brUsersSnap;
-
-        // Broad fallback: if prefix query returned 0 attendance docs, scan ALL and match by batchKey
-        if (attSnapshot.size === 0) {
-          console.log('[Student Attendance] Prefix query returned 0 docs, trying broad scan...');
-          const allAttSnap = await getDocs(collection(db, "attendance"));
-          const matched = [];
-          allAttSnap.forEach(d => {
-            const id = d.id;
-            if (id.includes(`_${batchKey}_`) || id.includes(`_${sanitizeKey(batch)}_`)) {
-              matched.push(d);
+        // Lenient broad fallback if prefix found nothing or too few — scan ALL and keep batch-matching docs
+        const needsBroad = attendanceDocs.length === 0;
+        if (needsBroad) {
+          console.log('[Student Attendance] Prefix query returned', attendanceDocs.length, 'docs — trying lenient broad scan by batch norm:', norm(batch));
+          try {
+            const batchStartYear = String(batch).split('-')[0].trim();
+            const allAttSnap = await getDocs(collection(db, "attendance"));
+            const broadMatched = [];
+            allAttSnap.forEach(d => {
+              const nid = norm(d.id);
+              const did = String(d.id);
+              const batchHit = nid.includes(norm(batch)) || nid.includes(norm(batchKey)) || did.includes(batch) || did.includes(batchKey) || (batchStartYear && nid.includes(norm(batchStartYear)));
+              if (batchHit) {
+                broadMatched.push(d);
+              }
+            });
+            // prefer those that also hint dept/prog, but keep all batch-matched if none hint
+            const deptProgMatched = broadMatched.filter(d => {
+              const nid = norm(d.id);
+              return nid.includes(norm(department)) || nid.includes(norm(deptKey)) || nid.includes(norm(programme)) || nid.includes(norm(progKey));
+            });
+            const chosen = deptProgMatched.length > 0 ? deptProgMatched : broadMatched;
+            if (chosen.length > 0) {
+              console.log('[Student Attendance] Broad scan kept', chosen.length, 'docs (batch match)', chosen.map(c=>c.id).slice(0,5));
+              attendanceDocs = chosen;
             }
-          });
-          if (matched.length > 0) {
-            console.log('[Student Attendance] Broad scan found', matched.length, 'matching docs');
-            attSnapshot = { size: matched.length, forEach: (cb) => matched.forEach(cb) };
+            // same for assignments — fetch broadly so facultyUidMap isn't empty
+            const allAssignSnap = await getDocs(collection(db, "subject_assignments"));
+            const assignBroad = [];
+            allAssignSnap.forEach(d => {
+              const nid = norm(d.id);
+              if (nid.includes(norm(batch)) || d.id.includes(batch) || d.id.includes(batchKey)) assignBroad.push(d);
+            });
+            if (assignBroad.length > 0 && assignDocs.length === 0) {
+              assignDocs = assignBroad;
+              console.log('[Student Attendance] Broad assignment scan found', assignDocs.length, 'docs');
+            }
+          } catch (e) {
+            console.warn('[Student Attendance] broad scan error', e);
           }
         }
+
+        // Wrap for downstream compatibility but keep array for iteration
+        const attSnapshot = { size: attendanceDocs.length, forEach: (cb) => attendanceDocs.forEach(cb), docs: attendanceDocs };
+        const assignSnap = { size: assignDocs.length, forEach: (cb) => assignDocs.forEach(cb), docs: assignDocs };
 
         console.log('[Student Attendance] Firestore results:', { attDocs: attSnapshot.size, assignDocs: assignSnap.size });
 
@@ -150,8 +194,12 @@ export default function Attendance() {
         }
 
         const facultyUidMap = {};
+        const isLenientAssign = assignDocs.length > 0 && !assignDocs.every(d => d.id.startsWith(`${progKey}_${deptKey}_${batchKey}`));
         assignSnap.forEach(d => {
-          if (!d.id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
+          const nid = norm(d.id);
+          const strictOk = d.id.startsWith(`${progKey}_${deptKey}_${batchKey}`);
+          const lenientOk = nid.includes(norm(batch)) || nid.includes(norm(batchKey));
+          if (!strictOk && !(isLenientAssign && lenientOk)) return;
           const data = d.data();
           Object.entries(data).forEach(([uid, codes]) => {
             if (uid.startsWith('_') || !Array.isArray(codes)) return;
@@ -160,30 +208,41 @@ export default function Attendance() {
         });
 
         const facultyNames = {};
-        usersSnap.forEach(d => {
+        if (usersSnap) usersSnap.forEach(d => {
           const u = d.data();
           facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
         });
 
-        const regNo = studentData.regNo || studentData.examNumber || '';
-        const admissionNo = studentData.admissionNo || studentData.admNo || '';
-        const profileData = studentData._profile_data || studentData._student_data || {};
-        const profileRegNo = profileData.regNo || profileData.examNumber || '';
-        const profileAdmNo = profileData.admissionNo || profileData.admNo || '';
-
-        const studentIds = [regNo, profileRegNo, admissionNo, profileAdmNo, studentData.id, studentData.email]
-          .filter(Boolean)
-          .map(x => String(x).trim());
+        // Build comprehensive student IDs — mirrors Attendance.jsx idMap dual lookup and covers all legacy fields
+        const collectIds = (...vals) => vals.filter(Boolean).map(v => String(v).trim()).filter(Boolean);
+        const allStudentIdsRaw = collectIds(
+          studentData.regNo, studentData.registerNo, studentData.registerNumber, studentData.rollNo, studentData.examNumber, studentData.examNo,
+          studentData.admissionNo, studentData.admNo, studentData.applicationNo, studentData.appNo,
+          profData.regNo, profData.registerNo, profData.registerNumber, profData.rollNo, profData.examNumber, profData.examNo,
+          profData.admissionNo, profData.admNo, profData.applicationNo,
+          stuData.regNo, stuData.registerNo, stuData.rollNo, stuData.examNumber,
+          stuData.admissionNo, stuData.admNo, stuData.applicationNo,
+          studentData.id, studentData.uid, studentData.email, studentData.mobile, studentData.phone,
+          profData.email, profData.mobile, stuData.email
+        );
+        // dedup case-insensitive, keep original casing for map lookup but also lower for matching
+        const seenLower = new Set();
+        const studentIds = [];
+        allStudentIdsRaw.forEach(id => { const l = String(id).trim().toLowerCase(); if (!seenLower.has(l) && l) { seenLower.add(l); studentIds.push(String(id).trim()); } });
 
         console.log('[Student Attendance] Student IDs:', studentIds);
 
-        // Collect raw entries where this student is enrolled or period is marked
+        // Collect raw entries — lenient: if we did broad fallback, accept any batch-matched doc, not just strict prefix
         const rawEntries = [];
         const subjectDocMap = {};
+        const isLenientAtt = attendanceDocs.length > 0 && !attendanceDocs.every(d => d.id.startsWith(`${progKey}_${deptKey}_${batchKey}`));
 
         attSnapshot.forEach((docSnap) => {
           const id = docSnap.id;
-          if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
+          const nid = norm(id);
+          const strictOk = id.startsWith(`${progKey}_${deptKey}_${batchKey}`);
+          const lenientOk = nid.includes(norm(batch)) || nid.includes(norm(batchKey));
+          if (!strictOk && !(isLenientAtt && lenientOk)) return;
           const data = docSnap.data();
           const records = getAttendanceRecords(data);
           const recordCount = Object.keys(records).length;
@@ -246,23 +305,40 @@ export default function Attendance() {
             const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
             if (eSnap.exists()) {
               const eData = eSnap.data();
-              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
+              // enrolment docs may have lowercased keys — normalize to lower set as well
+              const rawKeys = Object.keys(eData).filter(k => eData[k]);
+              const lowerSet = new Set(rawKeys.map(k => String(k).trim().toLowerCase()));
+              // keep both original and lower for case-insensitive check
+              rawKeys.forEach(k => lowerSet.add(k));
+              enrolMap[ek] = lowerSet;
             }
           } catch (e) { /* enrollment doc may not exist */ }
         }));
+        const hasEnrolData = Object.keys(enrolMap).length > 0;
+        const hasAssignData = Object.keys(facultyUidMap).length > 0;
         const filteredEntries = rawEntries.filter(e => {
-          // 1. Course enrollment doc (precise — for data saved after enrollment tracking)
           const ek = enrolKeyMap[e.docId];
           if (ek && enrolMap[ek]) {
-            return studentIds.some(id => enrolMap[ek].has(id));
+            // case-insensitive enrol check — enrol docs may store lowercased regNos
+            return studentIds.some(id => enrolMap[ek].has(id) || enrolMap[ek].has(String(id).trim().toLowerCase()) );
           }
-          // 2. Fallback: subject must be assigned to this batch (handles old data without enrollment docs)
-          return !!facultyUidMap[e.subjectCode];
+          if (hasEnrolData) {
+            // enrolment exists for this batch but this subject has no enrol doc — be lenient, keep if assignment says yes
+            if (hasAssignData) return !!facultyUidMap[e.subjectCode];
+            // no enrol doc for this subject and no assignment info — don't hide (faculty marked it, so show)
+            return true;
+          }
+          if (hasAssignData) {
+            // No enrolment system for this batch — rely on subject assignment
+            return !!facultyUidMap[e.subjectCode];
+          }
+          // No enrolment and no assignment data at all for this batch (old data or broad fallback) — show everything faculty marked
+          return true;
         });
 
         const filteredSubjectCounts = {};
         filteredEntries.forEach(e => { filteredSubjectCounts[e.subjectCode] = (filteredSubjectCounts[e.subjectCode] || 0) + 1; });
-        console.log('[Student Attendance] After enrollment filter:', filteredEntries.length, '| Per-subject:', filteredSubjectCounts);
+        console.log('[Student Attendance] After enrollment filter:', filteredEntries.length, '| Per-subject:', filteredSubjectCounts, '| hasEnrol:', hasEnrolData, '| hasAssign:', hasAssignData);
 
         // Dedup by recordKey: when no enrollment docs exist, a student may appear in multiple subjects
         // for the same period (old data). Dedup ensures each period is counted at most once.
@@ -284,7 +360,7 @@ export default function Attendance() {
             const enrolledInGroup = group.filter(e => {
               const ek = enrolKeyMap[e.docId];
               const enrolledSet = enrolMap[ek];
-              return enrolledSet && enrolledSet.has(regNo);
+              return enrolledSet && studentIds.some(id => enrolledSet.has(id) || enrolledSet.has(String(id).trim().toLowerCase()));
             });
             if (enrolledInGroup.length > 0) {
               enrolledInGroup.forEach(e => resolvedEntries.push(e));
