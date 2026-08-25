@@ -336,7 +336,7 @@ export default function FacultyDashboard() {
       await Promise.all(visibleGroups.map(async (g) => {
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
         const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
-        const legacyCompositeKey = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}`;
+        const legacyCompositeKey = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}`;
         try {
           let snap = await getDoc(doc(db, 'timetable_allocations', compositeKey));
           if (!snap.exists() && legacyCompositeKey !== compositeKey) {
@@ -489,8 +489,8 @@ export default function FacultyDashboard() {
         if (!batchPrefixes.includes(prefix1)) batchPrefixes.push(prefix1);
         if (!batchPrefixes.includes(prefix2)) batchPrefixes.push(prefix2);
         // Legacy prefixes: Attendance.jsx local sanitizeKey doesn't replace spaces/slashes
-        const lp1 = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}_`;
-        const lp2 = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${g.semester}_`;
+        const lp1 = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
+        const lp2 = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
         if (lp1 !== prefix1 && !batchPrefixes.includes(lp1)) batchPrefixes.push(lp1);
         if (lp2 !== prefix2 && !batchPrefixes.includes(lp2)) batchPrefixes.push(lp2);
       }
@@ -843,6 +843,12 @@ export default function FacultyDashboard() {
     return pendingQps.filter(q => isInCurrentActiveSemester(q));
   }, [pendingQps, isInCurrentActiveSemester]);
 
+  const canEditQp = (qp) => {
+    if (!qp) return false;
+    const s = String(qp.status || '').toLowerCase().trim();
+    return s === 'draft' || s === 'recorrected' || s === 'revoked' || s === 'rejected';
+  };
+
   const baseQps = useMemo(() => {
     return semesterTab === "current" ? currentSemesterQps : pendingQps;
   }, [pendingQps, currentSemesterQps, semesterTab]);
@@ -1194,8 +1200,8 @@ export default function FacultyDashboard() {
                 // 2. No direct record — check if a substitute marked a different subject for same group/period/section
                 const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
                 const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-                const legacyGroupPrefixNum = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}_`;
-                const legacyGroupPrefixFull = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${g.semester}_`;
+                const legacyGroupPrefixNum = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
+                const legacyGroupPrefixFull = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
                 const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
                 for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
                   if (!getAttendanceRecords(aData)?.[recordKey]) continue;
@@ -1245,8 +1251,8 @@ export default function FacultyDashboard() {
 
           const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
           const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-          const legacyGroupPrefixNum = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}_`;
-          const legacyGroupPrefixFull = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${g.semester}_`;
+          const legacyGroupPrefixNum = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
+          const legacyGroupPrefixFull = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
           const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
 
           for (const code of (g.codes || [])) {
@@ -1460,7 +1466,7 @@ export default function FacultyDashboard() {
     visibleGroups.forEach(g => {
       const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
       const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
-      const legacyCompositeKey = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}`;
+      const legacyCompositeKey = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}`;
       const tt = timetableData[compositeKey] || timetableData[legacyCompositeKey];
       if (!tt || !tt.periodsPerDay) {
         if (tt) console.warn(`TT for ${compositeKey}: missing periodsPerDay`);
@@ -1521,7 +1527,7 @@ export default function FacultyDashboard() {
     visibleGroups.forEach(g => {
       const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
       const compositeKey = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`;
-      const legacyCompositeKey = `${g.progKey}_${(g.department||'').replace(/[.#$[\]]/g,'_')}_${(g.batch||'').replace(/[.#$[\]]/g,'_')}_${(g.academicYear||'').replace(/[.#$[\]]/g,'_')}_${semNum}`;
+      const legacyCompositeKey = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}`;
       const tt = timetableData[compositeKey] || timetableData[legacyCompositeKey];
       const daySchedule = tt?.facultyEntries?.[dayName] || {};
       Object.entries(daySchedule).forEach(([period, entries]) => {
@@ -2111,10 +2117,10 @@ export default function FacultyDashboard() {
         )}
 
         {/* Assigned Subjects + Tasks */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch mb-8">
           {/* Assigned Subjects */}
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col h-full">
+            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between shrink-0">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
                 <BookOpen size={20} className="text-[#120c7a]" />
                 Assigned Subjects
@@ -2122,12 +2128,12 @@ export default function FacultyDashboard() {
               </h2>
             </div>
             {assignmentsLoading ? (
-              <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
+              <div className="flex-1 flex items-center justify-center py-16 text-zinc-400 gap-3">
                 <Loader2 className="animate-spin" size={20} />
                 <span className="text-sm font-semibold">Loading assignments...</span>
               </div>
             ) : visibleGroups.length === 0 ? (
-              <div className="py-16 text-center">
+              <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center mx-auto mb-3">
                   <BookOpen size={28} />
                 </div>
@@ -2135,7 +2141,7 @@ export default function FacultyDashboard() {
                 <p className="text-sm text-zinc-400 mt-1">Contact your HOD to get subject assignments.</p>
               </div>
             ) : (
-              <div className="divide-y divide-zinc-100">
+              <div className="divide-y divide-zinc-100 flex-1 overflow-y-auto min-h-0 max-h-[550px]">
                 {visibleGroups.map((g) => (
                   <div key={`${g.progKey}-${g.department}-${g.batch}-${g.academicYear}-${g.semester}`}
                     className="px-6 py-4 hover:bg-zinc-50/50 transition-colors">
@@ -2181,8 +2187,8 @@ export default function FacultyDashboard() {
           </div>
 
           {/* Missed Attendance */}
-          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden mb-8">
-            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col h-full">
+            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between shrink-0">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
                 <CalendarCheck2 size={20} className="text-[#120c7a]" />
                 Missed Attendance
@@ -2190,12 +2196,12 @@ export default function FacultyDashboard() {
               </h2>
             </div>
             {pendingLoading ? (
-              <div className="flex items-center justify-center py-16 text-zinc-400 gap-3">
+              <div className="flex-1 flex items-center justify-center py-16 text-zinc-400 gap-3">
                 <Loader2 className="animate-spin" size={20} />
                 <span className="text-sm font-semibold">Checking attendance...</span>
               </div>
             ) : missedCount === 0 ? (
-              <div className="py-16 text-center">
+              <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-3">
                   <CheckCircle2 size={28} />
                 </div>
@@ -2203,7 +2209,7 @@ export default function FacultyDashboard() {
                 <p className="text-sm text-zinc-400 mt-1">No missed attendance or pending tasks.</p>
               </div>
             ) : (
-              <div className="divide-y divide-zinc-100 max-h-[350px] overflow-y-auto">
+              <div className="divide-y divide-zinc-100 flex-1 overflow-y-auto min-h-0 max-h-[550px]">
                 {/* Attendance tasks */}
                 {attendanceTasks.map((task, idx) => {
                   const dateParts = task.date?.split('-') || ['00', '00', '00'];
@@ -2822,7 +2828,7 @@ export default function FacultyDashboard() {
                         >
                           <Eye size={16} />
                         </button>
-                        {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                        {canEditQp(qp) && (
                           <button
                             onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(qp))}`)}
                             className="p-2 rounded-lg bg-[#120c7a]/10 border border-[#120c7a]/20 text-[#120c7a] hover:bg-[#120c7a]/20 transition-all shadow-sm active:scale-95"
@@ -2831,7 +2837,7 @@ export default function FacultyDashboard() {
                             <Edit2 size={16} />
                           </button>
                         )}
-                        {qp.status !== 'forwarded' && qp.status !== 'approved_by_hod' && (
+                        {canEditQp(qp) && (
                           <button
                             onClick={() => handleDeleteQp(qp)}
                             disabled={deletingQp === `${qp.compositeKey}-${qp.id}`}
@@ -2875,7 +2881,7 @@ export default function FacultyDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {selectedQP.status !== 'forwarded' && selectedQP.status !== 'approved_by_hod' && (
+                {canEditQp(selectedQP) && (
                   <button
                     onClick={() => { setShowQPModal(false); navigate(`/question-paper-generator?id=${selectedQP.id}&compositeKey=${selectedQP.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(selectedQP))}`); }}
                     className="inline-flex items-center gap-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"

@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { db } from "../../firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 
-const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function daysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
@@ -11,6 +11,24 @@ function daysInMonth(year, month) {
 function firstDayOfMonth(year, month) {
   return new Date(year, month, 1).getDay();
 }
+
+const formatDateKey = (date) => {
+  if (!date) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null;
+  const clean = String(dateStr).split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts.map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+};
 
 const EVENT_COLORS = {
   Holiday: "bg-rose-400",
@@ -36,42 +54,45 @@ export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   useEffect(() => {
-    const fetchCalendar = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, "academic_calendar_events"));
-        const dateMap = {};
+    const unsub = onSnapshot(collection(db, "academic_calendar_events"), (snapshot) => {
+      const dateMap = {};
 
-        snapshot.forEach((docSnap) => {
-          const ev = { id: docSnap.id, ...docSnap.data() };
-          const fromDate = ev.fromDate;
-          const toDate = ev.toDate;
+      snapshot.forEach((docSnap) => {
+        const ev = { id: docSnap.id, ...docSnap.data() };
+        const fromDate = ev.fromDate;
+        const toDate = ev.toDate;
 
-          if (fromDate && toDate) {
-            const start = new Date(fromDate + 'T00:00:00');
-            const end = new Date(toDate + 'T00:00:00');
-            if (!isNaN(start) && !isNaN(end)) {
-              let cursor = new Date(start);
-              while (cursor <= end) {
-                const dStr = cursor.toISOString().split('T')[0];
-                if (!dateMap[dStr]) dateMap[dStr] = [];
-                dateMap[dStr].push(ev);
-                cursor.setDate(cursor.getDate() + 1);
-              }
-              return;
+        if (fromDate && toDate) {
+          const start = parseLocalDate(fromDate);
+          const end = parseLocalDate(toDate);
+          if (start && end && !isNaN(start.getTime()) && !isNaN(end.getTime())) {
+            let cursor = new Date(start);
+            while (cursor <= end) {
+              const dStr = formatDateKey(cursor);
+              if (!dateMap[dStr]) dateMap[dStr] = [];
+              dateMap[dStr].push(ev);
+              cursor.setDate(cursor.getDate() + 1);
             }
+            return;
           }
+        }
 
-          if (ev.eventDate) {
-            if (!dateMap[ev.eventDate]) dateMap[ev.eventDate] = [];
-            dateMap[ev.eventDate].push(ev);
-          }
-        });
+        if (ev.eventDate) {
+          const parsed = parseLocalDate(ev.eventDate);
+          const dKey = parsed ? formatDateKey(parsed) : ev.eventDate;
+          if (!dateMap[dKey]) dateMap[dKey] = [];
+          dateMap[dKey].push(ev);
+        }
+      });
 
-        setEventsByDate(dateMap);
-      } catch (err) { console.error(err); }
+      setEventsByDate(dateMap);
       setLoading(false);
-    };
-    fetchCalendar();
+    }, (err) => {
+      console.error("[StudentCalendar] Error loading events:", err);
+      setLoading(false);
+    });
+
+    return () => unsub();
   }, []);
 
   const year = currentDate.getFullYear();
@@ -96,6 +117,8 @@ export default function Calendar() {
       </div>
     );
   }
+
+  const todayStr = formatDateKey(new Date());
 
   return (
     <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
@@ -147,9 +170,9 @@ export default function Calendar() {
             }
 
             const dateEvents = eventsByDate[dayObj.date] || [];
-            const isToday = dayObj.date === new Date().toISOString().split('T')[0];
-            const dateDate = new Date(dayObj.date + 'T00:00:00');
-            const isSunday = dateDate.getDay() === 0;
+            const isToday = dayObj.date === todayStr;
+            const dateDate = parseLocalDate(dayObj.date);
+            const isSunday = dateDate ? dateDate.getDay() === 0 : false;
 
             const hasHoliday = dateEvents.some(e => e.type === 'Holiday');
             const hasExam = dateEvents.some(e => e.type === 'Exam');
@@ -188,9 +211,8 @@ export default function Calendar() {
                   {dateEvents.slice(0, 3).map(ev => (
                     <div
                       key={ev.id}
-                      className={`w-full rounded px-1 py-0.5 truncate text-[9px] md:text-[10px] font-bold leading-tight ${
-                        isToday ? 'text-white bg-white/20' : getEventBgClass(ev.type)
-                      }`}
+                      className={`w-full rounded px-1 py-0.5 truncate text-[9px] md:text-[10px] font-bold leading-tight ${isToday ? 'text-white bg-white/20' : getEventBgClass(ev.type)
+                        }`}
                       title={ev.title}
                     >
                       {ev.title}
@@ -235,3 +257,4 @@ export default function Calendar() {
     </div>
   );
 }
+

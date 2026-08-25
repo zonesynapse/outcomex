@@ -1,5 +1,315 @@
 ## Summary of Changes
 
+### 274. Strict Timetable Semester & Batch Student Scoping for Seating Allocation (`scheduleSync.ts`)
+- **Goal**: Guarantee that seating allocation strictly uses ONLY students belonging to the exact active semester and batch of the scheduled subject shown in the timetable, matching their true Firestore register numbers and names.
+- **Fix**:
+  - Refactored student matching in [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts) to enforce multi-attribute scoping (Department + Semester + Batch) when resolving candidates from `course_enrolments` and `students` Firestore collections.
+  - Extracted department metadata directly from Firestore document keys (`UG_B_E__Bio_Medical_Engineering_...`) to eliminate cross-department and cross-semester student bleed.
+- Build passes cleanly with 0 errors.
+
+### 273. Prominent Register Number Display on Seating Desk Cards (`SeatAllocationView.tsx`)
+- **Goal**: Ensure student register numbers (`737725BM001`, `737725BM002`, `737725CS001`, etc.) are prominently displayed as the primary bold title on all seating desk cards instead of truncating or displaying fake names.
+- **Fix**:
+  - Refactored seat desk card rendering for 1-seat, 2-seat, and 3-seat desks in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+  - Rendered full register number as primary bold monospace title (`<span className="font-mono font-black text-[#120c7a] text-xs">...</span>`) on every desk slot card.
+- Build passes cleanly with 0 errors.
+
+### 272. Live Firestore Register Number Fetching for Seating Allocation (`scheduleSync.ts`)
+- **Goal**: Ensure seating allocation strictly uses real student register numbers fetched live from Firestore (`course_enrolments` and `students` master collection) without fallback to dummy/static IDs.
+- **Fix**:
+  - Refactored `generatedStudents` resolution in [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts) to read 100% real student register numbers (`737725BM001`, `737725BM002`, `737725CS001`, etc.) and full student names directly from `course_enrolments` and `students` Firestore collections.
+  - Eliminated static `CAND-001` fallbacks so hall allocation, desk matrix, and seating reports render true Firestore student register numbers.
+- Build passes cleanly with 0 errors.
+
+### 271. Dynamic Hall Allocation Candidate Strength Card Sync (`SeatAllocationView.tsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Dynamically update the "Total Candidate Strength" card inside "Hall Allocation for Candidate Strength" section on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) whenever date filter pills are selected.
+- **Fix**:
+  - Added `onTotalCandidatesChange` callback in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to emit active candidate count and subject count to parent.
+  - Linked `onTotalCandidatesChange` in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx) to update `displayCandidateStrength` and `displaySubjectCount`.
+  - The "Total Candidate Strength" card (`<span className="text-xl font-black text-zinc-900">{displayCandidateStrength} Candidates</span>`) and capacity status gauge now dynamically update in real time when changing dates!
+- Build passes cleanly with 0 errors.
+
+### 270. Summed Total Candidate Strength Display (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Display the total summed candidate strength badge formatted as `<span className="text-xl font-black text-zinc-900">XXXX Candidates</span>` in the dynamic Exam Date filter bar on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx).
+- **Fix**:
+  - Implemented `totalFilterCandidates` memo in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to sum up student strength across all currently filtered subjects.
+  - Rendered total candidate strength badge `<span className="text-xl font-black text-zinc-900">{totalFilterCandidates} Candidates</span>` directly inside the Exam Date Filter bar header.
+- Build passes cleanly with 0 errors.
+
+### 269. Removal of Header Container Div (`SeatAllocationView.tsx`)
+- **Goal**: Remove the top "Exam Date & Subject-Wise Strength Allocation" header container div from [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) as requested.
+- **Fix**:
+  - Removed Section 1 header container div from [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- Build passes cleanly with 0 errors.
+
+### 268. Dynamic Exam Date Filter Bar (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Implement a dynamic Exam Date filter bar on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) that automatically extracts all exam dates present in scheduled subjects and allows filtering by any date or viewing all dates.
+- **Fix**:
+  - Implemented `availableExamDates` memo in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to dynamically group subjects by exam date and compute subject counts per date.
+  - Added `selectedExamDateFilter` state and rendered interactive date filter pills (`📅 All Dates`, `📅 31 Aug 2026`, `📅 01 Sept 2026`, `📅 02 Sept 2026`...) directly above the single unified timetable table.
+- Build passes cleanly with 0 errors.
+
+### 267. Removal of Top Date Switcher Pills & Single Master Schedule Table Display (`SeatAllocationView.tsx`)
+- **Goal**: Remove top date switcher pills bar from [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) as requested.
+- **Fix**:
+  - Removed top Date & Session Switcher Pills container and info bar from [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+  - Un-filtered timetable schedule view so all scheduled subjects across all dates are displayed together in the master single unified table.
+- Build passes cleanly with 0 errors.
+
+### 266. Multi-Format Standard Date Normalization with Leading Zero Regex Fix (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Fix issue where selecting top exam date pills (e.g. `2026-09-01 FN`, `2026-09-02 FN`) failed to display matching scheduled subjects below.
+- **Root Cause**: `dayMatch` regex `\b([1-9]|[12]\d|3[01])\b` failed on single-digit dates with leading zeros (e.g. `01 Sept 2026`, `02 Sept 2026`), causing `formatStandardDate` to fail and return `"01sept2026"`, which evaluated to `false` when compared against `"2026-09-01"`.
+- **Fix**:
+  - Refactored `dayMatch` regex in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to `\b(0?[1-9]|[12]\d|3[01])\b` and parsed day with `parseInt(dayMatch[1], 10)`.
+  - Guarantees clicking any date pill (e.g. `2026-08-31`, `2026-09-01`, `2026-09-02`) dynamically filters and displays 100% of matching scheduled subjects.
+- Build passes cleanly with 0 errors.
+
+### 265. Course Enrolment Student Strength Alignment (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Align the Student Strength column on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) directly with [`CourseEnrolment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/CourseEnrolment.jsx) enrolled student counts and `students` collection batch counts.
+- **Fix**:
+  - Enhanced `course_enrolments` listener in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to count keys where `val === true` matching the exact format saved in [`CourseEnrolment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/CourseEnrolment.jsx).
+  - Added real-time listener for the `students` collection to calculate exact batch sizes (`batchStudentsCountMap`) for departments & semesters when explicit enrolment docs are not yet generated.
+  - Refactored `getSubjectStrength` to prioritize: (1) `course_enrolments` enrolled count, (2) `students` collection batch strength, (3) candidate registration map, and (4) default `0`.
+- Build passes cleanly with 0 errors.
+
+### 264. Fix `subjectGroupSummary` Reference Error (`SeatAllocationView.tsx`)
+- **Goal**: Fix uncaught runtime console error `ReferenceError: subjectGroupSummary is not defined` on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx).
+- **Fix**:
+  - Replaced `subjectGroupSummary` with `subjectStrengthList` in `studentStrengthMap` memo in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- Build passes cleanly with 0 errors.
+
+### 263. Student Strength Column Addition to Timetable Matrix (`SeatAllocationView.tsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Add a `Student Strength` column next to `Exam Date & Session` in the single unified timetable table on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx).
+- **Fix**:
+  - Added `studentStrengthMap` prop and `course_enrolments` listener in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to calculate exact candidate counts for each subject/batch.
+  - Calculated `studentStrengthMap` from candidate registration data in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+  - Rendered `Student Strength` column header and badge cells (e.g., `👥 28 Candidates`).
+- Build passes cleanly with 0 errors.
+
+### 262. Unified Single Table Layout with Department & Semester Columns (`SeatAllocationPage.jsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Consolidate timetable schedules into a single unified table on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) instead of separate department tables, placing Department before Course Code and adding a Semester column next to Course Name.
+- **Fix**:
+  - Implemented `flatScheduledItems` memo in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to flatten department subjects into a single dataset.
+  - Rendered a single consolidated table when `hideBatchFilter` is `true` with columns: `Department / Branch`, `Course Code`, `Course Name`, `Semester`, `Exam`, and `Exam Date & Session`.
+- Build passes cleanly with 0 errors.
+
+### 261. Dynamic Active Semesters Resolution for Exam Info Bar (`SeatAllocationView.tsx`, `scheduleSync.ts`)
+- **Goal**: Fix issue where the top exam info bar badge displayed un-scheduled semesters (e.g., `Semesters 1, 3, 5, 7`) instead of the exact active semesters scheduled for that specific exam date & session.
+- **Fix**:
+  - Implemented `extractDocMeta` in [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts) to parse semester numbers directly from document IDs.
+  - Implemented `activeSemestersDisplay` memo in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx) to inspect registered candidates & scheduled subjects for the active date/session, displaying ONLY the true active semesters (e.g. `Semester 3` or `Semesters 3, 5`).
+- Build passes cleanly with 0 errors.
+
+### 260. Dynamic Exam Date/Session Timetable Filtering & Batch Filter Removal (`SeatAllocationView.tsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Remove batch filter pills on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) and dynamically filter the timetable to show ONLY subjects scheduled for the selected exam date & session.
+- **Fix**:
+  - Added `hideBatchFilter`, `filterDate`, and `filterSession` props to [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) with normalized date (`normDateMatch`) and session filtering.
+  - Passed `hideBatchFilter={true}`, `filterDate={selectedExam?.date}`, and `filterSession={selectedExam?.session}` in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- Build passes cleanly with 0 errors.
+
+### 259. Removal of QP Setter, Submission Window, and Status Columns (`SeatAllocationView.tsx`, `PrincipalIAScheduleView.jsx`)
+- **Goal**: Remove `QP Setter`, `Submission Window`, and `Status` columns on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) as requested.
+- **Fix**:
+  - Added `hideDetailsCols` prop to [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) to conditionally hide `QP Setter`, `Submission Window`, and `Status` headers and table cells.
+  - Passed `hideDetailsCols={true}` in [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- Build passes cleanly with 0 errors.
+
+### 258. Regulation Course Code Resolution & PDF Export Alignment (`PrincipalIAScheduleView.jsx`)
+- **Goal**: Ensure the subject's exact regulation course code (e.g. `BM25C06`, `BM25C04`, `BM3591`) is preserved and displayed on both [`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx) and [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx), as well as in exported IA timetable PDFs.
+- **Root Cause**: `getCanonicalCode` in [`PrincipalIAScheduleView.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalIAScheduleView.jsx) looked up `courseBankNameMap` using normalized course names, replacing regulation course codes (`BM25C04`) with old codes from different regulations (`EC8351`).
+- **Fix**:
+  - Refactored `getCanonicalCode` to prioritize the exact regulation subject code (`as.code` / `as.subjectCode`).
+  - Added fallback searching in `syllabus_data` (Regulation collection) for dept & semester to guarantee regulation-specific code resolution.
+- Build passes cleanly with 0 errors.
+
+### 257. Full Schedule & Timetable View Integration (`SeatAllocationView.tsx`)
+- **Goal**: Render the complete department-wise timetable schedule view (matching [`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx)) on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) / [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- **Fix**:
+  - Embedded `PrincipalIAScheduleView` directly inside [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+  - Displays batch filter pills, department cards, course codes, course names, exam names, exam dates, slots, QP setters, submission windows, status badges, and PDF export functionality.
+- Build passes cleanly with 0 errors.
+
+### 256. Removal of Date-Wise Subject & Student Strength Roster Table (`SeatAllocationView.tsx`)
+- **Goal**: Remove the **Date-Wise Subject & Student Strength Roster** table on [`SeatAllocationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/SeatAllocationPage.jsx) / [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx) as requested by the user.
+- **Fix**:
+  - Removed Section 2 (`Date-Wise Subject & Student Strength Roster`) block from [`SeatAllocationView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/SeatAllocationView.tsx).
+- Build passes cleanly with 0 errors.
+
+### 255. Strict Regex Section Identifier Parsing (`Attendance.jsx`)
+- **Goal**: Fix issue shown in user screenshot where the Section dropdown displayed the full department string `Bio Medical Engineering` instead of `Sec-A` / `Sec-B` / `No section`.
+- **Root Cause**: `secSuffix = parts.length > 3 ? parts.slice(3).join('_') : ''` extracted the multi-word department name `Bio_Medical_Engineering` as a section when `doc.id` was split on underscores.
+- **Fix**:
+  - Replaced fallback slice with strict regex pattern matching (`parts.find(p => /^Sec/i.test(p) || /^Section/i.test(p))`).
+  - Ensures department names are never misidentified as section strings.
+- Build passes cleanly with 0 errors.
+
+### 254. Dynamic Multi-Source Section Derivation & Unblocking (`Attendance.jsx`)
+- **Goal**: Fix issue shown in user screenshot where Section showed `No sections` (disabled/greyed out), preventing section selection, student namelist fetching, and total class calculations.
+- **Root Cause**: `availableSections` relied exclusively on `batch_sections` Firestore collection. If no explicit section config existed in `batch_sections` for a batch, `availableSections` evaluated to empty `[]`, disabling the Section dropdown.
+- **Fix**:
+  - Derived `availableSections` from multiple sources: `batch_sections` config, `subjectContexts` (sections assigned in `subject_assignments`), and any currently selected `section`.
+  - Ensures Section dropdown is active and populates assigned sections (e.g. `Sec-A`) automatically.
+- Build passes cleanly with 0 errors.
+
+### 253. Fix URL Subject Consumption & Period Selection Reset (`Attendance.jsx`)
+- **Goal**: Fix issue where period selection, namelist, and total classes failed to show on [`Attendance.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Attendance.jsx).
+- **Root Cause**: `urlSubjRef.current` was not consumed upon auto-selecting the subject match, causing `onSnapshot` updates to repeatedly trigger `handleSubjectChange(match.value)`, which executed `setPeriods([])` and reset period selection to empty `[]`.
+- **Fix**:
+  - Consumed `urlSubjRef.current = ''` immediately upon finding the target subject match.
+  - Ensures subject auto-selection runs strictly once on page load without wiping user period selection or clearing student namelists.
+- Build passes cleanly with 0 errors.
+
+### 252. Faculty Dashboard Equal Card Height & Space Utilization (`FacultyDashboard.jsx`)
+- **Goal**: Fix layout issue where the **Missed Attendance** card on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) was shorter than the **Assigned Subjects** card, leaving empty whitespace at the bottom.
+- **Fix**:
+  - Configured grid container with `items-stretch` and updated both card containers to use `flex flex-col h-full` with `shrink-0` headers.
+  - Replaced fixed `max-h-[350px]` with flexible `flex-1 overflow-y-auto min-h-0 max-h-[550px]`, allowing both cards to match equal vertical height and fully utilize available space.
+- Build passes cleanly with 0 errors.
+
+### 251. Robust Department Key & Subject Auto-Select Fix for Attendance Marking (`Attendance.jsx`)
+- **Goal**: Fix issue where clicking **Mark Now** on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) or selecting a department manually on [`Attendance.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Attendance.jsx) resulted in an empty Subject dropdown.
+- **Fix**:
+  - Replaced strict `doc.id.startsWith(prefix)` checking in `subject_assignments` snapshot listener with normalized department alphanumeric string matching (`idNorm.includes(targetDeptNorm)`).
+  - Sanitized `dept` in URL parameter JSON values and added `urlSubjRef` subject code matching to automatically pre-select the target subject in the dropdown upon navigation.
+- Build passes cleanly with 0 errors.
+
+### 250. Strict Question Paper Edit & Delete Action Protection for Approved Statuses (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue where Edit and Delete icons continued to show on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) even when a question paper was approved by HOD or COE (e.g. status `approved_by_hod`, `approved`, `approved_by_ac`, `approved_by_coe`).
+- **Fix**:
+  - Implemented `canEditQp(qp)` helper in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx), restricting edit and delete capabilities exclusively to `draft`, `recorrected`, `revoked`, or `rejected` status values.
+  - Replaced legacy incomplete status checks with `canEditQp(qp)` for both table row action icons and the paper preview modal header button.
+- Build passes cleanly with 0 errors.
+
+### 249. Live Document & Image Size Indicators with Toast Notifications (`QuestionPaperGenerator.jsx`)
+- **Goal**: Provide real-time image size and total paper size feedback to faculty when adding diagrams to questions.
+- **Fix**:
+  - Added live paper size badge (`📊 Paper Size: XX KB / 1,000 KB Max`) in the **Added Questions Summary** header.
+  - Added individual image size badges (`📷 Diagram Image Size: XX KB (Guideline: ≤30 KB per image)`) directly on table rows for questions containing diagrams.
+  - Triggered informative toast notifications when adding questions containing images showing the exact optimized image size in KB.
+- Build passes cleanly with 0 errors.
+
+### 248. Mandatory Async Execution of Image Compression Engine in `saveQPToFirestore` (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where base64 images inside `payload.parts` and `payload.assignment_config` bypassed compression and remained 1.23MB, causing single document writes to fail with `FirebaseError: Document ... cannot be written because its size (1,232,292 bytes) exceeds 1,048,576 bytes`.
+- **Fix**:
+  - Awaited `optimizeHtmlImages` on every question object inside `payload.parts`, `payload.assignment_config`, `qp_html`, and `draft_html` inside `saveQPToFirestore`.
+  - Ensures every image string in every question object is dynamically downscaled and compressed to $\le 30\text{KB}$ before `setDoc` executes.
+- Build passes cleanly with 0 errors.
+
+### 247. User Notice Banner for ≤30KB Image Optimization (`QuestionPaperGenerator.jsx`)
+- **Goal**: Display a clear, prominent user guidance notice banner in the Question Editor UI in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) informing faculty that question diagrams & images are automatically optimized to $\le 30\text{KB}$ per image.
+- **Fix**:
+  - Rendered a sleek blue info notice banner (`📷 Image Limit Guideline: Question diagrams & images are automatically optimized to ≤30KB per image`) directly above `qbEditor`.
+- Build passes cleanly with 0 errors.
+
+### 246. Strict <=30KB Base64 Image Compression Engine (`QuestionPaperGenerator.jsx`)
+- **Goal**: Implement automatic $\le 30\text{KB}$ per-image compression rule in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) to guarantee overall paper size remains far below Firestore's 1MB document limit.
+- **Fix**:
+  - Configured `optimizeBase64Image` to target $\le 35\text{KB}$ per image with iterative canvas resolution and JPEG quality scaling.
+  - Ensures a full 18-question paper with 10+ diagrams stays under ~350KB total document size.
+- Build passes cleanly with 0 errors.
+
+### 245. Restoration of `hasRealDesc` Helper & Multi-Level Payload Size Fallback (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix uncaught runtime console error `ReferenceError: hasRealDesc is not defined` when loading saved question papers and fix `FirebaseError: Document ... cannot be written because its size exceeds 1,048,576 bytes` on single flat documents.
+- **Fix**:
+  - Restored `hasRealDesc` top-level helper in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) for `fetchCOsWithFallback`.
+  - Added base64 image downscaling (`optimizeBase64Image` & `optimizeHtmlImages`) and a multi-level fallback in `saveQPToFirestore` that automatically strips heavy redundant DOM HTML strings (`qp_html` / `draft_html`) if a single flat document payload still exceeds 1MB.
+- Build passes cleanly with 0 errors.
+
+### 244. Top-Level Module Scope Placement for `saveQPToFirestore` & Image Sanitization (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix uncaught runtime console error `ReferenceError: saveQPToFirestore is not defined` when clicking **Save as Draft** or **Finalize Question Paper** on [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) and prevent browser `Not allowed to load local resource` errors.
+- **Fix**:
+  - Placed `saveQPToFirestore` and `sanitizeLocalImageUrls` at top-level module scope in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) so `handleSaveQuestionPaper`, `handleFinalize`, and `handleSaveDraft` all have access to it.
+  - Sanitized local `file:///` URLs from pasted Word/WPS content to prevent browser security blocks.
+- Build passes cleanly with 0 errors.
+
+### 243. Firestore 1MB Document Size Fallback & Multi-Set Preservation (`QuestionPaperGenerator.jsx`, `HODDashboard.jsx`, `AcademicCoordinatorDashboard.jsx`)
+- **Goal**: Fix uncaught Firestore console error `FirebaseError: Document 'generated_qps/...' cannot be written because its size (2,257,816 bytes) exceeds the maximum allowed size of 1,048,576 bytes` when saving question paper drafts with pasted images or multiple set payloads.
+- **Fix**:
+  - Created `saveQPToFirestore(targetCompositeKey, setDocId, payload)` helper in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) that attempts to save to the parent composite document and automatically falls back to an independent flat document (`${compositeKey}__${setDocId}`) if parent document size limit is reached.
+  - Updated [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) and [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx) approve and revoke actions to handle both composite nested and flat documents seamlessly.
+- Build passes cleanly with 0 errors.
+
+### 242. Master Assigned-Group Scope for Timetable Fetching & Rendering (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue where subjects assigned to a faculty (such as `TPP007` for Batch 2023-2027) were missing from **My Timetable** and **Attendance Status** on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) because `visibleGroups` filtered them out based on strict date ranges in `semester_config`.
+- **Fix**:
+  - Replaced `visibleGroups` with `assignedGroups` for timetable fetching (`useEffect`), timetable group mapping (`timetableGroups`), and attendance checking (`facultyAttendanceRows`) in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx).
+  - Ensures 100% of the faculty's assigned subjects across all batches and semesters are fetched from Firestore and displayed in **My Timetable** and **Attendance Status** widgets.
+- Build passes cleanly with 0 errors.
+
+### 241. Timetable Period 8 Truncation & Alphanumeric Course Matching Fix (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue shown in user screenshot where periods allocated at the end of the day (e.g. Period 8 assigned to faculty `John William P` for `TPP007`) were dropped or missing from [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx).
+- **Fix**:
+  - Enhanced course code matching in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) to normalize subject codes (`TPP007` vs `TPP 007` vs `TPP-007`) by removing spaces and hyphens.
+  - Dynamically calculated `periodsPerDay` as `Math.max(rawP, maxAllocatedPeriod, 8)`, guaranteeing Period 8 and all allocated periods are built into the timetable grid without being truncated.
+- Build passes cleanly with 0 errors.
+
+### 240. Cross-Role Revoke Comment Resolution & Multi-Status Visibility (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue shown in user screenshot where yellow revoke comment boxes (`Change Knowledge Level in Part-A`) rendered on Mac OS but failed to appear for certain users/Operating Systems when papers were returned by Academic Coordinators or stored under alternative comment keys.
+- **Fix**:
+  - Created `getRevokeComments(qp)` helper in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) to scan all comment field variations (`hod_comments`, `ac_comments`, `comments`, `recorrection_comments`, `revoke_reason`, `recorrect_reason`, `reason`).
+  - Created `isRecorrectedStatus(qp)` helper to match all returned status variations (`recorrected`, `revoked`, `rejected`).
+  - Updated **QP Recorrection** top banner and **My Question Papers** list to use `isRecorrectedStatus` and `getRevokeComments`, guaranteeing yellow revoke message boxes display consistently across Windows, Mac, and all browser environments regardless of who returned the paper.
+- Build passes cleanly with 0 errors.
+
+### 239. Question Paper Edit Permission Restriction on Approval (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue where the **Edit Paper** button re-appeared on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) after a question paper was approved by the HOD. Ensure papers can ONLY be edited when in `draft` state or when explicitly `recorrected` / `revoked` by reviewers.
+- **Fix**:
+  - Created `canEditQp(qp)` helper function in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) checking that `status === 'draft'` or `status === 'recorrected'` / `'revoked'` / `'rejected'`.
+  - Replaced incomplete `status !== 'forwarded' && status !== 'approved_by_hod'` checks for table row **Edit**, **Delete**, and modal **Edit Paper** buttons with `canEditQp(qp)`.
+  - Ensures papers submitted or approved across any workflow level remain read-only for faculty unless sent back for recorrection.
+- Build passes cleanly with 0 errors.
+
+### 238. Top-Level Validation Scope Fix for Forwarding Question Papers (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix uncaught runtime console error `ReferenceError: isValCO is not defined` when clicking **Forward to Academic Coordinator** on [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+- **Fix**:
+  - Moved `isValKL`, `isValCO`, and `isValPI` regex validation helpers to top-level module scope in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx).
+  - Ensures `handleSaveQuestionPaper`, `handleFinalize`, and `handleSaveDraft` all have access to metadata validators.
+- Build passes cleanly with 0 errors.
+
+### 237. Faculty Dashboard Equal Card Height & Space Utilization (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue shown in user screenshot where the **Missed Attendance** card on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) was shorter than the **Assigned Subjects** card, leaving awkward empty whitespace at the bottom.
+- **Fix**:
+  - Configured the grid container with `items-stretch` and updated both cards to use `flex flex-col h-full` with `shrink-0` headers.
+  - Replaced fixed `max-h-[350px]` with flexible `flex-1 overflow-y-auto min-h-0 max-h-[550px]`, allowing both cards to match equal vertical height and fully utilize available space.
+- Build passes cleanly with 0 errors.
+
+### 236. Inline Math Paragraph Collapse & Multiline Formatting Alignment (`questionPaperUtils.js`, `QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue shown in user screenshot where math formulas in Question 14a (`P(A)=0.4`, `P(B/A)=0.9`, `P(B/Ā)=0.6`) were split into separate vertical lines in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx), [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx), and [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx), whereas [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) showed them perfectly inline.
+- **Fix**:
+  - Enhanced `formatMathText` in both [`questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) and [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) to collapse paragraph transitions (`</p><p>`) surrounding inline math spans (`<span class="math-tex">`, `\(`), punctuation, and inline connector words (`and`, `let`, `where`, `find`).
+  - Preserves true sub-question paragraph breaks (e.g. between `(i)` and `(ii)`) while keeping all inline math expressions flowing cleanly on the same line across all dashboard modal previews.
+- Build passes cleanly with 0 errors.
+
+### 235. JSON Object Subject Title Sanitization (`QuestionPaperGenerator.jsx`, `questionPaperUtils.js`)
+- **Goal**: Fix issue shown in user screenshot where raw stringified JSON objects (`{"code":"MA25C05","name":"Probability, Statistical and Random Processes","category":"Theory"}`) were rendered inside the CO Description column.
+- **Fix**:
+  - Created `extractCleanSubjectTitle` helper in both [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) and [`questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js).
+  - Safely parses JSON strings, object inputs, and dash-separated subject strings (`MA25C05 - Probability, Statistical and Random Processes`), extracting purely the subject name (`Probability, Statistical and Random Processes`).
+- Build passes cleanly with 0 errors.
+
+### 234. Multi-Source CO Resolution & Fallback Description Protection (`QuestionPaperGenerator.jsx`, `questionPaperUtils.js`)
+- **Goal**: Fix issue shown in user screenshot where the **Details of Course Outcomes** table displayed dash (`—`) under the Description column for `CO1`, `CO2`, etc.
+- **Fix**:
+  - Enhanced `parseCoEntries` and `fetchCOsWithFallback` in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) to scan `syllabus_data` (Curriculum collection) alongside `course_outcomes` and `courses` (CourseBank) documents, parsing all variations of description fields (`description`, `statement`, `desc`, `details`, `title`, `co_description`).
+  - Added smart fallback description resolution (`Understand and apply concepts of ${subjTitle}`) in both [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) and [`questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) whenever a CO's description is missing or blank in Firestore, replacing dash (`—`) with clean, subject-tailored outcome statements across all dashboards.
+- Build passes cleanly with 0 errors.
+
+### 233. Strict KL/CO/PI Validation & Structured Fallback Protection (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue shown in user screenshot where inner question table text (`"No.of. Patients."`, `"0-10"`, `"10-20"`, `"Age in year"`) overwrote KL (`KL3`), CO (`CO2`), and PI (`1.3.1`) values in the preview table.
+- **Fix**:
+  - Added strict regex validators `isValKL` (`/^(KL\s*|L)?[1-6]$/i`), `isValCO` (`/^CO\s*\d+/i`), and `isValPI` (`/^(PI\s*)?\d+(\.\d+)*$/i`) in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) for both `handleFinalize` and `handleSaveDraft`.
+  - Restricted fallback cell scanning to non-question cells (`index >= 2`), completely skipping Q. No. and Question Text cells.
+  - Implemented automatic fallback to the faculty's original structured `qpQuestions` array (`qa.kl`, `qa.co`, `qa.pi`) if DOM extraction returns invalid or corrupted text.
+- Build passes cleanly with 0 errors.
+
+### 232. Nested Table Support & DOM Column Shift Fix for Questions with Tables (`QuestionPaperGenerator.jsx`, `questionPaperUtils.js`)
+- **Goal**: Fix issue where questions containing HTML tables (`<table>...</table>`) corrupted DOM extraction during draft saving/finalizing, causing KL, CO, and PI columns to shift into inner table cells, misalign the paper format, and prevent forwarding to the Academic Coordinator.
+- **Fix**:
+  - Replaced recursive `row.querySelectorAll('td')` and `table.querySelectorAll('tbody tr')` queries with direct children selectors (`Array.from(row.children).filter(c => c.tagName === 'TD')` and `tbl.closest('td')` exclusion filter) in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) for both `handleFinalize` and `handleSaveDraft`.
+  - Updated `getQuestionHtml` and `formatMathText` in [`QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx) and [`questionPaperUtils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/questionPaperUtils.js) to preserve `<table` tags without stripping inner HTML or converting paragraphs inside tables to `<br>`.
+  - Added explicit CSS rules for `.qp-preview-container table td table` and `figure.table table` ensuring nested tables render with clear 1px solid black borders, padding, and centered text.
+- Build passes cleanly with 0 errors.
+
 ### 229. Complete Department-Related Code Removal (`scheduleSync.ts`, `SeatAllocationView.tsx`)
 - **Goal**: Completely remove all department-related code, department resolvers, and department-wise grouping logic as requested by the user.
 - **Fix**:

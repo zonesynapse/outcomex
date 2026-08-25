@@ -5,9 +5,10 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useLocation } from "react-router-dom";
 import {
   Calendar, Clock, AlertCircle, Loader2, BookOpen, Coffee, UtensilsCrossed,
-  ShieldCheck, CheckCircle2, FileText, Filter, Sparkles, Check
+  ShieldCheck, Filter
 } from "lucide-react";
 import { getAcademicYears, formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
+import { fetchAllCourseNamesMap, getCourseName } from "../../utils/courseUtils";
 
 const normKey = (key) => {
   if (!key) return '';
@@ -60,11 +61,56 @@ function formatDateDisplay(value) {
   }
 }
 
+const format12Hour = (time24) => {
+  if (!time24) return '';
+  if (time24.includes('AM') || time24.includes('PM')) return time24;
+  const [hStr, mStr] = time24.split(':');
+  let h = parseInt(hStr, 10);
+  if (isNaN(h)) return time24;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  const formattedH = String(h).padStart(2, '0');
+  return `${formattedH}:${mStr || '00'} ${ampm}`;
+};
+
+function formatExamTimingDisplay(item) {
+  if (!item) return "-";
+  let sTime = item.startTime || "";
+  let eTime = item.endTime || "";
+  let slot = item.slot || item.session || "";
+
+  if (sTime) {
+    const startFormatted = format12Hour(sTime);
+    const endFormatted = eTime ? format12Hour(eTime) : "";
+    const timeRange = endFormatted ? `${startFormatted} - ${endFormatted}` : startFormatted;
+    if (slot) {
+      return `${slot} (${timeRange})`;
+    }
+    return timeRange;
+  }
+
+  if (item.timeSlot) {
+    const tsStr = String(item.timeSlot).trim();
+    if (tsStr) return tsStr;
+  }
+
+  if (slot) {
+    const sUpper = String(slot).toUpperCase();
+    if (sUpper === 'FN') return 'FN (Forenoon)';
+    if (sUpper === 'AN') return 'AN (Afternoon)';
+    return slot;
+  }
+
+  return "-";
+}
+
 export default function Timetable() {
   const location = useLocation();
   const [studentData, setStudentData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [timetable, setTimetable] = useState(null);
+  const [courseNames, setCourseNames] = useState({});
 
   // Tab View Switcher: "class" | "ia"
   const [activeTab, setActiveTab] = useState("class");
@@ -72,6 +118,36 @@ export default function Timetable() {
   // Approved IA Exam Timetable state
   const [iaSchedules, setIaSchedules] = useState([]);
   const [iaExamFilter, setIaExamFilter] = useState("ALL");
+
+  useEffect(() => {
+    fetchAllCourseNamesMap().then(names => {
+      setCourseNames(names || {});
+    }).catch(err => {
+      console.error("[StudentTimetable] Error fetching course names:", err);
+    });
+  }, []);
+
+  const getCourseDisplayName = (code) => {
+    if (!code) return "";
+    const cleanCode = String(code).trim();
+    if (!cleanCode) return "";
+
+    // 1. Check if timetable doc has subjects list (with names)
+    if (timetable?.subjects && Array.isArray(timetable.subjects)) {
+      const found = timetable.subjects.find(
+        (s) => (s.code || s.acronym || "").trim().toUpperCase() === cleanCode.toUpperCase()
+      );
+      if (found && found.name && found.name !== cleanCode) return found.name;
+    }
+
+    // 2. Check global courseNames map
+    if (courseNames && Object.keys(courseNames).length > 0) {
+      const name = getCourseName(courseNames, cleanCode, studentData?.department, studentData?.programme);
+      if (name && name !== cleanCode) return name;
+    }
+
+    return "";
+  };
 
   // Resolve the student's current Academic Year + Semester from their batch (shares class timetable logic)
   const currentContext = useMemo(() => {
@@ -125,8 +201,8 @@ export default function Timetable() {
         const progKey = formatProgrammeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
-        const legacyDeptKey = (department||'').replace(/[.#$[\]/ ]/g, '_');
-        const legacyBatchKey = (batch||'').replace(/[.#$[\]/ ]/g, '_');
+        const legacyDeptKey = (department || '').replace(/[.#$[\]/ ]/g, '_');
+        const legacyBatchKey = (batch || '').replace(/[.#$[\]/ ]/g, '_');
         const years = getAcademicYears(batch);
 
         const currentYear = new Date().getFullYear();
@@ -174,7 +250,9 @@ export default function Timetable() {
                   foundTimetable = data;
                 }
               }
-            } catch {}
+            } catch (err) {
+              console.debug("[StudentTimetable] key fetch skipped:", err);
+            }
           }
         }
 
@@ -273,6 +351,17 @@ export default function Timetable() {
           // Restrict to the student's current semester (skip docs for other semesters)
           if (studentSemNorm && docSemNorm && docSemNorm !== studentSemNorm) return;
 
+          let docDefaultSTime = d.startTime || "";
+          let docDefaultETime = d.endTime || "";
+          let docDefaultSlot = d.slot || d.session || "";
+          let docDefaultTimeSlot = d.timeSlot || "";
+          Object.values(d.assignments).forEach((item) => {
+            if (item?.startTime && !docDefaultSTime) docDefaultSTime = item.startTime;
+            if (item?.endTime && !docDefaultETime) docDefaultETime = item.endTime;
+            if ((item?.slot || item?.session) && !docDefaultSlot) docDefaultSlot = item.slot || item.session;
+            if (item?.timeSlot && !docDefaultTimeSlot) docDefaultTimeSlot = item.timeSlot;
+          });
+
           Object.values(d.assignments).forEach((as) => {
             if (!as || !as.examDate) return;
             // CRITICAL CHECK: ONLY DISPLAY SCHEDULES APPROVED BY PRINCIPAL!
@@ -289,6 +378,12 @@ export default function Timetable() {
                 });
                 if (!deptMatch) return;
               }
+
+              const sTime = as.startTime || docDefaultSTime || "";
+              const eTime = as.endTime || docDefaultETime || "";
+              const slot = as.slot || as.session || docDefaultSlot || "";
+              const timeSlot = as.timeSlot || docDefaultTimeSlot || "";
+
               items.push({
                 docId: docSnap.id,
                 batch: d.batch || studentBatch,
@@ -298,7 +393,10 @@ export default function Timetable() {
                 code: as.code || "",
                 name: as.name || "",
                 examDate: as.examDate,
-                submissionWindow: as.submissionWindow || (as.fromDate && as.toDate ? `${as.fromDate} to ${as.toDate}` : ""),
+                startTime: sTime,
+                endTime: eTime,
+                slot: slot,
+                timeSlot: timeSlot,
                 numSets: as.numSets || 1,
                 approved: true,
                 principalApprovedAt: as.principalApprovedAt || d.updatedAt || "",
@@ -370,9 +468,11 @@ export default function Timetable() {
           const code = parts[0] || '';
           const span = parseInt(parts[1], 10) || 1;
           if (!code) continue;
-          map[day][p] = code;
+          if (!map[day][p]) map[day][p] = [];
+          map[day][p].push({ code, span, isSpanned: false });
           for (let s = 1; s < span; s++) {
-            map[day][p + s] = code;
+            if (!map[day][p + s]) map[day][p + s] = [];
+            map[day][p + s].push({ code, span, isSpanned: true });
             covered[day][p + s] = true;
           }
         }
@@ -446,21 +546,19 @@ export default function Timetable() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab("class")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === "class"
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${activeTab === "class"
                 ? "bg-[#120c7a] text-white shadow-md"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
+              }`}
           >
             <Clock size={16} /> Class Timetable
           </button>
           <button
             onClick={() => setActiveTab("ia")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === "ia"
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all ${activeTab === "ia"
                 ? "bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
+              }`}
           >
             <Calendar size={16} /> IA Exam Timetable
             {iaSchedules.length > 0 && (
@@ -531,7 +629,7 @@ export default function Timetable() {
                           if (slot.type === 'period') {
                             const ti = periodTimings[slot.num - 1];
                             return (
-                              <th key={idx} className="px-3 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest min-w-[100px]">
+                              <th key={idx} className="px-3 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest min-w-[130px]">
                                 <div>P{slot.num}</div>
                                 {ti && <div className="text-[8px] font-normal text-slate-400 mt-0.5">{ti}</div>}
                               </th>
@@ -569,14 +667,47 @@ export default function Timetable() {
                             </td>
                             {slots.map((slot, idx) => {
                               if (slot.type === 'period') {
-                                const code = slotSubjectMap.map[day]?.[slot.num];
+                                const rawVal = slotSubjectMap.map[day]?.[slot.num];
+                                const entries = Array.isArray(rawVal)
+                                  ? rawVal
+                                  : (rawVal ? [{ code: rawVal, span: 1, isSpanned: false }] : []);
                                 const isCovered = slotSubjectMap.covered[day]?.[slot.num];
                                 return (
-                                  <td key={idx} className={`px-3 py-3 text-center border border-slate-50 ${isCovered ? 'bg-blue-50/40' : ''}`}>
-                                    {code ? (
-                                      <span className={`text-xs font-bold ${isCovered ? 'text-blue-400' : 'text-[#120c7a]'} bg-blue-50 px-3 py-1.5 rounded-lg inline-block`}>
-                                        {code}{isCovered && <span className="ml-1 text-[8px] text-blue-300 font-normal">span</span>}
-                                      </span>
+                                  <td key={idx} className={`px-2 py-3 text-center border border-slate-50 align-middle ${isCovered ? 'bg-blue-50/30' : ''}`}>
+                                    {entries.length > 0 ? (
+                                      <div className="flex flex-col gap-1.5 items-center justify-center">
+                                        {entries.map((item, eIdx) => {
+                                          const courseTitle = getCourseDisplayName(item.code);
+                                          return (
+                                            <div
+                                              key={eIdx}
+                                              className={`w-full min-w-[110px] max-w-[160px] mx-auto p-2 rounded-xl flex flex-col items-center justify-center transition-all ${isCovered || item.isSpanned
+                                                  ? 'bg-blue-50/80 border border-blue-200/80 text-blue-800'
+                                                  : 'bg-white border border-slate-200/90 shadow-xs text-[#120c7a] hover:border-indigo-300'
+                                                }`}
+                                            >
+                                              <div className="flex items-center gap-1">
+                                                <span className="text-xs font-black tracking-tight text-[#120c7a]">
+                                                  {item.code}
+                                                </span>
+                                                {(isCovered || item.isSpanned) && (
+                                                  <span className="text-[8px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-bold uppercase tracking-wider">
+                                                    span
+                                                  </span>
+                                                )}
+                                              </div>
+                                              {courseTitle ? (
+                                                <span
+                                                  className="text-[10px] font-semibold text-slate-600 leading-snug mt-1 text-center line-clamp-2 break-words"
+                                                  title={courseTitle}
+                                                >
+                                                  {courseTitle}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     ) : (
                                       <span className="text-xs text-slate-300 italic">Free</span>
                                     )}
@@ -670,38 +801,38 @@ export default function Timetable() {
                       <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-wider">Exam Event</th>
                       <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-wider">Subject Code & Name</th>
                       <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-wider">Scheduled Exam Date</th>
-                      <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-wider">Submission Window</th>
-                      <th className="px-6 py-4 text-center text-[10px] font-black text-slate-500 uppercase tracking-wider">Status</th>
+                      <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-wider">Time</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {filteredIaSchedules.map((item, idx) => (
-                      <tr key={`${item.docId}_${item.code}_${idx}`} className="hover:bg-emerald-50/30 transition-colors">
-                        <td className="px-6 py-4 font-extrabold text-[#120c7a]">
-                          <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-wider border border-blue-100">
-                            {item.examName}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-black text-slate-800 text-sm">{item.code}</div>
-                          <div className="text-xs text-slate-500 font-medium">{item.name}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2 text-slate-800 font-extrabold">
-                            <Calendar size={15} className="text-emerald-600" />
-                            {formatDateDisplay(item.examDate)}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-xs font-semibold text-slate-600">
-                          {item.submissionWindow || "-"}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            <CheckCircle2 size={14} className="text-emerald-600" /> Approved
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredIaSchedules.map((item, idx) => {
+                      const examTimeDisplay = formatExamTimingDisplay(item);
+                      return (
+                        <tr key={`${item.docId}_${item.code}_${idx}`} className="hover:bg-emerald-50/30 transition-colors">
+                          <td className="px-6 py-4 font-extrabold text-[#120c7a]">
+                            <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-black uppercase tracking-wider border border-blue-100">
+                              {item.examName}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="font-black text-slate-800 text-sm">{item.code}</div>
+                            <div className="text-xs text-slate-500 font-medium">{item.name}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2 text-slate-800 font-extrabold">
+                              <Calendar size={15} className="text-emerald-600 shrink-0" />
+                              {formatDateDisplay(item.examDate)}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2 text-slate-700 font-bold text-xs">
+                              <Clock size={15} className="text-blue-600 shrink-0" />
+                              <span>{examTimeDisplay}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

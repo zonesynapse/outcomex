@@ -2,16 +2,16 @@ import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase"; // Import db for Firestore
 import { doc, collection, setDoc, getDoc, onSnapshot, addDoc, deleteDoc, updateDoc, getDocs } from "firebase/firestore"; // Firestore imports
 import { onAuthStateChanged } from "firebase/auth";
-import { 
-  Calendar as CalendarIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Trash2, 
-  FileText, 
-  Download, 
-  Clock, 
-  MapPin, 
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Trash2,
+  FileText,
+  Download,
+  Clock,
+  MapPin,
   X,
   ChevronDown,
   CheckCircle2,
@@ -23,6 +23,24 @@ import Layout from "../components/Layout";
 import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay, getRecentBatches, sanitizeKey } from "../lib/utils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
+
+const formatDateKey = (date) => {
+  if (!date) return "";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const parseLocalDate = (dateStr) => {
+  if (!dateStr) return null;
+  const clean = String(dateStr).split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts.map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+};
 
 export default function AcademicCalendar() {
   // Removed Programme, Batch, and Academic Year filter states
@@ -37,7 +55,7 @@ export default function AcademicCalendar() {
   const [showEventModal, setShowEventModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(null);
   const [editingEventId, setEditingEventId] = useState(null);
-  
+
   // Semester Config State
   const [semesterConfigs, setSemesterConfigs] = useState([]);
   const [showSemesterForm, setShowSemesterForm] = useState(false);
@@ -81,33 +99,35 @@ export default function AcademicCalendar() {
     const unsubEvents = onSnapshot(eventsRef, (snap) => { // Use onSnapshot for real-time updates
       const allEvents = {}; // Convert QuerySnapshot to object
       const dateMap = {};
-      
-      snap.forEach(doc => { 
+
+      snap.forEach(doc => {
         const ev = { id: doc.id, ...doc.data() };
-        allEvents[doc.id] = ev; 
-        
-        const start = new Date(ev.fromDate);
-        const end = new Date(ev.toDate);
-        if (!ev.fromDate || !ev.toDate || isNaN(start.getTime()) || isNaN(end.getTime())) {
-             // Fallback for old events that might have 'eventDate'
-             if (ev.eventDate) {
-                 if (!dateMap[ev.eventDate]) dateMap[ev.eventDate] = {};
-                 dateMap[ev.eventDate][ev.id] = ev;
-             }
-             return;
+        allEvents[doc.id] = ev;
+
+        const start = parseLocalDate(ev.fromDate);
+        const end = parseLocalDate(ev.toDate);
+        if (!ev.fromDate || !ev.toDate || !start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+          // Fallback for old events that might have 'eventDate'
+          if (ev.eventDate) {
+            const pDate = parseLocalDate(ev.eventDate);
+            const dKey = pDate ? formatDateKey(pDate) : ev.eventDate;
+            if (!dateMap[dKey]) dateMap[dKey] = {};
+            dateMap[dKey][ev.id] = ev;
+          }
+          return;
         }
         let cursor = new Date(start);
         while (cursor <= end) {
-            const dStr = cursor.toISOString().split('T')[0];
-            if (!dateMap[dStr]) dateMap[dStr] = {};
-            dateMap[dStr][ev.id] = ev;
-            cursor.setDate(cursor.getDate() + 1);
+          const dStr = formatDateKey(cursor);
+          if (!dateMap[dStr]) dateMap[dStr] = {};
+          dateMap[dStr][ev.id] = ev;
+          cursor.setDate(cursor.getDate() + 1);
         }
       });
       setRawEvents(allEvents);
       setEvents(dateMap);
     });
-    
+
     // Fetch CIA Configs for linking
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubCia = onSnapshot(ciaRef, (snap) => { // Use onSnapshot for real-time updates
@@ -117,7 +137,7 @@ export default function AcademicCalendar() {
         setCiaConfigs(Object.entries(data).map(([id, val]) => ({ id, ...val })));
       }
     });
-    
+
     // Fetch Semester Configs
     const semRef = collection(db, 'semester_config');
     const unsubSem = onSnapshot(semRef, (snap) => {
@@ -184,7 +204,7 @@ export default function AcademicCalendar() {
 
     // Padding for previous month
     for (let i = 0; i < startDay; i++) days.push(null);
-    
+
     // Actual days
     for (let i = 1; i <= totalDays; i++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
@@ -199,7 +219,7 @@ export default function AcademicCalendar() {
   const availableBatches = useMemo(() => {
     if (!semesterForm.programme) return [];
     const progKey = formatProgrammeKey(semesterForm.programme);
-    
+
     // Get all candidate batches for the programme
     let candidateBatches = [];
     const mappedBatches = batchRegulations[progKey];
@@ -222,17 +242,17 @@ export default function AcademicCalendar() {
 
   const handleAddEvent = async () => {
     if (!newEvent.title || !newEvent.fromDate || !newEvent.toDate) return;
-    
+
     const start = new Date(newEvent.fromDate);
     const end = new Date(newEvent.toDate);
-    
+
     if (end < start) {
       alert("End date cannot be before start date.");
       return;
     }
 
     const eventsCollectionRef = collection(db, 'academic_calendar_events'); // Firestore collection path
-    
+
     try {
       if (editingEventId) {
         // Update existing event
@@ -335,215 +355,215 @@ export default function AcademicCalendar() {
   return (
     <Layout title="Academic Calendar">
       <div className="max-w-[1600px] mx-auto p-4 md:p-4 space-y-4">
-        
+
         {/* Simplified Header with only Official Doc link if exists */}
         {officialDoc?.file_url && (
           <div className="flex justify-end pr-4">
-            <motion.a 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                href={officialDoc.file_url}
-                target="_blank"
-                className="flex items-center gap-3 bg-[#120c7a] text-white px-6 py-2.5 rounded-2xl font-bold shadow-xl shadow-blue-900/10"
-              >
-                <FileText size={18} />
-                Institutional PDF
-                <Download size={14} className="ml-2 opacity-50" />
+            <motion.a
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              href={officialDoc.file_url}
+              target="_blank"
+              className="flex items-center gap-3 bg-[#120c7a] text-white px-6 py-2.5 rounded-2xl font-bold shadow-xl shadow-blue-900/10"
+            >
+              <FileText size={18} />
+              Institutional PDF
+              <Download size={14} className="ml-2 opacity-50" />
             </motion.a>
           </div>
         )}
 
         {/* Semester Configuration */}
         <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-zinc-100">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-black text-zinc-800 flex items-center gap-3">
-                  <CalendarIcon className="text-blue-600" size={24} />
-                  Semester Configuration
-                </h3>
-                <p className="text-xs text-zinc-400 font-medium mt-1">Define active semesters with date ranges</p>
-              </div>
-              <button
-                onClick={() => { setShowSemesterForm(true); setEditingSemesterId(null); setSemesterForm({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' }); }}
-                className="inline-flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-2xl font-bold text-sm hover:bg-blue-800 transition-all shadow-lg"
-              >
-                <Plus size={16} /> Add Semester
-              </button>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-black text-zinc-800 flex items-center gap-3">
+                <CalendarIcon className="text-blue-600" size={24} />
+                Semester Configuration
+              </h3>
+              <p className="text-xs text-zinc-400 font-medium mt-1">Define active semesters with date ranges</p>
             </div>
+            <button
+              onClick={() => { setShowSemesterForm(true); setEditingSemesterId(null); setSemesterForm({ programme: '', batches: [], semesterType: 'Odd', startDate: '', endDate: '' }); }}
+              className="inline-flex items-center gap-2 bg-[#120c7a] text-white px-5 py-2.5 rounded-2xl font-bold text-sm hover:bg-blue-800 transition-all shadow-lg"
+            >
+              <Plus size={16} /> Add Semester
+            </button>
+          </div>
 
-            {/* Semester List */}
-            <div className="space-y-3">
-              {semesterConfigs.length === 0 && (
-                <p className="text-zinc-400 text-sm italic text-center py-6">No semester configurations yet.</p>
-              )}
-              {semesterConfigs.map(cfg => (
-                <div key={cfg.id} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100 group">
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    <div>
-                      <p className="font-bold text-zinc-800 text-sm">
-                        {cfg.programmeDisplay || formatProgDisplay(cfg.programme)}
-                      </p>
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 flex-wrap">
-                        {(Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).filter(Boolean).map(b => (
-                          <span key={b} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
-                            {formatBatchDisplay(b)}
-                            <span className="text-blue-300">→</span>
-                            <span>Sem {computeSemesterNumber(b, cfg.semesterType, cfg.startDate)}</span>
-                          </span>
-                        ))}
-                        <span className="text-zinc-300">•</span>
-                        <span>{cfg.academicYear}</span>
-                        <span className="text-zinc-300">•</span>
-                        <span className={cfg.semesterType === 'Odd' ? 'text-blue-500' : 'text-orange-500'}>{cfg.semesterType}</span>
-                        <span className="text-zinc-300">•</span>
-                        <span>{cfg.startDate} → {cfg.endDate}</span>
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingSemesterId(cfg.id);
-                        setSemesterForm({
-                          programme: cfg.programmeDisplay || cfg.programme,
-                          batches: Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []),
-                          semesterType: cfg.semesterType || 'Odd',
-                          startDate: cfg.startDate || '',
-                          endDate: cfg.endDate || '',
-                        });
-                        setShowSemesterForm(true);
-                      }}
-                      className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
-                    >
-                      <Edit size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteSemesterConfig(cfg.id)}
-                      className="p-2 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+          {/* Semester List */}
+          <div className="space-y-3">
+            {semesterConfigs.length === 0 && (
+              <p className="text-zinc-400 text-sm italic text-center py-6">No semester configurations yet.</p>
+            )}
+            {semesterConfigs.map(cfg => (
+              <div key={cfg.id} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100 group">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <div>
+                    <p className="font-bold text-zinc-800 text-sm">
+                      {cfg.programmeDisplay || formatProgDisplay(cfg.programme)}
+                    </p>
+                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 flex-wrap">
+                      {(Array.isArray(cfg.batch) ? cfg.batch : [cfg.batch]).filter(Boolean).map(b => (
+                        <span key={b} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+                          {formatBatchDisplay(b)}
+                          <span className="text-blue-300">→</span>
+                          <span>Sem {computeSemesterNumber(b, cfg.semesterType, cfg.startDate)}</span>
+                        </span>
+                      ))}
+                      <span className="text-zinc-300">•</span>
+                      <span>{cfg.academicYear}</span>
+                      <span className="text-zinc-300">•</span>
+                      <span className={cfg.semesterType === 'Odd' ? 'text-blue-500' : 'text-orange-500'}>{cfg.semesterType}</span>
+                      <span className="text-zinc-300">•</span>
+                      <span>{cfg.startDate} → {cfg.endDate}</span>
+                    </p>
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setEditingSemesterId(cfg.id);
+                      setSemesterForm({
+                        programme: cfg.programmeDisplay || cfg.programme,
+                        batches: Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []),
+                        semesterType: cfg.semesterType || 'Odd',
+                        startDate: cfg.startDate || '',
+                        endDate: cfg.endDate || '',
+                      });
+                      setShowSemesterForm(true);
+                    }}
+                    className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                  >
+                    <Edit size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSemesterConfig(cfg.id)}
+                    className="p-2 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
 
-            {/* Semester Config Form */}
-            <AnimatePresence>
-              {showSemesterForm && (
-                <div className="mt-6 pt-6 border-t border-zinc-100 space-y-4 animate-in fade-in slide-in-from-top-2">
-                  {editingSemesterId && (
-                    <div className="flex justify-end">
-                      <button onClick={() => { setShowSemesterForm(false); setEditingSemesterId(null); }} className="text-[10px] uppercase font-bold text-zinc-400 hover:text-zinc-600">Cancel</button>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Programme</label>
+          {/* Semester Config Form */}
+          <AnimatePresence>
+            {showSemesterForm && (
+              <div className="mt-6 pt-6 border-t border-zinc-100 space-y-4 animate-in fade-in slide-in-from-top-2">
+                {editingSemesterId && (
+                  <div className="flex justify-end">
+                    <button onClick={() => { setShowSemesterForm(false); setEditingSemesterId(null); }} className="text-[10px] uppercase font-bold text-zinc-400 hover:text-zinc-600">Cancel</button>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Programme</label>
+                    <select
+                      value={semesterForm.programme}
+                      onChange={e => setSemesterForm({ ...semesterForm, programme: e.target.value })}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">Select Programme</option>
+                      {Object.keys(PROGRAMME_DEPARTMENTS).map(p => (
+                        <option key={p} value={p}>{formatProgDisplay(p)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Batch</label>
+                    <div className="relative">
                       <select
-                        value={semesterForm.programme}
-                        onChange={e => setSemesterForm({...semesterForm, programme: e.target.value})}
-                        className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full appearance-none bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        value=""
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val && !semesterForm.batches.includes(val)) {
+                            setSemesterForm(prev => ({ ...prev, batches: [...prev.batches, val] }));
+                            e.target.value = "";
+                          }
+                        }}
                       >
-                        <option value="">Select Programme</option>
-                        {Object.keys(PROGRAMME_DEPARTMENTS).map(p => (
-                          <option key={p} value={p}>{formatProgDisplay(p)}</option>
+                        <option value="">-- Add Batch --</option>
+                        {availableBatches.map(b => (
+                          <option key={b} value={b}>{formatBatchDisplay(b)}</option>
                         ))}
                       </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Batch</label>
-                      <div className="relative">
-                        <select
-                          className="w-full appearance-none bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                          value=""
-                          onChange={e => {
-                            const val = e.target.value;
-                            if (val && !semesterForm.batches.includes(val)) {
-                              setSemesterForm(prev => ({ ...prev, batches: [...prev.batches, val] }));
-                              e.target.value = "";
-                            }
-                          }}
-                        >
-                          <option value="">-- Add Batch --</option>
-                          {availableBatches.map(b => (
-                            <option key={b} value={b}>{formatBatchDisplay(b)}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
-                      </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {semesterForm.batches.map(b => (
-                          <span key={b} className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded flex items-center gap-1 border border-blue-100 uppercase tracking-tighter">
-                            {formatBatchDisplay(b)}
-                            <button type="button" onClick={() => setSemesterForm(prev => ({ ...prev, batches: prev.batches.filter(x => x !== b) }))} className="hover:text-red-500 transition-colors">
-                              <X size={12} />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Semester Type</label>
-                      <select
-                        value={semesterForm.semesterType}
-                        onChange={e => setSemesterForm({...semesterForm, semesterType: e.target.value})}
-                        className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                      >
-                        <option value="Odd">Odd</option>
-                        <option value="Even">Even</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Start Date</label>
-                      <input
-                        type="date"
-                        value={semesterForm.startDate}
-                        onChange={e => setSemesterForm({...semesterForm, startDate: e.target.value})}
-                        className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">End Date</label>
-                      <input
-                        type="date"
-                        value={semesterForm.endDate}
-                        onChange={e => setSemesterForm({...semesterForm, endDate: e.target.value})}
-                        className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                  {semesterForm.startDate && semesterForm.batches.length > 0 && semesterForm.programme && (
-                    <div className="bg-blue-50 rounded-2xl px-4 py-3 text-xs font-bold text-blue-700 flex items-center gap-3 flex-wrap">
-                      <span>📅 {computeAcademicYear(semesterForm.semesterType, semesterForm.startDate)}</span>
-                      <span className="text-blue-300">•</span>
-                      <span className="text-blue-500">{semesterForm.semesterType}</span>
-                      <span className="text-blue-300">•</span>
+                    <div className="flex flex-wrap gap-2 mt-2">
                       {semesterForm.batches.map(b => (
-                        <span key={b} className="inline-flex items-center gap-1 bg-white/60 rounded-lg px-2 py-0.5">
+                        <span key={b} className="px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-black rounded flex items-center gap-1 border border-blue-100 uppercase tracking-tighter">
                           {formatBatchDisplay(b)}
-                          <span className="text-blue-400">→</span>
-                          <span className="text-blue-800">Sem {computeSemesterNumber(b, semesterForm.semesterType, semesterForm.startDate)}</span>
+                          <button type="button" onClick={() => setSemesterForm(prev => ({ ...prev, batches: prev.batches.filter(x => x !== b) }))} className="hover:text-red-500 transition-colors">
+                            <X size={12} />
+                          </button>
                         </span>
                       ))}
                     </div>
-                  )}
-                  <button
-                    onClick={handleSaveSemesterConfig}
-                    className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
-                  >
-                    {editingSemesterId ? "Update Semester" : "Add Semester"}
-                  </button>
+                  </div>
                 </div>
-              )}
-            </AnimatePresence>
-          </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Semester Type</label>
+                    <select
+                      value={semesterForm.semesterType}
+                      onChange={e => setSemesterForm({ ...semesterForm, semesterType: e.target.value })}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="Odd">Odd</option>
+                      <option value="Even">Even</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={semesterForm.startDate}
+                      onChange={e => setSemesterForm({ ...semesterForm, startDate: e.target.value })}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">End Date</label>
+                    <input
+                      type="date"
+                      value={semesterForm.endDate}
+                      onChange={e => setSemesterForm({ ...semesterForm, endDate: e.target.value })}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                </div>
+                {semesterForm.startDate && semesterForm.batches.length > 0 && semesterForm.programme && (
+                  <div className="bg-blue-50 rounded-2xl px-4 py-3 text-xs font-bold text-blue-700 flex items-center gap-3 flex-wrap">
+                    <span>📅 {computeAcademicYear(semesterForm.semesterType, semesterForm.startDate)}</span>
+                    <span className="text-blue-300">•</span>
+                    <span className="text-blue-500">{semesterForm.semesterType}</span>
+                    <span className="text-blue-300">•</span>
+                    {semesterForm.batches.map(b => (
+                      <span key={b} className="inline-flex items-center gap-1 bg-white/60 rounded-lg px-2 py-0.5">
+                        {formatBatchDisplay(b)}
+                        <span className="text-blue-400">→</span>
+                        <span className="text-blue-800">Sem {computeSemesterNumber(b, semesterForm.semesterType, semesterForm.startDate)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={handleSaveSemesterConfig}
+                  className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
+                >
+                  {editingSemesterId ? "Update Semester" : "Add Semester"}
+                </button>
+              </div>
+            )}
+          </AnimatePresence>
+        </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
-          
+
           {/* Left: Events & Info Sidebar */}
           <div className="space-y-8">
             <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-zinc-100">
@@ -553,7 +573,7 @@ export default function AcademicCalendar() {
               </h3>
               <div className="space-y-6">
                 {Object.entries(events)
-                  .filter(([date]) => new Date(date) >= new Date().setHours(0,0,0,0))
+                  .filter(([date]) => new Date(date) >= new Date().setHours(0, 0, 0, 0))
                   .sort(([a], [b]) => a.localeCompare(b))
                   .slice(0, 5)
                   .map(([date, dateEvents]) => (
@@ -596,7 +616,7 @@ export default function AcademicCalendar() {
 
           {/* Right: Main Digital Calendar */}
           <div className="xl:col-span-3 bg-white rounded-[3rem] shadow-2xl border border-zinc-100 overflow-hidden flex flex-col">
-            
+
             {/* Calendar Controls */}
             <div className="p-4 flex items-center justify-between border-b border-zinc-50 bg-zinc-50/30">
               <div className="flex items-center gap-4">
@@ -608,21 +628,21 @@ export default function AcademicCalendar() {
                   <p className="text-zinc-400 font-bold tracking-widest uppercase text-xs">{year}</p>
                 </div>
               </div>
-              
+
               <div className="flex items-center gap-3">
-                <button 
+                <button
                   onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))}
                   className="p-3 hover:bg-zinc-100 rounded-2xl transition-colors text-zinc-400 hover:text-zinc-800"
                 >
                   <ChevronLeft size={24} />
                 </button>
-                <button 
+                <button
                   onClick={() => setCurrentDate(new Date())}
                   className="px-6 py-2.5 bg-white border border-zinc-200 rounded-2xl text-sm font-bold text-zinc-600 hover:border-blue-500 hover:text-blue-600 transition-all"
                 >
                   Today
                 </button>
-                <button 
+                <button
                   onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))}
                   className="p-3 hover:bg-zinc-100 rounded-2xl transition-colors text-zinc-400 hover:text-zinc-800"
                 >
@@ -640,14 +660,14 @@ export default function AcademicCalendar() {
                   </div>
                 ))}
               </div>
-              
+
               <div className="grid grid-cols-7 gap-1">
                 {calendarDays.map((dayObj, idx) => {
                   if (!dayObj) return <div key={`empty-${idx}`} className="min-h-[60px] md:min-h-[80px] bg-zinc-50/50 rounded-2xl" />;
-                  
-                  const isToday = dayObj.date === new Date().toISOString().split('T')[0];
-                  const dateDate = new Date(dayObj.date + 'T00:00:00');
-                  const isSunday = dateDate.getDay() === 0;
+
+                  const isToday = dayObj.date === formatDateKey(new Date());
+                  const dateDate = parseLocalDate(dayObj.date);
+                  const isSunday = dateDate ? dateDate.getDay() === 0 : false;
                   const dayEvents = Object.values(events[dayObj.date] || {});
 
                   // Determine primary event type for background color
@@ -678,21 +698,21 @@ export default function AcademicCalendar() {
                     bgClass = "bg-red-50/40 border-red-100/50 text-red-700";
                     textClass = "text-red-500";
                   }
-                  
+
                   return (
-                    <motion.div 
+                    <motion.div
                       key={dayObj.date}
                       whileHover={{ y: -5, scale: 1.02 }} // Removed isAdmin check from here
-                      onClick={() => { 
-                        setSelectedDate(dayObj.date); 
-                        setShowEventModal(true); 
+                      onClick={() => {
+                        setSelectedDate(dayObj.date);
+                        setShowEventModal(true);
                       }}
                       className={`min-h-[60px] md:min-h-[80px] relative p-2 rounded-2xl border transition-all cursor-pointer flex flex-col group ${bgClass}`}
                     >
                       <span className={`text-xs md:text-base font-black ${textClass} group-hover:scale-110 transition-transform`}>
                         {dayObj.day}
                       </span>
-                      
+
                       <div className="flex-grow flex flex-col gap-1 mt-2 overflow-hidden">
                         {dayEvents.slice(0, 2).map(ev => (
                           <div key={ev.id} className={`h-1.5 rounded-full ${isToday ? 'bg-white/40' : 'bg-blue-100'}`} title={ev.title} />
@@ -707,8 +727,8 @@ export default function AcademicCalendar() {
                       {/* Hover Overlay with detail */}
                       {dayEvents.length > 0 && !isToday && (
                         <div className="absolute inset-0 bg-white/95 rounded-[2rem] p-4 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-center items-center text-center z-10">
-                           <p className="text-[10px] font-black text-blue-600 truncate w-full">{dayEvents[0].title}</p>
-                           <span className="text-[8px] font-bold text-zinc-400 mt-1 uppercase">{dayEvents[0].type}</span>
+                          <p className="text-[10px] font-black text-blue-600 truncate w-full">{dayEvents[0].title}</p>
+                          <span className="text-[8px] font-bold text-zinc-400 mt-1 uppercase">{dayEvents[0].type}</span>
                         </div>
                       )}
                     </motion.div>
@@ -723,7 +743,7 @@ export default function AcademicCalendar() {
         <AnimatePresence>
           {showEventModal && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-md">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -733,8 +753,8 @@ export default function AcademicCalendar() {
                   <div>
                     <h3 className="text-2xl font-black">Manage Events</h3>
                     <p className="text-blue-100 text-sm opacity-80">
-                      {newEvent.fromDate === newEvent.toDate 
-                        ? newEvent.fromDate 
+                      {newEvent.fromDate === newEvent.toDate
+                        ? newEvent.fromDate
                         : `${newEvent.fromDate} to ${newEvent.toDate}`
                       }
                     </p>
@@ -775,7 +795,7 @@ export default function AcademicCalendar() {
                             >
                               <Edit size={16} />
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDeleteEvent(ev.id)}
                               className="p-2 text-zinc-400 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
                             >
@@ -793,107 +813,107 @@ export default function AcademicCalendar() {
                   {/* New/Edit Event Form */}
                   {canManage && (
                     <div className="space-y-4 pt-6 border-t border-zinc-100 relative">
-                    {editingEventId && (
-                      <div className="absolute top-2 right-0">
-                         <button onClick={() => { setEditingEventId(null); setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: selectedDate, toDate: selectedDate, ciaId: "" }); }} className="text-[10px] uppercase font-bold text-zinc-400 hover:text-zinc-600">Cancel Edit</button>
-                      </div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">From Date</label>
-                        <input 
-                          type="date" 
-                          value={newEvent.fromDate}
-                          onChange={e => setNewEvent({...newEvent, fromDate: e.target.value})}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">To Date</label>
-                        <input 
-                          type="date" 
-                          value={newEvent.toDate}
-                          onChange={e => setNewEvent({...newEvent, toDate: e.target.value})}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Event Title</label>
-                        <input 
-                          type="text" 
-                          value={newEvent.title}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setNewEvent(prev => {
-                              const update = { ...prev, title: val };
-                              // If CIA is selected, we keep the linked title but allow manual override
-                              return update;
-                            });
-                          }}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                          placeholder="Independence Day"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Time (Optional)</label>
-                        <input 
-                          type="time" 
-                          value={newEvent.time}
-                          onChange={e => setNewEvent({...newEvent, time: e.target.value})}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Type</label>
-                        <select 
-                          value={newEvent.type}
-                          onChange={e => setNewEvent({...newEvent, type: e.target.value})}
-                          className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                        >
-                          {Object.keys(EVENT_TYPES).map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
-                      </div>
-                      
-                      {newEvent.type === 'Exam' && (
-                        <div className="space-y-1 animate-in fade-in zoom-in-95">
-                          <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest ml-1">Link to CIA (Curriculum)</label>
-                          <select 
-                            value={newEvent.ciaId}
-                            onChange={e => {
-                              const id = e.target.value;
-                              const config = ciaConfigs.find(c => c.id === id);
-                              setNewEvent(prev => ({
-                                ...prev, 
-                                ciaId: id, 
-                                title: config 
-                                  ? (config.program ? `${config.examName} (${config.program})` : `${config.examName} (${config.regulation})`)
-                                  : prev.title
-                              }));
-                            }}
-                            className="w-full bg-blue-50 border-none rounded-2xl px-4 py-3 font-bold text-blue-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                          >
-                            <option value="">-- Select CIA --</option>
-                            {ciaConfigs.map(c => (
-                              <option key={c.id} value={c.id}>{c.examName} {c.program ? `- ${c.program}` : ""} ({c.regulation})</option>
-                            ))}
-                          </select>
+                      {editingEventId && (
+                        <div className="absolute top-2 right-0">
+                          <button onClick={() => { setEditingEventId(null); setNewEvent({ title: "", type: "Holiday", description: "", time: "", fromDate: selectedDate, toDate: selectedDate, ciaId: "" }); }} className="text-[10px] uppercase font-bold text-zinc-400 hover:text-zinc-600">Cancel Edit</button>
                         </div>
                       )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">From Date</label>
+                          <input
+                            type="date"
+                            value={newEvent.fromDate}
+                            onChange={e => setNewEvent({ ...newEvent, fromDate: e.target.value })}
+                            className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">To Date</label>
+                          <input
+                            type="date"
+                            value={newEvent.toDate}
+                            onChange={e => setNewEvent({ ...newEvent, toDate: e.target.value })}
+                            className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Event Title</label>
+                          <input
+                            type="text"
+                            value={newEvent.title}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setNewEvent(prev => {
+                                const update = { ...prev, title: val };
+                                // If CIA is selected, we keep the linked title but allow manual override
+                                return update;
+                              });
+                            }}
+                            className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="Independence Day"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Time (Optional)</label>
+                          <input
+                            type="time"
+                            value={newEvent.time}
+                            onChange={e => setNewEvent({ ...newEvent, time: e.target.value })}
+                            className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest ml-1">Type</label>
+                          <select
+                            value={newEvent.type}
+                            onChange={e => setNewEvent({ ...newEvent, type: e.target.value })}
+                            className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 font-bold text-zinc-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                          >
+                            {Object.keys(EVENT_TYPES).map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+
+                        {newEvent.type === 'Exam' && (
+                          <div className="space-y-1 animate-in fade-in zoom-in-95">
+                            <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest ml-1">Link to CIA (Curriculum)</label>
+                            <select
+                              value={newEvent.ciaId}
+                              onChange={e => {
+                                const id = e.target.value;
+                                const config = ciaConfigs.find(c => c.id === id);
+                                setNewEvent(prev => ({
+                                  ...prev,
+                                  ciaId: id,
+                                  title: config
+                                    ? (config.program ? `${config.examName} (${config.program})` : `${config.examName} (${config.regulation})`)
+                                    : prev.title
+                                }));
+                              }}
+                              className="w-full bg-blue-50 border-none rounded-2xl px-4 py-3 font-bold text-blue-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                            >
+                              <option value="">-- Select CIA --</option>
+                              {ciaConfigs.map(c => (
+                                <option key={c.id} value={c.id}>{c.examName} {c.program ? `- ${c.program}` : ""} ({c.regulation})</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={handleAddEvent}
+                        className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
+                      >
+                        {editingEventId ? "Update Event" : "Add to Calendar"}
+                      </button>
                     </div>
-                    
-                    <button 
-                      onClick={handleAddEvent}
-                      className="w-full bg-[#120c7a] text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-blue-900/20 hover:scale-[1.02] transition-all"
-                    >
-                      {editingEventId ? "Update Event" : "Add to Calendar"}
-                    </button>
-                  </div>
                   )}
                 </div>
               </motion.div>
@@ -902,7 +922,7 @@ export default function AcademicCalendar() {
         </AnimatePresence>
 
       </div>
-      
+
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }

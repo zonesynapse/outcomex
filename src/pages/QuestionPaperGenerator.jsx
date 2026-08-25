@@ -38,17 +38,201 @@ const sanitizeKeyStrict = (key) => {
   return String(key).replace(/[.#$[\]/ ]/g, '_');
 };
 
+const extractCleanSubjectTitle = (input) => {
+  if (!input) return '';
+  let str = input;
+  if (typeof str === 'object' && str !== null) {
+    str = str.name || str.title || str.label || str.subjectName || str.code || '';
+  } else if (typeof str === 'string') {
+    str = str.trim();
+    if (str.startsWith('{') && str.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(str);
+        str = parsed.name || parsed.title || parsed.label || parsed.subjectName || parsed.code || '';
+      } catch (e) { }
+    }
+  }
+  str = String(str || '').trim();
+  if (str.includes('-')) {
+    const parts = str.split('-');
+    const codePart = parts[0].trim();
+    const titlePart = parts.slice(1).join('-').trim();
+    if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
+      return titlePart;
+    }
+  }
+  return str;
+};
+
+const isValKL = (val) => /^(KL\s*|L)?[1-6]$/i.test(String(val || '').trim());
+const isValCO = (val) => /^CO\s*\d+/i.test(String(val || '').trim());
+const isValPI = (val) => /^(PI\s*)?\d+(\.\d+)*$/i.test(String(val || '').trim());
+
 const parseCoEntries = (obj) => Object.entries(obj || {})
   .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
-  .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
+  .map(([code, val]) => {
+    const normCode = code.toUpperCase().startsWith('CO') ? code.toUpperCase() : `CO${code.replace(/\D/g, '')}`;
+    const desc = typeof val === 'object' && val !== null
+      ? (val.description || val.statement || val.desc || val.details || val.title || val.co_description || '')
+      : String(val || '');
+    return { code: normCode, description: desc };
+  })
   .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
 
 const hasRealDesc = (list) => Array.isArray(list) && list.length > 0 && list.some(co => {
   const d = String(co.description || '').trim();
-  return d && d.toUpperCase() !== String(co.code || '').toUpperCase();
+  return d && d.toUpperCase() !== String(co.code || '').toUpperCase() && d !== '—';
 });
 
-const fetchCOsWithFallback = async (department, regulation, subjectCode, academicYear, progKey, parseFn, hasDescFn, knownRegulations) => {
+const sanitizeLocalImageUrls = (html) => {
+  if (!html || typeof html !== 'string') return html;
+  return html.replace(/src=["']file:\/\/\/[^"']+["']/gi, 'src="" data-local-file-blocked="true" title="Local file images from Word/WPS must be inserted via Upload or Drag & Drop"');
+};
+
+const optimizeBase64Image = (base64Str, maxTargetKB = 35) => {
+  return new Promise((resolve) => {
+    if (!base64Str || typeof base64Str !== 'string') return resolve(base64Str);
+    const sizeInKB = Math.round((base64Str.length * 3) / 4) / 1024;
+    if (sizeInKB <= maxTargetKB) {
+      return resolve(base64Str);
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      
+      const maxDim = 600;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(80, width);
+      canvas.height = Math.max(80, height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      let quality = 0.70;
+      let compressed = canvas.toDataURL('image/jpeg', quality);
+      let compSizeKB = Math.round((compressed.length * 3) / 4) / 1024;
+
+      while (compSizeKB > maxTargetKB && quality > 0.20) {
+        quality -= 0.10;
+        compressed = canvas.toDataURL('image/jpeg', quality);
+        compSizeKB = Math.round((compressed.length * 3) / 4) / 1024;
+      }
+
+      resolve(compressed.length < base64Str.length ? compressed : base64Str);
+    };
+    img.onerror = () => resolve(base64Str);
+    img.src = base64Str;
+  });
+};
+
+const optimizeHtmlImages = async (html) => {
+  if (!html || typeof html !== 'string') return html;
+  let cleanHtml = sanitizeLocalImageUrls(html);
+  const imgRegex = /src=["'](data:image\/[^"']+)["']/gi;
+  const matches = [...cleanHtml.matchAll(imgRegex)];
+  if (!matches.length) return cleanHtml;
+
+  for (const match of matches) {
+    const origSrc = match[1];
+    if (origSrc) {
+      try {
+        const compressedSrc = await optimizeBase64Image(origSrc, 35);
+        cleanHtml = cleanHtml.replace(origSrc, compressedSrc);
+      } catch (_) { /* keep original on error */ }
+    }
+  }
+  return cleanHtml;
+};
+
+const saveQPToFirestore = async (targetCompositeKey, setDocId, payload, defaultKey = '', defaultQpDocId = '') => {
+  const compKey = targetCompositeKey || defaultKey;
+  const sId = setDocId || defaultQpDocId;
+
+  if (!compKey || !sId) {
+    console.error("[saveQPToFirestore] Missing compositeKey or setDocId", { compKey, sId });
+    throw new Error("Missing compositeKey or setDocId");
+  }
+
+  // Sanitize local file URLs & Auto-compress heavy base64 images to <=35KB per image
+  if (payload && typeof payload === 'object') {
+    if (Array.isArray(payload.parts)) {
+      for (const p of payload.parts) {
+        if (Array.isArray(p.questions)) {
+          for (const q of p.questions) {
+            if (q.question) q.question = await optimizeHtmlImages(q.question);
+          }
+        }
+      }
+    }
+    if (Array.isArray(payload.assignment_config)) {
+      for (const q of payload.assignment_config) {
+        if (q.question) q.question = await optimizeHtmlImages(q.question);
+      }
+    }
+    if (payload.qp_html) payload.qp_html = await optimizeHtmlImages(payload.qp_html);
+    if (payload.draft_html) payload.draft_html = await optimizeHtmlImages(payload.draft_html);
+  }
+
+  try {
+    await setDoc(doc(db, 'generated_qps', compKey), { [sId]: payload }, { merge: true });
+    return true;
+  } catch (err) {
+    const errStr = String(err?.message || err || '');
+    const isSizeError = errStr.includes('exceeds the maximum allowed size') || errStr.includes('size') || errStr.includes('1,048,576') || errStr.includes('bytes');
+    if (!isSizeError) {
+      throw err;
+    }
+    console.warn(`[saveQPToFirestore] Parent document ${compKey} size limit reached (${errStr}). Saving set ${sId} as flat document.`);
+  }
+
+  const flatDocId = `${compKey}__${sId}`;
+  const flatPayload = {
+    ...payload,
+    id: sId,
+    compositeKey: compKey,
+    _isFlatDoc: true,
+  };
+
+  try {
+    await setDoc(doc(db, 'generated_qps', flatDocId), flatPayload, { merge: true });
+  } catch (flatErr) {
+    const flatErrStr = String(flatErr?.message || flatErr || '');
+    if (flatErrStr.includes('exceeds the maximum allowed size') || flatErrStr.includes('size') || flatErrStr.includes('1,048,576') || flatErrStr.includes('bytes')) {
+      console.warn(`[saveQPToFirestore] Flat document payload size exceeds 1MB. Stripping redundant qp_html string...`);
+      const slimPayload = { ...flatPayload };
+      delete slimPayload.qp_html;
+      delete slimPayload.draft_html;
+      await setDoc(doc(db, 'generated_qps', flatDocId), slimPayload, { merge: true });
+    } else {
+      throw flatErr;
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, 'generated_qps', compKey), {
+      [sId]: deleteField()
+    });
+  } catch (e) {
+    // Ignore: Parent doc update error is harmless as flat doc was created
+  }
+
+  return true;
+};
+
+const fetchCOsWithFallback = async (department, regulation, subjectCode, academicYear, progKey, parseFn, hasDescFn, knownRegulations, fullSubjectName) => {
   const parse = parseFn || parseCoEntries;
   const hasDesc = hasDescFn || hasRealDesc;
   const lc = (v) => String(v || '').toLowerCase();
@@ -105,11 +289,43 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
     }
   }
 
+  // Search syllabus_data collection for COs defined inside curriculum documents
+  if (!hasDesc(loadedCOs)) {
+    try {
+      const sylSnap = await getDocs(collection(db, 'syllabus_data'));
+      sylSnap.forEach(d => {
+        const data = d.data();
+        const sems = data.semesters || data.curriculum || [];
+        const processSubj = (subj) => {
+          const sCode = String(subj?.code || subj?.subjectCode || '').trim();
+          if (lc(sCode) === lc(subjectCode) || lc(sCode).includes(lc(subjectCode))) {
+            const rawCOs = subj?.co || subj?.outcomes || subj?.course_outcomes || subj?.courseOutcomes;
+            if (Array.isArray(rawCOs) && rawCOs.length > 0) {
+              const cand = rawCOs.map((c, i) => ({
+                code: (c.id || c.code || c.co || `CO${i + 1}`).toUpperCase(),
+                description: c.description || c.statement || c.desc || c.details || (typeof c === 'string' ? c : '')
+              }));
+              if (hasDesc(cand)) {
+                loadedCOs = cand;
+              }
+            }
+          }
+        };
+        if (Array.isArray(sems)) {
+          sems.forEach(sem => {
+            const subjs = sem.subjects || sem.courses || [];
+            if (Array.isArray(subjs)) subjs.forEach(processSubj);
+          });
+        }
+        if (Array.isArray(data.subjects)) data.subjects.forEach(processSubj);
+      });
+    } catch (_) { /* skip */ }
+  }
+
   if (!hasDesc(loadedCOs)) {
     // Try courses collection — include regulation in key (UG_Overall_AU_-_R2025_cs25c08 pattern)
     const progForms = [...new Set([progKey, lc(progKey)].filter(Boolean))];
     const deptCourseForms = [...new Set([sanitizeKey(department), sanitizeKeyStrict(department), 'Overall', 'overall', lc(sanitizeKey(department))].filter(Boolean))];
-    // ensure Overall always tried even if dept is Overall already
     if (!deptCourseForms.includes('Overall')) deptCourseForms.push('Overall');
     const regCourseForms = [...new Set([sanitizeKey(regulation||''), sanitizeKeyStrict(regulation||''), lc(sanitizeKey(regulation||'')), lc(sanitizeKeyStrict(regulation||''))].filter(Boolean))];
     if (!regulation && Array.isArray(knownRegulations)) {
@@ -129,7 +345,6 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
         }
       }
     }
-    // dedupe
     const seenCourse = new Set();
     const uniqCourseCandidates = courseCandidates.filter(k => { if (seenCourse.has(lc(k))) return false; seenCourse.add(lc(k)); return true; });
     for (const key of uniqCourseCandidates) {
@@ -147,7 +362,6 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
           }
         }
       } catch (_) { /* skip */ }
-      // try lower-cased doc-id variant
       try {
         const snapLc = await getDoc(doc(db, 'courses', lc(key)));
         if (snapLc.exists()) {
@@ -164,7 +378,6 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
       } catch (_) { /* skip */ }
       if (hasDesc(loadedCOs)) break;
     }
-    // Final fallback: collection scan — find ANY courses doc whose code matches subjectCode case-insensitive
     if (!hasDesc(loadedCOs)) {
       try {
         const snapAll = await getDocs(collection(db, 'courses'));
@@ -173,7 +386,6 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
           const data = d.data();
           const codeField = String(data?.code || '').trim();
           if (lc(codeField) === lc(subjectCode) || lc(d.id).endsWith('_' + lc(subjectCode)) || lc(d.id) === lc(subjectCode)) {
-            // prefer doc whose programme/regulation matches when available
             const progMatch = !progKey || lc(data.programme||'') === lc(progKey) || lc(d.id).startsWith(lc(progKey)+'_');
             const regMatch = !regulation || lc(data.regulation||'') === lc(regulation) || lc(d.id).includes(lc(sanitizeKey(regulation))) || lc(d.id).includes(lc(sanitizeKeyStrict(regulation)));
             const deptMatch = !department || lc(data.department||'') === lc(department) || lc(data.department||'') === 'overall' || lc(d.id).includes(lc(sanitizeKey(department))) || lc(d.id).includes('overall');
@@ -204,6 +416,20 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
       { code: 'CO5', description: '' }
     ];
   }
+
+  // Ensure every CO in loadedCOs has a meaningful description
+  const subjTitle = extractCleanSubjectTitle(fullSubjectName);
+  loadedCOs = loadedCOs.map(c => {
+    const d = String(c.description || '').trim();
+    if (!d || d.toUpperCase() === String(c.code || '').toUpperCase() || d === '—' || d.startsWith('{')) {
+      const fallback = subjTitle
+        ? `Understand and apply concepts of ${subjTitle}`
+        : `Understand and apply course outcome concepts (${c.code})`;
+      return { ...c, description: fallback };
+    }
+    return c;
+  });
+
   return loadedCOs;
 };
 
@@ -372,6 +598,15 @@ export default function QuestionPaperGenerator() {
     return qpQuestions.length > 0 || (assignmentConfig && assignmentConfig.length > 0) || !!qbQuestion.trim();
   }, [qpQuestions, assignmentConfig, qbQuestion]);
   useUnsavedChanges(isQpDirty);
+
+  const totalDocSizeKB = useMemo(() => {
+    try {
+      const raw = JSON.stringify(qpQuestions || []);
+      return (Math.round((raw.length * 3) / 4) / 1024).toFixed(1);
+    } catch {
+      return '0.0';
+    }
+  }, [qpQuestions]);
 
 
   // Derive subject code from JSON subject state for Firestore paths
@@ -615,15 +850,19 @@ export default function QuestionPaperGenerator() {
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(html || '', 'text/html');
-      const tables = Array.from(doc.querySelectorAll('table'));
+      const tables = Array.from(doc.querySelectorAll('table')).filter(tbl => !tbl.closest('td'));
       const qnos = [];
       tables.forEach(table => {
-        const ths = Array.from(table.querySelectorAll('th'));
+        const headerRow = table.querySelector('thead tr') || table.rows[0];
+        if (!headerRow) return;
+        const ths = Array.from(headerRow.children).filter(c => c.tagName === 'TH' || c.tagName === 'TD');
         if (ths.length && ths[0].textContent && ths[0].textContent.toLowerCase().includes('q. no')) {
-          const rows = Array.from(table.querySelectorAll('tbody tr'));
+          const tbody = table.querySelector('tbody') || table;
+          const rows = Array.from(tbody.children).filter(r => r.tagName === 'TR');
           rows.forEach(row => {
-            const td = row.querySelector('td');
-            if (td) {
+            const cells = Array.from(row.children).filter(c => c.tagName === 'TD');
+            if (cells.length > 0) {
+              const td = cells[0];
               const txt = td.textContent.trim();
               // capture patterns like: 2, 2a, 2(a), 11(a), 3(b), 4b
               const m = txt.match(/^(\d+)(?:\s*\(?([a-zA-Z])\)?\s*)?/);
@@ -716,6 +955,14 @@ export default function QuestionPaperGenerator() {
     setShowFinalPreview(false);
     // Mark editing as done
     isEditingQbRef.current = false;
+
+    if (text.includes('data:image/')) {
+      const matches = [...text.matchAll(/src=["'](data:image\/[^"']+)["']/gi)];
+      let imgSizeKB = 0;
+      matches.forEach(m => { imgSizeKB += Math.round((m[1].length * 3) / 4) / 1024; });
+      imgSizeKB = imgSizeKB.toFixed(1);
+      showToast(`📷 Diagram Image Added: ${imgSizeKB} KB (Auto-optimized under 30KB limit)`, "info");
+    }
 
     // reset builder inputs and focus
     setQbQuestion('');
@@ -2544,6 +2791,28 @@ export default function QuestionPaperGenerator() {
     }
 
     let html = `
+<style>
+  .qp-preview-container table td table,
+  figure.table table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    margin: 8px 0 !important;
+    border: 1px solid #000 !important;
+  }
+  .qp-preview-container table td table th,
+  .qp-preview-container table td table td,
+  figure.table table th,
+  figure.table table td {
+    border: 1px solid #000 !important;
+    padding: 4px 6px !important;
+    font-size: 11px !important;
+    text-align: center !important;
+  }
+  figure.table {
+    margin: 8px 0 !important;
+    width: 100% !important;
+  }
+</style>
 <!-- Logo + College Info -->
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; height:80px; width:100%; border:1px solid #000;">
   <tbody>
@@ -2606,8 +2875,30 @@ export default function QuestionPaperGenerator() {
         const formatMathTextAssign = (qStr) => {
           if (!qStr) return '';
           let str = String(qStr);
-          // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>, strip remaining wrappers but keep breaks
-          str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+          if (/<table/i.test(str)) {
+            try {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(`<div>${str}</div>`, 'text/html');
+              const innerTables = doc.querySelectorAll('table');
+              innerTables.forEach(t => {
+                t.setAttribute('border', '1');
+                t.style.borderCollapse = 'collapse';
+                t.style.margin = '8px 0';
+                t.style.width = '100%';
+                t.style.border = '1px solid #000';
+                t.querySelectorAll('th, td').forEach(c => {
+                  c.style.border = '1px solid #000';
+                  c.style.padding = '4px 6px';
+                  c.style.fontSize = '11px';
+                  c.style.textAlign = 'center';
+                });
+              });
+              const rootDiv = doc.body.firstElementChild;
+              if (rootDiv) str = rootDiv.innerHTML;
+            } catch (e) { }
+          } else {
+            str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+          }
           str = str.replace(/\[Math Processing Error\]/gi, '');
           str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
             const cleanPrefix = prefix ? prefix.trim() : '';
@@ -2674,8 +2965,34 @@ export default function QuestionPaperGenerator() {
           const formatMathText = (qStr) => {
             if (!qStr) return '';
             let str = String(qStr);
-            // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>
+            if (/<table/i.test(str)) {
+              try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(`<div>${str}</div>`, 'text/html');
+                const innerTables = doc.querySelectorAll('table');
+                innerTables.forEach(t => {
+                  t.setAttribute('border', '1');
+                  t.style.borderCollapse = 'collapse';
+                  t.style.margin = '8px 0';
+                  t.style.width = '100%';
+                  t.style.border = '1px solid #000';
+                  t.querySelectorAll('th, td').forEach(c => {
+                    c.style.border = '1px solid #000';
+                    c.style.padding = '4px 6px';
+                    c.style.fontSize = '11px';
+                    c.style.textAlign = 'center';
+                  });
+                });
+                const rootDiv = doc.body.firstElementChild;
+                if (rootDiv) str = rootDiv.innerHTML;
+              } catch (e) { }
+          } else {
+            str = str.replace(/<\/p>\s*<p[^>]*>(?=\s*(?:<span[^>]*class="[^"]*math[^"]*"[^>]*>|\\\(|\\\[|,|\.|\b(and|or|let|where|find|with|if|then|for|is|are|the|a|an)\b))/gi, ' ');
+            str = str.replace(/(?:<\/span>|\\\)|\\\])\s*<\/p>\s*<p[^>]*>/gi, ' ');
             str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+            str = str.replace(/<br\s*\/?>\s*(?=<span[^>]*class="[^"]*math[^"]*"[^>]*>|\\\()/gi, ' ');
+            str = str.replace(/(?:<\/span>|\\\))\s*<br\s*\/?>\s*(?=[a-z0-9,.\)\(])/gi, ' ');
+          }
             str = str.replace(/\[Math Processing Error\]/gi, '');
             str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
               const cleanPrefix = prefix ? prefix.trim() : '';
@@ -2793,13 +3110,16 @@ export default function QuestionPaperGenerator() {
       }).map(code => ({ code, description: '' }));
     }
     if (effectiveCos.length > 0) {
+      const subjTitle = extractCleanSubjectTitle(subject);
       coRows = effectiveCos
         .filter((co) => activeSet.has(co.code))
         .map((co) => {
           const tick = activeSet.has(co.code) ? '✓' : '';
           const w = weightMap && Object.prototype.hasOwnProperty.call(weightMap, co.code) ? weightMap[co.code] : '';
           const coCode = (co.code || '').toUpperCase();
-          const coDesc = (co.description && co.description.trim() && co.description.trim().toUpperCase() !== coCode) ? co.description : '—';
+          const rawDesc = (co.description || co.desc || co.statement || co.details || '').trim();
+          const fallbackDesc = subjTitle ? `Understand and apply concepts of ${subjTitle}` : `Understand and apply course outcome concepts (${coCode})`;
+          const coDesc = (rawDesc && rawDesc.toUpperCase() !== coCode && rawDesc !== '—' && !rawDesc.startsWith('{')) ? rawDesc : fallbackDesc;
 
           return `
           <tr>
@@ -3213,7 +3533,7 @@ export default function QuestionPaperGenerator() {
                 const foundKey = Object.keys(bloomsDomains || {}).find(k => bloomsDomains[k]?.name === saved);
                 return foundKey || '';
               })(),
-              question: (q.question || '').replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '')
+              question: /<table/i.test(q.question || '') ? (q.question || '') : (q.question || '').replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '')
             }));
             setAssignmentConfig(resolved);
             setSavedAssignmentConfig(resolved);
@@ -4660,9 +4980,9 @@ export default function QuestionPaperGenerator() {
 
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
+        await saveQPToFirestore(compositeKey, editId, payload, key, qpId);
       } else {
-        await setDoc(doc(db, 'generated_qps', key), { [qpId]: payload }, { merge: true });
+        await saveQPToFirestore(key, qpId, payload, key, qpId);
       }
       setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
@@ -4697,14 +5017,17 @@ export default function QuestionPaperGenerator() {
     const extractedData = {};
     const parser = new DOMParser();
     const contentDoc = parser.parseFromString(content, 'text/html');
-    const tables = contentDoc.querySelectorAll('table');
+    const tables = Array.from(contentDoc.querySelectorAll('table')).filter(tbl => !tbl.closest('td'));
 
     const invalidEntries = [];
 
     tables.forEach(table => {
-      const headers = table.querySelectorAll('th');
-      if (headers.length >= 5 && headers[0].textContent.includes('Q. No.')) {
-        const rows = table.querySelectorAll('tbody tr');
+      const headerRow = table.querySelector('thead tr') || table.rows[0];
+      if (!headerRow) return;
+      const headers = Array.from(headerRow.children).filter(c => c.tagName === 'TH' || c.tagName === 'TD');
+      if (headers.length >= 4 && headers[0].textContent.includes('Q. No.')) {
+        const tbody = table.querySelector('tbody') || table;
+        const rows = Array.from(tbody.children).filter(r => r.tagName === 'TR');
         let currentQno = '';
 
         let questionIndex = -1;
@@ -4721,15 +5044,12 @@ export default function QuestionPaperGenerator() {
         });
 
         const getCellValue = (cell) => {
+          if (!cell) return '';
           const select = cell.querySelector('select');
           if (select) {
-            // Prefer the select.value (works if the option is actually selected),
-            // fall back to option[selected], option[selected="selected"], or first option.
             try {
               if (select.value && select.value.trim() !== '') return select.value;
-            } catch {
-              // ignore and continue to fallbacks
-            }
+            } catch { }
 
             const selectedOption = select.querySelector('option[selected]') || select.querySelector('option[selected="selected"]');
             if (selectedOption && selectedOption.value) return selectedOption.value;
@@ -4741,19 +5061,37 @@ export default function QuestionPaperGenerator() {
 
         const getQuestionHtml = (cell) => {
           if (!cell) return '';
-          // Preserve line breaks from CKEditor: <p> blocks and <br> inside the paper table cell
           let html = cell.innerHTML || '';
-          // Keep math spans intact, convert block boundaries to <br>
-          html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
-          // Normalize multiple <br> to single
-          html = html.replace(/(<br\s*\/?>\s*)+/gi, '<br>');
-          // Trim leading/trailing <br>
-          html = html.replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+          if (/<table/i.test(html)) {
+            try {
+              const tempDoc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+              const innerTables = tempDoc.querySelectorAll('table');
+              innerTables.forEach(t => {
+                t.setAttribute('border', '1');
+                t.style.borderCollapse = 'collapse';
+                t.style.margin = '8px 0';
+                t.style.width = '100%';
+                t.style.border = '1px solid #000';
+                t.querySelectorAll('th, td').forEach(c => {
+                  c.style.border = '1px solid #000';
+                  c.style.padding = '4px 6px';
+                  c.style.fontSize = '11px';
+                  c.style.textAlign = 'center';
+                });
+              });
+              const rootDiv = tempDoc.body.firstElementChild;
+              if (rootDiv) html = rootDiv.innerHTML;
+            } catch (e) { }
+          } else {
+            html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+            html = html.replace(/(<br\s*\/?>\s*)+/gi, '<br>');
+            html = html.replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+          }
           return html;
         };
 
         rows.forEach(row => {
-          const cells = row.querySelectorAll('td');
+          const cells = Array.from(row.children).filter(c => c.tagName === 'TD');
           if (cells.length === 0) return;
 
           const texts = Array.from(cells).map(c => c.textContent.trim());
@@ -4795,24 +5133,37 @@ export default function QuestionPaperGenerator() {
             questionText = candidate;
           }
 
-          // find KL/CO/PI by scanning cells and using getCellValue for selects
+          // find KL/CO/PI using strict column index and strict validation
+          const isValKL = (val) => /^(KL\s*|L)?[1-6]$/i.test(String(val || '').trim());
+          const isValCO = (val) => /^CO\s*\d+/i.test(String(val || '').trim());
+          const isValPI = (val) => /^(PI\s*)?\d+(\.\d+)*$/i.test(String(val || '').trim());
+
           let kl = '';
           let co = '';
           let pi = '';
 
-          // Prefer header-index based extraction when available.
-          if (klIndex >= 0 && cells.length > klIndex) kl = getCellValue(cells[klIndex]);
-          if (coIndex >= 0 && cells.length > coIndex) co = getCellValue(cells[coIndex]);
-          if (piIndex >= 0 && cells.length > piIndex) pi = getCellValue(cells[piIndex]);
-
-          for (let i = 0; i < cells.length; i++) {
-            const val = getCellValue(cells[i]);
-            if (!kl && /^L[1-6]$/i.test(val)) kl = val;
-            if (!co && /^CO\d+/i.test(val)) co = val;
-            if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
+          if (klIndex >= 0 && cells.length > klIndex) {
+            const v = getCellValue(cells[klIndex]);
+            if (isValKL(v)) kl = v;
+          }
+          if (coIndex >= 0 && cells.length > coIndex) {
+            const v = getCellValue(cells[coIndex]);
+            if (isValCO(v)) co = v;
+          }
+          if (piIndex >= 0 && cells.length > piIndex) {
+            const v = getCellValue(cells[piIndex]);
+            if (isValPI(v)) pi = v;
           }
 
-          // If CO or PI missing, peek at next row only if it's a continuation row (not an (Or) row or next question row)
+          // Scan non-question cells (index >= 2) if missing
+          for (let i = 2; i < cells.length; i++) {
+            const val = getCellValue(cells[i]);
+            if (!kl && isValKL(val)) kl = val;
+            if (!co && isValCO(val)) co = val;
+            if (!pi && isValPI(val)) pi = val;
+          }
+
+          // If CO or PI missing, peek at next row only if it's a continuation row
           if ((!co || !pi) && row.nextElementSibling) {
             const nextRowText = row.nextElementSibling.textContent.trim().toLowerCase();
             const nextFirstCell = row.nextElementSibling.querySelector('td')?.textContent.trim() || '';
@@ -4820,21 +5171,21 @@ export default function QuestionPaperGenerator() {
             const hasNextRowQNo = /^\d+/.test(nextFirstCell);
 
             if (!isNextRowOr && !hasNextRowQNo) {
-              const nextCells = row.nextElementSibling.querySelectorAll('td');
+              const nextCells = Array.from(row.nextElementSibling.children).filter(c => c.tagName === 'TD');
               if (nextCells && nextCells.length > 0) {
                 if (!co && coIndex >= 0 && nextCells.length > coIndex) {
                   const nextCo = getCellValue(nextCells[coIndex]);
-                  if (/^CO\d+/i.test(nextCo)) co = nextCo;
+                  if (isValCO(nextCo)) co = nextCo;
                 }
                 if (!pi && piIndex >= 0 && nextCells.length > piIndex) {
                   const nextPi = getCellValue(nextCells[piIndex]);
-                  if (nextPi && nextPi.trim() !== '' && !/^select\s*pi$/i.test(nextPi)) pi = nextPi;
+                  if (isValPI(nextPi)) pi = nextPi;
                 }
 
                 for (let i = 0; i < nextCells.length; i++) {
                   const val = getCellValue(nextCells[i]);
-                  if (!co && /^CO\d+/i.test(val)) co = val;
-                  if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
+                  if (!co && isValCO(val)) co = val;
+                  if (!pi && isValPI(val)) pi = val;
                   if (co && pi) break;
                 }
               }
@@ -4848,11 +5199,23 @@ export default function QuestionPaperGenerator() {
             if (!questionText || questionText.toLowerCase().includes('enter your question here') || questionText.trim() === '') {
               invalidEntries.push(`Question ${displayQKey} text is empty`);
             }
-            if (!co || co.trim() === '' || co.toUpperCase() === 'CO') {
-              invalidEntries.push(`CO for Question ${displayQKey} is empty`);
+            if (!co || !isValCO(co)) {
+              // Check if qpQuestions has a valid CO as fallback before raising error
+              const qObj = getQuestionByQNo(qpQuestions, qKey) || getQuestionByQNo(qpQuestions, displayQKey);
+              if (qObj?.co && isValCO(qObj.co)) {
+                co = qObj.co;
+              } else {
+                invalidEntries.push(`CO for Question ${displayQKey} is empty`);
+              }
             }
-            if (!pi || pi.trim() === '' || pi.toUpperCase() === 'PI' || /^select\s*pi$/i.test(pi)) {
-              invalidEntries.push(`PI for Question ${displayQKey} is empty`);
+            if (!pi || !isValPI(pi)) {
+              // Check if qpQuestions has a valid PI as fallback before raising error
+              const qObj = getQuestionByQNo(qpQuestions, qKey) || getQuestionByQNo(qpQuestions, displayQKey);
+              if (qObj?.pi && isValPI(qObj.pi)) {
+                pi = qObj.pi;
+              } else {
+                invalidEntries.push(`PI for Question ${displayQKey} is empty`);
+              }
             }
           }
 
@@ -4902,32 +5265,39 @@ export default function QuestionPaperGenerator() {
             const qnoB = `${payloadQuestionCounter}(b)`;
             const qnoBAlt = `${payloadQuestionCounter}b`;
 
+            const qa = getQuestionByQNo(qpQuestions, qnoAAlt) || getQuestionByQNo(qpQuestions, qnoA);
+            const qb = getQuestionByQNo(qpQuestions, qnoBAlt) || getQuestionByQNo(qpQuestions, qnoB);
+
             const dataA = extractedData[qnoA] || extractedData[qnoAAlt] || {};
             const dataB = extractedData[qnoB] || extractedData[qnoBAlt] || {};
 
             qs.push({
-              qno: qnoA, sub: "a", either_or: true, marks: part.marksPerQuestion,
-              question: dataA.question || "",
-              co: dataA.co || "",
-              kl: dataA.kl || "",
-              pi: (dataA.pi && dataA.pi.toUpperCase() !== 'PI') ? dataA.pi : ""
+              qno: qnoA, sub: "a", either_or: true, marks: qa?.marks || part.marksPerQuestion,
+              question: dataA.question || qa?.question || "",
+              co: isValCO(dataA.co) ? dataA.co : (qa?.co || dataA.co || ""),
+              kl: isValKL(dataA.kl) ? dataA.kl : (qa?.kl || dataA.kl || ""),
+              kldomain: qa?.kldomain || "",
+              pi: isValPI(dataA.pi) ? dataA.pi : (qa?.pi || (dataA.pi && dataA.pi.toUpperCase() !== 'PI' ? dataA.pi : ""))
             });
             qs.push({
-              qno: qnoB, sub: "b", either_or: true, marks: part.marksPerQuestion,
-              question: dataB.question || "",
-              co: dataB.co || "",
-              kl: dataB.kl || "",
-              pi: (dataB.pi && dataB.pi.toUpperCase() !== 'PI') ? dataB.pi : ""
+              qno: qnoB, sub: "b", either_or: true, marks: qb?.marks || part.marksPerQuestion,
+              question: dataB.question || qb?.question || "",
+              co: isValCO(dataB.co) ? dataB.co : (qb?.co || dataB.co || ""),
+              kl: isValKL(dataB.kl) ? dataB.kl : (qb?.kl || dataB.kl || ""),
+              kldomain: qb?.kldomain || "",
+              pi: isValPI(dataB.pi) ? dataB.pi : (qb?.pi || (dataB.pi && dataB.pi.toUpperCase() !== 'PI' ? dataB.pi : ""))
             });
           } else {
             const qno = `${payloadQuestionCounter}`;
             const dataQ = extractedData[qno] || {};
+            const qq = getQuestionByQNo(qpQuestions, qno);
             qs.push({
-              qno: qno, either_or: false, marks: part.marksPerQuestion,
-              question: dataQ.question || "",
-              co: dataQ.co || "",
-              kl: dataQ.kl || "",
-              pi: (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI') ? dataQ.pi : ""
+              qno: qno, either_or: false, marks: qq?.marks || part.marksPerQuestion,
+              question: dataQ.question || qq?.question || "",
+              co: isValCO(dataQ.co) ? dataQ.co : (qq?.co || dataQ.co || ""),
+              kl: isValKL(dataQ.kl) ? dataQ.kl : (qq?.kl || dataQ.kl || ""),
+              kldomain: qq?.kldomain || "",
+              pi: isValPI(dataQ.pi) ? dataQ.pi : (qq?.pi || (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI' ? dataQ.pi : ""))
             });
           }
           payloadQuestionCounter++;
@@ -5010,9 +5380,9 @@ export default function QuestionPaperGenerator() {
 
     try {
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
+        await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId);
       } else {
-        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: payload }, { merge: true });
+        await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
       }
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);
@@ -5083,11 +5453,14 @@ export default function QuestionPaperGenerator() {
           if (content && content.trim()) {
             const parser = new DOMParser();
             const contentDoc = parser.parseFromString(content, 'text/html');
-            const tables = contentDoc.querySelectorAll('table');
+            const tables = Array.from(contentDoc.querySelectorAll('table')).filter(tbl => !tbl.closest('td'));
             tables.forEach(table => {
-              const headers = table.querySelectorAll('th');
+              const headerRow = table.querySelector('thead tr') || table.rows[0];
+              if (!headerRow) return;
+              const headers = Array.from(headerRow.children).filter(c => c.tagName === 'TH' || c.tagName === 'TD');
               if (headers.length >= 4 && headers[0].textContent.includes('Q. No.')) {
-                const rows = table.querySelectorAll('tbody tr');
+                const tbody = table.querySelector('tbody') || table;
+                const rows = Array.from(tbody.children).filter(r => r.tagName === 'TR');
                 let questionIndex = -1, klIndex = -1, coIndex = -1, piIndex = -1;
                 headers.forEach((h, idx) => {
                   const txt = (h.textContent || '').trim().toLowerCase();
@@ -5097,6 +5470,7 @@ export default function QuestionPaperGenerator() {
                   if (txt === 'pi') piIndex = idx;
                 });
                 const getCellValue = (cell) => {
+                  if (!cell) return '';
                   const select = cell.querySelector('select');
                   if (select) {
                     try { if (select.value && select.value.trim() !== '') return select.value; } catch { }
@@ -5110,11 +5484,35 @@ export default function QuestionPaperGenerator() {
                 const getQuestionHtml = (cell) => {
                   if (!cell) return '';
                   let html = cell.innerHTML || '';
-                  html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '').replace(/(<br\s*\/?>\s*)+/gi, '<br>').replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+                  if (/<table/i.test(html)) {
+                    try {
+                      const tempDoc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
+                      const innerTables = tempDoc.querySelectorAll('table');
+                      innerTables.forEach(t => {
+                        t.setAttribute('border', '1');
+                        t.style.borderCollapse = 'collapse';
+                        t.style.margin = '8px 0';
+                        t.style.width = '100%';
+                        t.style.border = '1px solid #000';
+                        t.querySelectorAll('th, td').forEach(c => {
+                          c.style.border = '1px solid #000';
+                          c.style.padding = '4px 6px';
+                          c.style.fontSize = '11px';
+                          c.style.textAlign = 'center';
+                        });
+                      });
+                      const rootDiv = tempDoc.body.firstElementChild;
+                      if (rootDiv) html = rootDiv.innerHTML;
+                    } catch (e) { }
+                  } else {
+                    html = html.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+                    html = html.replace(/(<br\s*\/?>\s*)+/gi, '<br>');
+                    html = html.replace(/^(<br\s*\/?>)+|(<br\s*\/?>)+$/gi, '').trim();
+                  }
                   return html;
                 };
                 rows.forEach(row => {
-                  const cells = row.querySelectorAll('td');
+                  const cells = Array.from(row.children).filter(c => c.tagName === 'TD');
                   if (cells.length === 0) return;
                   const texts = Array.from(cells).map(c => c.textContent.trim());
                   if (texts.some(t => t.toLowerCase() === '(or)')) return;
@@ -5124,15 +5522,34 @@ export default function QuestionPaperGenerator() {
                   let rowQ = '';
                   if (m && m[1]) rowQ = m[2] ? `${m[1]}(${m[2].toLowerCase()})` : `${m[1]}`;
                   if (!rowQ) return;
+                  const isValKL = (val) => /^(KL\s*|L)?[1-6]$/i.test(String(val || '').trim());
+                  const isValCO = (val) => /^CO\s*\d+/i.test(String(val || '').trim());
+                  const isValPI = (val) => /^(PI\s*)?\d+(\.\d+)*$/i.test(String(val || '').trim());
+
                   let questionText = questionIndex >= 0 && cells.length > questionIndex ? getQuestionHtml(cells[questionIndex]) : (getQuestionHtml(cells[1]) || '');
-                  let kl = klIndex >= 0 && cells.length > klIndex ? getCellValue(cells[klIndex]) : '';
-                  let co = coIndex >= 0 && cells.length > coIndex ? getCellValue(cells[coIndex]) : '';
-                  let pi = piIndex >= 0 && cells.length > piIndex ? getCellValue(cells[piIndex]) : '';
-                  for (let i = 0; i < cells.length; i++) {
+                  let kl = '';
+                  let co = '';
+                  let pi = '';
+
+                  if (klIndex >= 0 && cells.length > klIndex) {
+                    const v = getCellValue(cells[klIndex]);
+                    if (isValKL(v)) kl = v;
+                  }
+                  if (coIndex >= 0 && cells.length > coIndex) {
+                    const v = getCellValue(cells[coIndex]);
+                    if (isValCO(v)) co = v;
+                  }
+                  if (piIndex >= 0 && cells.length > piIndex) {
+                    const v = getCellValue(cells[piIndex]);
+                    if (isValPI(v)) pi = v;
+                  }
+
+                  // Scan non-question cells (index >= 2) if missing
+                  for (let i = 2; i < cells.length; i++) {
                     const val = getCellValue(cells[i]);
-                    if (!kl && /^L[1-6]$/i.test(val)) kl = val;
-                    if (!co && /^CO\d+/i.test(val)) co = val;
-                    if (!pi && val && val.trim() !== '' && !/^select\s*pi$/i.test(val)) pi = val;
+                    if (!kl && isValKL(val)) kl = val;
+                    if (!co && isValCO(val)) co = val;
+                    if (!pi && isValPI(val)) pi = val;
                   }
                   extractedData[rowQ] = { question: questionText || '', kl: kl || '', co: co || '', pi: pi || '' };
                 });
@@ -5169,16 +5586,20 @@ export default function QuestionPaperGenerator() {
               const dataA = extractedData[qnoA] || extractedData[qnoAAlt] || {};
               const dataB = extractedData[qnoB] || extractedData[qnoBAlt] || {};
 
+              const isValKL = (val) => /^(KL\s*|L)?[1-6]$/i.test(String(val || '').trim());
+              const isValCO = (val) => /^CO\s*\d+/i.test(String(val || '').trim());
+              const isValPI = (val) => /^(PI\s*)?\d+(\.\d+)*$/i.test(String(val || '').trim());
+
               qs.push({
                 qno: qnoA,
                 sub: "a",
                 either_or: true,
                 marks: qa?.marks || marks,
                 question: dataA.question || qa?.question || "",
-                co: dataA.co || qa?.co || "",
-                kl: dataA.kl || qa?.kl || "",
+                co: isValCO(dataA.co) ? dataA.co : (qa?.co || dataA.co || ""),
+                kl: isValKL(dataA.kl) ? dataA.kl : (qa?.kl || dataA.kl || ""),
                 kldomain: qa?.kldomain || "",
-                pi: (dataA.pi && dataA.pi.toUpperCase() !== 'PI') ? dataA.pi : (qa?.pi || "")
+                pi: isValPI(dataA.pi) ? dataA.pi : (qa?.pi || (dataA.pi && dataA.pi.toUpperCase() !== 'PI' ? dataA.pi : ""))
               });
 
               qs.push({
@@ -5187,25 +5608,29 @@ export default function QuestionPaperGenerator() {
                 either_or: true,
                 marks: qb?.marks || marks,
                 question: dataB.question || qb?.question || "",
-                co: dataB.co || qb?.co || "",
-                kl: dataB.kl || qb?.kl || "",
+                co: isValCO(dataB.co) ? dataB.co : (qb?.co || dataB.co || ""),
+                kl: isValKL(dataB.kl) ? dataB.kl : (qb?.kl || dataB.kl || ""),
                 kldomain: qb?.kldomain || "",
-                pi: (dataB.pi && dataB.pi.toUpperCase() !== 'PI') ? dataB.pi : (qb?.pi || "")
+                pi: isValPI(dataB.pi) ? dataB.pi : (qb?.pi || (dataB.pi && dataB.pi.toUpperCase() !== 'PI' ? dataB.pi : ""))
               });
             } else {
               const qno = `${payloadQuestionCounter}`;
-              const q = getQuestionByQNo(currentQuestions, `${payloadQuestionCounter}`) || getQuestionByQNo(currentQuestions, qno);
               const dataQ = extractedData[qno] || {};
+              const qq = getQuestionByQNo(currentQuestions, qno);
+
+              const isValKL = (val) => /^(KL\s*|L)?[1-6]$/i.test(String(val || '').trim());
+              const isValCO = (val) => /^CO\s*\d+/i.test(String(val || '').trim());
+              const isValPI = (val) => /^(PI\s*)?\d+(\.\d+)*$/i.test(String(val || '').trim());
 
               qs.push({
                 qno: qno,
                 either_or: false,
-                marks: q?.marks || marks,
-                question: dataQ.question || q?.question || "",
-                co: dataQ.co || q?.co || "",
-                kl: dataQ.kl || q?.kl || "",
-                kldomain: q?.kldomain || "",
-                pi: (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI') ? dataQ.pi : (q?.pi || "")
+                marks: qq?.marks || marks,
+                question: dataQ.question || qq?.question || "",
+                co: isValCO(dataQ.co) ? dataQ.co : (qq?.co || dataQ.co || ""),
+                kl: isValKL(dataQ.kl) ? dataQ.kl : (qq?.kl || dataQ.kl || ""),
+                kldomain: qq?.kldomain || "",
+                pi: isValPI(dataQ.pi) ? dataQ.pi : (qq?.pi || (dataQ.pi && dataQ.pi.toUpperCase() !== 'PI' ? dataQ.pi : ""))
               });
             }
             payloadQuestionCounter++;
@@ -5299,9 +5724,9 @@ export default function QuestionPaperGenerator() {
       };
 
       if (editId && compositeKey) {
-        await setDoc(doc(db, 'generated_qps', compositeKey), { [editId]: payload }, { merge: true });
+        await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId);
       } else {
-        await setDoc(doc(db, 'generated_qps', key), { [qpDocId]: payload }, { merge: true });
+        await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
       }
 
       if (assessmentType === 'Exam') {
@@ -6702,6 +7127,10 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
             {showQbEditor && (
               <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 w-full mb-8">
+                <div className="mb-3.5 flex items-center gap-2.5 text-xs font-medium text-blue-800 bg-blue-50/80 border border-blue-200/80 px-4 py-2.5 rounded-xl shadow-xs">
+                  <span className="text-sm">📷</span>
+                  <span><strong>Image Limit Guideline:</strong> Question diagrams & images are automatically optimized to <strong>≤30KB</strong> per image to keep paper generation fast and reliable.</span>
+                </div>
                 <div className="mb-4 bg-white rounded-xl overflow-hidden border border-slate-200">
                   <MathTemplateToolbar editorId="qbEditor" />
                   <textarea
@@ -6845,11 +7274,18 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
 
               {qpQuestions && qpQuestions.length > 0 && (
                 <div className="mt-8 pt-8 border-t border-slate-200">
-                  <div className="flex justify-between items-center mb-4">
+                  <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
                     <h4 className="font-bold text-slate-700">Added Questions Summary</h4>
-                    <span className="text-[10px] font-black bg-blue-100 text-[#120c7a] px-2 py-1 rounded-md uppercase tracking-wider">
-                      {qpQuestions.length} Questions Added
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black bg-blue-100 text-[#120c7a] px-2.5 py-1 rounded-md uppercase tracking-wider">
+                        {qpQuestions.length} Questions Added
+                      </span>
+                      <span className={`text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider border ${
+                        parseFloat(totalDocSizeKB) > 800 ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      }`}>
+                        📊 Paper Size: {totalDocSizeKB} KB / 1,000 KB Max
+                      </span>
+                    </div>
                   </div>
                   <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                     <div className="overflow-auto max-h-[300px]">
@@ -6877,6 +7313,20 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                               </td>
                               <td className="px-4 py-3 align-top">
                                 <div className="qp-question-content text-xs md:text-sm text-slate-800 leading-relaxed font-medium overflow-auto max-h-48" dangerouslySetInnerHTML={{ __html: q.question }}></div>
+                                {q.question && q.question.includes('data:image/') && (() => {
+                                  const matches = [...q.question.matchAll(/src=["'](data:image\/[^"']+)["']/gi)];
+                                  let totalImgKB = 0;
+                                  matches.forEach(m => {
+                                    totalImgKB += Math.round((m[1].length * 3) / 4) / 1024;
+                                  });
+                                  totalImgKB = totalImgKB.toFixed(1);
+                                  return (
+                                    <div className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+                                      <span>📷 Diagram Image Size: <strong>{totalImgKB} KB</strong></span>
+                                      <span className="text-[9px] text-blue-600 font-medium">(Guideline: ≤30 KB per image)</span>
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="px-4 py-3 text-slate-600 font-medium">{q.kl}</td>
                               <td className="px-4 py-3">

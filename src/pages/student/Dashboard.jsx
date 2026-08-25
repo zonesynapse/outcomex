@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot, query, where, documentId } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { formatProgDisplay, getAttendanceRecords } from "../../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, getAttendanceRecords, getAcademicYears, parseStudentAttendanceVal } from "../../lib/utils";
 import {
   GraduationCap, CheckCircle, BarChart3, Clock, Bell,
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
@@ -12,7 +12,45 @@ import {
 
 const sanitizeKey = (key) => {
   if (!key) return '';
-  return String(key).replace(/[.#$[\]]/g, '_');
+  return String(key).replace(/[.#$[\]/ ]/g, '_');
+};
+
+const normKey = (key) => {
+  if (!key) return '';
+  return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+};
+
+const getStudentValFromRec = (studentsObj, studentIds) => {
+  if (!studentsObj) return undefined;
+  for (const id of studentIds) {
+    if (studentsObj[id] !== undefined) return studentsObj[id];
+  }
+  if (Array.isArray(studentsObj)) {
+    const match = studentsObj.find(item => {
+      if (!item) return false;
+      const itemReg = String(item.reg || item.regNo || item.admNo || item.admissionNo || item.id || '').trim().toLowerCase();
+      return studentIds.some(id => String(id).trim().toLowerCase() === itemReg);
+    });
+    if (match) return match;
+  }
+  if (typeof studentsObj === 'object') {
+    const keys = Object.keys(studentsObj);
+    const matchedKey = keys.find(k => {
+      const normK = String(k).trim().toLowerCase();
+      return studentIds.some(id => String(id).trim().toLowerCase() === normK);
+    });
+    if (matchedKey) return studentsObj[matchedKey];
+  }
+  return undefined;
+};
+
+const extractSubjectCode = (docId) => {
+  const parts = docId.split('_');
+  const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+  if (batchIdx >= 0 && batchIdx + 3 < parts.length) {
+    return parts.slice(batchIdx + 3).join('_').replace(/_(Sec-\w+)$/, '');
+  }
+  return parts.slice(4).join('_');
 };
 
 export default function StudentDashboard() {
@@ -27,7 +65,26 @@ export default function StudentDashboard() {
       if (user) {
         try {
           const snap = await getDoc(doc(db, "users", user.uid));
-          if (snap.exists()) setUserData(snap.data());
+          if (snap.exists()) {
+            let uData = snap.data();
+            const reg = uData.regNo || uData.registerNo || uData.rollNo || uData.admissionNo || '';
+            if (reg && (!uData.programme || !uData.department || !uData.batch)) {
+              try {
+                const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(reg)));
+                if (idxSnap.exists()) {
+                  const idxData = idxSnap.data();
+                  uData = {
+                    ...idxData,
+                    ...uData,
+                    programme: uData.programme || idxData.programme || idxData.degree || '',
+                    department: uData.department || idxData.department || idxData.dept || idxData.branch || '',
+                    batch: uData.batch || idxData.batch || idxData.batchYear || '',
+                  };
+                }
+              } catch (_) { }
+            }
+            setUserData(uData);
+          }
         } catch (err) {
           console.error(err);
         }
@@ -39,65 +96,125 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     if (!userData) return;
-    const { regNo, programme, department, batch } = userData;
-    if (!regNo || !programme || !department || !batch) { setAttLoading(false); return; }
+    const profData = userData._profile_data || {};
+    const stuData = userData._student_data || {};
+
+    const regNo = String(userData.regNo || userData.registerNo || userData.registerNumber || userData.rollNo || userData.admissionNo || profData.regNo || profData.registerNo || stuData.regNo || '').trim();
+    const programme = String(userData.programme || userData.program || userData.degree || profData.programme || stuData.programme || '').trim();
+    const department = String(userData.department || userData.dept || userData.branch || profData.department || stuData.department || '').trim();
+    const batch = String(userData.batch || userData.batchYear || profData.batch || stuData.batch || '').trim();
+
+    if (!regNo && !userData.email) {
+      setAttendancePct(0);
+      setAttLoading(false);
+      return;
+    }
+
+    const studentIds = [
+      regNo,
+      userData.admissionNo, userData.admNo, userData.id, userData.registerNo, userData.registerNumber, userData.rollNo, userData.examNumber,
+      profData.regNo, profData.admissionNo, profData.admNo,
+      stuData.regNo, stuData.admissionNo, stuData.admNo
+    ].filter(Boolean).map(x => String(x).trim());
 
     const fetchAttendance = async () => {
       try {
-        const progKey = sanitizeKey(programme);
+        const progKey = formatProgrammeKey(programme) || sanitizeKey(programme);
         const deptKey = sanitizeKey(department);
         const batchKey = sanitizeKey(batch);
-        const snapshot = await getDocs(collection(db, "attendance"));
 
-        // Extract subject code from doc ID
-        const extractSubjectCode = (docId) => {
-          const p = docId.split('_');
-          const batchIdx = p.findIndex(part => /^\d{4}-\d{4}$/.test(part));
-          if (batchIdx >= 0 && batchIdx + 3 < p.length) return p.slice(batchIdx + 3).join('_').replace(/_(Sec-\w+)$/, '');
-          return p.slice(4).join('_');
-        };
+        const batchPrefix = (progKey && deptKey && batchKey) ? `${progKey}_${deptKey}_${batchKey}` : '';
+
+        const [attSnapshot, assignSnap] = await Promise.all([
+          getDocs(collection(db, "attendance")),
+          getDocs(collection(db, "subject_assignments")).catch(() => ({ forEach: () => { } })),
+        ]);
+
+        const facultyUidMap = {};
+        if (assignSnap && assignSnap.forEach) {
+          assignSnap.forEach(d => {
+            if (batchPrefix && !d.id.startsWith(batchPrefix)) return;
+            const data = d.data();
+            Object.entries(data).forEach(([uid, codes]) => {
+              if (uid.startsWith('_') || !Array.isArray(codes)) return;
+              codes.forEach(code => { if (!facultyUidMap[code]) facultyUidMap[code] = uid; });
+            });
+          });
+        }
 
         const rawEntries = [];
-        snapshot.forEach((docSnap) => {
+        attSnapshot.forEach((docSnap) => {
           const id = docSnap.id;
-          if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
           const data = docSnap.data();
           const records = getAttendanceRecords(data);
           if (!Object.keys(records).length) return;
 
+          let docMatchesPrefix = batchPrefix ? id.startsWith(batchPrefix) : false;
+          if (!docMatchesPrefix && batch) {
+            const normB = normKey(batch);
+            const normD = normKey(department);
+            const normId = normKey(id);
+            if (normId.includes(normB) && (!normD || normId.includes(normD) || normD.includes(normId))) {
+              docMatchesPrefix = true;
+            }
+          }
+
+          let hasStudentInDoc = false;
+          Object.values(records).forEach(rec => {
+            if (getStudentValFromRec(rec?.students, studentIds) !== undefined) {
+              hasStudentInDoc = true;
+            }
+          });
+
+          if (!docMatchesPrefix && !hasStudentInDoc) return;
+
           const subjectCode = extractSubjectCode(id);
 
           Object.entries(records).forEach(([key, rec]) => {
-            const rawH = rec?.students?.[regNo];
-            if (rawH === undefined) return;
+            const dateMatch = key.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
+            if (!dateMatch) return;
 
-            const hours = typeof rawH === 'object' && rawH !== null ? (rawH.hours ?? 0) : rawH;
-            const storedStatus = typeof rawH === 'object' && rawH !== null ? rawH.status : undefined;
-            let status = 'A';
-            if (storedStatus) {
-              status = storedStatus;
-            } else {
-              if (hours > 0) status = 'P';
-              else if (hours === -1 || rawH === 'OD' || (typeof rawH === 'object' && rawH?.hours === -1)) status = 'OD';
+            const rawH = getStudentValFromRec(rec?.students, studentIds);
+            const parsedVal = parseStudentAttendanceVal(rawH);
+
+            let status = 'P';
+            if (parsedVal) {
+              status = parsedVal.status;
+            } else if (rec?.students && Object.keys(rec.students).length > 0 && rawH === undefined) {
+              if (hasStudentInDoc) {
+                status = 'P';
+              } else {
+                return;
+              }
+            } else if (rawH === undefined && !docMatchesPrefix) {
+              return;
             }
 
-            rawEntries.push({ recordKey: key, status, subjectCode, docId: id });
+            rawEntries.push({
+              docId: id,
+              subjectCode,
+              recordKey: key,
+              status,
+              isEvent: rec?.isEvent || false
+            });
           });
         });
 
-        // Filter by course enrollment (backward compat with old data)
+        // Filter by course enrollment
         const uniqueEnrolKeys = new Set();
-        const enrolKeyByDoc = {};
+        const enrolKeyMap = {};
         rawEntries.forEach(e => {
-          const p = e.docId.split('_');
-          const batchIdx = p.findIndex(part => /^\d{4}-\d{4}$/.test(part));
-          if (batchIdx < 0 || batchIdx + 3 >= p.length) return;
-          const ayKey = p[batchIdx + 1];
-          const semNum = p[batchIdx + 2];
-          const ek = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
-          enrolKeyByDoc[e.docId] = ek;
-          uniqueEnrolKeys.add(ek);
+          const parts = e.docId.split('_');
+          const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+          if (batchIdx < 0 || batchIdx + 3 >= parts.length) return;
+          const bKey = parts[batchIdx];
+          const ayKey = parts[batchIdx + 1];
+          const semNum = parts[batchIdx + 2];
+          const enrolKey = `${progKey || parts[0]}_${deptKey || parts[1]}_${sanitizeKey(bKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
+          enrolKeyMap[e.docId] = enrolKey;
+          uniqueEnrolKeys.add(enrolKey);
         });
+
         const enrolMap = {};
         await Promise.all([...uniqueEnrolKeys].map(async (ek) => {
           try {
@@ -108,38 +225,85 @@ export default function StudentDashboard() {
             }
           } catch (e) { /* enrollment doc may not exist */ }
         }));
+
         const filteredEntries = rawEntries.filter(e => {
-          const ek = enrolKeyByDoc[e.docId];
-          const enrolledSet = enrolMap[ek];
-          if (!enrolledSet) return true;
-          return enrolledSet.has(regNo);
+          const ek = enrolKeyMap[e.docId];
+          if (ek && enrolMap[ek]) {
+            return studentIds.some(id => enrolMap[ek].has(id) || enrolMap[ek].has(String(id).trim().toLowerCase()));
+          }
+          return Object.keys(facultyUidMap).length === 0 || !!facultyUidMap[e.subjectCode];
         });
 
+        // Dedup by recordKey
         const entriesByRecordKey = {};
-        const subjectPresenceCount = {};
-        filteredEntries.forEach(entry => {
-          if (!entriesByRecordKey[entry.recordKey]) entriesByRecordKey[entry.recordKey] = [];
-          entriesByRecordKey[entry.recordKey].push(entry);
-          if (entry.status === 'P' || entry.status === 'OD') {
-            subjectPresenceCount[entry.subjectCode] = (subjectPresenceCount[entry.subjectCode] || 0) + 1;
-          }
+        filteredEntries.forEach(e => {
+          if (!entriesByRecordKey[e.recordKey]) entriesByRecordKey[e.recordKey] = [];
+          entriesByRecordKey[e.recordKey].push(e);
         });
 
-        let totalPresent = 0, totalClasses = 0;
+        const resolvedEntries = [];
         Object.values(entriesByRecordKey).forEach(group => {
-          totalClasses++;
-          const presentEntries = group.filter(e => e.status === 'P' || e.status === 'OD');
-          if (presentEntries.length > 0) {
-            totalPresent++;
+          if (group.length === 1) {
+            resolvedEntries.push(group[0]);
+          } else if (new Set(group.map(e => e.subjectCode)).size === 1) {
+            const best = group.find(e => e.docId.includes('_Sec-')) || group[0];
+            resolvedEntries.push(best);
+          } else {
+            const enrolledInGroup = group.filter(e => {
+              const ek = enrolKeyMap[e.docId];
+              const enrolledSet = enrolMap[ek];
+              return enrolledSet && studentIds.some(id => enrolledSet.has(id) || enrolledSet.has(String(id).trim().toLowerCase()));
+            });
+            if (enrolledInGroup.length > 0) {
+              enrolledInGroup.forEach(e => resolvedEntries.push(e));
+            } else {
+              const present = group.filter(e => e.status === 'P' || e.status === 'OD');
+              if (present.length > 0) resolvedEntries.push(present[0]);
+              else resolvedEntries.push(group[0]);
+            }
           }
         });
 
-        setAttendancePct(totalClasses > 0 ? (totalPresent / totalClasses) * 100 : null);
-      } catch (err) { console.error(err); }
+        let totalClasses = 0;
+        let attended = 0;
+        let odCount = 0;
+
+        resolvedEntries.forEach(entry => {
+          if (entry.isEvent) return;
+          totalClasses += 1;
+          if (entry.status === 'P') attended += 1;
+          if (entry.status === 'OD') odCount += 1;
+        });
+
+        const nonOdTotal = totalClasses - odCount;
+        const pct = nonOdTotal > 0 ? (attended / nonOdTotal) * 100 : (totalClasses > 0 ? 0 : 0);
+        setAttendancePct(pct);
+      } catch (err) {
+        console.error("[StudentDashboard] fetchAttendance error:", err);
+        setAttendancePct(0);
+      }
       setAttLoading(false);
     };
 
     fetchAttendance();
+  }, [userData]);
+
+  // Resolve the student's current Academic Year + Semester from their batch (mirrors Timetable.jsx)
+  const currentContext = useMemo(() => {
+    if (!userData?.batch) return { academicYear: "", semester: "" };
+    const years = getAcademicYears(userData.batch);
+    if (years.length === 0) return { academicYear: "", semester: "" };
+    const currentYear = new Date().getFullYear();
+    const month = new Date().getMonth();
+    const isOddSem = month >= 6;
+    const activeAy = years.find((y) => {
+      const [start] = y.split('-').map(Number);
+      if (isOddSem) return start === currentYear;
+      return start + 1 === currentYear;
+    }) || years[0];
+    const ayIndex = years.indexOf(activeAy);
+    const semNum = String(ayIndex * 2 + (isOddSem ? 1 : 2));
+    return { academicYear: activeAy, semester: semNum };
   }, [userData]);
 
   const [approvedExamsCount, setApprovedExamsCount] = useState(0);
@@ -148,6 +312,12 @@ export default function StudentDashboard() {
     if (!userData?.batch) return;
     const studentBatch = String(userData.batch).trim();
     const sanitizedStudentBatch = sanitizeKey(studentBatch);
+    const studentProg = userData.programme ? String(userData.programme) : "";
+    const studentDept = userData.department ? String(userData.department) : "";
+    const studentProgNorm = studentProg ? normKey(studentProg) : "";
+    const studentAyNorm = currentContext.academicYear ? normKey(currentContext.academicYear) : "";
+    const studentDeptNorm = studentDept ? normKey(studentDept) : "";
+    const studentSemNorm = currentContext.semester ? normKey(currentContext.semester) : "";
 
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       let count = 0;
@@ -164,18 +334,45 @@ export default function StudentDashboard() {
           docSnap.id.startsWith(sanitizedStudentBatch) ||
           docSnap.id.includes(sanitizedStudentBatch)
         ) {
+          const docAy = String(d.academicYear || "").trim();
+          const docAyNorm = docAy ? normKey(docAy) : "";
+          // Restrict to the student's own academic year (skip docs for other years)
+          if (studentAyNorm && docAyNorm && docAyNorm !== studentAyNorm) return;
+
+          const docSem = String(d.semester || "").trim();
+          const docSemNorm = docSem ? normKey(docSem) : "";
+          // Restrict to the student's current semester (skip docs for other semesters)
+          if (studentSemNorm && docSemNorm && docSemNorm !== studentSemNorm) return;
+
           Object.values(d.assignments).forEach((as) => {
-            if (as && as.examDate && (as.approved === true || as.principalApprovedBy || d.principalApproved === true || d.status === "Approved")) {
+            if (!as || !as.examDate) return;
+            // CRITICAL CHECK: ONLY DISPLAY SCHEDULES APPROVED BY PRINCIPAL!
+            if (as.approved === true || as.principalApprovedBy || d.principalApproved === true || d.status === "Approved") {
+              // Restrict to entries that belong to the student's own department
+              const asDepts = Array.isArray(as.departments) && as.departments.length > 0 ? as.departments : null;
+              if (asDepts && studentDeptNorm) {
+                const deptMatch = asDepts.some((dd) => {
+                  const ddDept = normKey(dd?.dept || dd?.deptKey || dd?.department || "");
+                  const ddProg = normKey(dd?.progKey || dd?.programmeKey || dd?.prog || "");
+                  const deptOk = ddDept === studentDeptNorm || ddDept.includes(studentDeptNorm) || studentDeptNorm.includes(ddDept);
+                  const progOk = !studentProgNorm || !ddProg || ddProg === studentProgNorm || ddProg.includes(studentProgNorm) || studentProgNorm.includes(ddProg);
+                  return deptOk && progOk;
+                });
+                if (!deptMatch) return;
+              }
               count++;
             }
           });
         }
       });
       setApprovedExamsCount(count);
-    }, () => {});
+    }, (err) => {
+      console.error("[StudentDashboard] Error reading approved IA schedules:", err);
+      setApprovedExamsCount(0);
+    });
 
     return () => unsub();
-  }, [userData]);
+  }, [userData, currentContext]);
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">

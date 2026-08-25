@@ -31,6 +31,7 @@ const confetti = (opts) => { };
 import { Room, Student, AllocatedSeat, Department, ExamSchedule, SubjectStrength } from '../../../types';
 import { allocateSeats, AllocationStrategy, downloadCSV, getRoomNetCapacity, findOptimalHalls } from './allocationEngine';
 import { DEPT_SUBJECTS } from './initialData';
+import PrincipalIAScheduleView from '../../PrincipalIAScheduleView';
 
 interface SeatAllocationViewProps {
   rooms: Room[];
@@ -141,14 +142,47 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   // Total student strength for current date & session
   const totalRequiredStrength = sessionStudents.length;
 
+  // Active semesters actually registered for this exam session
+  const activeSemestersDisplay = useMemo(() => {
+    if (!selectedExam) return '';
+    const semSet = new Set<number>();
+    sessionStudents.forEach((s) => {
+      if (s.semester) semSet.add(s.semester);
+    });
+    if (selectedExam.items && Array.isArray(selectedExam.items)) {
+      selectedExam.items.forEach((item) => {
+        if (item.semester) semSet.add(item.semester);
+      });
+    }
+    if (semSet.size === 0) return selectedExam.semesterDisplay || String(selectedExam.semester || 5);
+    const sorted = Array.from(semSet).sort((a, b) => a - b);
+    return sorted.join(', ');
+  }, [selectedExam, sessionStudents]);
+
+  // Subject student strength lookup map for schedule view
+  const studentStrengthMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    subjectStrengthList.forEach((sg) => {
+      const normC = sg.subjectCode.toLowerCase().replace(/[^a-z0-9]/g, '');
+      map[normC] = sg.studentCount;
+    });
+    return map;
+  }, [subjectStrengthList]);
+
+  const [activeCandidateCount, setActiveCandidateCount] = useState<number | null>(null);
+  const [activeSubjectCount, setActiveSubjectCount] = useState<number | null>(null);
+
+  const displayCandidateStrength = activeCandidateCount !== null ? activeCandidateCount : totalRequiredStrength;
+  const displaySubjectCount = activeSubjectCount !== null ? activeSubjectCount : subjectStrengthList.length;
+
   // Selected Hall IDs for this exam session
   const currentSelectedHallIds = useMemo(() => {
     if (selectedExam.selectedHallIds && selectedExam.selectedHallIds.length > 0) {
       return selectedExam.selectedHallIds;
     }
     // Fallback: auto-calculate default optimal halls if none set yet
-    return findOptimalHalls(totalRequiredStrength || 42, activeRooms);
-  }, [selectedExam.selectedHallIds, totalRequiredStrength, activeRooms]);
+    return findOptimalHalls(displayCandidateStrength || 42, activeRooms);
+  }, [selectedExam.selectedHallIds, displayCandidateStrength, activeRooms]);
 
   // Array of actual Room objects currently selected for this exam
   const selectedHalls = useMemo(() => {
@@ -161,7 +195,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   }, [selectedHalls]);
 
   // Capacity Difference (Selected Capacity - Required Strength)
-  const capacityDifference = totalSelectedHallsCapacity - totalRequiredStrength;
+  const capacityDifference = totalSelectedHallsCapacity - displayCandidateStrength;
 
   // Ensure current active room tab points to a valid selected hall
   const currentViewingRoom = useMemo(() => {
@@ -520,226 +554,20 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   return (
     <div className="space-y-6">
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 1: DATE & SESSION SELECTOR + EXAM METADATA
+          SECTION 2: EXAMINATION TIMETABLE & SCHEDULES (SAME AS EXAM SCHEDULES PAGE)
           ───────────────────────────────────────────────────────────── */}
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 1: DATE & SESSION SELECTOR + EXAM METADATA
-          ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl p-5 md:p-6 border border-zinc-200 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
-          <div>
-            <div className="flex items-center space-x-3">
-              <span className="w-9 h-9 bg-blue-50 text-[#120c7a] rounded-xl border border-blue-200 flex items-center justify-center font-bold">
-                <Calendar className="w-5 h-5" />
-              </span>
-              <div>
-                <h2 className="text-lg font-black text-zinc-900">
-                  Exam Date & Subject-Wise Strength Allocation
-                </h2>
-                <p className="text-xs text-zinc-500 font-medium">
-                  Select examination date, review subject candidate strength, and allocate halls dynamically based on capacity demand.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Date & Session Switcher Pills */}
-          <div className="flex items-center flex-wrap gap-2">
-            {exams.map((exam) => {
-              const isSelected = exam.id === selectedExam.id;
-              const countForExam = students.filter(
-                (s) => s.examDate === exam.date && s.session === exam.session
-              ).length;
-
-              return (
-                <button
-                  key={exam.id}
-                  id={`exam-tab-${exam.id}`}
-                  onClick={() => {
-                    onSelectExam(exam);
-                    if (exam.selectedHallIds && exam.selectedHallIds[0]) {
-                      setSelectedRoomId(exam.selectedHallIds[0]);
-                    }
-                  }}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 border cursor-pointer ${isSelected
-                    ? 'bg-[#120c7a] text-white border-[#120c7a] shadow-md'
-                    : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200'
-                    }`}
-                >
-                  <span className="font-mono">{exam.date}</span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-md font-extrabold ${isSelected ? 'bg-white/20 text-white' : 'bg-zinc-200 text-zinc-800'
-                      }`}
-                  >
-                    {exam.session}
-                  </span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-zinc-200 text-zinc-700'
-                      }`}
-                  >
-                    {countForExam} Stud.
-                  </span>
-                </button>
-              );
-            })}
-
-            <button
-              id="add-exam-date-btn"
-              onClick={() => setIsAddExamModalOpen(true)}
-              className="px-3.5 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
-              title="Add another examination date or session"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>New Date</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Selected Exam Information Bar */}
-        <div className="bg-blue-50/70 rounded-xl p-3.5 border border-blue-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="font-black text-zinc-900 text-sm">
-              {selectedExam.name}
-            </span>
-            <span className="text-zinc-400">•</span>
-            <span className="flex items-center space-x-1 text-zinc-700">
-              <Calendar className="w-3.5 h-3.5 text-[#120c7a]" />
-              <strong className="text-zinc-900">{selectedExam.date}</strong>
-            </span>
-            <span className="text-zinc-400">•</span>
-            <span className="flex items-center space-x-1 text-zinc-700">
-              <Clock className="w-3.5 h-3.5 text-[#120c7a]" />
-              <span>Session: <strong className="text-[#120c7a] font-extrabold">{selectedExam.session === 'FN' ? 'Forenoon (FN)' : 'Afternoon (AN)'}</strong> ({selectedExam.timeSlot})</span>
-            </span>
-            <span className="text-zinc-400">•</span>
-            <span className="bg-[#120c7a] text-white font-extrabold px-2.5 py-0.5 rounded-md text-[11px]">
-              Semester{String(selectedExam.semesterDisplay || selectedExam.semester).includes(',') ? 's' : ''} {selectedExam.semesterDisplay || selectedExam.semester}
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <span className="text-zinc-600 font-semibold">Session Demand:</span>
-            <span className="font-extrabold text-sm text-[#120c7a] bg-white px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
-              {totalRequiredStrength} Registered Candidates
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 2: SUBJECT-WISE CANDIDATE STRENGTH BREAKDOWN
-          ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl p-5 md:p-6 border border-zinc-200 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
-          <div className="flex items-center space-x-3">
-            <span className="w-9 h-9 bg-blue-50 text-[#120c7a] rounded-xl border border-blue-200 flex items-center justify-center font-bold">
-              <BookOpen className="w-4 h-4" />
-            </span>
-            <div>
-              <h2 className="text-base font-black text-zinc-900">
-                Date-Wise Subject & Student Strength Roster
-              </h2>
-              <p className="text-xs text-zinc-500 font-medium">
-                Review and customize candidate strength for each subject. Hall capacity will balance against these student numbers.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <button
-              id="add-subject-to-session-btn"
-              onClick={() => {
-                const available = DEPT_SUBJECTS[selectedExam.semester] || DEPT_SUBJECTS[5];
-                const firstDept = (Object.keys(available)[0] as Department) || 'CSE';
-                setNewSubjectDept(firstDept);
-                setNewSubjectCode(available[firstDept]?.code || 'CS8591');
-                setNewSubjectName(available[firstDept]?.name || 'Course Name');
-                setNewSubjectStrength(28);
-                setIsAddSubjectModalOpen(true);
-              }}
-              className="flex items-center space-x-1.5 px-4 py-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white border border-[#120c7a] rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Subject / Branch</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Date-Wise Scheduled Subjects Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                <th className="py-2.5 px-3 rounded-l-xl">Subject Code & Course Title</th>
-                <th className="py-2.5 px-3">Semester</th>
-                <th className="py-2.5 px-3">Candidate Register Prefix / Range</th>
-                <th className="py-2.5 px-3 text-center">Registered Strength</th>
-                <th className="py-2.5 px-3 text-right rounded-r-xl">Quick Adjust / Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {subjectStrengthList.map((item) => (
-                <tr key={`${item.department}_${item.subjectCode}`} className="hover:bg-slate-50/60 transition-colors">
-                  <td className="py-3 px-3">
-                    <div className="font-semibold text-slate-800">
-                      <span className="font-mono text-indigo-600 mr-2 font-bold">{item.subjectCode}</span>
-                      {item.subjectName}
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 text-slate-600 font-medium">
-                    Sem {item.semester} (Yr {item.year})
-                  </td>
-                  <td className="py-3 px-3 font-mono text-slate-700 font-medium text-[11px]">
-                    {item.regNoRange || `${item.regNoPrefix}001 - ${item.regNoPrefix}${item.studentCount.toString().padStart(3, '0')}`}
-                  </td>
-                  <td className="py-3 px-3 text-center">
-                    <span className="inline-flex items-center space-x-1 font-bold text-sm text-slate-900 bg-slate-100 px-3 py-1 rounded-lg">
-                      <Users className="w-3.5 h-3.5 text-slate-500" />
-                      <span>{item.studentCount}</span>
-                      <span className="text-[10px] text-slate-500 font-normal">Students</span>
-                    </span>
-                  </td>
-                  <td className="py-3 px-3 text-right">
-                    <div className="inline-flex items-center space-x-1.5">
-                      <button
-                        id={`strength-minus-${item.department}-${item.subjectCode}`}
-                        onClick={() => handleAdjustSubjectStrength(item.department, item.subjectCode, Math.max(1, item.studentCount - 2))}
-                        className="w-7 h-7 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors"
-                        title="Reduce strength by 2"
-                      >
-                        -2
-                      </button>
-                      <button
-                        id={`strength-plus-${item.department}-${item.subjectCode}`}
-                        onClick={() => handleAdjustSubjectStrength(item.department, item.subjectCode, item.studentCount + 2)}
-                        className="w-7 h-7 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold transition-colors"
-                        title="Increase strength by 2"
-                      >
-                        +2
-                      </button>
-                      <button
-                        id={`remove-sub-${item.department}-${item.subjectCode}`}
-                        onClick={() => handleRemoveSubject(item.department, item.subjectCode)}
-                        className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors ml-2"
-                        title="Remove subject from this session"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-
-              {subjectStrengthList.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-400">
-                    No subjects registered for this date & session. Click "+ Add Subject / Branch" to add candidates.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="bg-white rounded-2xl p-5 md:p-6 border border-zinc-200 shadow-sm">
+        <PrincipalIAScheduleView 
+          showApproveButton={false} 
+          hideApproveButton={true} 
+          hideDetailsCols={true} 
+          hideBatchFilter={true}
+          studentStrengthMap={studentStrengthMap}
+          onTotalCandidatesChange={(count, subjCount) => {
+            setActiveCandidateCount(count);
+            setActiveSubjectCount(subjCount);
+          }}
+        />
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
@@ -756,7 +584,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                 Hall Allocation for Candidate Strength
               </h2>
               <p className="text-xs text-zinc-500 font-medium mt-0.5">
-                Select examination halls to accommodate the <strong>{totalRequiredStrength} candidates</strong> registered for this date & session.
+                Select examination halls to accommodate the <strong>{displayCandidateStrength} candidates</strong> registered for this date & session.
               </p>
             </div>
           </div>
@@ -778,8 +606,8 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-zinc-50 rounded-2xl border border-zinc-200 text-xs">
           <div className="bg-white p-4 rounded-xl border border-zinc-200 shadow-2xs">
             <span className="text-zinc-500 block text-[11px] font-semibold">Total Candidate Strength</span>
-            <span className="text-xl font-black text-zinc-900">{totalRequiredStrength} Candidates</span>
-            <span className="text-[10px] text-zinc-400 font-medium block mt-0.5">{subjectStrengthList.length} Subjects in this session</span>
+            <span className="text-xl font-black text-zinc-900">{displayCandidateStrength} Candidates</span>
+            <span className="text-[10px] text-zinc-400 font-medium block mt-0.5">{displaySubjectCount} Subjects in this session</span>
           </div>
 
           <div className="bg-white p-4 rounded-xl border border-zinc-200 shadow-2xs">
@@ -1149,16 +977,16 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                   >
                                     {seatA.student.department}
                                   </span>
-                                  <span className="text-[9px] font-mono text-slate-500">
-                                    {seatA.student.registerNumber.slice(-4)}
+                                  <span className="text-[9px] font-bold text-blue-700 font-mono">
+                                    {seatA.student.subjectCode}
                                   </span>
                                 </div>
-                                <p className="font-semibold text-slate-800 text-[11px] truncate mt-1">
-                                  {seatA.student.name}
-                                </p>
-                                <span className="text-[9px] text-slate-400 block font-mono">
+                                <span className="font-mono font-black text-[#120c7a] text-xs block truncate mt-1">
                                   {seatA.student.registerNumber}
                                 </span>
+                                <p className="font-medium text-slate-600 text-[10px] truncate mt-0.5">
+                                  {seatA.student.name}
+                                </p>
                               </div>
                             ) : (
                               <div className="p-3 text-center text-[10px] text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
@@ -1192,12 +1020,12 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                         {seatA.student.department}
                                       </span>
                                     </div>
-                                    <p className="font-bold text-slate-800 text-[10px] truncate mt-0.5">
-                                      {seatA.student.name.split(' ')[0]}
-                                    </p>
-                                    <span className="text-[8px] text-slate-500 font-mono block">
-                                      ...{seatA.student.registerNumber.slice(-4)}
+                                    <span className="font-mono font-black text-[#120c7a] text-[10px] block truncate mt-0.5">
+                                      {seatA.student.registerNumber}
                                     </span>
+                                    <p className="font-medium text-slate-600 text-[9px] truncate">
+                                      {seatA.student.name}
+                                    </p>
                                   </div>
                                 ) : (
                                   <div className="p-2 text-center text-[8px] text-slate-300 bg-slate-50 rounded-lg border border-dashed border-slate-200">
@@ -1224,12 +1052,12 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                         {seatB.student.department}
                                       </span>
                                     </div>
-                                    <p className="font-bold text-slate-800 text-[10px] truncate mt-0.5">
-                                      {seatB.student.name.split(' ')[0]}
-                                    </p>
-                                    <span className="text-[8px] text-slate-500 font-mono block">
-                                      ...{seatB.student.registerNumber.slice(-4)}
+                                    <span className="font-mono font-black text-[#120c7a] text-[10px] block truncate mt-0.5">
+                                      {seatB.student.registerNumber}
                                     </span>
+                                    <p className="font-medium text-slate-600 text-[9px] truncate">
+                                      {seatB.student.name}
+                                    </p>
                                   </div>
                                 ) : (
                                   <div className="p-2 text-center text-[8px] text-slate-300 bg-slate-50 rounded-lg border border-dashed border-slate-200">
@@ -1265,8 +1093,11 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                       {seat.student.department}
                                     </span>
                                   </div>
-                                  <p className="font-bold text-slate-800 text-[9px] truncate mt-0.5">
-                                    {seat.student.name.split(' ')[0]}
+                                  <span className="font-mono font-black text-[#120c7a] text-[9px] block truncate tracking-tight mt-0.5" title={`${seat.student.name} (${seat.student.registerNumber})`}>
+                                    {seat.student.registerNumber}
+                                  </span>
+                                  <p className="font-medium text-slate-600 text-[8px] truncate">
+                                    {seat.student.name}
                                   </p>
                                 </div>
                               ) : (

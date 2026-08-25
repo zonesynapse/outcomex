@@ -145,6 +145,7 @@ export default function Attendance() {
   const [students, setStudents] = useState([]);
   const [masterList, setMasterList] = useState({});
   const [sectionIndex, setSectionIndex] = useState({});
+  const [facultyNames, setFacultyNames] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState(null); // { absent: [], od: [], notMarked: [] }
@@ -246,6 +247,7 @@ export default function Attendance() {
   const [searchParams] = useSearchParams();
   const urlSectionRef = useRef('');
   const urlDeptRef = useRef('');
+  const urlSubjRef = useRef('');
 
   useEffect(() => {
     const prog = searchParams.get('prog');
@@ -259,6 +261,7 @@ export default function Attendance() {
     const sec = searchParams.get('section');
     urlSectionRef.current = sec || '';
     urlDeptRef.current = dept || '';
+    urlSubjRef.current = subj || '';
     if (prog) setProgramme(prog);
     if (dept) setDepartment(dept);
     if (bat) setBatch(bat);
@@ -274,7 +277,7 @@ export default function Attendance() {
       setPeriods(prev => [...new Set([...prev, periodVal])]);
     }
     if (subj && prog && dept && bat && ay && sem) {
-      setSubject(JSON.stringify({ code: subj, batch: bat, ay, sem, section: sec || '', dept, progKey: prog }));
+      setSubject(JSON.stringify({ code: subj, batch: bat, ay, sem, section: sec || '', dept: sanitizeKey(dept), progKey: prog }));
     }
   }, []);
 
@@ -358,22 +361,32 @@ export default function Attendance() {
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !programme) return [];
+    const sections = new Set();
+
     const progKey = formatProgrammeKey(programme);
     const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
     const cfg = sectionConfigs[docId];
-    if (!cfg || !cfg.numSections) return [];
-    const count = cfg.numSections;
-    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
-  }, [batch, department, programme, sectionConfigs]);
+    if (cfg && cfg.numSections) {
+      const count = cfg.numSections;
+      const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      for (let i = 0; i < count; i++) sections.add(`Sec-${letters[i]}`);
+    }
 
-  // Re-apply section from URL once sectionConfigs populate the dropdown options
-  // If no section in URL but only 1 section configured, auto-select it
+    (subjectContexts || []).forEach(ctx => {
+      if (ctx.section) sections.add(ctx.section);
+    });
+
+    if (section) sections.add(section);
+
+    return Array.from(sections);
+  }, [batch, department, programme, sectionConfigs, subjectContexts, section]);
+
+  // Re-apply section from URL or auto-select single available section
   useEffect(() => {
     const sec = urlSectionRef.current;
     if (sec && availableSections.length > 0 && availableSections.includes(sec) && section !== sec) {
       setSection(sec);
-    } else if (!sec && availableSections.length === 1 && !section) {
+    } else if (!section && availableSections.length === 1) {
       setSection(availableSections[0]);
     }
   }, [availableSections, programme, department, batch]);
@@ -416,6 +429,21 @@ export default function Attendance() {
     return () => unsub();
   }, []);
 
+  // Listen to users collection for faculty name resolution
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'users'), (snap) => {
+      const map = {};
+      snap.forEach(d => {
+        const u = d.data();
+        map[d.id] = u.facultyName || u.displayName || u.name || u.email || '';
+      });
+      setFacultyNames(map);
+    }, (error) => {
+      console.warn('[Attendance] users listener error:', error);
+    });
+    return () => unsub();
+  }, []);
+
   const dateRangeInfo = useMemo(() => {
     if (!semesterConfigs.length) return { blocked: false, msg: '' };
     const selected = new Date(attendanceDate + 'T00:00:00');
@@ -440,9 +468,11 @@ export default function Attendance() {
   useEffect(() => {
     if (!programme || !department || !currentUid || !userRole) return;
 
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
-    const prefix = `${progKey}_${deptKey}_`;
+    const targetDeptNorm = norm(department);
+    const targetProgNorm = norm(programme);
     const assignmentsRef = collection(db, "subject_assignments");
 
     const unsubscribe = onSnapshot(assignmentsRef, async (snapshot) => {
@@ -450,13 +480,30 @@ export default function Attendance() {
       const batchesToFetchSyllabus = new Set();
 
       snapshot.docs.forEach(doc => {
-        if (!doc.id.startsWith(prefix)) return;
-        const remaining = doc.id.slice(prefix.length);
-        const parts = remaining.split('_');
-        const batch = parts[0];
-        const ay = parts[1];
-        const sem = parts[2];
-        const secSuffix = parts.length > 3 ? parts.slice(3).join('_') : '';
+        const idNorm = norm(doc.id);
+        const matchDept = idNorm.includes(targetDeptNorm) || (deptKey && idNorm.includes(norm(deptKey)));
+        const matchProg = !targetProgNorm || idNorm.includes(targetProgNorm) || (progKey && idNorm.includes(norm(progKey))) || targetProgNorm.includes('ug') || idNorm.includes('ug') || idNorm.includes('be') || idNorm.includes('btech');
+
+        if (!matchDept || !matchProg) return;
+
+        const parts = doc.id.split('_').filter(Boolean);
+        let batch = parts[0];
+        let ay = parts[1];
+        let sem = parts[2];
+        let secSuffix = '';
+
+        const secPart = parts.find(p => /^Sec/i.test(p) || /^Section/i.test(p));
+        if (secPart) {
+          secSuffix = secPart;
+        }
+
+        const numericParts = parts.filter(p => /^\d{4}/.test(p) || /^\d+$/.test(p) || /^Sem/i.test(p));
+        if (numericParts.length >= 3) {
+          batch = numericParts[0];
+          ay = numericParts[1];
+          sem = numericParts[2];
+        }
+
         const data = doc.data();
 
         Object.entries(data).forEach(([uid, codes]) => {
@@ -464,7 +511,7 @@ export default function Attendance() {
           if (Array.isArray(codes)) {
             codes.forEach(code => {
               contexts.push({ code, batch, ay, sem, section: secSuffix, uid, dept: deptKey, progKey });
-              batchesToFetchSyllabus.add(batch);
+              if (batch) batchesToFetchSyllabus.add(batch);
             });
           }
         });
@@ -517,7 +564,8 @@ export default function Attendance() {
             const cName = map ? getCourseName(map, ctx.code, ctx.dept, ctx.progKey) : '';
             uniqueSubjectAssignments.push({
               value: JSON.stringify({ code: ctx.code, batch: ctx.batch, ay: ctx.ay, sem: ctx.sem, section: ctx.section, dept: ctx.dept, progKey: ctx.progKey }),
-              text: cName ? `${ctx.code} - ${cName}${ctx.section ? ` (${ctx.section})` : ''}` : `${ctx.code}${ctx.section ? ` (${ctx.section})` : ''}`
+              text: cName ? `${ctx.code} - ${cName}${ctx.section ? ` (${ctx.section})` : ''}` : `${ctx.code}${ctx.section ? ` (${ctx.section})` : ''}`,
+              code: ctx.code
             });
             seenAssignments.add(assignmentIdentifier);
           }
@@ -525,13 +573,33 @@ export default function Attendance() {
         return uniqueSubjectAssignments;
       };
 
-      // 1. Render IMMEDIATELY in 0ms with subject codes (no waiting!)
-      setSubjects(buildItems(null));
+      const initialItems = buildItems(null);
+      setSubjects(initialItems);
 
-      // 2. Fetch course names in background and enrich labels asynchronously
+      // Auto-select subject from URL searchParams ONCE if provided and available
+      const urlSubj = urlSubjRef.current;
+      if (urlSubj && initialItems.length > 0) {
+        const normSubj = norm(urlSubj);
+        const match = initialItems.find(item => norm(item.code) === normSubj || norm(item.value).includes(normSubj));
+        if (match) {
+          urlSubjRef.current = '';
+          handleSubjectChange(match.value);
+        }
+      }
+
+      // Fetch course names in background and enrich labels asynchronously
       fetchAllCourseNamesMap()
         .then(namesMap => {
-          setSubjects(buildItems(namesMap));
+          const enrichedItems = buildItems(namesMap);
+          setSubjects(enrichedItems);
+          if (urlSubjRef.current && enrichedItems.length > 0) {
+            const normSubj = norm(urlSubjRef.current);
+            const match = enrichedItems.find(item => norm(item.code) === normSubj || norm(item.value).includes(normSubj));
+            if (match) {
+              urlSubjRef.current = '';
+              handleSubjectChange(match.value);
+            }
+          }
         })
         .catch(e => {
           console.warn("[Attendance] Failed to fetch course names map:", e);
@@ -710,11 +778,75 @@ export default function Attendance() {
     const fetchData = async () => {
       try {
         const baseAttendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
-        const attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
+        let attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
+        // Fallback for attendance docId with different progKey/ batch format
+        if (!attendanceSnap.exists()) {
+          try {
+            const allAttSnap = await getDocs(collection(db, 'attendance'));
+            const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const targetCodeNorm = norm(selectedSubjectObj.code);
+            const targetBatchNorm = norm(batch);
+            const targetDeptNorm = norm(department);
+            for (const dSnap of allAttSnap.docs) {
+              const idNorm = norm(dSnap.id);
+              if (idNorm.includes(targetCodeNorm) && idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
+                const dData = dSnap.data() || {};
+                const hasCode = String(dSnap.id).includes(selectedSubjectObj.code);
+                if (hasCode) { attendanceSnap = dSnap; break; }
+              }
+            }
+          } catch (e) { console.warn('[Attendance] attendance fallback scan error:', e); }
+        }
         let studentSnap = await getDoc(doc(db, "students", compositeKey));
         if (!studentSnap.exists() && sectionSuffix) {
           const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
           studentSnap = await getDoc(doc(db, "students", baseKey));
+        }
+        // ── Robust fallback: scan all students docs by _meta if exact keys miss (handles programme UG vs B_E & batch format variants) ──
+        if (!studentSnap.exists()) {
+          try {
+            const allSnap = await getDocs(collection(db, 'students'));
+            const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const batchNorm = (s) => {
+              const str = String(s || '');
+              const m = str.match(/\d{4}\s*-\s*\d{2,4}/);
+              if (m) {
+                let b = m[0].replace(/\s/g, '');
+                // expand 2024-28 -> 2024-2028
+                const parts = b.split('-');
+                if (parts[1] && parts[1].length === 2) b = `${parts[0]}-20${parts[1]}`;
+                return b;
+              }
+              return str.match(/\d{4}-\d{4}/)?.[0] || str;
+            };
+            const targetBatch = batchNorm(batch);
+            const targetDeptNorm = norm(department);
+            const targetSection = String(section || '').trim().toLowerCase();
+            let bestSnap = null;
+            let bestScore = -1;
+            allSnap.forEach(dSnap => {
+              const dData = dSnap.data() || {};
+              const meta = dData._meta || {};
+              const docIdNorm = norm(dSnap.id);
+              const deptMatch = meta.department ? (norm(meta.department) === targetDeptNorm || norm(meta.department).includes(targetDeptNorm) || targetDeptNorm.includes(norm(meta.department))) : docIdNorm.includes(targetDeptNorm);
+              const batchMatch = meta.batch ? batchNorm(meta.batch) === targetBatch : docIdNorm.includes(norm(targetBatch));
+              if (!deptMatch || !batchMatch) return;
+              let score = 0;
+              const metaSec = String(meta.section || '').toLowerCase();
+              if (metaSec === targetSection) score += 10;
+              else if (!targetSection && !metaSec) score += 5;
+              else if (dSnap.id.toLowerCase().includes(targetSection)) score += 3;
+              // prefer docs that actually have students
+              const hasStudents = Object.keys(dData).some(k => !k.startsWith('_'));
+              if (hasStudents) score += 2;
+              if (score > bestScore) { bestScore = score; bestSnap = dSnap; }
+            });
+            if (bestSnap) {
+              studentSnap = { exists: () => true, data: () => bestSnap.data(), id: bestSnap.id };
+            }
+          } catch (e) {
+            console.warn('[Attendance] students fallback scan error:', e);
+          }
         }
 
         const data = attendanceSnap.data() || {};
@@ -762,12 +894,35 @@ export default function Attendance() {
             const baseSecSnap = await getDoc(doc(db, 'student_section_index', baseSecKey));
             if (baseSecSnap.exists()) secIdxData = baseSecSnap.data();
           }
+          // Fallback: if studentSnap was resolved via scan, try its id for section index
+          if (!Object.keys(secIdxData).length && studentSnap?.id && studentSnap.id !== compositeKey) {
+            try {
+              const altSnap = await getDoc(doc(db, 'student_section_index', studentSnap.id));
+              if (altSnap.exists()) secIdxData = altSnap.data();
+            } catch {}
+          }
+          // Final fallback: scan all student_section_index docs by meta-like matching
+          if (!Object.keys(secIdxData).length) {
+            try {
+              const allSecSnap = await getDocs(collection(db, 'student_section_index'));
+              const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              const targetDeptNorm = norm(department);
+              const targetBatchNorm = norm(batch);
+              for (const dSnap of allSecSnap.docs) {
+                const idNorm = norm(dSnap.id);
+                if (idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
+                  const dData = dSnap.data() || {};
+                  if (Object.keys(dData).some(k => !k.startsWith('_'))) { secIdxData = dData; break; }
+                }
+              }
+            } catch {}
+          }
         } catch (e) {
           console.warn('[Attendance] student_section_index load error:', e);
         }
         setSectionIndex(secIdxData);
 
-        // Filter to only enrolled students from course_enrolments
+        // Filter to only enrolled students from course_enrolments — robust fallback
         try {
           let enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}${sectionSuffix}`;
           let enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
@@ -775,18 +930,49 @@ export default function Attendance() {
             const baseEnrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
             enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolDocId));
           }
+          // Fallback: scan all enrolment docs for this subject/batch/dept/section (handles progKey mismatch)
+          if (!enrolSnap.exists()) {
+            try {
+              const allEnrolSnap = await getDocs(collection(db, 'course_enrolments'));
+              const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              const targetCodeNorm = norm(selectedSubjectObj.code);
+              const targetDeptNorm = norm(department);
+              const targetBatchNorm = norm(batch);
+              const targetSecNorm = norm(section);
+              for (const dSnap of allEnrolSnap.docs) {
+                const idNorm = norm(dSnap.id);
+                if (idNorm.includes(targetCodeNorm) && idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
+                  if (targetSecNorm && !idNorm.includes(targetSecNorm)) {
+                    // if section selected but doc is base (no section), still consider as fallback
+                    // keep but prefer section-specific
+                  }
+                  const dData = dSnap.data() || {};
+                  if (Object.keys(dData).some(k => dData[k])) { enrolSnap = dSnap; break; }
+                }
+              }
+            } catch {}
+          }
           if (enrolSnap.exists()) {
             const enrolledData = enrolSnap.data();
-            const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k]));
-            const filtered = { _meta: rawMaster._meta };
-            if (rawMaster._order) filtered._order = rawMaster._order;
-            if (rawMaster._joiningAY) filtered._joiningAY = rawMaster._joiningAY;
-            Object.keys(rawMaster).forEach(k => {
-              if (k !== '_meta' && k !== '_order' && k !== '_joiningAY' && enrolledKeys.has(k)) {
-                filtered[k] = rawMaster[k];
+            const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k] && !k.startsWith('_')));
+            // If enrolment doc exists but has zero enrolled keys, treat as "no enrolment filter" — show all students
+            if (enrolledKeys.size > 0) {
+              const hasAnyMatch = Object.keys(rawMaster).some(k => !k.startsWith('_') && enrolledKeys.has(k));
+              // Only apply filter if at least one student matches; otherwise show all (prevents empty namelist)
+              if (hasAnyMatch) {
+                const filtered = { _meta: rawMaster._meta };
+                if (rawMaster._order) filtered._order = rawMaster._order;
+                if (rawMaster._joiningAY) filtered._joiningAY = rawMaster._joiningAY;
+                Object.keys(rawMaster).forEach(k => {
+                  if (k !== '_meta' && k !== '_order' && k !== '_joiningAY' && enrolledKeys.has(k)) {
+                    filtered[k] = rawMaster[k];
+                  }
+                });
+                // If filtered results in zero students but rawMaster had students, keep rawMaster (backward compatible)
+                const filteredCount = Object.keys(filtered).filter(k => !k.startsWith('_')).length;
+                if (filteredCount > 0) rawMaster = filtered;
               }
-            });
-            rawMaster = filtered;
+            }
           }
         } catch (e) {
           console.warn('Enrollment filter failed, showing all students:', e);

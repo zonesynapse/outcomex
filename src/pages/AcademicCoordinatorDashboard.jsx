@@ -2091,18 +2091,21 @@ export default function AcademicCoordinatorDashboard() {
       return;
     }
     try {
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, {
-        [selectedQP.id]: {
-          status: 'recorrected',
-          forwarded_to: selectedQP.forwarded_by,
-          forwarded_by: null,
-          ac_comments: recorrectComments.trim(),
-          ac_signature_url: null,
-          updated_at: now
-        }
-      }, { merge: true });
+      const updates = {
+        status: 'recorrected',
+        forwarded_to: selectedQP.forwarded_by,
+        forwarded_by: null,
+        ac_comments: recorrectComments.trim(),
+        ac_signature_url: null,
+        updated_at: now
+      };
+      if (selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__'))) {
+        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
+        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
+      }
 
       // Notify the faculty (person below the Academic Coordinator in the chain)
       if (selectedQP.forwarded_by) {
@@ -2168,21 +2171,24 @@ export default function AcademicCoordinatorDashboard() {
         return;
       }
 
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, {
-        [selectedQP.id]: {
-          status: 'forwarded',
-          forwarded_to: hodUid,
-          forwarded_at: now,
-          ac_approved: true,
-          ac_approved_by: currentUid,
-          ac_approved_at: now,
-          ac_signature_url: currentHodSignature,
-          ac_comments: null,
-          updated_at: now
-        }
-      }, { merge: true });
+      const updates = {
+        status: 'forwarded',
+        forwarded_to: hodUid,
+        forwarded_at: now,
+        ac_approved: true,
+        ac_approved_by: currentUid,
+        ac_approved_at: now,
+        ac_signature_url: currentHodSignature,
+        ac_comments: null,
+        updated_at: now
+      };
+      if (selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__'))) {
+        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
+        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
+      }
       showToast("Question paper moved to HOD for review.", "success");
       setShowQPModal(false);
     } catch (error) {

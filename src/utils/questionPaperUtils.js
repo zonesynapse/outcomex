@@ -126,6 +126,28 @@ export const getQuestionPaperHTML = (
     : `<div style="height: 48px; width: 100%;"></div>`;
 
   let html = `
+<style>
+  .qp-preview-container table td table,
+  figure.table table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    margin: 8px 0 !important;
+    border: 1px solid #000 !important;
+  }
+  .qp-preview-container table td table th,
+  .qp-preview-container table td table td,
+  figure.table table th,
+  figure.table table td {
+    border: 1px solid #000 !important;
+    padding: 4px 6px !important;
+    font-size: 11px !important;
+    text-align: center !important;
+  }
+  figure.table {
+    margin: 8px 0 !important;
+    width: 100% !important;
+  }
+</style>
 <div class="qp-preview-container" style="font-family: 'Times New Roman', Times, serif; color: #000; line-height: 1.4;">
 <table cellspacing="0" border="1" style="border-collapse:collapse; font-size:11px; width:100%; border:1.5px solid #000; margin-bottom: 10px;">
   <tbody>
@@ -238,8 +260,35 @@ export const getQuestionPaperHTML = (
         const formatMathText = (qStr) => {
           if (!qStr) return '';
           let str = String(qStr);
-          // Preserve CKEditor line breaks: </p><p> and </div><div> -> <br>
-          str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+
+          if (/<table/i.test(str)) {
+            try {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(`<div>${str}</div>`, 'text/html');
+              const innerTables = doc.querySelectorAll('table');
+              innerTables.forEach(t => {
+                t.setAttribute('border', '1');
+                t.style.borderCollapse = 'collapse';
+                t.style.margin = '8px 0';
+                t.style.width = '100%';
+                t.style.border = '1px solid #000';
+                t.querySelectorAll('th, td').forEach(c => {
+                  c.style.border = '1px solid #000';
+                  c.style.padding = '4px 6px';
+                  c.style.fontSize = '11px';
+                  c.style.textAlign = 'center';
+                });
+              });
+              const rootDiv = doc.body.firstElementChild;
+              if (rootDiv) str = rootDiv.innerHTML;
+            } catch (e) { }
+          } else {
+            str = str.replace(/<\/p>\s*<p[^>]*>(?=\s*(?:<span[^>]*class="[^"]*math[^"]*"[^>]*>|\\\(|\\\[|,|\.|\b(and|or|let|where|find|with|if|then|for|is|are|the|a|an)\b))/gi, ' ');
+            str = str.replace(/(?:<\/span>|\\\)|\\\])\s*<\/p>\s*<p[^>]*>/gi, ' ');
+            str = str.replace(/<\/p>\s*<p[^>]*>/gi, '<br>').replace(/<\/?p[^>]*>/gi, '').replace(/<\/div>\s*<div[^>]*>/gi, '<br>').replace(/<\/?div[^>]*>/gi, '');
+            str = str.replace(/<br\s*\/?>\s*(?=<span[^>]*class="[^"]*math[^"]*"[^>]*>|\\\()/gi, ' ');
+            str = str.replace(/(?:<\/span>|\\\))\s*<br\s*\/?>\s*(?=[a-z0-9,.\)\(])/gi, ' ');
+          }
 
           // 0. Remove any leftover error markers like [Math Processing Error]
           str = str.replace(/\[Math Processing Error\]/gi, '');
@@ -424,12 +473,40 @@ export const getQuestionPaperHTML = (
 
   const listToRender = coveredCos.length > 0 ? coveredCos : effectiveCos;
 
+const extractCleanSubjectTitle = (input) => {
+  if (!input) return '';
+  let str = input;
+  if (typeof str === 'object' && str !== null) {
+    str = str.name || str.title || str.label || str.subjectName || str.code || '';
+  } else if (typeof str === 'string') {
+    str = str.trim();
+    if (str.startsWith('{') && str.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(str);
+        str = parsed.name || parsed.title || parsed.label || parsed.subjectName || parsed.code || '';
+      } catch (e) { }
+    }
+  }
+  str = String(str || '').trim();
+  if (str.includes('-')) {
+    const parts = str.split('-');
+    const codePart = parts[0].trim();
+    const titlePart = parts.slice(1).join('-').trim();
+    if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
+      return titlePart;
+    }
+  }
+  return str;
+};
+
   let coRows = '';
   if (listToRender && listToRender.length > 0) {
+    const subjTitle = extractCleanSubjectTitle(qp?.subject || qp?.subject_name || qp?.subjectTitle);
     coRows = listToRender.map((co) => {
       const coCode = (co.code || co.co_code || co.co || '').toUpperCase();
-      const rawDesc = co.description || co.desc || co.co_description || '';
-      const coDesc = (rawDesc && rawDesc.trim() && rawDesc.trim().toUpperCase() !== coCode) ? rawDesc : '—';
+      const rawDesc = (co.description || co.desc || co.co_description || co.statement || co.details || '').trim();
+      const fallbackDesc = subjTitle ? `Understand and apply concepts of ${subjTitle}` : `Understand and apply course outcome concepts (${coCode})`;
+      const coDesc = (rawDesc && rawDesc.toUpperCase() !== coCode && rawDesc !== '—' && !rawDesc.startsWith('{')) ? rawDesc : fallbackDesc;
       const tick = activeCOs.has(coCode) || (coWeightage[coCode] && coWeightage[coCode] > 0) || co.tick === '✓' ? '✓' : '';
       const w = coWeightage[coCode] || co.weightage || '';
       return `

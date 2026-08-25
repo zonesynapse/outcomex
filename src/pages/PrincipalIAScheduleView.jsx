@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   CheckCircle2, Clock, FileText, Loader2, ShieldCheck, Calendar,
-  FileDown, Printer, X, Download, Eye, Sparkles
+  FileDown, Printer, X, Download, Eye, Sparkles, Users
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -385,9 +385,19 @@ const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
   `;
 };
 
-export default function PrincipalIAScheduleView({ showApproveButton = true, hideApproveButton = false }) {
+export default function PrincipalIAScheduleView({
+  showApproveButton = true,
+  hideApproveButton = false,
+  hideDetailsCols = false,
+  hideBatchFilter = false,
+  filterDate = null,
+  filterSession = null,
+  studentStrengthMap = null,
+  onTotalCandidatesChange = null
+}) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
+  const [courseEnrolmentsMap, setCourseEnrolmentsMap] = useState({});
   const [approvingKey, setApprovingKey] = useState("");
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
   const [logoBase64, setLogoBase64] = useState(null);
@@ -397,6 +407,106 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
   const [previewDeptGroup, setPreviewDeptGroup] = useState(null);
   const [previewSelectedBatch, setPreviewSelectedBatch] = useState("ALL");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [batchStudentsCountMap, setBatchStudentsCountMap] = useState({});
+
+  // Listen to course_enrolments & students collections for exact student strength counts
+  useEffect(() => {
+    const unsubEnrol = onSnapshot(
+      collection(db, "course_enrolments"),
+      (snap) => {
+        const map = {};
+        snap.forEach((doc) => {
+          const data = doc.data() || {};
+          let count = 0;
+          Object.entries(data).forEach(([key, val]) => {
+            if (key.startsWith('_')) return;
+            if (val === true || (val && typeof val === 'object' && val.enrolled !== false)) {
+              count++;
+            }
+          });
+          map[doc.id] = count;
+        });
+        setCourseEnrolmentsMap(map);
+      },
+      (err) => console.warn("Error loading course_enrolments:", err)
+    );
+
+    const unsubStudents = onSnapshot(
+      collection(db, "students"),
+      (snap) => {
+        const counts = {};
+        snap.forEach((doc) => {
+          const data = doc.data() || {};
+          const meta = data._meta || {};
+          const dept = meta.department || data.department || "";
+          const batch = meta.batch || data.batch || "";
+          const sem = meta.semester || data.semester || "";
+
+          let studentCount = 0;
+          Object.keys(data).forEach((k) => {
+            if (!k.startsWith('_')) studentCount++;
+          });
+
+          const normD = String(dept).toLowerCase().replace(/[^a-z0-9]/g, "");
+          const normB = String(batch).toLowerCase().replace(/[^a-z0-9]/g, "");
+          const normS = String(sem).trim();
+
+          if (normD && normB) {
+            counts[`${normD}_${normB}`] = (counts[`${normD}_${normB}`] || 0) + studentCount;
+          }
+          if (normD && normS) {
+            counts[`${normD}_sem${normS}`] = (counts[`${normD}_sem${normS}`] || 0) + studentCount;
+          }
+        });
+        setBatchStudentsCountMap(counts);
+      },
+      (err) => console.warn("Error loading students collection:", err)
+    );
+
+    return () => {
+      unsubEnrol();
+      unsubStudents();
+    };
+  }, []);
+
+  const getSubjectStrength = (code, rawCode, deptLabel, semester, batch) => {
+    const normC = String(code || rawCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normD = String(deptLabel || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normB = String(batch || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normSem = String(semester || "").trim();
+
+    // Priority 1: Match course_enrolments collection doc (CourseEnrolment.jsx)
+    let enrolledCount = null;
+    Object.entries(courseEnrolmentsMap).forEach(([docKey, count]) => {
+      const normKey = docKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normKey.includes(normC)) {
+        if (!normD || normKey.includes(normD) || normD.includes(normKey.substring(0, 8))) {
+          enrolledCount = count;
+        }
+      }
+    });
+
+    if (enrolledCount !== null && enrolledCount > 0) {
+      return enrolledCount;
+    }
+
+    // Priority 2: Check batchStudentsCountMap for exact dept & batch
+    if (normD && normB && batchStudentsCountMap[`${normD}_${normB}`]) {
+      return batchStudentsCountMap[`${normD}_${normB}`];
+    }
+
+    // Priority 3: Check batchStudentsCountMap for dept & semester
+    if (normD && normSem && batchStudentsCountMap[`${normD}_sem${normSem}`]) {
+      return batchStudentsCountMap[`${normD}_sem${normSem}`];
+    }
+
+    // Priority 4: Check studentStrengthMap prop passed from SeatAllocationView
+    if (studentStrengthMap && studentStrengthMap[normC] !== undefined && studentStrengthMap[normC] > 0) {
+      return studentStrengthMap[normC];
+    }
+
+    return enrolledCount || 0;
+  };
 
   // Preload logo on mount
   useEffect(() => {
@@ -817,19 +927,29 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     return `${rawExamName} (${cleanReg})`;
   };
 
-  const getCanonicalCode = (code, name, deptKey) => {
-    if (!name) return code || "";
-    const normName = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (deptKey) {
-      const cleanD = String(deptKey).replace(/[.#$[\]/ ]/g, '_');
-      if (courseBankNameMap[`${cleanD}_${normName}`]) {
-        return courseBankNameMap[`${cleanD}_${normName}`];
+  const getCanonicalCode = (code, name, deptKey, semNum) => {
+    const cleanCode = String(code || "").trim();
+    // If we have an explicit course code (e.g. BM25C06, CS8591, BM3591), use it directly!
+    if (cleanCode && cleanCode !== 'undefined' && cleanCode !== 'null') {
+      return cleanCode;
+    }
+    // Fallback: search syllabus_data (Regulation) for subject name matching this department & semester
+    if (name && allSyllabus.length > 0) {
+      const normN = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const sDoc of allSyllabus) {
+        if (deptKey && sDoc.deptKey && !sDoc.deptKey.toLowerCase().includes(String(deptKey).toLowerCase())) continue;
+        const subsBySem = sDoc.data?.semesters || {};
+        for (const [sKey, rawSubs] of Object.entries(subsBySem)) {
+          if (semNum && String(sKey).trim() !== String(semNum).trim()) continue;
+          const subs = toArray(rawSubs);
+          const found = subs.find(s => s?.name && String(s.name).toLowerCase().replace(/[^a-z0-9]/g, "") === normN);
+          if (found && (found.code || found.subjectCode || found.courseCode)) {
+            return String(found.code || found.subjectCode || found.courseCode).trim();
+          }
+        }
       }
     }
-    if (courseBankNameMap[normName]) {
-      return courseBankNameMap[normName];
-    }
-    return code || "";
+    return cleanCode || name || "";
   };
 
   const isValidBatchSemester = (batch, academicYear, semester) => {
@@ -868,6 +988,52 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     }
   };
 
+  const formatStandardDate = (dStr) => {
+    if (!dStr) return "";
+    let s = String(dStr).trim();
+    if (s.includes('T')) s = s.split('T')[0];
+
+    const isoMatch = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (isoMatch) {
+      const y = isoMatch[1];
+      const m = String(isoMatch[2]).padStart(2, '0');
+      const d = String(isoMatch[3]).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmyMatch) {
+      const d = String(dmyMatch[1]).padStart(2, '0');
+      const m = String(dmyMatch[2]).padStart(2, '0');
+      const y = dmyMatch[3];
+      return `${y}-${m}-${d}`;
+    }
+
+    const months = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+    const monthRegex = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
+    const mMatch = s.match(monthRegex);
+    const yearMatch = s.match(/\b(20\d{2})\b/);
+    const dayMatch = s.match(/\b(0?[1-9]|[12]\d|3[01])\b/);
+
+    if (mMatch && yearMatch && dayMatch) {
+      const m = months[mMatch[1].toLowerCase().substring(0, 3)];
+      const y = yearMatch[1];
+      const d = String(parseInt(dayMatch[1], 10)).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
+
+  const normDateMatch = (d1, d2) => {
+    if (!d1 || !d2) return false;
+    const std1 = formatStandardDate(d1);
+    const std2 = formatStandardDate(d2);
+    if (std1 && std2 && std1 === std2) return true;
+    if (std1 && std2 && (std1.includes(std2) || std2.includes(std1))) return true;
+    return false;
+  };
+
   // Flatten only subjects that have an assigned exam date, grouped by department
   const rows = useMemo(() => {
     const out = [];
@@ -886,6 +1052,8 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
 
       Object.entries(assignments).forEach(([assignKey, as]) => {
         if (!as?.examDate) return; // only subjects with assigned dates
+
+        if (filterDate && !normDateMatch(as.examDate, filterDate)) return;
         const rawCode = String(as.code || assignKey || "").trim();
         const normKey = normCodeKey(rawCode);
 
@@ -900,7 +1068,7 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
           depts = semMapped.length > 0 ? semMapped : allMapped;
         }
 
-        const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept);
+        const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept, sDoc.semester);
 
         let sTime = as.startTime || "";
         let eTime = as.endTime || "";
@@ -928,11 +1096,16 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
         }
         if (!slot && sTime) slot = parseInt(sTime.split(':')[0], 10) < 12 ? 'FN' : 'AN';
 
-        // Fallback: Inherit batch-level timetable session timing if subject timing was left blank
         if (!sTime && !as.timeSlot) {
           sTime = docDefaultSTime || "09:30";
           eTime = docDefaultETime || "11:30";
           slot = docDefaultSlot || "FN";
+        }
+
+        if (filterSession) {
+          const targetS = String(filterSession).toUpperCase().trim();
+          const rowS = String(slot || as.slot || as.session || "").toUpperCase().trim();
+          if (targetS && rowS && targetS !== rowS) return;
         }
 
         if (!sTime && !as.timeSlot) {
@@ -1126,6 +1299,65 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
     }).filter(Boolean);
   }, [rows, selectedBatchFilter]);
 
+  const flatScheduledItems = useMemo(() => {
+    const items = [];
+    filteredRows.forEach(group => {
+      group.items.forEach(r => {
+        items.push({
+          ...r,
+          deptLabel: group.dept
+        });
+      });
+    });
+    return items.sort((a, b) =>
+      a.deptLabel.localeCompare(b.deptLabel) ||
+      (parseInt(a.semester, 10) || 0) - (parseInt(b.semester, 10) || 0) ||
+      a.code.localeCompare(b.code)
+    );
+  }, [filteredRows]);
+
+  const [selectedExamDateFilter, setSelectedExamDateFilter] = useState("ALL");
+
+  const availableExamDates = useMemo(() => {
+    const datesMap = new Map();
+    flatScheduledItems.forEach((r) => {
+      if (!r.examDate) return;
+      const std = formatStandardDate(r.examDate);
+      if (!std) return;
+      const displayLabel = formatDate(r.examDate);
+      if (!datesMap.has(std)) {
+        datesMap.set(std, {
+          stdDate: std,
+          displayLabel: displayLabel || r.examDate,
+          count: 0
+        });
+      }
+      datesMap.get(std).count += 1;
+    });
+    return Array.from(datesMap.values()).sort((a, b) => a.stdDate.localeCompare(b.stdDate));
+  }, [flatScheduledItems]);
+
+  const displayScheduledItems = useMemo(() => {
+    if (selectedExamDateFilter === "ALL") return flatScheduledItems;
+    return flatScheduledItems.filter(r => {
+      if (!r.examDate) return false;
+      return normDateMatch(r.examDate, selectedExamDateFilter);
+    });
+  }, [flatScheduledItems, selectedExamDateFilter]);
+
+  const totalFilterCandidates = useMemo(() => {
+    return displayScheduledItems.reduce((sum, r) => {
+      const strength = getSubjectStrength(r.code, r.rawCode, r.deptLabel, r.semester, r.batch);
+      return sum + (typeof strength === 'number' ? strength : parseInt(strength, 10) || 0);
+    }, 0);
+  }, [displayScheduledItems, courseEnrolmentsMap, batchStudentsCountMap, studentStrengthMap]);
+
+  useEffect(() => {
+    if (typeof onTotalCandidatesChange === 'function') {
+      onTotalCandidatesChange(totalFilterCandidates, displayScheduledItems.length);
+    }
+  }, [totalFilterCandidates, displayScheduledItems.length, onTotalCandidatesChange]);
+
   const totalScheduled = useMemo(() => rows.reduce((sum, g) => sum + g.items.length, 0), [rows]);
   const approvedCount = useMemo(() => {
     return rows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
@@ -1198,23 +1430,25 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-        <div className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-xl p-4 text-white">
-          <p className="text-2xl font-bold">{totalScheduled}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Subjects Scheduled</p>
+      {!hideBatchFilter && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+          <div className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-xl p-4 text-white">
+            <p className="text-2xl font-bold">{totalScheduled}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Subjects Scheduled</p>
+          </div>
+          <div className="bg-gradient-to-br from-emerald-600 to-teal-800 rounded-xl p-4 text-white">
+            <p className="text-2xl font-bold">{approvedCount}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Approved Subjects</p>
+          </div>
+          <div className="bg-gradient-to-br from-amber-500 to-orange-700 rounded-xl p-4 text-white">
+            <p className="text-2xl font-bold">{totalScheduled - approvedCount}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Pending Approval</p>
+          </div>
         </div>
-        <div className="bg-gradient-to-br from-emerald-600 to-teal-800 rounded-xl p-4 text-white">
-          <p className="text-2xl font-bold">{approvedCount}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Approved Subjects</p>
-        </div>
-        <div className="bg-gradient-to-br from-amber-500 to-orange-700 rounded-xl p-4 text-white">
-          <p className="text-2xl font-bold">{totalScheduled - approvedCount}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Pending Approval</p>
-        </div>
-      </div>
+      )}
 
       {/* Batch Filter Bar */}
-      {availableBatches.length > 0 && (
+      {!hideBatchFilter && availableBatches.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-5 p-2 bg-zinc-100/80 rounded-xl border border-zinc-200">
           <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider px-2">Filter Batch:</span>
           <button
@@ -1244,8 +1478,144 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
         </div>
       )}
 
-      {/* Main Scheduled Items Grouped by Department & Batch */}
-      {filteredRows.length === 0 ? (
+      {/* Main Scheduled Items Grouped by Department & Batch OR Single Unified Table */}
+      {hideBatchFilter ? (
+        flatScheduledItems.length === 0 ? (
+          <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-400">
+            <Calendar size={36} className="mx-auto mb-2 opacity-50 text-blue-600" />
+            <p className="text-sm font-semibold text-zinc-700">No subjects scheduled.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Dynamic Exam Date Filter Bar & Total Student Strength Badge */}
+            {availableExamDates.length > 0 && (
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 bg-blue-50/70 rounded-xl border border-blue-200/80 shadow-2xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="flex items-center gap-1.5 text-xs font-black text-[#120c7a] uppercase tracking-wider px-1">
+                    <Calendar size={14} className="text-[#120c7a]" /> Filter by Exam Date:
+                  </span>
+                  <button
+                    onClick={() => setSelectedExamDateFilter("ALL")}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      selectedExamDateFilter === "ALL"
+                        ? "bg-[#120c7a] text-white shadow-md"
+                        : "bg-white text-zinc-700 hover:bg-blue-100/50 border border-zinc-200"
+                    }`}
+                  >
+                    📅 All Dates ({flatScheduledItems.length})
+                  </button>
+                  {availableExamDates.map((d) => {
+                    const isSelected = selectedExamDateFilter === d.stdDate;
+                    return (
+                      <button
+                        key={d.stdDate}
+                        onClick={() => setSelectedExamDateFilter(d.stdDate)}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                          isSelected
+                            ? "bg-[#120c7a] text-white shadow-md"
+                            : "bg-white text-zinc-700 hover:bg-blue-100/50 border border-zinc-200"
+                        }`}
+                      >
+                        <span>📅 {d.displayLabel}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                          isSelected ? "bg-white/20 text-white" : "bg-blue-100 text-blue-800"
+                        }`}>
+                          {d.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Total Student Strength Display */}
+                <div className="flex items-center gap-2 bg-white px-4 py-1.5 rounded-xl border border-blue-200 shadow-2xs self-start md:self-auto shrink-0">
+                  <Users size={18} className="text-[#120c7a] shrink-0" />
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total Strength:</span>
+                  <span className="text-xl font-black text-zinc-900">{totalFilterCandidates} Candidates</span>
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded-xl border border-zinc-200 shadow-sm bg-white">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-100/80 text-[11px] font-bold uppercase tracking-wider text-zinc-600 border-b border-zinc-200">
+                    <th className="px-4 py-3">Department / Branch</th>
+                    <th className="px-4 py-3">Course Code</th>
+                    <th className="px-4 py-3">Course Name</th>
+                    <th className="px-4 py-3">Semester</th>
+                    <th className="px-4 py-3">Exam</th>
+                    <th className="px-4 py-3">Exam Date & Session</th>
+                    <th className="px-4 py-3 text-center">Student Strength</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 bg-white">
+                  {displayScheduledItems.map((r, idx) => {
+                  const strength = getSubjectStrength(r.code, r.rawCode, r.deptLabel, r.semester, r.batch);
+                  return (
+                    <tr key={`${r.docId}_${r.code}_${idx}`} className="hover:bg-blue-50/40 transition-colors">
+                      <td className="px-4 py-3 text-xs font-semibold text-zinc-800">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-100 text-zinc-800 border border-zinc-200 font-bold">
+                          {r.deptLabel}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-sm font-bold text-blue-700">{r.code}</span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-zinc-900 font-medium max-w-[260px]">
+                        {r.name}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center text-xs font-extrabold px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Semester {r.semester}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-600 font-medium">
+                        {r.examName || "-"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-0.5">
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-zinc-800">
+                            <Clock size={13} className="text-emerald-600 shrink-0" />
+                            {formatDate(r.examDate)}
+                          </span>
+                          {r.slot || r.startTime || r.timeSlot ? (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              {r.slot && (
+                                <span className={`inline-flex items-center text-[9px] font-black px-1.5 py-0.5 rounded uppercase border ${
+                                  r.slot === "FN" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-amber-100 text-amber-800 border-amber-200"
+                                }`}>
+                                  {r.slot}
+                                </span>
+                              )}
+                              {r.startTime ? (
+                                <span className="text-[10px] font-bold text-zinc-600">
+                                  {format12Hour(r.startTime)}{r.endTime ? ` - ${format12Hour(r.endTime)}` : ''}
+                                </span>
+                              ) : r.timeSlot ? (
+                                <span className="text-[10px] font-bold text-zinc-600">
+                                  {r.timeSlot}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
+                          <Users size={13} className="text-emerald-600 shrink-0" />
+                          {strength} Candidates
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )
+    ) : filteredRows.length === 0 ? (
         <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-400">
           <Calendar size={36} className="mx-auto mb-2 opacity-50" />
           <p className="text-sm font-semibold">No IA exam schedules found.</p>
@@ -1334,9 +1704,9 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                               <th className="px-4 py-2.5">Course Name</th>
                               <th className="px-4 py-2.5">Exam</th>
                               <th className="px-4 py-2.5">Exam Date</th>
-                              <th className="px-4 py-2.5">QP Setter</th>
-                              <th className="px-4 py-2.5">Submission Window</th>
-                              <th className="px-4 py-2.5 text-center">Status</th>
+                              {!hideDetailsCols && <th className="px-4 py-2.5">QP Setter</th>}
+                              {!hideDetailsCols && <th className="px-4 py-2.5">Submission Window</th>}
+                              {!hideDetailsCols && <th className="px-4 py-2.5 text-center">Status</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-100 bg-white">
@@ -1377,21 +1747,25 @@ export default function PrincipalIAScheduleView({ showApproveButton = true, hide
                                       ) : null}
                                     </div>
                                   </td>
-                                  <td className="px-4 py-2.5 text-sm text-zinc-700">{r.setterName}</td>
-                                  <td className="px-4 py-2.5 text-sm text-zinc-600">
-                                    {r.fromDate ? `${formatDate(r.fromDate)} → ${formatDate(r.toDate)}` : "-"}
-                                  </td>
-                                  <td className="px-4 py-2.5 text-center">
-                                    {approved ? (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2.5 py-1">
-                                        <CheckCircle2 size={12} /> Approved
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-full px-2.5 py-1">
-                                        <Clock size={12} /> Pending
-                                      </span>
-                                    )}
-                                  </td>
+                                  {!hideDetailsCols && <td className="px-4 py-2.5 text-sm text-zinc-700">{r.setterName}</td>}
+                                  {!hideDetailsCols && (
+                                    <td className="px-4 py-2.5 text-sm text-zinc-600">
+                                      {r.fromDate ? `${formatDate(r.fromDate)} → ${formatDate(r.toDate)}` : "-"}
+                                    </td>
+                                  )}
+                                  {!hideDetailsCols && (
+                                    <td className="px-4 py-2.5 text-center">
+                                      {approved ? (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2.5 py-1">
+                                          <CheckCircle2 size={12} /> Approved
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 rounded-full px-2.5 py-1">
+                                          <Clock size={12} /> Pending
+                                        </span>
+                                      )}
+                                    </td>
+                                  )}
                                 </tr>
                               );
                             })}
