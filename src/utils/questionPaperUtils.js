@@ -127,6 +127,9 @@ export const getQuestionPaperHTML = (
 
   let html = `
 <style>
+  .qp-preview-container table { border-collapse: collapse !important; }
+  .qp-preview-container table th,
+  .qp-preview-container table td { border: 1px solid #000 !important; }
   .qp-preview-container table td table,
   figure.table table {
     border-collapse: collapse !important;
@@ -140,7 +143,7 @@ export const getQuestionPaperHTML = (
   figure.table table td {
     border: 1px solid #000 !important;
     padding: 4px 6px !important;
-    font-size: 11px !important;
+    font-size: 12px !important;
     text-align: center !important;
   }
   figure.table {
@@ -158,34 +161,34 @@ export const getQuestionPaperHTML = (
 </table>
 <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #000;" border="1">
   <tr>
-    <td style="padding: 6px;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : qp.assessment_type === 'Practical' ? 'Practical' : qp.assessment_type === 'Indirect' ? 'Indirect Assessment' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
-    <td colspan="3" style="padding: 6px;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
-    <td style="padding: 6px;"><strong>Academic Year</strong></td>
-    <td style="padding: 6px;">${qp.academic_year}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : qp.assessment_type === 'Practical' ? 'Practical' : qp.assessment_type === 'Indirect' ? 'Indirect Assessment' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
+    <td colspan="3" style="padding: 6px; border: 1px solid #000;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Academic Year</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.academic_year}</td>
   </tr>
   <tr>
-    <td style="padding: 6px;"><strong>Course Code / Title</strong></td>
-    <td colspan="5" style="padding: 6px;">${subjectDisplay}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Course Code / Title</strong></td>
+    <td colspan="5" style="padding: 6px; border: 1px solid #000;">${subjectDisplay}</td>
   </tr>
   <tr>
-    <td style="padding: 6px;"><strong>Year / Semester</strong></td>
-    <td style="padding: 6px;">${yearSemester}</td>
-    <td style="padding: 6px;"><strong>Department</strong></td>
-    <td style="padding: 6px;">${qp.department}</td>
-    <td style="padding: 6px;"><strong>Common for</strong></td>
-    <td style="padding: 6px;">${qp.common_for || qp.commonFor || 'NIL'}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Year / Semester</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${yearSemester}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Department</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.department}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Common for</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.common_for || qp.commonFor || 'NIL'}</td>
   </tr>
   <tr>
-    <td style="padding: 6px;"><strong>Max Mark</strong></td>
-    <td style="padding: 6px;">${qp.total_marks}</td>
-    <td style="padding: 6px;"><strong>Duration</strong></td>
-    <td style="padding: 6px;">${qp.duration || calculateDuration(qp.start_time, qp.end_time, qp.time_slot || qp.timeSlot) || '180 min'}</td>
-    <td style="padding: 6px;"><strong>Date</strong></td>
-    <td style="padding: 6px;">${qp.exam_date_display || formatExamDateDisplay(qp.exam_date) || (qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '')}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Max Mark</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.total_marks}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Duration</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.duration || calculateDuration(qp.start_time, qp.end_time, qp.time_slot || qp.timeSlot) || '180 min'}</td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Date</strong></td>
+    <td style="padding: 6px; border: 1px solid #000;">${qp.exam_date_display || formatExamDateDisplay(qp.exam_date) || (qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '')}</td>
   </tr>
   <tr>
-    <td style="padding: 6px;"><strong>Reg. No.</strong></td>
-    <td colspan="5" style="padding: 6px;"></td>
+    <td style="padding: 6px; border: 1px solid #000;"><strong>Reg. No.</strong></td>
+    <td colspan="5" style="padding: 6px; border: 1px solid #000;"></td>
   </tr>
 </table>
   `;
@@ -195,12 +198,12 @@ export const getQuestionPaperHTML = (
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; text-align: left; font-size: 12px;">
   <thead>
     <tr>
-      <th style="width: 8%; text-align: center; padding: 4px;">Q. No.</th>
-      <th style="width: 52%; text-align: center; padding: 4px;">Question(s)</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">KL</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">CO</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">PI</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">Marks</th>
+      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000;">Q. No.</th>
+      <th style="width: 52%; text-align: center; padding: 4px; border: 1px solid #000;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">PI</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">Marks</th>
     </tr>
   </thead>
   <tbody>`;
@@ -210,12 +213,12 @@ export const getQuestionPaperHTML = (
         const allPIs = (q.mappings || []).map(m => (m.pis || []).map((pi, i) => `${pi}${m.piMarks && m.piMarks[i] != null ? ` (${m.piMarks[i]})` : ''}`).join(', ')).join(', ');
         html += `
           <tr>
-            <td style="text-align: center; padding: 8px;">${idx + 1}</td>
-            <td style="padding: 8px;">${q.question || ''}</td>
-            <td contenteditable="true" style="text-align: center; padding: 4px;">${qp.assignment_kl || ''}</td>
-            <td contenteditable="true" style="text-align: center; padding: 4px;">${allCOs}</td>
-            <td contenteditable="true" style="text-align: center; padding: 4px;">${allPIs}</td>
-            <td style="text-align: center; padding: 4px;">${q.marks}</td>
+            <td style="text-align: center; padding: 8px; border: 1px solid #000;">${idx + 1}</td>
+            <td style="padding: 8px; border: 1px solid #000;">${q.question || ''}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${qp.assignment_kl || ''}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${allCOs}</td>
+            <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${allPIs}</td>
+            <td style="text-align: center; padding: 4px; border: 1px solid #000;">${q.marks}</td>
           </tr>
         `;
       });
@@ -234,20 +237,20 @@ export const getQuestionPaperHTML = (
 </span>`;
 
       html += `
-<table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1.5px solid black; margin-top: 15px;">
+<table class="part-header" style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1.5px solid black; margin-top: 15px; break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;">
   <tr>
     <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
     <td style="width: 50%; padding: 6px; border: none; text-align: right;">${totalMarks} Marks</td>
   </tr>
 </table>
-<table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 12px; border: 1px solid #000;">
+<table class="part-questions" border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 12px; border: 1.5px solid #000; break-before: avoid; page-break-before: avoid;">
   <thead>
     <tr>
-      <th style="width: 8%; text-align: center; padding: 4px;">Q. No.</th>
-      <th style="width: 62%; text-align: center; padding: 4px;">Question(s)</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">KL</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">CO</th>
-      <th style="width: 10%; text-align: center; padding: 4px;">PI</th>
+      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000;">Q. No.</th>
+      <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #000;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">PI</th>
     </tr>
   </thead>
   <tbody>`;
@@ -322,36 +325,36 @@ export const getQuestionPaperHTML = (
               const nextQ = filteredQuestions[qIdx + 1];
               html += `
                 <tr>
-                  <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                  <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;">${q.qno}</td>
+                  <td style="padding: 4px; border: 1px solid #000;">${formatMathText(q.question || '')}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.kl || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.co || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.pi || ''}</td>
                 </tr>
                 <tr>
-                  <td style="text-align: center; padding: 4px;"></td>
-                  <td style="text-align: center; padding: 4px;"><strong>(Or)</strong></td>
-                  <td style="text-align: center; padding: 4px;"></td>
-                  <td style="text-align: center; padding: 4px;"></td>
-                  <td style="text-align: center; padding: 4px;"></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"><strong>(Or)</strong></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 </tr>
                 <tr>
-                  <td style="text-align: center; padding: 4px;">${nextQ?.qno || ""}</td>
-                  <td style="padding: 4px;">${formatMathText(nextQ?.question || "")}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.kl || ''}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.co || ''}</td>
-                  <td contenteditable="true" style="text-align: center; padding: 4px;">${nextQ?.pi || ''}</td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.qno || ""}</td>
+                  <td style="padding: 4px; border: 1px solid #000;">${formatMathText(nextQ?.question || "")}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.kl || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.co || ''}</td>
+                  <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.pi || ''}</td>
                 </tr>
               `;
             }
           } else {
             html += `
               <tr>
-                <td style="text-align: center; padding: 4px;">${q.qno}</td>
-                <td style="padding: 4px;">${formatMathText(q.question || '')}</td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.kl || ''}</td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.co || ''}</td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;">${q.pi || ''}</td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;">${q.qno}</td>
+                <td style="padding: 4px; border: 1px solid #000;">${formatMathText(q.question || '')}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.kl || ''}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.co || ''}</td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.pi || ''}</td>
               </tr>
             `;
           }
@@ -363,34 +366,34 @@ export const getQuestionPaperHTML = (
           if (part.isEitherOr) {
             html += `
               <tr>
-                <td style="text-align: center; padding: 4px;">${questionCounter}(a)</td>
-                <td style="padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;">${questionCounter}(a)</td>
+                <td style="padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>
               <tr>
-                <td style="text-align: center; padding: 4px;"></td>
-                <td style="text-align: center; padding: 4px;"><strong>(Or)</strong></td>
-                <td style="text-align: center; padding: 4px;"></td>
-                <td style="text-align: center; padding: 4px;"></td>
-                <td style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;"><strong>(Or)</strong></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>
               <tr>
-                <td style="text-align: center; padding: 4px;">${questionCounter}(b)</td>
-                <td style="padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;">${questionCounter}(b)</td>
+                <td style="padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>`;
           } else {
             html += `
               <tr>
-                <td style="text-align: center; padding: 4px;">${questionCounter}</td>
-                <td style="padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
-                <td contenteditable="true" style="text-align: center; padding: 4px;"></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;">${questionCounter}</td>
+                <td style="padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
+                <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>`;
           }
           questionCounter++;

@@ -252,6 +252,7 @@ export default function Attendance() {
   const urlSectionRef = useRef('');
   const urlDeptRef = useRef('');
   const urlSubjRef = useRef('');
+  const urlPeriodRef = useRef('');
 
   useEffect(() => {
     const prog = searchParams.get('prog');
@@ -266,6 +267,7 @@ export default function Attendance() {
     urlSectionRef.current = sec || '';
     urlDeptRef.current = dept || '';
     urlSubjRef.current = subj || '';
+    urlPeriodRef.current = periodVal || '';
     if (prog) setProgramme(prog);
     if (dept) setDepartment(dept);
     if (bat) setBatch(bat);
@@ -583,7 +585,7 @@ export default function Attendance() {
         const match = initialItems.find(item => norm(item.code) === normSubj || norm(item.value).includes(normSubj));
         if (match) {
           urlSubjRef.current = '';
-          handleSubjectChange(match.value);
+          handleSubjectChange(match.value, true);
         }
       }
 
@@ -597,7 +599,7 @@ export default function Attendance() {
             const match = enrichedItems.find(item => norm(item.code) === normSubj || norm(item.value).includes(normSubj));
             if (match) {
               urlSubjRef.current = '';
-              handleSubjectChange(match.value);
+              handleSubjectChange(match.value, true);
             }
           }
         })
@@ -611,7 +613,7 @@ export default function Attendance() {
     return () => unsubscribe();
   }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay, semesterConfigs, isElevatedRole]);
 
-  const handleSubjectChange = (val) => {
+  const handleSubjectChange = (val, keepPeriods = false) => {
     if (!val) {
       setSubject("");
       setBatch("");
@@ -632,7 +634,7 @@ export default function Attendance() {
     setAcademicYear(selectedCtx.ay);
     setSemester(`${getOrdinal(parseInt(selectedCtx.sem))} Semester`);
     setSection(selectedCtx.section || "");
-    setPeriods([]);
+    if (!keepPeriods) setPeriods([]);
     setIsEventAttendance(false);
     setEventName("");
   };
@@ -1704,8 +1706,8 @@ export default function Attendance() {
                 </div>
                 {periods.length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {periods.map(p => {
-                      const periodInfo = availablePeriodsWithTiming.find(pi => pi.value === p);
+                    {periods.filter(Boolean).map(p => {
+                      const periodInfo = availablePeriodsWithTiming.find(pi => pi.value === String(p).replace(/[^0-9]/g, '') || pi.value === p);
                       return (
                         <span key={p} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[10px] font-bold text-blue-700">
                           {periodInfo ? periodInfo.label : `Period ${p}`}

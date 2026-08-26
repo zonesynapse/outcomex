@@ -81,7 +81,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
   // Selected Hall for grid inspection
   const [selectedRoomId, setSelectedRoomId] = useState<string>(() => {
-    return selectedExam.selectedHallIds?.[0] || rooms[0]?.id || '';
+    return selectedExam?.selectedHallIds?.[0] || rooms[0]?.id || '';
   });
 
   // Swap mode state
@@ -93,10 +93,11 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
   // Current session's students
   const sessionStudents = useMemo(() => {
+    if (!selectedExam) return [];
     return students.filter(
       (s) => s.examDate === selectedExam.date && s.session === selectedExam.session
     );
-  }, [students, selectedExam.date, selectedExam.session]);
+  }, [students, selectedExam?.date, selectedExam?.session]);
 
   // Derive subject-wise student strength for this date & session
   const subjectStrengthList: SubjectStrength[] = useMemo(() => {
@@ -177,12 +178,13 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
   // Selected Hall IDs for this exam session
   const currentSelectedHallIds = useMemo(() => {
+    if (!selectedExam) return [];
     if (selectedExam.selectedHallIds && selectedExam.selectedHallIds.length > 0) {
       return selectedExam.selectedHallIds;
     }
     // Fallback: auto-calculate default optimal halls if none set yet
     return findOptimalHalls(displayCandidateStrength || 42, activeRooms);
-  }, [selectedExam.selectedHallIds, displayCandidateStrength, activeRooms]);
+  }, [selectedExam?.selectedHallIds, displayCandidateStrength, activeRooms]);
 
   // Array of actual Room objects currently selected for this exam
   const selectedHalls = useMemo(() => {
@@ -209,13 +211,14 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
   // Seats allocated for the current exam session and current viewing hall
   const currentViewingHallSeats = useMemo(() => {
+    if (!selectedExam) return [];
     return allocatedSeats.filter(
       (s) =>
         s.roomId === currentViewingRoom?.id &&
         s.student.examDate === selectedExam.date &&
         s.student.session === selectedExam.session
     );
-  }, [allocatedSeats, currentViewingRoom?.id, selectedExam.date, selectedExam.session]);
+  }, [allocatedSeats, currentViewingRoom?.id, selectedExam?.date, selectedExam?.session]);
 
   // Filtered seats for searching in the active hall
   const filteredHallSeats = useMemo(() => {
@@ -870,7 +873,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Total {currentViewingHallSeats.length} students allocated for {selectedExam.date} ({selectedExam.session}).
+                Total {currentViewingHallSeats.length} students allocated for {selectedExam?.date} ({selectedExam?.session}).
               </p>
             </div>
 

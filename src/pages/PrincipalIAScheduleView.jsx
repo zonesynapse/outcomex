@@ -390,10 +390,12 @@ export default function PrincipalIAScheduleView({
   hideApproveButton = false,
   hideDetailsCols = false,
   hideBatchFilter = false,
+  hideApproved = false,
   filterDate = null,
   filterSession = null,
   studentStrengthMap = null,
-  onTotalCandidatesChange = null
+  onTotalCandidatesChange = null,
+  onPendingCountChange = null
 }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
@@ -1039,6 +1041,7 @@ export default function PrincipalIAScheduleView({
     const out = [];
     scheduleDocs.forEach(sDoc => {
       if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
+      if (hideApproved && (sDoc.principalApproved === true || sDoc.status === "Approved")) return;
       const assignments = sDoc.assignments || {};
       // Find batch-level default timing from any subject in the schedule document that has timing configured
       let docDefaultSTime = "";
@@ -1362,6 +1365,19 @@ export default function PrincipalIAScheduleView({
   const approvedCount = useMemo(() => {
     return rows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
   }, [rows]);
+
+  const pendingCount = useMemo(() => rows.reduce((sum, g) => sum + g.items.filter(i => !i.approved).length, 0), [rows]);
+  const allApproved = rows.length === 0 || pendingCount === 0;
+
+  useEffect(() => {
+    if (typeof onPendingCountChange === 'function') {
+      onPendingCountChange(allApproved ? 0 : totalScheduled);
+    }
+  }, [allApproved, totalScheduled, onPendingCountChange]);
+
+  if (hideApproved && allApproved) {
+    return null;
+  }
 
   const handleApproveDept = async (items) => {
     if (!items || items.length === 0) return;

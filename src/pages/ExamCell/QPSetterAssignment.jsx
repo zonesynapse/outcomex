@@ -4,15 +4,14 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, getDoc, onSnapshot, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import {
   PenLine, ArrowLeft, Loader2, Save, Users2, Layers, CalendarRange,
-  CheckCircle2, AlertTriangle, Search, X, Landmark, UserCheck, BookOpen, RefreshCw
+  CheckCircle2, AlertTriangle, Search, X, Landmark, UserCheck, BookOpen, RefreshCw, FileText, Clock
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
 import { useDepartments } from "../../hooks/useDepartments";
 import { useRegulations } from "../../hooks/useRegulations";
 import { useBatches } from "../../hooks/useBatches";
-import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey } from "../../lib/utils";
-import { sanitizeKey } from "../../lib/utils";
+import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, parseSubjectField } from "../../lib/utils";
 
 const normClean = (s) => String(s || "").replace(/[._\s\-/]/g, "").toLowerCase();
 const normCodeKey = (code) => String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -44,6 +43,7 @@ export default function QPSetterAssignment() {
   const [allAssignments, setAllAssignments] = useState([]);
   const [courseBankMap, setCourseBankMap] = useState({});
 
+  const [generatedQPs, setGeneratedQPs] = useState([]);
   const [selectedProgramme, setSelectedProgramme] = useState("");
 
   useEffect(() => {
@@ -343,17 +343,6 @@ export default function QPSetterAssignment() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [usersMap]);
 
-  const filteredRows = useMemo(() => {
-    if (!searchQuery.trim()) return rows;
-    const q = searchQuery.trim().toLowerCase();
-    return rows.filter(r =>
-      r.code.toLowerCase().includes(q) ||
-      r.name.toLowerCase().includes(q) ||
-      r.departments.some(d => d.dept.toLowerCase().includes(q)) ||
-      r.handlers.some(h => h.label.toLowerCase().includes(q))
-    );
-  }, [rows, searchQuery]);
-
   const getAssignmentForCode = useCallback((code, assignObj) => {
     if (!code || !assignObj) return {};
     if (assignObj[code]) return assignObj[code];
@@ -371,6 +360,81 @@ export default function QPSetterAssignment() {
     }
     return {};
   }, []);
+
+  const filteredRows = useMemo(() => {
+    const assigned = rows.filter(r => {
+      const a = getAssignmentForCode(r.code, assignments);
+      return a.setterUid && a.examDate;
+    });
+    if (!searchQuery.trim()) return assigned;
+    const q = searchQuery.trim().toLowerCase();
+    return assigned.filter(r =>
+      r.code.toLowerCase().includes(q) ||
+      r.name.toLowerCase().includes(q) ||
+      r.departments.some(d => d.dept.toLowerCase().includes(q)) ||
+      r.handlers.some(h => h.label.toLowerCase().includes(q))
+    );
+  }, [rows, searchQuery, assignments, getAssignmentForCode]);
+
+  const qpStatusMap = useMemo(() => {
+    const map = {};
+    const normAY = academicYear ? normClean(academicYear) : "";
+    const normBatch = batch ? normClean(batch) : "";
+
+    rows.forEach(r => {
+      map[r.code] = { total: 0, atHod: 0, atExamCell: 0, draft: 0, published: 0, recorrected: 0, codes: [] };
+    });
+
+    generatedQPs.forEach(qp => {
+      let qpCodes = [];
+
+      const parsed = parseSubjectField(qp.subject);
+      if (parsed.code) qpCodes.push(normCodeKey(parsed.code));
+
+      const rawSubjCode = qp.subject_code || qp.code || "";
+      if (rawSubjCode) {
+        const cleanCode = String(rawSubjCode).split("-")[0].split("–")[0].trim();
+        const nk = normCodeKey(cleanCode);
+        if (nk && !qpCodes.includes(nk)) qpCodes.push(nk);
+      }
+
+      const ck = String(qp.compositeKey || qp.id || "");
+      const ckParts = ck.split("_");
+      for (let i = ckParts.length - 1; i >= 0; i--) {
+        const part = ckParts[i];
+        if (/^[A-Z]/.test(part) && part.length >= 3 && part.length <= 12) {
+          const nk = normCodeKey(part);
+          if (nk && !qpCodes.includes(nk)) qpCodes.push(nk);
+          break;
+        }
+      }
+
+      if (qpCodes.length === 0) return;
+
+      const qpBatch = normClean(qp.batch || "");
+      const qpAY = normClean(qp.academic_year || "");
+      const batchMatch = !normBatch || !qpBatch || qpBatch.includes(normBatch) || normBatch.includes(qpBatch);
+      const ayMatch = !normAY || !qpAY || qpAY.includes(normAY) || normAY.includes(qpAY);
+      if (!batchMatch || !ayMatch) return;
+
+      const matchedRow = rows.find(r => {
+        const rnk = normCodeKey(r.code);
+        return qpCodes.some(qc => qc === rnk || qc.includes(rnk) || rnk.includes(qc));
+      });
+      if (!matchedRow) return;
+
+      const s = String(qp.status || "draft").toLowerCase().trim();
+      const entry = map[matchedRow.code];
+      entry.total++;
+      if (s === "approved_by_hod") entry.atExamCell++;
+      else if (s === "forwarded") entry.atHod++;
+      else if (s === "approved_by_coe") entry.published++;
+      else if (s === "draft") entry.draft++;
+      else if (s === "recorrected" || s === "revoked" || s === "rejected") entry.recorrected++;
+    });
+
+    return map;
+  }, [generatedQPs, rows, batch, academicYear]);
 
   const saveDocKey = useMemo(() => {
     if (!batch || !academicYear || !semester) return "";
@@ -426,6 +490,27 @@ export default function QPSetterAssignment() {
     }, (err) => console.warn("QPSetterAssignment qp_setter_assignments listener:", err));
     return () => unsub();
   }, [batch, academicYear, semester]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "generated_qps"), (snap) => {
+      const list = [];
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const isFlat = !!(data.subject || data.subject_code || data.parts || data.assignment_config || data.qpaper_name);
+        if (isFlat) {
+          list.push({ ...data, id: d.id, compositeKey: d.id });
+        } else {
+          Object.entries(data).forEach(([id, qp]) => {
+            if (qp && typeof qp === "object" && (qp.subject || qp.parts || qp.assignment_config || qp.qpaper_name)) {
+              list.push({ ...qp, id, compositeKey: d.id });
+            }
+          });
+        }
+      });
+      setGeneratedQPs(list);
+    }, (err) => console.warn("QPSetterAssignment generated_qps listener:", err));
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!rows.length) return;
@@ -623,6 +708,13 @@ export default function QPSetterAssignment() {
   const commonRows = filteredRows.filter(r => r.departments.length > 1);
   const deptRows = filteredRows.filter(r => r.departments.length === 1);
 
+  const readyCount = useMemo(() => {
+    return filteredRows.filter(r => {
+      const a = getAssignmentForCode(r.code, assignments);
+      return a.setterUid && a.examDate && a.numSets > 0 && (a.fromDate || a.toDate);
+    }).length;
+  }, [filteredRows, assignments, getAssignmentForCode]);
+
   const renderRow = (r) => {
     const row = getAssignmentForCode(r.code, assignments);
     const isCommon = r.departments.length > 1;
@@ -711,6 +803,56 @@ export default function QPSetterAssignment() {
               className="px-2 py-2 rounded-lg border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-700 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all w-[135px]"
             />
           </div>
+        </td>
+        <td className="py-3 px-3">
+          {(() => {
+            const qs = qpStatusMap[r.code] || { total: 0, atHod: 0, atExamCell: 0, draft: 0, published: 0, recorrected: 0 };
+            if (qs.total === 0) {
+              return (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 bg-zinc-50 rounded-lg px-2 py-1">
+                  <X size={11} /> Not Taken
+                </span>
+              );
+            }
+            const requiredSets = getAssignmentForCode(r.code, assignments)?.numSets || 1;
+            const allPublished = qs.published >= requiredSets && qs.atHod === 0 && qs.atExamCell === 0 && qs.draft === 0 && qs.recorrected === 0;
+            if (allPublished) {
+              return (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 rounded-lg px-2 py-1">
+                  <CheckCircle2 size={11} /> Published ({qs.published}/{requiredSets})
+                </span>
+              );
+            }
+            return (
+              <div className="flex flex-col gap-0.5">
+                {qs.atExamCell > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50 rounded-lg px-2 py-1">
+                    <FileText size={11} /> {qs.atExamCell} at Exam Cell
+                  </span>
+                )}
+                {qs.atHod > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-600 bg-violet-50 rounded-lg px-2 py-1">
+                    <Clock size={11} /> {qs.atHod} with HOD
+                  </span>
+                )}
+                {qs.recorrected > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-500 bg-rose-50 rounded-lg px-2 py-1">
+                    <AlertTriangle size={11} /> {qs.recorrected} Recorrected
+                  </span>
+                )}
+                {qs.draft > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 rounded-lg px-2 py-1">
+                    <AlertTriangle size={11} /> {qs.draft} Draft
+                  </span>
+                )}
+                {qs.published > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 rounded-lg px-2 py-1">
+                    <CheckCircle2 size={11} /> {qs.published} Published
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </td>
         <td className="py-3 px-3">
           {row.setterUid ? (
@@ -844,11 +986,11 @@ export default function QPSetterAssignment() {
             <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center"><BookOpen size={15} /></div>
-                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Subjects</p>
+                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Scheduled Subjects</p>
               </div>
-              <p className="text-2xl font-black text-zinc-900 mt-2">{rows.length}</p>
+              <p className="text-2xl font-black text-zinc-900 mt-2">{filteredRows.length}</p>
               <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">
-                {commonRows.length} common · {deptRows.length} department-specific
+                with setter + exam date assigned · {rows.length} total in semester
               </p>
             </div>
             <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4">
@@ -861,19 +1003,19 @@ export default function QPSetterAssignment() {
             </div>
             <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><CheckCircle2 size={15} /></div>
-                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Subjects Ready</p>
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><CheckCircle2 size={15} /></div>
+                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Ready to Generate</p>
               </div>
-              <p className="text-2xl font-black text-zinc-900 mt-2">{unsavedCount}</p>
-              <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">with a chosen setter</p>
+              <p className="text-2xl font-black text-zinc-900 mt-2">{readyCount}</p>
+              <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">setter + window set</p>
             </div>
             <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm p-4">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><CalendarRange size={15} /></div>
-                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Submission Window</p>
+                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><CalendarRange size={15} /></div>
+                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">Needs Window</p>
               </div>
-              <p className="text-2xl font-black text-zinc-900 mt-2">Sem {semester}</p>
-              <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">Batch {batch} · {academicYear}</p>
+              <p className="text-2xl font-black text-zinc-900 mt-2">{filteredRows.length - readyCount}</p>
+              <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">setter only, no dates</p>
             </div>
           </div>
         )}
@@ -897,7 +1039,7 @@ export default function QPSetterAssignment() {
           ) : (
             <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden mb-6">
               <div className="max-h-[60vh] overflow-auto">
-                <table className="w-full text-left border-collapse text-xs min-w-[1100px]">
+                <table className="w-full text-left border-collapse text-xs min-w-[1250px]">
                   <thead>
                     <tr className="bg-gradient-to-r from-[#120c7a] to-indigo-800 text-white text-[10px] font-black uppercase tracking-wider">
                       <th className="py-3 px-3">Department</th>
@@ -907,6 +1049,7 @@ export default function QPSetterAssignment() {
                       <th className="py-3 px-3">QP Setter (Assign)</th>
                       <th className="py-3 px-3">Sets</th>
                       <th className="py-3 px-3">Submission Window</th>
+                      <th className="py-3 px-3">QP Status</th>
                       <th className="py-3 px-3">Status</th>
                     </tr>
                   </thead>

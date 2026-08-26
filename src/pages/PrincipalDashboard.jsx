@@ -90,6 +90,8 @@ export default function PrincipalDashboard() {
   const [showCircularReturn, setShowCircularReturn] = useState(false);
   const [circularActioning, setCircularActioning] = useState(false);
 
+  const [pendingIACount, setPendingIACount] = useState(-1);
+
   useEffect(() => {
     const q = query(
       collection(db, "monthly_reports"),
@@ -1362,6 +1364,7 @@ export default function PrincipalDashboard() {
           </div>
 
           {/* QP Setter Assignment & Department-Wise IA Schedule */}
+          {pendingIACount !== 0 && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
@@ -1373,9 +1376,10 @@ export default function PrincipalDashboard() {
               </p>
             </div>
             <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-              <PrincipalIAScheduleView />
+              <PrincipalIAScheduleView hideApproved={true} onPendingCountChange={setPendingIACount} />
             </div>
           </div>
+          )}
 
           {/* Module Overview */}
           <div>

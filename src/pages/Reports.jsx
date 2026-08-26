@@ -15,7 +15,6 @@ import {
   Eye,
   Download,
   FileText,
-  Edit2,
   Users,
   FileX,
   AlertCircle
@@ -23,7 +22,9 @@ import {
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay } from "../lib/utils";
+import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay, parseSubjectField } from "../lib/utils";
+import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
+import { typesetMath } from "../utils/mathJaxUtils";
 
 import Layout from "../components/Layout";
 
@@ -43,6 +44,41 @@ const deriveSemesterNumber = (semStr) => {
   if (romanToNum[semStr]) return romanToNum[semStr];
   const match = semStr.match(/\d+/);
   return match ? parseInt(match[0]) : null;
+};
+
+const getQpSubjectCode = (qp) => {
+  if (!qp) return '';
+  const raw = qp.subject;
+  if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && obj.code) return String(obj.code).trim();
+    } catch {}
+  }
+  const parsed = parseSubjectField(raw);
+  if (parsed.code) return parsed.code;
+  return String(raw || '').trim();
+};
+
+const getQpSubjectName = (qp) => {
+  if (!qp) return '';
+  const raw = qp.subject;
+  if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && obj.name) return String(obj.name).trim();
+    } catch {}
+  }
+  const parsed = parseSubjectField(raw);
+  if (parsed.name) return parsed.name;
+  return qp.subject_name || '';
+};
+
+const getQpSubjectDisplay = (qp) => {
+  const code = getQpSubjectCode(qp);
+  const name = getQpSubjectName(qp);
+  if (code && name) return `${code} - ${name}`;
+  return code || name || '';
 };
 
 export default function Reports() {
@@ -79,6 +115,8 @@ export default function Reports() {
   const [loadingQPs, setLoadingQPs] = useState(false);
   const [selectedQP, setSelectedQP] = useState(null);
   const [showQPModal, setShowQPModal] = useState(false);
+  const [modalCourseOutcomes, setModalCourseOutcomes] = useState([]);
+  const [facultySignatureForQP, setFacultySignatureForQP] = useState('');
   const [showLogTemplateModal, setShowLogTemplateModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -743,12 +781,15 @@ export default function Reports() {
 
     let filtered = questionPapers;
     if (userAssignments.length > 0) {
-      filtered = filtered.filter(qp => userAssignments.includes(qp.subject));
+      filtered = filtered.filter(qp => {
+        const code = getQpSubjectCode(qp);
+        return userAssignments.includes(code) || userAssignments.includes(qp.subject);
+      });
     }
     if (field === 'academic_year') filtered = filtered.filter(qp => !batch || qp.batch === batch);
     if (field === 'semester') filtered = filtered.filter(qp => (!batch || qp.batch === batch) && (!academicYear || qp.academic_year === academicYear));
     if (field === 'subject') filtered = filtered.filter(qp => (!batch || qp.batch === batch) && (!academicYear || qp.academic_year === academicYear) && (!semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester))));
-    if (field === 'exam') filtered = filtered.filter(qp => (!batch || qp.batch === batch) && (!academicYear || qp.academic_year === academicYear) && (!semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester))) && (!selectedSubject || `${qp.subject} - ${qp.subject_name}` === selectedSubject));
+    if (field === 'exam') filtered = filtered.filter(qp => (!batch || qp.batch === batch) && (!academicYear || qp.academic_year === academicYear) && (!semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester))) && (!selectedSubject || getQpSubjectDisplay(qp) === selectedSubject));
 
     const options = [...new Set(filtered.map(qp => {
       if (field === 'semester') {
@@ -757,7 +798,7 @@ export default function Reports() {
         const suffix = suffixes[parseInt(num)] || "th";
         return `${num}${suffix} Semester`;
       }
-      if (field === 'subject') return `${qp.subject} - ${qp.subject_name}`;
+      if (field === 'subject') return getQpSubjectDisplay(qp);
       if (field === 'exam') {
         // Use exam_name if available, otherwise look up from ciaConfigs using qpaper_name as config ID
         if (qp.exam_name) return qp.exam_name;
@@ -856,276 +897,184 @@ export default function Reports() {
     return labels[String(semNum)] || "";
   };
 
-  const renderQuestionPaper = (qp) => {
+  const renderQuestionPaper = useCallback((qp) => {
     if (!qp) return "";
+    return getQuestionPaperHTML(qp, modalCourseOutcomes, facultySignatureForQP, '', ciaConfigs, null, '', '');
+  }, [modalCourseOutcomes, facultySignatureForQP, ciaConfigs]);
 
-    const yearSemester = `${getYearLabel(qp.semester)} / ${getSemesterLabel(qp.semester)}`;
-    // Get exam name from exam_name field, or look it up from cia_configs using the config ID
-    let examDisplay = qp.exam_name;
-    if (!examDisplay) {
-      const configId = qp.qpaper_name;
-      examDisplay = ciaConfigs[configId]?.examName || configId;
-    }
-    const subjectDisplay = `${qp.subject} - ${qp.subject_name}`;
+  useEffect(() => {
+    if (!showQPModal || !selectedQP) return;
+    const fetchQPDetails = async () => {
+      const savedCos = selectedQP.course_outcomes || selectedQP.courseOutcomes;
+      if (Array.isArray(savedCos) && savedCos.length > 0) setModalCourseOutcomes(savedCos);
 
-    let html = `
-<div style="font-family: Arial, sans-serif; font-size: 11px; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background: white;">
-  <!-- Logo + College Info -->
-  <div style="text-align: center; margin-bottom: 15px;">
-    <img alt="logo" src="https://i.postimg.cc/QdgcKs7s/ckcet-logo.png" style="width: 100%; height: auto; display: block;" />
-  </div>
-  
-  <table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #333;" border="1">
-    <tr>
-      <td style="padding: 4px;"><strong>${qp.assessment_type === 'Project' ? 'Project Evaluation' : 'Internal Assessment Test'}</strong></td>
-      <td colspan="3" style="padding: 4px;">${examDisplay}</td>
-      <td style="padding: 4px;"><strong>Academic Year</strong></td>
-      <td style="padding: 4px;">${qp.academic_year}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Subject Code / Subject Title</strong></td>
-      <td colspan="5" style="padding: 4px;">${subjectDisplay}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Year / Semester</strong></td>
-      <td style="padding: 4px;">${yearSemester}</td>
-      <td style="padding: 4px;"><strong>Department</strong></td>
-      <td style="padding: 4px;">${qp.department}</td>
-      <td style="padding: 4px;"><strong>Common to</strong></td>
-      <td style="padding: 4px;">-</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Max. Marks</strong></td>
-      <td style="padding: 4px;">${qp.total_marks}</td>
-      <td style="padding: 4px;"><strong>Duration</strong></td>
-      <td style="padding: 4px;">180 min</td>
-      <td style="padding: 4px;"><strong>Date</strong></td>
-      <td style="padding: 4px;">${new Date(qp.saved_at).toLocaleDateString()}</td>
-    </tr>
-    <tr>
-      <td style="padding: 4px;"><strong>Register No.</strong></td>
-      <td colspan="5" style="padding: 4px;"></td>
-    </tr>
-  </table>
+      const sanitizeKeyStrict = (k) => k ? String(k).replace(/[.#$[\]/ ]/g, '_') : '';
+      const progKey = formatProgrammeKey(selectedQP.programme);
+      const regulation = getRegulationForBatch(progKey, selectedQP.batch);
+      if (regulation) {
+        const parsedSubj = parseSubjectField(selectedQP.subject);
+        const subjCode = parsedSubj.code || selectedQP.subject || '';
+        const deptKey = sanitizeKey(selectedQP.department);
+        const regKey = sanitizeKey(regulation);
+        const subjKey = sanitizeKey(subjCode);
+        const ayKey = sanitizeKey(selectedQP.academic_year);
+        let fetchedCOs = [];
 
-  <div style="margin-top: 20px;">
-    ${(qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' || qp.assessment_type === 'Indirect') && (qp.assignment_config && qp.assignment_config.length > 0) ? `
-      <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
-        <thead>
-          <tr style="background: #f9f9f9;">
-            <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #333;">Q. No.</th>
-            <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #333;">Question(s)</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">Marks</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">CO</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">KL</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${(qp.assignment_config || []).map((q, idx) => `
-            <tr>
-              <td style="text-align: center; padding: 4px; border: 1px solid #333;">Q${idx + 1}</td>
-              <td style="padding: 4px; border: 1px solid #333;">${q.question || ''}</td>
-              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.marks || ''}</td>
-              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${(q.mappings || []).map(m => m.co).filter(Boolean).join(', ')}</td>
-              <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl || ''}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    ` : (qp.parts || []).map(part => `
-      <table style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1px solid black; margin-top: 15px;">
-        <tr>
-          <td style="width: 50%; padding: 6px; border: none;">Part ${part.part} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
-          <td style="width: 50%; padding: 6px; border: none; text-align: right;">
-            ${part.num_questions} &times; ${part.marks_per_question} = <strong>${part.num_questions * part.marks_per_question}</strong> Marks
-          </td>
-        </tr>
-      </table>
-      <table border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 11px;">
-        <thead>
-          <tr style="background: #f9f9f9;">
-            <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #333;">Q. No.</th>
-            <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #333;">Question(s)</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">KL</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">CO</th>
-            <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #333;">PI</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${part.questions.map((q, qIdx) => {
-      if (q.either_or) {
-        if (q.sub === 'a') {
-          const nextQ = part.questions[qIdx + 1];
-          return `
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
-                    <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
-                  </tr>
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"><strong>(Or)</strong></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;"></td>
-                  </tr>
-                  <tr>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.qno || ""}</td>
-                    <td style="padding: 4px; border: 1px solid #333;">${nextQ?.question || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.kl || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.co || ""}</td>
-                    <td style="text-align: center; padding: 4px; border: 1px solid #333;">${nextQ?.pi || ""}</td>
-                  </tr>
-                `;
+        try {
+          const coDocId = `${deptKey}_${regKey}_${subjKey}_${ayKey}`;
+          const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId));
+          if (coSnap.exists()) {
+            const data = coSnap.data();
+            fetchedCOs = Object.entries(data)
+              .filter(([k]) => k.toUpperCase().startsWith('CO'))
+              .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
+              .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+          }
+        } catch (e) { /* ignore */ }
+
+        if (fetchedCOs.length === 0) {
+          const altKeys = [`${deptKey}_${regKey}_${subjKey}`, `${regKey}_${subjKey}`, `${subjKey}`];
+          for (const key of altKeys) {
+            try {
+              const altSnap = await getDoc(doc(db, 'course_outcomes', key));
+              if (altSnap.exists()) {
+                const altData = altSnap.data();
+                const altCOs = Object.entries(altData)
+                  .filter(([k]) => k.toUpperCase().startsWith('CO'))
+                  .map(([code, val]) => ({ code: code.toUpperCase(), description: typeof val === 'object' && val !== null ? val.description : val }))
+                  .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+                if (altCOs.length > 0) { fetchedCOs = altCOs; break; }
+              }
+            } catch (_) { /* skip */ }
+          }
         }
-        return "";
-      } else {
-        return `
-                <tr>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.qno}</td>
-                  <td style="padding: 4px; border: 1px solid #333;">${q.question}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.kl}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.co}</td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #333;">${q.pi}</td>
-                </tr>
-              `;
-      }
-    }).join('')}
-        </tbody>
-      </table>
-    `).join('')}
-  </div>
 
-  <div style="margin-top: 30px;">
-    <h3 style="font-size: 14px; margin-bottom: 10px;">Details of Course Outcomes</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 10px;">
-      <thead>
-        <tr style="background: #f9f9f9;">
-          <th style="padding: 4px; border: 1px solid #333;">Outcome Code</th>
-          <th style="padding: 4px; border: 1px solid #333;">Description</th>
-          <th style="padding: 4px; border: 1px solid #333;">Tick Covered COs</th>
-          <th style="padding: 4px; border: 1px solid #333;">Weightage</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${(() => {
-        const activeCOs = new Set();
-        const coWeightage = {};
-        const getBaseQno = (qno) => {
-          let raw = String(qno || '').trim().toLowerCase().replace(/\s+/g, '');
-          raw = raw.replace(/\(?[ab]\)/gi, '');
-          return raw.replace(/^(\d+)[ab](.*)$/i, '$1$2');
-        };
-        if (qp.co_weightage && Object.keys(qp.co_weightage).length > 0) {
-          Object.entries(qp.co_weightage).forEach(([coKey, wVal]) => {
-            if (coKey && coKey.toUpperCase().startsWith('CO') && Number(wVal) > 0) {
-              activeCOs.add(coKey);
-              coWeightage[coKey] = Number(wVal);
-            }
+        const hasPlaceholder = fetchedCOs.length > 0 && fetchedCOs.every(co => !co.description || co.description.toUpperCase() === co.code.toUpperCase());
+        if (hasPlaceholder || fetchedCOs.length === 0) {
+          const fbDeptStrict = sanitizeKeyStrict(selectedQP.department);
+          const fbSubjStrict = sanitizeKeyStrict(subjCode);
+          const fbRegStrict = sanitizeKeyStrict(regulation);
+          const courseKeyCandidates = [
+            `${progKey}_${fbDeptStrict}_${fbRegStrict}_${fbSubjStrict}`,
+            `${progKey}_${deptKey}_${regKey}_${subjKey}`,
+            `${progKey}_Overall_${fbRegStrict}_${fbSubjStrict}`,
+          ];
+          for (const key of courseKeyCandidates) {
+            try {
+              const cSnap = await getDoc(doc(db, 'courses', key));
+              if (cSnap.exists()) {
+                const bd = cSnap.data();
+                if (bd.co && Array.isArray(bd.co)) {
+                  fetchedCOs = bd.co.map(c => ({ code: c.id, description: c.description || '' }))
+                    .sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.code || '').replace(/\D/g, ''), 10) || 0));
+                  break;
+                }
+              }
+            } catch (_) { /* skip */ }
+          }
+        }
+
+        if (fetchedCOs.length > 0) {
+          const fetchedHasRealDescs = fetchedCOs.some(co => {
+            const d = (co.description || '').trim();
+            return d && d.toUpperCase() !== co.code.toUpperCase();
           });
+          if (fetchedHasRealDescs) setModalCourseOutcomes(fetchedCOs);
         }
+      }
+      if (selectedQP.forwarded_by) {
+        try {
+          const snap = await getDoc(doc(db, 'users', selectedQP.forwarded_by));
+          if (snap.exists()) setFacultySignatureForQP(snap.data().signatureUrl || '');
+        } catch (e) { /* ignore */ }
+      }
+    };
+    fetchQPDetails();
+  }, [showQPModal, selectedQP, getRegulationForBatch]);
 
-        if (activeCOs.size === 0) {
-          if (qp.assignment_config && qp.assignment_config.length > 0) {
-            (qp.assignment_config || []).forEach((q) => {
-              (q.mappings || []).forEach(m => {
-                const co = String(m?.co || '').trim();
-                if (!co || !co.toUpperCase().startsWith('CO')) return;
-                const mapMarks = parseInt(m?.marks, 10) || 0;
-                activeCOs.add(co);
-                coWeightage[co] = (coWeightage[co] || 0) + mapMarks;
-              });
-            });
-          }
-          if (activeCOs.size === 0) {
-            const groups = {};
-            (qp.parts || []).forEach((part) => {
-              (part?.questions || []).forEach((q) => {
-                const co = String(q?.co || '').trim();
-                const marks = parseInt(q?.marks, 10) || 0;
-                if (!co || !co.toUpperCase().startsWith('CO') || marks <= 0) return;
-                const base = getBaseQno(q?.qno);
-                if (!base) return;
-                activeCOs.add(co);
-                if (!groups[base]) groups[base] = { marks, cos: new Set() };
-                if (marks > 0) groups[base].marks = marks;
-                groups[base].cos.add(co);
-              });
-            });
-            Object.values(groups).forEach((group) => {
-              group.cos.forEach((co) => {
-                coWeightage[co] = (coWeightage[co] || 0) + group.marks;
-              });
-            });
-          }
-        }
-        const sorted = Array.from(activeCOs).sort((a, b) => {
-          const na = parseInt(a.replace(/\D/g, ''), 10) || 0;
-          const nb = parseInt(b.replace(/\D/g, ''), 10) || 0;
-          return na - nb;
-        });
-        if (sorted.length > 0) {
-          return sorted.map(co => {
-            const w = coWeightage[co] || '';
-            return `<tr><td style="padding: 4px; border: 1px solid #333;">${co}</td><td style="padding: 4px; border: 1px solid #333;"></td><td style="text-align: center; padding: 4px; border: 1px solid #333;">✓</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">${w || ''}</td></tr>`;
-          }).join('');
-        }
-        return '<tr><td style="padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;">-</td><td style="text-align: center; padding: 4px; border: 1px solid #333;">-</td><td style="padding: 4px; border: 1px solid #333;"></td></tr>';
-      })()}
-      </tbody>
-    </table>
-  </div>
+  useEffect(() => {
+    if (!showQPModal || !selectedQP) return;
+    const container = document.querySelector('.qp-print-wrapper');
+    typesetMath(container);
+  }, [showQPModal, selectedQP, modalCourseOutcomes]);
 
-  <table style="width: 100%; border-collapse: collapse; margin-top: 40px;">
-    <tr>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Signature of HoD</td>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Academic Coordinator</td>
-      <td style="text-align: center; border: none; padding: 20px 10px;">Principal</td>
-    </tr>
-  </table>
-</div>
-    `;
-    return html;
-  };
-
-  const handleDownloadQP = (qp) => {
+  const handleDownloadQP = async (qp) => {
     try {
       const content = renderQuestionPaper(qp);
-      const wordHTML = `
-<html xmlns:o='urn:schemas-microsoft-com:office:office'
-      xmlns:w='urn:schemas-microsoft-com:office:word'
-      xmlns='http://www.w3.org/TR/REC-html40'>
-<head>
-    <meta charset='utf-8'>
-    <title>Question Paper</title>
-    <style>
-        @page { size: A4; margin: 0.75in; }
-        body { font-family: Arial, sans-serif; font-size: 11px; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
-        th, td { border: 1px solid #333; padding: 4px; text-align: center; }
-        th { background-color: #f2f2f2; }
-    </style>
-</head>
-<body>
-    ${content}
-</body>
-</html>`;
+      const printWindow = window.open('', '_blank', 'width=900,height=1200');
+      if (!printWindow) { showToast('Please allow popups to download PDF.', 'error'); return; }
 
-      const blob = new Blob(['\ufeff', wordHTML], { type: 'application/msword' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${qp.qpaper_name}_${qp.subject}.doc`;
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        if (link.parentNode) link.parentNode.removeChild(link);
-      }, 1000);
+      const contentNoInnerStyle = content.replace(/<style[\s\S]*?<\/style>/gi, '');
+
+      printWindow.document.write(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>${qp.qpaper_name || 'Question Paper'}</title>
+<style>
+  /* Senior QP exact: EVERY page needs top gap - @page alone is trimmed by Chrome, so content clone padding repeats on each page fragment */
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 14mm 12mm;
+  }
+  *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  html,body{margin:0!important;padding:0!important;font-family:'Times New Roman',Times,serif;font-size:12pt;color:#000;background:#fff!important;line-height:1.4}
+  .page-shell{width:100%;max-width:186mm;margin:0 auto}
+  table{border-collapse:collapse;width:100%}
+  td,th{border:1px solid #000!important;padding:5px 6px;font-family:'Times New Roman',Times,serif;font-size:12pt;vertical-align:top}
+  img{max-width:100%;height:auto}
+  .logo-img{height:58px!important;width:auto!important;max-width:100%!important;display:block;margin:0 auto;object-fit:contain}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
+  tr{page-break-inside:avoid;break-inside:avoid}
+  .outcomes-summary-section{page-break-inside:avoid}
+  /* keep Part header together with at least 1 question — prevents orphan Part B header alone at page bottom */
+  .part-header{break-after:avoid!important;page-break-after:avoid!important;break-inside:avoid!important;page-break-inside:avoid!important}
+  .part-questions{break-before:avoid!important;page-break-before:avoid!important}
+  .part-questions tbody tr:first-child{break-after:avoid!important;page-break-after:avoid!important}
+  .part-questions{orphans:2;widows:2}
+  .qp-preview-container{font-family:'Times New Roman',Times,serif;color:#000;line-height:1.4;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+  .qp-preview-container table{border-collapse:collapse!important;width:100%!important}
+  .qp-preview-container table th,.qp-preview-container table td{border:1px solid #000!important;font-size:12pt!important}
+  .print-bar{position:fixed;top:0;left:0;right:0;background:#202124;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:9999;font-family:system-ui,-apple-system,sans-serif;font-size:13px}
+  .print-bar button{background:#1a73e8;color:#fff;border:none;padding:8px 18px;border-radius:4px;cursor:pointer;font-weight:600}
+  @media screen{
+    html,body{background:#525659!important}
+    .paper-frame{background:#fff;width:210mm;min-height:297mm;margin:52px auto 24px;box-shadow:0 6px 28px rgba(0,0,0,.45);overflow:hidden;padding:0}
+    .page-shell{padding:16mm 12mm 14mm 12mm}
+  }
+  @media print{
+    html,body{background:#fff!important;width:auto!important;margin:0!important;padding:0!important}
+    .paper-frame{box-shadow:none!important;margin:0!important;width:auto!important;min-height:auto!important;background:#fff!important;padding:0!important}
+    .page-shell{padding:0!important;margin:0 auto!important}
+    /* clone padding repeats top gap on EVERY page fragment (senior QP style) */
+    .qp-preview-container{padding-top:8mm!important;box-decoration-break:clone!important;-webkit-box-decoration-break:clone!important}
+    .print-bar{display:none!important}
+  }
+</style>
+<script>
+window.MathJax={
+  tex:{inlineMath:[['\\\\(','\\\\)']],displayMath:[['\\\\[','\\\\]']]},
+  svg:{fontCache:'global'},
+  startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{setTimeout(()=>{window.focus();window.print()},800)})}
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+</head><body>
+<div class="print-bar no-print">
+  <span>Question Paper — A4 Portrait &bull; 14mm top/bottom, 12mm left/right margins on every page</span>
+  <button onclick="window.print()">Print / Save as PDF</button>
+</div>
+<div class="paper-frame">
+  <div class="page-shell">
+    ${contentNoInnerStyle}
+  </div>
+</div>
+<script>
+  setTimeout(()=>{if(!window.MathJax||!window.MathJax.typesetPromise){window.focus();window.print()}},2000);
+</script>
+</body></html>`);
+      printWindow.document.close();
     } catch (err) {
-      console.error('Word export failed:', err);
+      console.error('PDF export failed:', err);
+      showToast('PDF export failed. Please try again.', 'error');
     }
   };
 
@@ -3185,11 +3134,15 @@ export default function Reports() {
               ) : (
                 (() => {
                   const filteredQPs = questionPapers
-                    .filter(qp => userAssignments.length === 0 || userAssignments.includes(qp.subject))
+                    .filter(qp => {
+                      if (userAssignments.length === 0) return true;
+                      const code = getQpSubjectCode(qp);
+                      return userAssignments.includes(code) || userAssignments.includes(qp.subject);
+                    })
                     .filter(qp => !batch || qp.batch === batch)
                     .filter(qp => !academicYear || qp.academic_year === academicYear)
                     .filter(qp => !semester || getSemesterLabel(qp.semester) === getSemesterLabel(deriveSemesterNumber(semester)))
-                    .filter(qp => !selectedSubject || `${qp.subject} - ${qp.subject_name}` === selectedSubject)
+                    .filter(qp => !selectedSubject || getQpSubjectDisplay(qp) === selectedSubject)
                     .filter(qp => {
                       if (!selectedExam) return true;
                       // Get the exam name for this QP
@@ -3237,8 +3190,8 @@ export default function Reports() {
                               </td>
                               <td className="p-4">
                                 <div className="flex flex-col">
-                                  <span className="text-sm font-bold text-zinc-800">{qp.subject}</span>
-                                  <span className="text-xs text-zinc-500 truncate max-w-[200px]">{qp.subject_name}</span>
+                                  <span className="text-sm font-bold text-zinc-800">{getQpSubjectCode(qp)}</span>
+                                  <span className="text-xs text-zinc-500 truncate max-w-[200px]">{getQpSubjectName(qp)}</span>
                                 </div>
                               </td>
                               <td className="p-4">
@@ -3265,16 +3218,9 @@ export default function Reports() {
                                   <button
                                     onClick={() => handleDownloadQP(qp)}
                                     className="p-2 text-green-500 hover:bg-green-100 rounded-xl transition-all"
-                                    title="Download as Word"
+                                    title="Download as PDF"
                                   >
                                     <Download size={18} />
-                                  </button>
-                                  <button
-                                    onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}`)}
-                                    className="p-2 text-amber-500 hover:bg-amber-100 rounded-xl transition-all"
-                                    title="Continue Editing"
-                                  >
-                                    <Edit2 size={18} />
                                   </button>
                                 </div>
                               </td>
@@ -3541,43 +3487,51 @@ export default function Reports() {
 
         {/* Question Paper View Modal */}
         {showQPModal && selectedQP && (
-          <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="fixed inset-0 bg-black/60 z-[180] flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-3xl w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
-              <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center shrink-0">
+              <div className="bg-white px-6 py-4 border-b border-zinc-200 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="bg-blue-100 p-2 rounded-xl text-blue-600">
+                  <div className="bg-[#120c7a]/10 p-2.5 rounded-xl text-[#120c7a]">
                     <FileText size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-zinc-800 leading-tight">
+                    <h3 className="font-bold text-zinc-900 leading-tight">
                       {(() => {
                         if (selectedQP.exam_name) return selectedQP.exam_name;
                         const configId = selectedQP.qpaper_name;
                         return ciaConfigs[configId]?.examName || configId;
                       })()}
                     </h3>
-                    <p className="text-xs text-zinc-500">{selectedQP.subject} • {selectedQP.subject_name}</p>
+                    <p className="text-xs text-zinc-500">{getQpSubjectDisplay(selectedQP)} • {getQpSubjectName(selectedQP)}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleDownloadQP(selectedQP)}
                     className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm"
                   >
                     <Download size={16} />
-                    Download Word
+                    Download PDF
                   </button>
                   <button
-                    onClick={() => setShowQPModal(false)}
-                    className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-all"
+                    onClick={() => { setShowQPModal(false); setModalCourseOutcomes([]); setFacultySignatureForQP(''); }}
+                    className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-xl transition-all"
                   >
-                    <X size={24} />
+                    <X size={20} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-8 bg-zinc-100/50">
-                <div className="bg-white shadow-lg mx-auto" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
+              <div className="flex-1 overflow-y-auto p-6 bg-zinc-50">
+                <style>{`
+                  .qp-print-wrapper { font-family: 'Times New Roman', serif !important; font-size: 12px !important; }
+                  .qp-print-wrapper table { border-collapse: collapse; width: 100%; border-color: #000 !important; }
+                  .qp-print-wrapper td, .qp-print-wrapper th { border: 1px solid #000 !important; padding: 6px; font-family: 'Times New Roman', serif; font-size: 12px; }
+                  .qp-print-wrapper .logo-img { max-width: 100%; width: 754px !important; height: 60px !important; object-fit: contain; }
+                  .qp-print-wrapper p { margin: 0 0 5px 0; }
+                `}</style>
+                <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
+                  style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}>
                   <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(selectedQP) }} />
                 </div>
               </div>

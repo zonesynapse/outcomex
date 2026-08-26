@@ -4,13 +4,14 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, getDoc, onSnapshot, setDoc } from "firebase/firestore";
 import {
   FileText, Eye, X, CheckCircle2, Edit2, Loader2, Search, Landmark,
-  Clock, CalendarCheck2, ShieldCheck, Sparkles, ArrowLeft, BookOpen
+  Clock, CalendarCheck2, ShieldCheck, Sparkles, ArrowLeft, BookOpen,
+  Download, Link2, Unlock, Calendar
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
 import { getQuestionPaperHTML } from "../../utils/questionPaperUtils";
 import { useRegulations } from "../../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay } from "../../lib/utils";
+import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay } from "../../lib/utils";
 import { typesetMath } from "../../utils/mathJaxUtils";
 
 const timeAgo = (dateStr) => {
@@ -29,15 +30,54 @@ const timeAgo = (dateStr) => {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 };
 
+const fmtDate = (value) => {
+  if (!value) return "-";
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  } catch { return String(value); }
+};
+
+const normCodeKey = (s) => String(s || "").toUpperCase().replace(/\s+/g, "");
+
+const formatDeptBadge = (raw) => {
+  if (!raw) return "";
+  if (typeof raw === "object" && raw !== null) {
+    const prog = raw.prog || raw.progKey || "";
+    const dept = raw.dept || raw.deptKey || raw.department || "";
+    if (dept) return formatDepartmentDisplay(dept, prog);
+    return formatDepartmentDisplay(raw.department || "", prog);
+  }
+  return formatDepartmentDisplay(String(raw), "");
+};
+
+const extractDeptFromCompositeKey = (key) => {
+  if (!key) return "";
+  const parts = key.split("_");
+  // compositeKey patterns:
+  //  departments doc: "B_E_Computer_Science_and_Engineering" (no year)
+  //  syllabus_data doc: "B_E_CSE_R2021"  / qp doc: "B_E_CSE_2024_01" — first two parts are prog when B/M prefix.
+  // For qp composites we conservatively take the 3rd+ dept tokens when available.
+  if (parts.length >= 3 && ["B", "M"].includes(parts[0]) && ["E", "Tech", "Sc", "Com"].includes(parts[1])) {
+    const deptTokens = parts.slice(2);
+    // strip trailing year/semester numbers
+    while (deptTokens.length > 0 && /^\d/.test(deptTokens[deptTokens.length - 1])) deptTokens.pop();
+    if (deptTokens.length > 0) return deptTokens.join("_");
+  }
+  return parts[0] || "";
+};
+
 const flattenQps = (data) => {
   const all = [];
   Object.entries(data || {}).forEach(([compositeKey, docData]) => {
     const isFlat = !!(docData && typeof docData === 'object' && (docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name));
+    const deptFromKey = formatDeptBadge(extractDeptFromCompositeKey(compositeKey));
     if (isFlat) {
-      all.push({ ...docData, id: compositeKey, compositeKey });
+      all.push({ ...docData, id: compositeKey, compositeKey, department: docData.department || deptFromKey });
     } else {
       Object.entries(docData || {}).forEach(([id, qp]) => {
-        all.push({ ...(qp || {}), id, compositeKey });
+        all.push({ ...(qp || {}), id, compositeKey, department: qp.department || deptFromKey });
       });
     }
   });
@@ -76,6 +116,10 @@ export default function ExamCellQPReview() {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
   };
+
+  const [scheduleDocs, setScheduleDocs] = useState([]);
+  const [allocModal, setAllocModal] = useState({ open: false, qp: null });
+  const [allocating, setAllocating] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -117,6 +161,109 @@ export default function ExamCellQPReview() {
       setAllQps(flattenQps(data));
       setLoading(false);
     }, () => setLoading(false));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
+      const docs = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (!data?.assignments) return;
+        Object.entries(data.assignments).forEach(([code, as]) => {
+          if (!as?.examDate) return;
+          const depts = (as.departments && as.departments.length > 0)
+            ? as.departments
+            : (data.departments && data.departments.length > 0 ? data.departments : []);
+          docs.push({
+            docId: d.id,
+            code,
+            name: as.name || "",
+            departments: depts,
+            examDate: as.examDate,
+            startTime: as.startTime || "",
+            endTime: as.endTime || "",
+            slot: as.slot || as.session || "",
+            batch: data.batch || "",
+            semester: data.semester || "",
+            academicYear: data.academicYear || "",
+            examName: data.examName || data.examId || "",
+            setterName: as.setterName || "",
+            setterUid: as.setterUid || ""
+          });
+        });
+      });
+      setScheduleDocs(docs);
+    }, () => setScheduleDocs([]));
+    return () => unsub();
+  }, []);
+
+  const [syllabusCodeMap, setSyllabusCodeMap] = useState({});
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "syllabus_data"), (snap) => {
+      const map = {};
+      snap.forEach(d => {
+        const deptRaw = (() => {
+          // parseSyllabusDocId: [prog, dept..., regKey] — e.g. "B_E_CSE_R2021" → dept "CSE"
+          const parts = d.id.split("_");
+          if (parts.length < 3) return "";
+          let progTake = 1;
+          if (["B", "M"].includes(parts[0]) && ["E", "Tech", "Sc", "Com"].includes(parts[1])) progTake = 2;
+          const deptTokens = parts.slice(progTake, parts.length - 1);
+          return deptTokens.join("_");
+        })();
+        const raw = d.data() || {};
+        const semKeys = Object.keys(raw).filter(k => !k.startsWith("_"));
+        const toArray = (v) => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.values(v) : []);
+        semKeys.forEach(sk => {
+          toArray(raw[sk]).forEach(sub => {
+            const c = normCodeKey(sub?.code || sub?.subjectCode || sub?.courseCode || "");
+            if (!c) return;
+            if (!map[c]) map[c] = new Set();
+            if (deptRaw) map[c].add(deptRaw);
+          });
+        });
+      });
+      const out = {};
+      Object.keys(map).forEach(k => { out[k] = Array.from(map[k]); });
+      setSyllabusCodeMap(out);
+    }, () => setSyllabusCodeMap({}));
+    return () => unsub();
+  }, []);
+
+  const [courseBankDeptMap, setCourseBankDeptMap] = useState({});
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "courses"), (snap) => {
+      const map = {};
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const hasDirectFields = data.code || data.programme;
+        if (hasDirectFields) {
+          const c = normCodeKey(data.code || "");
+          if (!c) return;
+          const dept = data.department || "";
+          const prog = data.programme || "";
+          if (dept) {
+            if (!map[c]) map[c] = [];
+            map[c].push({ dept, prog });
+          }
+        } else {
+          Object.entries(data).forEach(([deptK, deptVal]) => {
+            if (!deptVal || typeof deptVal !== "object") return;
+            Object.entries(deptVal).forEach(([regK, regVal]) => {
+              if (!regVal || typeof regVal !== "object") return;
+              Object.entries(regVal).forEach(([codeK]) => {
+                const c = normCodeKey(codeK);
+                if (!c) return;
+                if (!map[c]) map[c] = [];
+                map[c].push({ dept: deptK, prog: "" });
+              });
+            });
+          });
+        }
+      });
+      setCourseBankDeptMap(map);
+    }, () => setCourseBankDeptMap({}));
     return () => unsub();
   }, []);
 
@@ -178,6 +325,14 @@ export default function ExamCellQPReview() {
     }
     return result;
   }, [publishedQps, searchQuery]);
+
+  const awaitingAllocation = useMemo(() =>
+    filteredPublished.filter(q => !q.allocated),
+    [filteredPublished]);
+
+  const allocatedQps = useMemo(() =>
+    filteredPublished.filter(q => q.allocated),
+    [filteredPublished]);
 
   const renderQuestionPaper = useCallback((qp) => {
     if (!qp) return "";
@@ -284,6 +439,190 @@ export default function ExamCellQPReview() {
     }
   };
 
+  const handleAllocateToExam = async (scheduleSlot) => {
+    if (!allocModal.qp || !scheduleSlot) return;
+    setAllocating(true);
+    try {
+      const qp = allocModal.qp;
+      const qpRef = doc(db, 'generated_qps', qp.compositeKey);
+      const now = new Date().toISOString();
+      await setDoc(qpRef, {
+        [qp.id]: {
+          allocated: true,
+          allocatedTo: {
+            examDate: scheduleSlot.examDate,
+            session: scheduleSlot.slot || "",
+            startTime: scheduleSlot.startTime || "",
+            endTime: scheduleSlot.endTime || "",
+            subjectCode: scheduleSlot.code,
+            batch: scheduleSlot.batch,
+            semester: scheduleSlot.semester,
+            academicYear: scheduleSlot.academicYear,
+            examName: scheduleSlot.examName || "",
+            allocatedBy: coeName,
+            allocatedByUid: currentUid,
+            allocatedAt: now
+          },
+          updated_at: now
+        }
+      }, { merge: true });
+      showToast(`QP allocated to ${scheduleSlot.examDate} (${scheduleSlot.slot || "FN"}) successfully!`, "success");
+      setAllocModal({ open: false, qp: null });
+    } catch (error) {
+      console.error("Error allocating QP:", error);
+      showToast("Failed to allocate question paper.", "error");
+    } finally {
+      setAllocating(false);
+    }
+  };
+
+  const matchedScheduleSlots = useMemo(() => {
+    if (!allocModal.qp) return [];
+    const qp = allocModal.qp;
+    const parsedSubj = parseSubjectField(qp.subject);
+    const qpSubjCode = (parsedSubj.code || qp.subject || "").toString().replace(/\s+/g, "").toUpperCase();
+    const qpBatch = (qp.batch || "").toString().trim();
+    const qpSem = (qp.semester || "").toString().trim();
+
+    return scheduleDocs.filter(s => {
+      const sCode = (s.code || "").toString().replace(/\s+/g, "").toUpperCase();
+      const sBatch = (s.batch || "").toString().trim();
+      const sSem = (s.semester || "").toString().trim();
+      return sCode === qpSubjCode && sBatch === qpBatch && sSem === qpSem;
+    }).sort((a, b) => String(a.examDate).localeCompare(String(b.examDate)));
+  }, [allocModal.qp, scheduleDocs]);
+
+  const publishedBySubject = useMemo(() => {
+    const groups = {};
+
+    const normDeptKey = (d) => {
+      if (!d) return "";
+      return formatDeptBadge(d).toLowerCase().replace(/\s+/g, " ").trim();
+    };
+    const addDept = (grp, deptEntry) => {
+      const raw = normDeptKey(deptEntry);
+      if (!raw) return;
+      const exists = grp.departments.some(d => normDeptKey(d) === raw);
+      if (!exists) grp.departments.push(deptEntry);
+    };
+    const syllabusDeptsFor = (code) => {
+      const c = normCodeKey(code);
+      return syllabusCodeMap[c] || [];
+    };
+    const extractSemNum = (s) => {
+      if (!s) return "";
+      const str = String(s).trim();
+      const m = str.match(/(\d+)/);
+      return m ? m[1] : str;
+    };
+    const extractBatchStart = (b) => {
+      if (!b) return "";
+      const str = String(b).trim();
+      const m = str.match(/(\d{4})/);
+      return m ? m[1] : str;
+    };
+    const makeKey = (code, batch, sem) => {
+      const c = (code || "").toString().replace(/\s+/g, "").toUpperCase();
+      const b = extractBatchStart(batch);
+      const s = extractSemNum(sem);
+      return `${c}|${b}|${s}`;
+    };
+
+    // 1. Seed from scheduleDocs (qp_setter_assignments) — every scheduled subject
+    scheduleDocs.forEach(s => {
+      const code = (s.code || "").toString().replace(/\s+/g, "").toUpperCase();
+      const key = makeKey(code, s.batch, s.semester);
+      if (!groups[key]) {
+        groups[key] = {
+          code,
+          name: s.name || "",
+          batch: (s.batch || "").trim(),
+          semester: (s.semester || "").trim(),
+          departments: [],
+          academicYear: (s.academicYear || "").trim(),
+          courseType: "",
+          examDate: s.examDate || "",
+          startTime: s.startTime || "",
+          endTime: s.endTime || "",
+          slot: s.slot || s.session || "",
+          examName: s.examName || "",
+          setterName: s.setterName || "",
+          setterUid: s.setterUid || "",
+          qps: []
+        };
+      }
+      if (s.departments && Array.isArray(s.departments)) {
+        s.departments.forEach(d => addDept(groups[key], d));
+      }
+    });
+
+    // 2. Merge published QPs into their matching scheduled groups
+    filteredPublished.forEach(qp => {
+      const parsedSubj = parseSubjectField(qp.subject);
+      const code = (parsedSubj.code || qp.subject || "").toString().replace(/\s+/g, "").toUpperCase();
+      const name = parsedSubj.name || qp.subject_name || "";
+      const batch = (qp.batch || "").toString().trim();
+      const sem = (qp.semester || "").toString().trim();
+      const key = makeKey(code, batch, sem);
+      if (!groups[key]) {
+        groups[key] = {
+          code, name, batch, semester: sem,
+          departments: [],
+          academicYear: qp.academic_year || "",
+          courseType: qp.course_type || "",
+          examDate: "",
+          startTime: "",
+          endTime: "",
+          slot: "",
+          examName: "",
+          qps: []
+        };
+      }
+      if (!groups[key].name && name) groups[key].name = name;
+      if (!groups[key].courseType && qp.course_type) groups[key].courseType = qp.course_type;
+      if (qp.department) addDept(groups[key], qp.department);
+      groups[key].qps.push(qp);
+    });
+
+    // 3. Backfill empty dept groups from syllabus_data, then courses (CourseBank)
+    Object.values(groups).forEach(g => {
+      if (g.departments.length === 0) {
+        syllabusDeptsFor(g.code).forEach(rawDeptKey => addDept(g, rawDeptKey));
+      }
+      if (g.departments.length === 0) {
+        const bankEntries = courseBankDeptMap[normCodeKey(g.code)] || [];
+        bankEntries.forEach(({ dept, prog }) => {
+          if (dept) addDept(g, { dept, prog });
+        });
+      }
+    });
+
+    return Object.values(groups).sort((a, b) => {
+      const deptA = normDeptKey(a.departments[0]);
+      const deptB = normDeptKey(b.departments[0]);
+      const deptCmp = deptA.localeCompare(deptB);
+      if (deptCmp !== 0) return deptCmp;
+      return a.code.localeCompare(b.code);
+    });
+  }, [filteredPublished, scheduleDocs, syllabusCodeMap, courseBankDeptMap]);
+
+  const [pubSearchQuery, setPubSearchQuery] = useState("");
+  const filteredPublishedSubjects = useMemo(() => {
+    let result = publishedBySubject;
+    if (pubSearchQuery.trim()) {
+      const q = pubSearchQuery.trim().toLowerCase();
+      result = result.filter(g => {
+        const deptMatch = g.departments.some(d => formatDeptBadge(d).toLowerCase().includes(q));
+        return g.code.toLowerCase().includes(q) ||
+          g.name.toLowerCase().includes(q) ||
+          deptMatch ||
+          g.batch.toLowerCase().includes(q) ||
+          g.semester.toLowerCase().includes(q);
+      });
+    }
+    return result;
+  }, [publishedBySubject, pubSearchQuery]);
+
   const renderQpCard = (qp, published) => {
     const name = resolveName(published ? qp.coe_approved_by || qp.forwarded_by : qp.forwarded_by);
     const initial = (name || "?").charAt(0).toUpperCase();
@@ -296,9 +635,12 @@ export default function ExamCellQPReview() {
     const subjCode = parsedSubj.code || qp.subject;
     const subjName = parsedSubj.name || qp.subject_name;
 
+    const isAllocated = published && qp.allocated;
+    const allocInfo = qp.allocatedTo;
+
     return (
       <div key={`${qp.compositeKey}-${qp.id}`}
-        className="group bg-white/60 rounded-2xl border border-zinc-150 p-4 hover:shadow-md hover:bg-white transition-all duration-200">
+        className={`group bg-white/60 rounded-2xl border p-4 hover:shadow-md hover:bg-white transition-all duration-200 ${isAllocated ? 'border-emerald-200' : 'border-zinc-150'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5 min-w-0 flex-1">
             <div className={`w-8 h-8 rounded-full ${dotColor} text-white flex items-center justify-center text-xs font-black shrink-0`}>
@@ -330,14 +672,45 @@ export default function ExamCellQPReview() {
                     <ShieldCheck size={9} className="mr-0.5" /> COE APPROVED
                   </span>
                 )}
+                {isAllocated && allocInfo && (
+                  <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-50 text-violet-700 px-1.5 py-0.5 text-[9px] font-extrabold border border-violet-100/40">
+                    <Link2 size={9} /> {allocInfo.examDate} ({allocInfo.session || "FN"})
+                  </span>
+                )}
               </div>
+              {isAllocated && allocInfo && (
+                <p className="text-[10px] text-emerald-600 font-semibold mt-1.5">
+                  Allocated by {allocInfo.allocatedBy} on {fmtDate(allocInfo.allocatedAt)}
+                </p>
+              )}
             </div>
           </div>
-          <button
-            onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
-            className={`shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl text-white text-[11px] font-extrabold transition-all shadow-sm cursor-pointer ${published ? "bg-zinc-500 hover:bg-zinc-600" : "bg-[#120c7a] hover:bg-[#0f0a66]"}`}>
-            <Eye size={12} /> {published ? "View" : "Review"}
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {published && !isAllocated && (
+              <button
+                onClick={() => setAllocModal({ open: true, qp })}
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-extrabold transition-all shadow-sm cursor-pointer">
+                <Link2 size={12} /> Allocate
+              </button>
+            )}
+            {isAllocated && (
+              <button
+                onClick={() => {
+                  const w = window.open('', '_blank');
+                  w.document.write(getQuestionPaperHTML(qp, [], "", "", ciaConfigs, null, qp.coe_signature_url || ""));
+                  w.document.close();
+                  setTimeout(() => { w.print(); }, 800);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[#120c7a] hover:bg-[#0f0a66] text-white text-[11px] font-extrabold transition-all shadow-sm cursor-pointer">
+                <Download size={12} /> Download
+              </button>
+            )}
+            <button
+              onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
+              className={`inline-flex items-center gap-1 px-3 py-2 rounded-xl text-white text-[11px] font-extrabold transition-all shadow-sm cursor-pointer ${published ? "bg-zinc-500 hover:bg-zinc-600" : "bg-[#120c7a] hover:bg-[#0f0a66]"}`}>
+              <Eye size={12} /> {published ? "View" : "Review"}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -415,7 +788,9 @@ export default function ExamCellQPReview() {
           <p className="text-xs font-bold text-zinc-600">
             {activeTab === "review"
               ? `${filteredPending.length} paper${filteredPending.length !== 1 ? "s" : ""} waiting for COE final review. Approve to publish, or send back to faculty for recorrection.`
-              : `${filteredPublished.length} paper${filteredPublished.length !== 1 ? "s" : ""} published by the Exam Cell.`}
+              : activeTab === "published" && awaitingAllocation.length > 0
+                ? `${awaitingAllocation.length} paper${awaitingAllocation.length !== 1 ? "s" : ""} published but not yet allocated to an exam. ${allocatedQps.length} already allocated.`
+                : `${filteredPublished.length} paper${filteredPublished.length !== 1 ? "s" : ""} published${allocatedQps.length > 0 ? ` (${allocatedQps.length} allocated)` : ""}.`}
           </p>
         </div>
 
@@ -456,8 +831,294 @@ export default function ExamCellQPReview() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filteredPublished.map(qp => renderQpCard(qp, true))}
+            <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+              {/* Published Table Search */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 pt-6 pb-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={15} />
+                  <input
+                    value={pubSearchQuery}
+                    onChange={(e) => setPubSearchQuery(e.target.value)}
+                    placeholder="Search course code, subject name, department, or batch..."
+                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold bg-zinc-50 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                  />
+                </div>
+                <span className="text-xs font-extrabold text-zinc-400 shrink-0">
+                  {filteredPublishedSubjects.length} Subject{filteredPublishedSubjects.length !== 1 ? "s" : ""} · {filteredPublished.length} Total QPs
+                </span>
+              </div>
+
+              {/* Allocated Info Banner */}
+              {allocatedQps.length > 0 && (
+                <div className="mx-6 mb-4 flex items-center gap-2 px-4 py-2.5 bg-emerald-50/60 border border-emerald-200 rounded-xl">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <p className="text-[11px] font-bold text-emerald-700">{allocatedQps.length} QP{allocatedQps.length !== 1 ? "s" : ""} allocated &amp; ready for download</p>
+                  {awaitingAllocation.length > 0 && (
+                    <span className="ml-auto text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      {awaitingAllocation.length} awaiting allocation
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {filteredPublishedSubjects.length === 0 ? (
+                <div className="p-12 text-center">
+                  <BookOpen size={36} className="text-zinc-300 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-zinc-600">{pubSearchQuery ? "No matching subjects" : "No published papers yet"}</p>
+                  <p className="text-xs text-zinc-400 mt-1">{pubSearchQuery ? "Try adjusting your search." : "Papers you approve in the review queue will appear here."}</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto pb-4">
+                  <table className="w-full text-left border-collapse text-xs border border-slate-300 mx-6" style={{ width: "calc(100% - 3rem)" }}>
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-800 font-extrabold uppercase text-[10px] tracking-wider">
+                        <th className="p-3.5 border border-slate-300 rounded-tl-xl text-center" style={{ width: "13%" }}>Department</th>
+                        <th className="p-3.5 border border-slate-300" style={{ width: "10%" }}>Course Code</th>
+                        <th className="p-3.5 border border-slate-300" style={{ width: "18%" }}>Course Name</th>
+                        <th className="p-3.5 border border-slate-300 text-center" style={{ width: "10%" }}>Batch / Sem</th>
+                        <th className="p-3.5 border border-slate-300" style={{ width: "14%" }}>Exam Date &amp; Time</th>
+                        <th className="p-3.5 border border-slate-300" style={{ width: "12%" }}>QP Setter</th>
+                        <th className="p-3.5 border border-slate-300 rounded-tr-xl">Published Question Papers</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-medium">
+                      {filteredPublishedSubjects.map((group, gIdx) => {
+                        const allocatedCount = group.qps.filter(q => q.allocated).length;
+                        const pendingCount = group.qps.length - allocatedCount;
+                        const firstQp = group.qps[0];
+
+                        const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
+                        const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
+                          const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
+                          const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
+                          const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
+                          const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
+                          const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
+                          return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
+                        }) : null;
+
+                        const examDateRaw = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || null;
+                        const examDateDisplay = examDateRaw ? fmtDate(examDateRaw) : null;
+                        const examSlot = allocInfo?.session || matchedSlot?.slot || matchedSlot?.session || group.slot || "";
+                        const startTime = allocInfo?.startTime || matchedSlot?.startTime || group.startTime || "";
+                        const endTime = allocInfo?.endTime || matchedSlot?.endTime || group.endTime || "";
+                        const examTime = startTime && endTime
+                          ? `${startTime} — ${endTime}`
+                          : startTime || "";
+
+                        return (
+                          <tr key={`${group.code}_${group.batch}_${group.semester}_${gIdx}`} className="hover:bg-slate-50/50 transition-colors">
+                            {/* Department */}
+                            <td className="p-3.5 align-top border border-slate-200 bg-slate-50/40">
+                              {group.departments.length > 0 ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  {group.departments.length > 1 && (
+                                    <span className="inline-flex items-center text-[9px] font-black text-white bg-violet-600 border border-violet-700 px-2 py-0.5 rounded-md">
+                                      COMMON
+                                    </span>
+                                  )}
+                                  {group.departments.map((d, dIdx) => {
+                                    const badgeLabel = formatDeptBadge(d);
+                                    if (!badgeLabel) return null;
+                                    const deptColors = [
+                                      "text-sky-700 bg-sky-50 border-sky-200",
+                                      "text-emerald-700 bg-emerald-50 border-emerald-200",
+                                      "text-amber-700 bg-amber-50 border-amber-200",
+                                      "text-violet-700 bg-violet-50 border-violet-200",
+                                      "text-rose-700 bg-rose-50 border-rose-200",
+                                      "text-indigo-700 bg-indigo-50 border-indigo-200",
+                                    ];
+                                    const colorClass = deptColors[dIdx % deptColors.length];
+                                    return (
+                                      <span key={`${group.code}_dept_${dIdx}`}
+                                        className={`inline-flex items-center text-[9px] font-bold px-2 py-1 rounded-md border ${colorClass}`}>
+                                        {badgeLabel}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span className="font-black text-slate-800 text-xs leading-snug block text-center">—</span>
+                              )}
+                            </td>
+
+                            {/* Course Code */}
+                            <td className="p-3.5 align-top border border-slate-200">
+                              <span className="font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg text-xs tracking-tight">
+                                {group.code}
+                              </span>
+                            </td>
+
+                            {/* Course Name */}
+                            <td className="p-3.5 align-top border border-slate-200">
+                              <span className="font-bold text-slate-900 block leading-tight">{group.name || "—"}</span>
+                              {group.courseType && (
+                                <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-md border text-indigo-700 bg-indigo-50 border-indigo-100 inline-block mt-1">
+                                  {group.courseType}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Batch / Sem */}
+                            <td className="p-3.5 align-top border border-slate-200 text-center">
+                              <div className="space-y-1">
+                                <span className="inline-flex items-center rounded-md bg-zinc-100/60 text-zinc-600 px-2 py-0.5 text-[10px] font-extrabold border border-zinc-200/50 block">
+                                  {group.batch || "—"}
+                                </span>
+                                <span className="inline-flex items-center rounded-md bg-blue-50/50 text-blue-700 px-2 py-0.5 text-[10px] font-extrabold border border-blue-100/40 block">
+                                  Sem {group.semester || "—"}
+                                </span>
+                                {group.academicYear && (
+                                  <span className="text-[9px] font-bold text-zinc-400 block">{group.academicYear}</span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Exam Date & Time */}
+                            <td className="p-3.5 align-top border border-slate-200">
+                              {examDateDisplay ? (
+                                <div className="space-y-1">
+                                  <span className="font-black text-slate-800 text-xs block">{examDateDisplay}</span>
+                                  {examTime && (
+                                    <span className="text-[11px] font-bold text-zinc-600 block">{examTime}</span>
+                                  )}
+                                  {examSlot && (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
+                                      (examSlot || "").toUpperCase() === "AN"
+                                        ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                        : "bg-blue-100 text-blue-700 border border-blue-200"
+                                    }`}>
+                                      <Clock size={9} className="mr-0.5" />
+                                      {(examSlot || "FN").toUpperCase()} SESSION
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-[10px] font-semibold text-zinc-400">Not allocated yet</span>
+                              )}
+                            </td>
+
+                            {/* QP Setter */}
+                            <td className="p-3.5 align-top border border-slate-200">
+                              {(() => {
+                                const setter = matchedSlot?.setterName || group.setterName || "";
+                                if (setter) {
+                                  return (
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="w-6 h-6 rounded-full bg-[#120c7a] text-white flex items-center justify-center text-[9px] font-black shrink-0">
+                                        {(setter || "?").charAt(0).toUpperCase()}
+                                      </div>
+                                      <span className="text-[11px] font-bold text-slate-800 leading-tight">{setter}</span>
+                                    </div>
+                                  );
+                                }
+                                return <span className="text-[10px] font-semibold text-zinc-400">—</span>;
+                              })()}
+                            </td>
+
+                            {/* Published QPs — List */}
+                            <td className="p-3.5 align-top border border-slate-200">
+                              {group.qps.length === 0 ? (
+                                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-zinc-400 bg-zinc-50 border border-zinc-200 px-3 py-2 rounded-xl">
+                                  NIL
+                                </span>
+                              ) : (<>
+                              <div className="space-y-2">
+                                {group.qps.map((qp, qIdx) => {
+                                  const qpParsed = parseSubjectField(qp.subject);
+                                  const setLabel = formatQPSetDisplay(qp);
+                                  const examLabel = resolveExamDisplay(qp);
+                                  const isAlloc = !!qp.allocated;
+                                  const allocData = qp.allocatedTo;
+                                  const submitter = resolveName(qp.forwarded_by);
+
+                                  return (
+                                    <div key={`${qp.compositeKey}-${qp.id}-${qIdx}`}
+                                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${isAlloc ? 'bg-emerald-50/40 border-emerald-200' : 'bg-amber-50/40 border-amber-200'}`}>
+                                      {/* Set badge */}
+                                      <span className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-lg text-[10px] font-black ${
+                                        isAlloc ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                      }`}>
+                                        {setLabel}
+                                      </span>
+
+                                      {/* Info */}
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-[11px] font-black text-zinc-800 truncate">{examLabel}</span>
+                                        </div>
+                                        {isAlloc && allocData && (
+                                          <span className="text-[9px] font-bold text-emerald-600 block mt-0.5">
+                                            Allocated → {fmtDate(allocData.examDate)} ({(allocData.session || "FN").toUpperCase()})
+                                          </span>
+                                        )}
+                                        {!isAlloc && (
+                                          <span className="text-[9px] font-bold text-amber-600 block mt-0.5">
+                                            Awaiting allocation
+                                          </span>
+                                        )}
+                                        <span className="text-[9px] text-zinc-400 font-medium block">
+                                          by {submitter} · {timeAgo(qp.updated_at || qp.coe_approved_at)}
+                                        </span>
+                                      </div>
+
+                                      {/* Actions */}
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {!isAlloc && (
+                                          <button
+                                            onClick={() => setAllocModal({ open: true, qp })}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-extrabold transition-all shadow-sm cursor-pointer">
+                                            <Link2 size={10} /> Allocate
+                                          </button>
+                                        )}
+                                        {isAlloc && (
+                                          <button
+                                            onClick={() => {
+                                              const w = window.open('', '_blank');
+                                              w.document.write(getQuestionPaperHTML(qp, [], "", "", ciaConfigs, null, qp.coe_signature_url || ""));
+                                              w.document.close();
+                                              setTimeout(() => { w.print(); }, 800);
+                                            }}
+                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#120c7a] hover:bg-[#0f0a66] text-white text-[10px] font-extrabold transition-all shadow-sm cursor-pointer">
+                                            <Download size={10} /> Download
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-500 hover:bg-zinc-600 text-white text-[10px] font-extrabold transition-all shadow-sm cursor-pointer">
+                                          <Eye size={10} /> View
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Summary badge */}
+                              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                <span className="text-[9px] font-black text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                                  {group.qps.length} QP{group.qps.length !== 1 ? "s" : ""}
+                                </span>
+                                {allocatedCount > 0 && (
+                                  <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                    {allocatedCount} Allocated
+                                  </span>
+                                )}
+                                {pendingCount > 0 && (
+                                  <span className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                                    {pendingCount} Pending
+                                  </span>
+                                )}
+                              </div>
+                              </>)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )
         )}
@@ -557,6 +1218,77 @@ export default function ExamCellQPReview() {
                   Send for Recorrection
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QP Allocation Modal */}
+      {allocModal.open && allocModal.qp && (
+        <div className="fixed inset-0 bg-black/60 z-[210] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="bg-emerald-100 p-2.5 rounded-xl text-emerald-600">
+                  <Link2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-zinc-900">Allocate QP to Exam Schedule</h3>
+                  <p className="text-xs text-zinc-500">
+                    {(() => { const p = parseSubjectField(allocModal.qp.subject); return p.code || allocModal.qp.subject; })()} · {allocModal.qp.batch} · Sem {allocModal.qp.semester}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setAllocModal({ open: false, qp: null })}
+                className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-xl transition-all cursor-pointer">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {matchedScheduleSlots.length === 0 ? (
+                <div className="text-center py-10">
+                  <Calendar size={36} className="text-zinc-300 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-zinc-600">No matching exam schedule found</p>
+                  <p className="text-xs text-zinc-400 mt-1 max-w-xs mx-auto">
+                    No exam timetable entry found for this subject, batch, and semester. Create an IA schedule first in QP Setter Assignment.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Select an exam slot:</p>
+                  {matchedScheduleSlots.map((slot, idx) => (
+                    <div key={idx}
+                      className="flex items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 hover:border-emerald-300 hover:bg-emerald-50/30 transition-all">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-black text-zinc-800">{fmtDate(slot.examDate)}</span>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-extrabold ${(slot.slot || "").toUpperCase() === "AN" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                            {(slot.slot || "FN").toUpperCase()}
+                          </span>
+                          {slot.startTime && slot.endTime && (
+                            <span className="text-[10px] text-zinc-400 font-medium">
+                              {slot.startTime} — {slot.endTime}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-500 font-medium mt-0.5">{slot.examName || ""}</p>
+                      </div>
+                      <button
+                        onClick={() => handleAllocateToExam(slot)}
+                        disabled={allocating}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-extrabold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 cursor-pointer">
+                        {allocating ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                        Allocate
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-zinc-100 bg-zinc-50 shrink-0">
+              <p className="text-[10px] text-zinc-400 font-medium text-center">
+                After allocation, the question paper can be downloaded and printed. No QP can be downloaded before allocation.
+              </p>
             </div>
           </div>
         </div>
