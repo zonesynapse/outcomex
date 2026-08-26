@@ -24,10 +24,14 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, sanitizeKey } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
-// Sanitize key — imported from lib/utils to match system-wide format
+// Local sanitizeKey — does NOT replace spaces/slashes (matches doc IDs created by HODRoleConfig, MarkEntry, etc.)
+function sanitizeKey(key) {
+  if (!key) return '';
+  return String(key).replace(/[.#$[\]]/g, '_');
+}
 
 function extractPureDate(key) {
   if (!key) return '';
@@ -468,25 +472,20 @@ export default function Attendance() {
   useEffect(() => {
     if (!programme || !department || !currentUid || !userRole) return;
 
-    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
-    const targetDeptNorm = norm(department);
-    const targetProgNorm = norm(programme);
+    const prefix = `${progKey}_${deptKey}_`;
     const assignmentsRef = collection(db, "subject_assignments");
 
     const unsubscribe = onSnapshot(assignmentsRef, async (snapshot) => {
+      const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const contexts = [];
       const batchesToFetchSyllabus = new Set();
 
       snapshot.docs.forEach(doc => {
-        const idNorm = norm(doc.id);
-        const matchDept = idNorm.includes(targetDeptNorm) || (deptKey && idNorm.includes(norm(deptKey)));
-        const matchProg = !targetProgNorm || idNorm.includes(targetProgNorm) || (progKey && idNorm.includes(norm(progKey))) || targetProgNorm.includes('ug') || idNorm.includes('ug') || idNorm.includes('be') || idNorm.includes('btech');
-
-        if (!matchDept || !matchProg) return;
-
-        const parts = doc.id.split('_').filter(Boolean);
+        if (!doc.id.startsWith(prefix)) return;
+        const remaining = doc.id.slice(prefix.length);
+        const parts = remaining.split('_');
         let batch = parts[0];
         let ay = parts[1];
         let sem = parts[2];
@@ -497,7 +496,8 @@ export default function Attendance() {
           secSuffix = secPart;
         }
 
-        const numericParts = parts.filter(p => /^\d{4}/.test(p) || /^\d+$/.test(p) || /^Sem/i.test(p));
+        // Prefer first 3 parts for batch/ay/sem (handles Sec parts in middle)
+        const numericParts = parts.filter(p => /^\d{4}/.test(p) || /^\d+$/.test(p));
         if (numericParts.length >= 3) {
           batch = numericParts[0];
           ay = numericParts[1];
@@ -779,74 +779,15 @@ export default function Attendance() {
       try {
         const baseAttendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
         let attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
-        // Fallback for attendance docId with different progKey/ batch format
-        if (!attendanceSnap.exists()) {
-          try {
-            const allAttSnap = await getDocs(collection(db, 'attendance'));
-            const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const targetCodeNorm = norm(selectedSubjectObj.code);
-            const targetBatchNorm = norm(batch);
-            const targetDeptNorm = norm(department);
-            for (const dSnap of allAttSnap.docs) {
-              const idNorm = norm(dSnap.id);
-              if (idNorm.includes(targetCodeNorm) && idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
-                const dData = dSnap.data() || {};
-                const hasCode = String(dSnap.id).includes(selectedSubjectObj.code);
-                if (hasCode) { attendanceSnap = dSnap; break; }
-              }
-            }
-          } catch (e) { console.warn('[Attendance] attendance fallback scan error:', e); }
+        // Fallback: try sectionless base docId
+        if (!attendanceSnap.exists() && sectionSuffix) {
+          const baseSnap = await getDoc(doc(db, "attendance", baseAttendanceDocId));
+          if (baseSnap.exists()) attendanceSnap = baseSnap;
         }
         let studentSnap = await getDoc(doc(db, "students", compositeKey));
         if (!studentSnap.exists() && sectionSuffix) {
           const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
           studentSnap = await getDoc(doc(db, "students", baseKey));
-        }
-        // ── Robust fallback: scan all students docs by _meta if exact keys miss (handles programme UG vs B_E & batch format variants) ──
-        if (!studentSnap.exists()) {
-          try {
-            const allSnap = await getDocs(collection(db, 'students'));
-            const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const batchNorm = (s) => {
-              const str = String(s || '');
-              const m = str.match(/\d{4}\s*-\s*\d{2,4}/);
-              if (m) {
-                let b = m[0].replace(/\s/g, '');
-                // expand 2024-28 -> 2024-2028
-                const parts = b.split('-');
-                if (parts[1] && parts[1].length === 2) b = `${parts[0]}-20${parts[1]}`;
-                return b;
-              }
-              return str.match(/\d{4}-\d{4}/)?.[0] || str;
-            };
-            const targetBatch = batchNorm(batch);
-            const targetDeptNorm = norm(department);
-            const targetSection = String(section || '').trim().toLowerCase();
-            let bestSnap = null;
-            let bestScore = -1;
-            allSnap.forEach(dSnap => {
-              const dData = dSnap.data() || {};
-              const meta = dData._meta || {};
-              const docIdNorm = norm(dSnap.id);
-              const deptMatch = meta.department ? (norm(meta.department) === targetDeptNorm || norm(meta.department).includes(targetDeptNorm) || targetDeptNorm.includes(norm(meta.department))) : docIdNorm.includes(targetDeptNorm);
-              const batchMatch = meta.batch ? batchNorm(meta.batch) === targetBatch : docIdNorm.includes(norm(targetBatch));
-              if (!deptMatch || !batchMatch) return;
-              let score = 0;
-              const metaSec = String(meta.section || '').toLowerCase();
-              if (metaSec === targetSection) score += 10;
-              else if (!targetSection && !metaSec) score += 5;
-              else if (dSnap.id.toLowerCase().includes(targetSection)) score += 3;
-              // prefer docs that actually have students
-              const hasStudents = Object.keys(dData).some(k => !k.startsWith('_'));
-              if (hasStudents) score += 2;
-              if (score > bestScore) { bestScore = score; bestSnap = dSnap; }
-            });
-            if (bestSnap) {
-              studentSnap = { exists: () => true, data: () => bestSnap.data(), id: bestSnap.id };
-            }
-          } catch (e) {
-            console.warn('[Attendance] students fallback scan error:', e);
-          }
         }
 
         const data = attendanceSnap.data() || {};
@@ -894,63 +835,18 @@ export default function Attendance() {
             const baseSecSnap = await getDoc(doc(db, 'student_section_index', baseSecKey));
             if (baseSecSnap.exists()) secIdxData = baseSecSnap.data();
           }
-          // Fallback: if studentSnap was resolved via scan, try its id for section index
-          if (!Object.keys(secIdxData).length && studentSnap?.id && studentSnap.id !== compositeKey) {
-            try {
-              const altSnap = await getDoc(doc(db, 'student_section_index', studentSnap.id));
-              if (altSnap.exists()) secIdxData = altSnap.data();
-            } catch {}
-          }
-          // Final fallback: scan all student_section_index docs by meta-like matching
-          if (!Object.keys(secIdxData).length) {
-            try {
-              const allSecSnap = await getDocs(collection(db, 'student_section_index'));
-              const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-              const targetDeptNorm = norm(department);
-              const targetBatchNorm = norm(batch);
-              for (const dSnap of allSecSnap.docs) {
-                const idNorm = norm(dSnap.id);
-                if (idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
-                  const dData = dSnap.data() || {};
-                  if (Object.keys(dData).some(k => !k.startsWith('_'))) { secIdxData = dData; break; }
-                }
-              }
-            } catch {}
-          }
         } catch (e) {
           console.warn('[Attendance] student_section_index load error:', e);
         }
         setSectionIndex(secIdxData);
 
-        // Filter to only enrolled students from course_enrolments — robust fallback
+        // Filter to only enrolled students from course_enrolments
         try {
           let enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}${sectionSuffix}`;
           let enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
           if (!enrolSnap.exists() && sectionSuffix) {
             const baseEnrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
             enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolDocId));
-          }
-          // Fallback: scan all enrolment docs for this subject/batch/dept/section (handles progKey mismatch)
-          if (!enrolSnap.exists()) {
-            try {
-              const allEnrolSnap = await getDocs(collection(db, 'course_enrolments'));
-              const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-              const targetCodeNorm = norm(selectedSubjectObj.code);
-              const targetDeptNorm = norm(department);
-              const targetBatchNorm = norm(batch);
-              const targetSecNorm = norm(section);
-              for (const dSnap of allEnrolSnap.docs) {
-                const idNorm = norm(dSnap.id);
-                if (idNorm.includes(targetCodeNorm) && idNorm.includes(targetDeptNorm) && idNorm.includes(targetBatchNorm)) {
-                  if (targetSecNorm && !idNorm.includes(targetSecNorm)) {
-                    // if section selected but doc is base (no section), still consider as fallback
-                    // keep but prefer section-specific
-                  }
-                  const dData = dSnap.data() || {};
-                  if (Object.keys(dData).some(k => dData[k])) { enrolSnap = dSnap; break; }
-                }
-              }
-            } catch {}
           }
           if (enrolSnap.exists()) {
             const enrolledData = enrolSnap.data();
