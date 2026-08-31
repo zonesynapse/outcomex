@@ -1,13 +1,13 @@
-import React, { useState, useRef, useMemo } from 'react';
-import { 
-  Printer, 
-  Download, 
-  FileText, 
-  Building2, 
-  UserCheck, 
-  Layers, 
-  QrCode, 
-  CheckCircle2, 
+import React, { useState, useRef, useMemo, useEffect } from 'react';
+import {
+  Printer,
+  Download,
+  FileText,
+  Building2,
+  UserCheck,
+  Layers,
+  QrCode,
+  CheckCircle2,
   FileSpreadsheet,
   Sliders,
   Sparkles,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Room, Student, AllocatedSeat, DutyAllocation, Faculty, ExamSchedule, Department, ExamDutyWorkflow } from '../../../types';
 import { downloadCSV } from './allocationEngine';
+import { useDepartments } from '../../../hooks/useDepartments';
 
 interface PrintReportsViewProps {
   rooms: Room[];
@@ -38,6 +39,47 @@ interface DepartmentSeatGroup {
   seats: AllocatedSeat[];
 }
 
+// Academic year that a calendar date falls under (July-start convention)
+function getAcademicYearForDate(d: Date): string {
+  const y = d.getFullYear();
+  return d.getMonth() >= 6 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+}
+
+// Reverse-engineering: derive the batch from a semester + academic year
+// (inverse of year-of-study: batchStart = AYstart - floor((sem-1)/2))
+function deriveBatchFromSemesterAy(semester?: string, academicYear?: string, isPG?: boolean): string {
+  let ayStart = 2026;
+  if (academicYear) {
+    const m = String(academicYear).match(/^(\d{4})/);
+    if (m) ayStart = parseInt(m[1], 10);
+  }
+  const semNum = Number(semester) || 1;
+  const startYear = ayStart - Math.floor((semNum - 1) / 2);
+  const duration = isPG ? 2 : 4;
+  return `${startYear}-${startYear + duration}`;
+}
+
+// Normalize AY / batch for comparison (handles 2026-2027 vs 2026-27 vs 2026/2027)
+function normalizeAy(ay?: string): string {
+  if (!ay) return '';
+  const m = String(ay).match(/(\d{4})\D+(\d{2,4})/);
+  if (!m) return String(ay).trim().toLowerCase();
+  const start = m[1];
+  const end = m[2].length === 2 ? `${start.slice(0, 2)}${m[2]}` : m[2];
+  return `${start}-${end}`;
+}
+function normalizeBatch(batch?: string): string {
+  if (!batch) return '';
+  const nums = String(batch).match(/\d{4}/g);
+  if (nums && nums.length >= 2) return `${nums[0]}-${nums[1]}`;
+  // fallback: handle short form like 2023-27
+  const m = String(batch).match(/(\d{4})\D+(\d{2,4})/);
+  if (!m) return String(batch).trim().toLowerCase();
+  const start = m[1];
+  const end = m[2].length === 2 ? `${start.slice(0, 2)}${m[2]}` : m[2];
+  return `${start}-${end}`;
+}
+
 export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   rooms,
   students,
@@ -51,14 +93,17 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     'dept-attendance' | 'qp-distribution' | 'door-notice' | 'desk-slips' | 'admin-oversight' | 'absentee-statement' | 'faculty-orders'
   >('qp-distribution');
   const [selectedHallId, setSelectedHallId] = useState<string>(defaultHallId || rooms[0]?.id || '');
-  const [selectedDepartment, setSelectedDepartment] = useState<string>('CSE');
+  const [selectedProgramme, setSelectedProgramme] = useState<string>('');
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('');
+  const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('');
+  const [selectedSemester, setSelectedSemester] = useState<string>('');
   const [deptSortBy, setDeptSortBy] = useState<'regNo' | 'hall' | 'name'>('regNo');
   const [sortBy, setSortBy] = useState<SeatingSortOrder>('department');
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [groupByDept, setGroupByDept] = useState<boolean>(true);
   const [includeSignatures, setIncludeSignatures] = useState<boolean>(true);
   const [collegeName, setCollegeName] = useState<string>('C.K. COLLEGE OF ENGINEERING & TECHNOLOGY (AUTONOMOUS)');
-  const [examSubTitle, setExamSubTitle] = useState<string>('Office of the Controller of Examinations — Internal Assessment Cell');
+  const [examSubTitle, setExamSubTitle] = useState<string>('Internal Assessment Cell');
 
   // QP Distribution Report specific state
   const [qpViewMode, setQpViewMode] = useState<'matrix' | 'subject-summary' | 'envelope-slips'>('matrix');
@@ -68,7 +113,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   const printAreaRef = useRef<HTMLDivElement>(null);
 
   const selectedRoom = rooms.find((r) => r.id === selectedHallId) || rooms[0];
-  
+
   // Base seats for selected hall for the active exam date & session
   const rawHallSeats = useMemo(() => {
     return allocatedSeats.filter(
@@ -86,21 +131,171 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     return Array.from(depts);
   }, [rawHallSeats]);
 
-  // All unique departments appearing in the current active exam date & session across ALL halls
-  const allExamDepartments = useMemo(() => {
-    const depts = new Set<Department>();
-    students
-      .filter((s) => s.examDate === selectedExam.date && s.session === selectedExam.session)
-      .forEach((s) => depts.add(s.department));
-    
-    // Also add from allocatedSeats in case
-    allocatedSeats
-      .filter((s) => s.student.examDate === selectedExam.date && s.student.session === selectedExam.session)
-      .forEach((s) => depts.add(s.student.department));
+  const { departments: firestoreDeptMap } = useDepartments();
 
-    const arr = Array.from(depts);
-    return arr.length > 0 ? arr : (['CSE', 'IT', 'AI&DS', 'ECE', 'MECH', 'CIVIL', 'EEE'] as Department[]);
-  }, [students, allocatedSeats, selectedExam.date, selectedExam.session]);
+  const normalizeDeptName = (rawDept?: string): string => {
+    if (!rawDept) return '';
+    let s = String(rawDept).trim();
+    s = s.replace(/^Department of\s+/i, '');
+    const lower = s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (lower === 'cse' || lower.includes('computerscience')) return 'B.E. Computer Science and Engineering';
+    if (lower === 'it' || lower.includes('informationtechnology')) return 'B.Tech. Information Technology';
+    if (lower === 'aids' || lower.includes('artificialintelligence')) return 'B.Tech. Artificial Intelligence and Data Science';
+    if (lower === 'ece' || lower.includes('electronicsandcommunication')) return 'B.E. Electronics and Communication Engineering';
+    if (lower === 'eee' || lower.includes('electricalandelectronics')) return 'B.E. Electrical and Electronics Engineering';
+    if (lower === 'mech' || lower.includes('mechanicalengineering')) return 'B.E. Mechanical Engineering';
+    if (lower === 'civil' || lower.includes('civilengineering')) return 'B.E. Civil Engineering';
+    if (lower === 'bme' || lower.includes('biomedical')) return 'B.E. Bio Medical Engineering';
+    if (lower === 'robotics' || lower.includes('roboticsandautomation')) return 'B.E. Robotics and Automation';
+    if (lower === 'mba' || lower.includes('businessadministration') || lower === 'administration') return 'PG Master of Business Administration';
+    return s;
+  };
+
+  const getProgrammeForDept = (deptName: string): string => {
+    if (!deptName) return 'OTHER';
+    const norm = normalizeDeptName(deptName);
+    const lower = norm.toLowerCase();
+
+    if (norm.startsWith('B.E.') || lower.includes('b.e.') || lower.startsWith('be ')) return 'B_E';
+    if (norm.startsWith('B.Tech') || lower.includes('b.tech') || lower.startsWith('btech')) return 'B_Tech';
+    if (norm.startsWith('PG') || lower.includes('mba') || lower.includes('business administration') || lower.includes('administration')) return 'PG_MBA';
+    if (norm.startsWith('M.E.') || lower.includes('m.e.') || lower.startsWith('me ')) return 'M_E';
+    if (norm.startsWith('M.Tech') || lower.includes('m.tech') || lower.startsWith('mtech')) return 'M_Tech';
+
+    return 'B_E';
+  };
+
+  const PROGRAMME_LABEL_MAP: Record<string, string> = {
+    ALL: 'All Programmes',
+    UG: 'UG',
+    PG: 'PG',
+    B_E: 'B.E. (Bachelor of Engineering)',
+    B_TECH: 'B.Tech. (Bachelor of Technology)',
+    PG_MBA: 'PG Master of Business Administration',
+    M_E: 'M.E. (Master of Engineering)',
+    M_TECH: 'M.Tech. (Master of Technology)',
+  };
+
+  // Generic UG/PG bucket helpers — Firestore may store UG/PG as umbrella keys
+  const isUgProgramme = (k: string) => {
+    const n = String(k || '').trim().toUpperCase();
+    return n === 'UG' || n === 'B_E' || n === 'B_TECH' || n === 'BTECH' || n === 'BE';
+  };
+  const isPgProgramme = (k: string) => {
+    const n = String(k || '').trim().toUpperCase();
+    return n === 'PG' || n === 'PG_MBA' || n === 'M_E' || n === 'M_TECH' || n === 'MBA' || n === 'ME' || n === 'MTECH' || n === 'ADMINISTRATION';
+  };
+
+  // All unique departments configured in Firestore & candidate dataset (Normalized & Deduplicated)
+  const allExamDepartments = useMemo(() => {
+    const depts = new Set<string>();
+    const addDept = (d?: string) => {
+      const norm = normalizeDeptName(d);
+      if (norm) depts.add(norm);
+    };
+
+    const normDate = (d?: string) => String(d || '').replace(/[^0-9]/g, '');
+    const targetDateNorm = normDate(selectedExam?.date);
+    const targetSessNorm = String(selectedExam?.session || '').trim().toUpperCase();
+
+    // 1. Session candidates in Firestore
+    students.forEach((s) => {
+      const sDateNorm = normDate(s.examDate);
+      const sSessNorm = String(s.session || '').trim().toUpperCase();
+      const isMatch = (!targetDateNorm || sDateNorm === targetDateNorm) && (!targetSessNorm || sSessNorm === targetSessNorm);
+      if (isMatch && s.department) addDept(s.department);
+    });
+
+    // 2. Allocated seats in Firestore
+    allocatedSeats.forEach((s) => {
+      const sDateNorm = normDate(s.student?.examDate);
+      const sSessNorm = String(s.student?.session || '').trim().toUpperCase();
+      const isMatch = (!targetDateNorm || sDateNorm === targetDateNorm) && (!targetSessNorm || sSessNorm === targetSessNorm);
+      if (isMatch && s.student?.department) addDept(s.student.department);
+    });
+
+    // 3. Fall back to all students in total dataset
+    students.forEach((s) => { if (s.department) addDept(s.department); });
+    allocatedSeats.forEach((s) => { if (s.student?.department) addDept(s.student.department); });
+
+    // 4. Fetch from Firestore programme_departments collection via useDepartments
+    if (firestoreDeptMap && typeof firestoreDeptMap === 'object') {
+      Object.values(firestoreDeptMap).forEach((deptList) => {
+        if (Array.isArray(deptList)) {
+          deptList.forEach((d) => addDept(d));
+        }
+      });
+    }
+
+    return Array.from(depts).sort();
+  }, [firestoreDeptMap, students, allocatedSeats, selectedExam?.date, selectedExam?.session]);
+
+  // Programme dropdown — derived strictly from Curriculum (Firestore programme_departments) only
+  const availableProgrammes = useMemo(() => {
+    const progMap = new Map<string, { key: string; label: string }>();
+
+    if (firestoreDeptMap && typeof firestoreDeptMap === 'object') {
+      Object.keys(firestoreDeptMap).forEach((progKey) => {
+        const label = PROGRAMME_LABEL_MAP[progKey] || progKey;
+        progMap.set(progKey, { key: progKey, label });
+      });
+    }
+
+    return Array.from(progMap.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [firestoreDeptMap]);
+
+  // Department dropdown — exactly the departments configured for the selected Programme in Curriculum
+  const availableDepartments = useMemo(() => {
+    if (!selectedProgramme || selectedProgramme.trim() === '') return [];
+    if (!firestoreDeptMap || typeof firestoreDeptMap !== 'object') return [];
+    const deps = firestoreDeptMap[selectedProgramme];
+    if (!Array.isArray(deps)) return [];
+    return deps
+      .map((d) => normalizeDeptName(d))
+      .filter((d): d is string => !!d)
+      .sort((a, b) => a.localeCompare(b));
+  }, [firestoreDeptMap, selectedProgramme]);
+
+  // Auto-select first programme when none selected
+  useEffect(() => {
+    if (availableProgrammes.length > 0 && (!selectedProgramme || selectedProgramme.trim() === '')) {
+      setSelectedProgramme(availableProgrammes[0].key);
+    }
+  }, [availableProgrammes, selectedProgramme]);
+
+  // Auto-select first department when none selected
+  useEffect(() => {
+    if (availableDepartments.length > 0 && (!selectedDepartment || selectedDepartment.trim() === '')) {
+      setSelectedDepartment(availableDepartments[0]);
+    }
+  }, [availableDepartments, selectedDepartment]);
+
+  // Academic Year options — distinct years present in candidate data, plus current academic year
+  const availableAcademicYears = useMemo(() => {
+    const set = new Set<string>();
+    students.forEach((s) => { if (s.academicYear) set.add(s.academicYear); });
+    set.add(getAcademicYearForDate(new Date()));
+    const recent = getAcademicYearForDate(new Date());
+    const startY = parseInt(String(recent).split('-')[0], 10);
+    for (let i = -3; i <= 1; i++) set.add(`${startY + i}-${startY + i + 1}`);
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [students]);
+
+  // Default Academic Year slot to the current academic year
+  useEffect(() => {
+    if (!selectedAcademicYear || selectedAcademicYear.trim() === '') {
+      setSelectedAcademicYear(getAcademicYearForDate(new Date()));
+    }
+  }, [selectedAcademicYear]);
+
+  // Reverse-engineered batch from the chosen semester + academic year
+  const derivedReportBatch = useMemo(() => {
+    if (!selectedSemester || !selectedAcademicYear) return '';
+    const isPG = isPgProgramme(selectedProgramme) && !isUgProgramme(selectedProgramme) ? true : selectedProgramme === 'PG_MBA' || selectedProgramme === 'M_E' || selectedProgramme === 'M_TECH';
+    // For generic UG key, keep 4-year duration; for generic PG key, 2-year
+    const pgFlag = selectedProgramme === 'PG' || selectedProgramme === 'PG_MBA' || selectedProgramme === 'M_E' || selectedProgramme === 'M_TECH';
+    return deriveBatchFromSemesterAy(selectedSemester, selectedAcademicYear, pgFlag);
+  }, [selectedSemester, selectedAcademicYear, selectedProgramme]);
 
   // Map for fast room lookup
   const roomMap = useMemo(() => {
@@ -111,21 +306,85 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
 
   // Department-Wise Attendance Students Data (Aggregated across ALL exam halls)
   const departmentStudentsWithHall = useMemo(() => {
-    // 1. Get all students of the chosen department (or all departments) appearing for this exam date & session
+    const normDate = (d?: string) => String(d || '').replace(/[^0-9]/g, '');
+    const targetDateNorm = normDate(selectedExam?.date);
+    const targetSessNorm = String(selectedExam?.session || '').trim().toUpperCase();
+    const hasBatchFilter = !!derivedReportBatch;
+
+    // 1. Get all students of the chosen department / batch appearing for this exam date & session
+    // When a batch is derived (UG CSE Sem 7 + AY 2026-2027 → 2023-2027), show THAT batch's full namelist
+    // even if its scheduled exam date differs — this is the master branch-strength attendance sheet.
     const targetStudents = students.filter((st) => {
-      const matchExam = st.examDate === selectedExam.date && st.session === selectedExam.session;
-      if (!matchExam) return false;
-      if (selectedDepartment !== 'ALL' && st.department !== selectedDepartment) return false;
+      // Exam date/session binding — skipped when a specific batch is targeted so the master namelist shows
+      if (!hasBatchFilter) {
+        const stDateNorm = normDate(st.examDate);
+        const stSessNorm = String(st.session || '').trim().toUpperCase();
+        const matchExam = (!targetDateNorm || stDateNorm === targetDateNorm) && (!targetSessNorm || stSessNorm === targetSessNorm);
+        if (!matchExam) return false;
+      }
+
+      const normStDept = normalizeDeptName(st.department);
+
+      // Programme / Department filters — UG bucket (from image) must match B.E. + B.Tech.
+      if (selectedProgramme && selectedProgramme.trim() !== '' && selectedProgramme !== 'ALL') {
+        // Prefer authoritative Firestore programme_departments membership
+        const progDeptList = (firestoreDeptMap as any)?.[selectedProgramme];
+        if (Array.isArray(progDeptList) && progDeptList.length > 0) {
+          const progSet = new Set(progDeptList.map((d: string) => normalizeDeptName(d)));
+          if (!progSet.has(normStDept)) return false;
+        } else {
+          const stProg = getProgrammeForDept(normStDept);
+          const selNorm = String(selectedProgramme).trim().toUpperCase();
+          if (selNorm === 'UG') {
+            if (!(stProg === 'B_E' || stProg === 'B_Tech' || stProg === 'UG')) return false;
+          } else if (selNorm === 'PG' || selNorm === 'PG_MBA' || selNorm === 'MBA' || selNorm === 'ADMINISTRATION') {
+            if (!(stProg === 'PG_MBA' || stProg === 'M_E' || stProg === 'M_Tech' || stProg === 'PG')) return false;
+          } else {
+            const matchProg =
+              (selNorm === 'B_E' || selNorm === 'BE') ? stProg === 'B_E' :
+                (selNorm === 'B_TECH' || selNorm === 'BTECH') ? stProg === 'B_Tech' :
+                  (selNorm === 'M_E' || selNorm === 'ME') ? stProg === 'M_E' :
+                    (selNorm === 'M_TECH' || selNorm === 'MTECH') ? stProg === 'M_Tech' :
+                      stProg === selectedProgramme;
+            if (!matchProg) return false;
+          }
+        }
+      }
+
+      // Department filter
+      if (selectedDepartment && selectedDepartment.trim() !== '' && selectedDepartment !== 'ALL') {
+        const normSelDept = normalizeDeptName(selectedDepartment);
+        if (normStDept !== normSelDept && st.department !== selectedDepartment) return false;
+      }
+
+      // Academic Year filter — normalized (2026-27 == 2026-2027) and skipped when empty
+      if (selectedAcademicYear && selectedAcademicYear.trim() !== '') {
+        const selAyNorm = normalizeAy(selectedAcademicYear);
+        const stAyNorm = normalizeAy(st.academicYear);
+        if (stAyNorm && selAyNorm && stAyNorm !== selAyNorm) return false;
+      }
+
+      // Semester filter (disabled when empty)
+      if (selectedSemester && selectedSemester.trim() !== '') {
+        if (st.semester !== parseInt(selectedSemester, 10)) return false;
+      }
+
+      // Derived batch filter — reverse-engineering: semester + academicYear -> batch (e.g. Sem 7 + AY 2026-2027 → 2023-2027)
+      // This is the authoritative namelist gate for the image's form.
+      if (derivedReportBatch) {
+        const stBatchNorm = normalizeBatch(st.batch);
+        const derivedNorm = normalizeBatch(derivedReportBatch);
+        if (stBatchNorm && derivedNorm && stBatchNorm !== derivedNorm) return false;
+        // When batch is targeted, students without a batch tag are kept (they will be filtered by sem+dept above)
+      }
+
       return true;
     });
 
     // 2. Map with their allocated seat and hall info
     const enrichedList = targetStudents.map((st) => {
       const seat = allocatedSeats.find(
-        (s) =>
-          s.student.id === st.id &&
-          s.student.examDate === selectedExam.date &&
-          s.student.session === selectedExam.session
+        (s) => s.student.id === st.id || s.student.registerNumber === st.registerNumber
       );
 
       const room = seat ? roomMap.get(seat.roomId) : undefined;
@@ -157,7 +416,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     }
 
     return enrichedList;
-  }, [students, allocatedSeats, selectedExam.date, selectedExam.session, selectedDepartment, deptSortBy, roomMap]);
+  }, [students, allocatedSeats, selectedExam.date, selectedExam.session, selectedProgramme, selectedDepartment, selectedAcademicYear, selectedSemester, derivedReportBatch, deptSortBy, roomMap]);
 
   // Summary of halls used for this department
   const deptHallDistribution = useMemo(() => {
@@ -290,8 +549,8 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
           sortedRegs.length === 1
             ? sortedRegs[0]
             : sortedRegs.length > 1
-            ? `${sortedRegs[0]} – ${sortedRegs[sortedRegs.length - 1]}`
-            : '-';
+              ? `${sortedRegs[0]} – ${sortedRegs[sortedRegs.length - 1]}`
+              : '-';
 
         const studentCount = item.seats.length;
 
@@ -573,22 +832,18 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
 
           {[
             { id: 'dept-attendance', label: '1. Department Attendance Report (With Hall No)' },
-            { id: 'qp-distribution', label: '2. Question Paper Distribution & Indent Report' },
-            { id: 'door-notice', label: '3. Hall Door Notice (Room-Wise)' },
-            { id: 'desk-slips', label: '4. Student Desk Stickers / Slips' },
-            { id: 'admin-oversight', label: '5. Admin Oversight Master Report' },
-            { id: 'absentee-statement', label: '6. Absentee & Booklet Statement' },
-            { id: 'faculty-orders', label: '7. Faculty Duty Memo' },
+            { id: 'admin-oversight', label: '2. Admin Oversight Master Report' },
+            { id: 'absentee-statement', label: '3. Absentee & Booklet Statement' },
+            { id: 'faculty-orders', label: '4. Faculty Duty Memo' },
           ].map((rpt) => (
             <button
               key={rpt.id}
               id={`report-tab-${rpt.id}`}
               onClick={() => setReportType(rpt.id as any)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                reportType === rpt.id
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${reportType === rpt.id
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
             >
               {rpt.label}
             </button>
@@ -604,33 +859,30 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 <button
                   id="qp-view-mode-matrix"
                   onClick={() => setQpViewMode('matrix')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                    qpViewMode === 'matrix'
-                      ? 'bg-white text-indigo-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${qpViewMode === 'matrix'
+                    ? 'bg-white text-indigo-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   📋 Master Distribution Register
                 </button>
                 <button
                   id="qp-view-mode-summary"
                   onClick={() => setQpViewMode('subject-summary')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                    qpViewMode === 'subject-summary'
-                      ? 'bg-white text-indigo-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${qpViewMode === 'subject-summary'
+                    ? 'bg-white text-indigo-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   📊 Subject-Wise Indent Summary
                 </button>
                 <button
                   id="qp-view-mode-slips"
                   onClick={() => setQpViewMode('envelope-slips')}
-                  className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                    qpViewMode === 'envelope-slips'
-                      ? 'bg-white text-indigo-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`px-3 py-1 rounded-lg font-bold transition-all ${qpViewMode === 'envelope-slips'
+                    ? 'bg-white text-indigo-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   ✉️ Hall QP Packet Envelope Covers
                 </button>
@@ -697,6 +949,29 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         {/* Filters for Department-Wise Attendance Report */}
         {reportType === 'dept-attendance' && (
           <div className="flex flex-wrap items-center gap-4 pt-3 mt-3 border-t border-slate-100 text-xs">
+            {/* Select Programme Dropdown */}
+            <div className="flex items-center space-x-2">
+              <span className="font-semibold text-slate-700">Select Programme:</span>
+              <select
+                id="select-programme-attendance"
+                value={selectedProgramme}
+                onChange={(e) => {
+                  const newProg = e.target.value;
+                  setSelectedProgramme(newProg);
+                }}
+                aria-label="Select programme for attendance sheet"
+                className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-bold text-indigo-900 focus:outline-none"
+              >
+                <option value="" disabled hidden>-- Select Programme --</option>
+                {availableProgrammes.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Select Department Dropdown */}
             <div className="flex items-center space-x-2">
               <span className="font-semibold text-slate-700">Select Department:</span>
               <select
@@ -706,12 +981,93 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 aria-label="Select department branch for attendance sheet"
                 className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-bold text-indigo-900 focus:outline-none"
               >
-                {allExamDepartments.map((d) => (
+                <option value="" disabled hidden>-- Select Department --</option>
+                {availableDepartments.map((d) => (
                   <option key={d} value={d}>
-                    Department of {d}
+                    {d}
                   </option>
                 ))}
-                <option value="ALL">All Departments (Consolidated)</option>
+              </select>
+            </div>
+
+            {/* Academic Year Dropdown */}
+            <div className="flex items-center space-x-2">
+              <span className="font-semibold text-slate-700">Academic Year:</span>
+              <select
+                id="select-academic-year-attendance"
+                value={selectedAcademicYear}
+                onChange={(e) => setSelectedAcademicYear(e.target.value)}
+                aria-label="Select academic year for attendance sheet"
+                className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-bold text-indigo-900 focus:outline-none"
+              >
+                <option value="">All Academic Years</option>
+                {availableAcademicYears.map((ay) => (
+                  <option key={ay} value={ay}>
+                    {ay}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Semester Dropdown */}
+            <div className="flex items-center space-x-2">
+              <span className="font-semibold text-slate-700">Semester:</span>
+              <select
+                id="select-semester-attendance"
+                value={selectedSemester}
+                onChange={(e) => {
+                  const semVal = e.target.value;
+                  setSelectedSemester(semVal);
+                  // Map chosen sem -> AY so THAT batch's namelist shows in the form below (image concept)
+                  // Scoped to the selected programme/department so CSE Sem 7 picks CSE's AY (2026-2027)
+                  if (semVal) {
+                    const semNum = parseInt(semVal, 10);
+                    const ayCounts = new Map<string, number>();
+                    students.forEach((st) => {
+                      if (st.semester !== semNum || !st.academicYear) return;
+                      const normStDept = normalizeDeptName(st.department);
+                      if (selectedProgramme && selectedProgramme.trim() !== '' && selectedProgramme !== 'ALL') {
+                        const stProg = getProgrammeForDept(normStDept);
+                        const matchProg =
+                          (selectedProgramme === 'B_E' || selectedProgramme === 'BE') ? stProg === 'B_E' :
+                            (selectedProgramme === 'B_TECH' || selectedProgramme === 'BTECH') ? stProg === 'B_Tech' :
+                              (selectedProgramme === 'PG_MBA' || selectedProgramme === 'MBA') ? stProg === 'PG_MBA' :
+                                (selectedProgramme === 'M_E' || selectedProgramme === 'ME') ? stProg === 'M_E' :
+                                  (selectedProgramme === 'M_TECH' || selectedProgramme === 'MTECH') ? stProg === 'M_Tech' :
+                                    stProg === selectedProgramme;
+                        if (!matchProg) return;
+                      }
+                      if (selectedDepartment && selectedDepartment.trim() !== '' && selectedDepartment !== 'ALL') {
+                        const normSelDept = normalizeDeptName(selectedDepartment);
+                        if (normStDept !== normSelDept && st.department !== selectedDepartment) return;
+                      }
+                      ayCounts.set(st.academicYear, (ayCounts.get(st.academicYear) || 0) + 1);
+                    });
+                    if (ayCounts.size > 0) {
+                      let bestAy = '';
+                      let bestCount = -1;
+                      ayCounts.forEach((cnt, ay) => {
+                        if (cnt > bestCount) { bestCount = cnt; bestAy = ay; }
+                      });
+                      setSelectedAcademicYear(bestAy);
+                    } else {
+                      // No data for that sem+dept — keep the current/derived AY so reverse-engineering still yields a batch
+                      // (e.g. UG CSE Sem 7 + AY 2026-2027 → 2023-2027 even if no prior candidate record)
+                    }
+                  } else {
+                    // All Semesters — reset AY to current AY
+                    setSelectedAcademicYear(getAcademicYearForDate(new Date()));
+                  }
+                }}
+                aria-label="Select semester for attendance sheet"
+                className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-bold text-indigo-900 focus:outline-none"
+              >
+                <option value="">All Semesters</option>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                  <option key={sem} value={sem}>
+                    Sem {sem}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -834,7 +1190,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
       </div>
 
       {/* PRINTABLE CANVAS CONTAINER */}
-      <div 
+      <div
         ref={printAreaRef}
         className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 max-w-5xl mx-auto print:border-none print:shadow-none print:p-0 print:m-0 text-slate-900"
       >
@@ -859,7 +1215,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
               <div>
                 <span className="text-slate-500 block text-[10px] uppercase font-bold">Department / Branch:</span>
                 <span className="font-bold text-slate-900 text-sm">
-                  {selectedDepartment === 'ALL' ? 'All Engineering Departments' : `Department of ${selectedDepartment}`}
+                  {!selectedDepartment || selectedDepartment === 'ALL' ? 'All Engineering Departments' : `Department of ${selectedDepartment}`}
                 </span>
               </div>
               <div>
@@ -1001,8 +1357,8 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 {qpViewMode === 'subject-summary'
                   ? 'SUBJECT-WISE CONSOLIDATED QUESTION PAPER INDENT SUMMARY'
                   : qpViewMode === 'envelope-slips'
-                  ? 'EXAMINATION HALL QUESTION PAPER PACKET DOCKET & COVER SLIPS'
-                  : 'QUESTION PAPER DISTRIBUTION & INDENT STATEMENT (HALL / DEPT / SUBJECT-WISE)'}
+                    ? 'EXAMINATION HALL QUESTION PAPER PACKET DOCKET & COVER SLIPS'
+                    : 'QUESTION PAPER DISTRIBUTION & INDENT STATEMENT (HALL / DEPT / SUBJECT-WISE)'}
               </div>
             </div>
 
@@ -1414,6 +1770,122 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 Total Seated: <span className="text-indigo-800 font-mono text-sm">{sortedHallSeats.length}</span> Candidates
               </div>
             </div>
+
+            {/* Visual Classroom Desk Grid Matrix Layout */}
+            {selectedRoom && (
+              <div className="space-y-2.5 my-3">
+                <div className="w-full py-1.5 bg-slate-900 text-white rounded-md text-center text-xs font-bold uppercase tracking-wider">
+                  [ FRONT PODIUM / BLACKBOARD & CHIEF INVIGILATOR DESK ]
+                </div>
+                <div
+                  className="grid gap-2 p-3 bg-slate-50 border-2 border-slate-900 rounded-md"
+                  style={{
+                    gridTemplateColumns: `repeat(${selectedRoom.columns}, minmax(130px, 1fr))`,
+                  }}
+                >
+                  {(() => {
+                    const maxRows = Math.max(
+                      selectedRoom.rows,
+                      ...(selectedRoom.columnRows && selectedRoom.columnRows.length > 0
+                        ? selectedRoom.columnRows
+                        : [selectedRoom.rows])
+                    );
+
+                    return Array.from({ length: maxRows }).map((_, rIdx) => {
+                      const rowNum = rIdx + 1;
+                      return Array.from({ length: selectedRoom.columns }).map((_, cIdx) => {
+                        const colNum = cIdx + 1;
+                        const colRowCount = selectedRoom.columnRows?.[cIdx] ?? selectedRoom.rows;
+
+                        if (rowNum > colRowCount) {
+                          return (
+                            <div
+                              key={`empty-print-R${rowNum}-C${colNum}`}
+                              className="p-2 bg-slate-100/50 border border-dashed border-slate-300 rounded min-h-[70px]"
+                            />
+                          );
+                        }
+
+                        const deskId = `R${rowNum}-C${colNum}`;
+                        const isAisle = selectedRoom.disabledDesks?.includes(deskId);
+                        const deskSeats = rawHallSeats.filter((s) => s.deskNumber === deskId);
+                        const perDesk = selectedRoom.columnStudentsPerDesk?.[cIdx] ?? selectedRoom.studentsPerDesk ?? 1;
+
+                        if (isAisle) {
+                          return (
+                            <div
+                              key={deskId}
+                              className="p-2 bg-slate-200 border border-dashed border-slate-400 rounded text-center flex flex-col items-center justify-center min-h-[70px] text-slate-500 text-[10px]"
+                            >
+                              <span>{deskId}</span>
+                              <span className="text-[9px]">Aisle / Pillar</span>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={deskId}
+                            className="bg-white rounded border border-slate-900 p-1.5 flex flex-col justify-between"
+                          >
+                            <div className="flex items-center justify-between pb-1 border-b border-slate-300 text-[9px] font-bold text-slate-700">
+                              <span>Desk {deskId}</span>
+                              <span className="font-mono text-slate-500">Col {colNum}</span>
+                            </div>
+                            {perDesk === 1 ? (
+                              (() => {
+                                const seatA = deskSeats.find((s) => s.slotPosition === 'A' || s.slotPosition === 'Single');
+                                return seatA ? (
+                                  <div className="p-1 rounded bg-slate-50 border border-slate-300">
+                                    <div className="flex items-center justify-between text-[8px]">
+                                      <span className="font-bold px-1 rounded bg-slate-800 text-white">{seatA.student.department}</span>
+                                      <span className="font-mono font-bold text-indigo-900">{seatA.student.subjectCode}</span>
+                                    </div>
+                                    <span className="font-mono font-black text-slate-900 text-[11px] block mt-0.5">
+                                      {seatA.student.registerNumber}
+                                    </span>
+                                    <p className="font-medium text-slate-700 text-[9px] truncate">{seatA.student.name}</p>
+                                  </div>
+                                ) : (
+                                  <div className="p-2 text-center text-[9px] text-slate-400 bg-slate-50 rounded border border-dashed border-slate-200">
+                                    Vacant
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div className={`grid grid-cols-${Math.min(perDesk, 3)} gap-1`}>
+                                {Array.from({ length: perDesk }).map((_, sIdx) => {
+                                  const slotLetter = perDesk === 2 ? (sIdx === 0 ? 'A' : 'B') : String.fromCharCode(65 + sIdx);
+                                  const seat = deskSeats.find((s) => s.slotPosition === slotLetter || (perDesk === 2 && sIdx === 0 && s.slotPosition === 'Single'));
+                                  return seat ? (
+                                    <div key={slotLetter} className="p-1 rounded bg-slate-50 border border-slate-300">
+                                      <div className="flex items-center justify-between text-[7px]">
+                                        {seat.serialNumber != null && (
+                                          <span className="font-bold px-1 rounded bg-slate-900 text-white">#{seat.serialNumber}</span>
+                                        )}
+                                        <span className="font-bold px-1 rounded bg-indigo-100 text-indigo-900">{seat.student.department}</span>
+                                      </div>
+                                      <span className="font-mono font-black text-slate-900 text-[9px] block mt-0.5 truncate">
+                                        {seat.student.registerNumber}
+                                      </span>
+                                      <p className="font-medium text-slate-700 text-[8px] truncate">{seat.student.name}</p>
+                                    </div>
+                                  ) : (
+                                    <div key={slotLetter} className="p-1 text-center text-[8px] text-slate-300 bg-slate-50 rounded border border-dashed border-slate-200">
+                                      {slotLetter}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    });
+                  })()}
+                </div>
+              </div>
+            )}
 
             {/* Students Seating Table: Grouped by Department or Continuous */}
             {sortBy === 'department' && groupByDept ? (

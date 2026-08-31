@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Grid3X3,
   Sparkles,
@@ -25,19 +25,31 @@ import {
   ChevronRight,
   School,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Save
 } from 'lucide-react';
 const confetti = (opts) => { };
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../../../firebase';
 import { Room, Student, AllocatedSeat, Department, ExamSchedule, SubjectStrength } from '../../../types';
-import { allocateSeats, AllocationStrategy, downloadCSV, getRoomNetCapacity, findOptimalHalls } from './allocationEngine';
+import { allocateSeats, AllocationStrategy, SeatTraversal, MixGranularity, RoomDeptQuota, downloadCSV, getRoomNetCapacity, findOptimalHalls, detectConflicts } from './allocationEngine';
 import { DEPT_SUBJECTS } from './initialData';
 import PrincipalIAScheduleView from '../../PrincipalIAScheduleView';
+
+// Helper to normalize room ID / room number for matching across the component
+const normRoomStr = (val?: string) => String(val || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 
 interface SeatAllocationViewProps {
   rooms: Room[];
   students: Student[];
   allocatedSeats: AllocatedSeat[];
-  onUpdateAllocatedSeats: (seats: AllocatedSeat[]) => void;
+  initialRoomDeptQuotaByExam?: Record<string, RoomDeptQuota>;
+  initialSelectedHallIdsByExam?: Record<string, string[]>;
+  onUpdateAllocatedSeats: (
+    seats: AllocatedSeat[],
+    updatedQuotaByExam?: Record<string, RoomDeptQuota>,
+    updatedHallIdsByExam?: Record<string, string[]>
+  ) => void;
   exams: ExamSchedule[];
   selectedExam: ExamSchedule;
   onSelectExam: (exam: ExamSchedule) => void;
@@ -53,6 +65,8 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   rooms,
   students,
   allocatedSeats,
+  initialRoomDeptQuotaByExam,
+  initialSelectedHallIdsByExam,
   onUpdateAllocatedSeats,
   exams,
   selectedExam,
@@ -62,8 +76,47 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   onNavigateToReports,
 }) => {
   const [strategy, setStrategy] = useState<AllocationStrategy>('interleaved-dept');
+  const [traversal, setTraversal] = useState<SeatTraversal>('column');
+  const [mixGranularity, setMixGranularity] = useState<MixGranularity>('department');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterDept, setFilterDept] = useState<string>('all');
+  const [saveToast, setSaveToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setSaveToast({ message, type });
+    setTimeout(() => setSaveToast(null), 4000);
+  };
+
+  // PROFORMA-1: per-hall per-subject count matrix (Anna Univ Consolidated Hall Allocation)
+  // Isolated per exam (selectedExam.id) so oru exam ku potta number adutha exam ku replicate aavadhu — department+subject+exam wise
+  const [roomDeptQuotaByExam, setRoomDeptQuotaByExam] = useState<Record<string, RoomDeptQuota>>(
+    initialRoomDeptQuotaByExam || {}
+  );
+
+  const [selectedHallIdsByExam, setSelectedHallIdsByExam] = useState<Record<string, string[]>>(
+    initialSelectedHallIdsByExam || {}
+  );
+
+  useEffect(() => {
+    if (initialRoomDeptQuotaByExam && Object.keys(initialRoomDeptQuotaByExam).length > 0) {
+      setRoomDeptQuotaByExam(initialRoomDeptQuotaByExam);
+    }
+  }, [initialRoomDeptQuotaByExam]);
+
+  useEffect(() => {
+    if (initialSelectedHallIdsByExam && Object.keys(initialSelectedHallIdsByExam).length > 0) {
+      setSelectedHallIdsByExam(initialSelectedHallIdsByExam);
+    }
+  }, [initialSelectedHallIdsByExam]);
+  const examQuotaKey = selectedExam?.id || `${selectedExam?.date || 'no-date'}_${selectedExam?.session || 'FN'}`;
+  const roomDeptQuota: RoomDeptQuota = roomDeptQuotaByExam[examQuotaKey] || {};
+  const setRoomDeptQuota: React.Dispatch<React.SetStateAction<RoomDeptQuota>> = (action) => {
+    setRoomDeptQuotaByExam((prev) => {
+      const cur = prev[examQuotaKey] || {};
+      const nextQuota = typeof action === 'function' ? (action as (p: RoomDeptQuota) => RoomDeptQuota)(cur) : action;
+      return { ...prev, [examQuotaKey]: nextQuota };
+    });
+  };
 
   // Modals and UI sub-states
   const [isAddSubjectModalOpen, setIsAddSubjectModalOpen] = useState<boolean>(false);
@@ -91,24 +144,32 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   // Active rooms in the institution
   const activeRooms = useMemo(() => rooms.filter((r) => r.status === 'Active'), [rooms]);
 
-  // Current session's students
+  // Table-driven students (from Principal view displayScheduledItems) — single source of truth for hall
+  const [tableStudents, setTableStudents] = useState<Student[]>([]);
+
+  // Current session's students — prioritize table's filtered list (matches the top table's 4 exams 181) over generatedStudents
   const sessionStudents = useMemo(() => {
+    if (tableStudents.length > 0) {
+      if (!selectedExam) return tableStudents;
+      // tableStudents already filtered by selectedExamDateFilter (09 Sep), but ensure session matches
+      return tableStudents.filter((s) => s.examDate === selectedExam.date && s.session === selectedExam.session);
+    }
     if (!selectedExam) return [];
     return students.filter(
       (s) => s.examDate === selectedExam.date && s.session === selectedExam.session
     );
-  }, [students, selectedExam?.date, selectedExam?.session]);
+  }, [tableStudents, students, selectedExam?.date, selectedExam?.session]);
 
-  // Derive subject-wise student strength for this date & session
+  // Derive subject-wise student strength for this date & session (unique per department + semester + subject)
   const subjectStrengthList: SubjectStrength[] = useMemo(() => {
     const map = new Map<string, SubjectStrength>();
 
     sessionStudents.forEach((std) => {
-      const key = `${std.department}_${std.subjectCode}`;
+      const key = `${std.department}_Sem${std.semester || '5'}_${std.subjectCode}`;
       if (!map.has(key)) {
         map.set(key, {
           department: std.department,
-          programme: std.programme || (['IT', 'AI&DS'].includes(std.department) ? 'B.Tech' : 'B.E.'),
+          programme: std.programme || '',
           subjectCode: std.subjectCode,
           subjectName: std.subjectName,
           semester: std.semester,
@@ -120,11 +181,15 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
       map.get(key)!.studentCount += 1;
     });
 
-    const list = Array.from(map.values()).sort((a, b) => a.department.localeCompare(b.department) || a.subjectCode.localeCompare(b.subjectCode));
+    const list = Array.from(map.values()).sort((a, b) =>
+      a.department.localeCompare(b.department) ||
+      (a.semester || 0) - (b.semester || 0) ||
+      a.subjectCode.localeCompare(b.subjectCode)
+    );
 
     return list.map((item) => {
       const stds = sessionStudents
-        .filter((s) => s.department === item.department && s.subjectCode === item.subjectCode)
+        .filter((s) => s.department === item.department && s.subjectCode === item.subjectCode && (s.semester === item.semester || (!s.semester && !item.semester)))
         .sort((a, b) => {
           const numA = parseInt(a.registerNumber.replace(/[^0-9]/g, ''), 10);
           const numB = parseInt(b.registerNumber.replace(/[^0-9]/g, ''), 10);
@@ -142,6 +207,158 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
   // Total student strength for current date & session
   const totalRequiredStrength = sessionStudents.length;
+
+  const [activeCandidateCount, setActiveCandidateCount] = useState<number | null>(null);
+  const [activeSubjectCount, setActiveSubjectCount] = useState<number | null>(null);
+
+  const displayCandidateStrength = activeCandidateCount !== null ? activeCandidateCount : totalRequiredStrength;
+  const displaySubjectCount = activeSubjectCount !== null ? activeSubjectCount : subjectStrengthList.length;
+
+  // Selected Hall IDs for this exam session
+  const currentSelectedHallIds = useMemo(() => {
+    if (!selectedExam) return [];
+    const savedHalls = selectedHallIdsByExam[examQuotaKey];
+    if (savedHalls && Array.isArray(savedHalls) && savedHalls.length > 0) {
+      return savedHalls;
+    }
+    if (selectedExam.selectedHallIds && selectedExam.selectedHallIds.length > 0) {
+      return selectedExam.selectedHallIds;
+    }
+    // Fallback: auto-calculate default optimal halls if none set yet
+    return findOptimalHalls(displayCandidateStrength || 42, activeRooms);
+  }, [selectedExam, examQuotaKey, selectedHallIdsByExam, displayCandidateStrength, activeRooms]);
+
+  // Array of actual Room objects currently selected for this exam
+  const selectedHalls = useMemo(() => {
+    if (!activeRooms || activeRooms.length === 0) return [];
+    if (currentSelectedHallIds.length === 0) {
+      const optimalIds = findOptimalHalls(displayCandidateStrength || 42, activeRooms);
+      const matchedOptimal = activeRooms.filter((r) => optimalIds.includes(r.id) || optimalIds.includes(r.roomNumber));
+      return matchedOptimal.length > 0 ? matchedOptimal : activeRooms.slice(0, 2);
+    }
+    const set = new Set(currentSelectedHallIds.map(normRoomStr));
+    const matched = activeRooms.filter((r) => set.has(normRoomStr(r.id)) || set.has(normRoomStr(r.roomNumber)));
+    return matched.length > 0 ? matched : activeRooms.slice(0, 2);
+  }, [activeRooms, currentSelectedHallIds, displayCandidateStrength]);
+
+  // Total seat capacity of currently selected halls
+  const totalSelectedHallsCapacity = useMemo(() => {
+    return selectedHalls.reduce((sum, room) => sum + getRoomNetCapacity(room), 0);
+  }, [selectedHalls]);
+
+  // Capacity Difference (Selected Capacity - Required Strength)
+  const capacityDifference = totalSelectedHallsCapacity - displayCandidateStrength;
+
+  // ── PROFORMA-1 helpers: quota derived totals & auto-distribute ──
+  // Subject composite key = department + '__Sem' + semester + '__' + subjectCode (isolates dept+sem+subject+exam wise)
+  const getQuotaSubjectKey = (s: SubjectStrength | Student) => `${(s as SubjectStrength).department || (s as Student).department}__Sem${(s as SubjectStrength).semester || (s as Student).semester || ''}__${(s as SubjectStrength).subjectCode || (s as Student).subjectCode}`;
+  const quotaSubjects = useMemo(() => subjectStrengthList, [subjectStrengthList]);
+  const quotaSubjectKeys = useMemo(() => quotaSubjects.map((s) => getQuotaSubjectKey(s)), [quotaSubjects]);
+  const quotaSubjectStrength = useMemo(() => {
+    const m: Record<string, number> = {};
+    quotaSubjects.forEach((s) => { m[getQuotaSubjectKey(s)] = s.studentCount; });
+    return m;
+  }, [quotaSubjects]);
+  // Legacy dept names for compatibility
+  const quotaDepts = quotaSubjectKeys;
+  const quotaDeptStrength = quotaSubjectStrength;
+
+  const getQuotaCell = (hallId: string, subjectKey: string) => {
+    const v = roomDeptQuota[hallId]?.[subjectKey];
+    return v != null ? Number(v) : 0;
+  };
+  const handleQuotaCellChange = (hallId: string, subjectKey: string, raw: string) => {
+    const n = raw === '' ? 0 : Math.max(0, Math.floor(Number(raw) || 0));
+    const hall = activeRooms.find((r) => r.id === hallId) || selectedHalls.find((r) => r.id === hallId);
+    const cap = hall ? getRoomNetCapacity(hall) : 9999;
+    const need = quotaSubjectStrength[subjectKey] ?? 9999;
+    const capped = Math.min(n, cap, need);
+    setRoomDeptQuota((prev) => {
+      const next: RoomDeptQuota = { ...prev };
+      if (!next[hallId]) next[hallId] = {};
+      next[hallId] = { ...next[hallId], [subjectKey]: capped };
+      return next;
+    });
+  };
+
+  const quotaColTotals = useMemo(() => {
+    const m: Record<string, number> = {};
+    selectedHalls.forEach((h) => {
+      let tot = 0;
+      quotaSubjectKeys.forEach((k) => { tot += getQuotaCell(h.id, k); });
+      m[h.id] = tot;
+    });
+    return m;
+  }, [selectedHalls, roomDeptQuota, quotaSubjectKeys]);
+  const quotaRowTotals = useMemo(() => {
+    const m: Record<string, number> = {};
+    quotaSubjectKeys.forEach((k) => {
+      let tot = 0;
+      selectedHalls.forEach((h) => { tot += getQuotaCell(h.id, k); });
+      m[k] = tot;
+    });
+    return m;
+  }, [selectedHalls, roomDeptQuota, quotaSubjectKeys]);
+  const quotaGrandTotal = useMemo(() => Object.values(quotaColTotals).reduce((a, b) => a + b, 0), [quotaColTotals]);
+  const isQuotaComplete = useMemo(() => {
+    if (quotaSubjectKeys.length === 0 || selectedHalls.length === 0) return false;
+    return quotaSubjectKeys.every((k) => quotaRowTotals[k] === quotaSubjectStrength[k]) && quotaGrandTotal === totalRequiredStrength;
+  }, [quotaSubjectKeys, quotaRowTotals, quotaSubjectStrength, quotaGrandTotal, totalRequiredStrength]);
+
+  const handleAutoDistributeQuota = (mode: 'sequential' | 'even' = 'sequential') => {
+    if (selectedHalls.length === 0 || quotaSubjects.length === 0) return;
+    const caps: Record<string, number> = {};
+    selectedHalls.forEach((h) => { caps[h.id] = getRoomNetCapacity(h); });
+    const next: RoomDeptQuota = {};
+    selectedHalls.forEach((h) => { next[h.id] = {}; });
+    const remainingCap: Record<string, number> = { ...caps };
+    if (mode === 'even') {
+      // Evenly spread each subject (dept+subject) across halls
+      quotaSubjects.forEach((subj) => {
+        const key = getQuotaSubjectKey(subj);
+        let need = subj.studentCount;
+        let hallIdx = 0;
+        while (need > 0) {
+          let placed = false;
+          for (let attempt = 0; attempt < selectedHalls.length && need > 0; attempt++) {
+            const h = selectedHalls[hallIdx % selectedHalls.length];
+            hallIdx++;
+            if (remainingCap[h.id] <= 0) continue;
+            next[h.id][key] = (next[h.id][key] || 0) + 1;
+            remainingCap[h.id]--;
+            need--;
+            placed = true;
+          }
+          if (!placed) break;
+        }
+      });
+    } else {
+      // Sequential fill hall-by-hall (Hall 1 gets 15 EEE +10 Mech as in image G202-1)
+      let hallPtr = 0;
+      quotaSubjects.forEach((subj) => {
+        const key = getQuotaSubjectKey(subj);
+        let need = subj.studentCount;
+        while (need > 0 && hallPtr < selectedHalls.length) {
+          const h = selectedHalls[hallPtr];
+          const free = remainingCap[h.id];
+          if (free <= 0) { hallPtr++; continue; }
+          const take = Math.min(need, free);
+          next[h.id][key] = (next[h.id][key] || 0) + take;
+          remainingCap[h.id] -= take;
+          need -= take;
+          if (remainingCap[h.id] === 0) hallPtr++;
+          if (need === 0) break;
+        }
+      });
+    }
+    setRoomDeptQuota(next);
+  };
+
+  const handleClearQuota = () => {
+    const next: RoomDeptQuota = {};
+    selectedHalls.forEach((h) => { next[h.id] = {}; quotaSubjectKeys.forEach((k) => { next[h.id][k] = 0; }); });
+    setRoomDeptQuota(next);
+  };
 
   // Active semesters actually registered for this exam session
   const activeSemestersDisplay = useMemo(() => {
@@ -170,35 +387,6 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     return map;
   }, [subjectStrengthList]);
 
-  const [activeCandidateCount, setActiveCandidateCount] = useState<number | null>(null);
-  const [activeSubjectCount, setActiveSubjectCount] = useState<number | null>(null);
-
-  const displayCandidateStrength = activeCandidateCount !== null ? activeCandidateCount : totalRequiredStrength;
-  const displaySubjectCount = activeSubjectCount !== null ? activeSubjectCount : subjectStrengthList.length;
-
-  // Selected Hall IDs for this exam session
-  const currentSelectedHallIds = useMemo(() => {
-    if (!selectedExam) return [];
-    if (selectedExam.selectedHallIds && selectedExam.selectedHallIds.length > 0) {
-      return selectedExam.selectedHallIds;
-    }
-    // Fallback: auto-calculate default optimal halls if none set yet
-    return findOptimalHalls(displayCandidateStrength || 42, activeRooms);
-  }, [selectedExam?.selectedHallIds, displayCandidateStrength, activeRooms]);
-
-  // Array of actual Room objects currently selected for this exam
-  const selectedHalls = useMemo(() => {
-    return activeRooms.filter((r) => currentSelectedHallIds.includes(r.id));
-  }, [activeRooms, currentSelectedHallIds]);
-
-  // Total seat capacity of currently selected halls
-  const totalSelectedHallsCapacity = useMemo(() => {
-    return selectedHalls.reduce((sum, room) => sum + getRoomNetCapacity(room), 0);
-  }, [selectedHalls]);
-
-  // Capacity Difference (Selected Capacity - Required Strength)
-  const capacityDifference = totalSelectedHallsCapacity - displayCandidateStrength;
-
   // Ensure current active room tab points to a valid selected hall
   const currentViewingRoom = useMemo(() => {
     return (
@@ -209,16 +397,102 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     );
   }, [rooms, selectedRoomId, selectedHalls, activeRooms]);
 
-  // Seats allocated for the current exam session and current viewing hall
-  const currentViewingHallSeats = useMemo(() => {
+  // ── Strict live-candidate validation: hall must show ONLY the exact register numbers
+  //    of students who actually have exam on the selected date & session (e.g. MBA 420725631xxx
+  //    for 15 Sep, not stale EEE 420723105xxx). If saved allocation contains foreign regs
+  //    or count mismatch, auto-preview the correct live allocation.
+  // Helper for robust exam session matching across date, ID & session formats
+  const isMatchingSession = (seatOrStudent: any, exam: ExamSchedule | undefined) => {
+    if (!seatOrStudent || !exam) return false;
+    
+    // Top-level seat or student metadata check
+    const std = seatOrStudent.student || seatOrStudent;
+    const examId = seatOrStudent.examId || std?.examId;
+    const examKey = seatOrStudent.examKey || std?.examKey;
+    
+    if (examId && examId === exam.id) return true;
+    if (examKey && (examKey === `${exam.date}_${exam.session}` || examKey === exam.id)) return true;
+
+    const stdDate = std?.examDate || seatOrStudent.examDate;
+    const stdSession = std?.session || seatOrStudent.session;
+
+    if (stdDate === exam.date && stdSession === exam.session) return true;
+
+    const stdDateNorm = String(stdDate || '').replace(/[^0-9]/g, '');
+    const examDateNorm = String(exam.date || '').replace(/[^0-9]/g, '');
+    const stdSessNorm = String(stdSession || '').trim().toUpperCase();
+    const examSessNorm = String(exam.session || '').trim().toUpperCase();
+    
+    if (stdDateNorm && examDateNorm && stdDateNorm === examDateNorm && stdSessNorm === examSessNorm) return true;
+
+    return false;
+  };
+
+  // ── Strict live-candidate validation & saved plan preservation
+  const activeSessionAllocatedSeats = useMemo(() => {
     if (!selectedExam) return [];
-    return allocatedSeats.filter(
-      (s) =>
-        s.roomId === currentViewingRoom?.id &&
-        s.student.examDate === selectedExam.date &&
-        s.student.session === selectedExam.session
+
+    // Filter saved seats for this exam session
+    const savedForSession = allocatedSeats.filter(
+      (s) => isMatchingSession(s, selectedExam)
     );
-  }, [allocatedSeats, currentViewingRoom?.id, selectedExam?.date, selectedExam?.session]);
+
+    // If candidates and halls are available, generate live allocation respecting active traversal ('column')
+    if (sessionStudents.length > 0 && selectedHalls.length > 0) {
+      try {
+        const quotaOpt = isQuotaComplete ? roomDeptQuota : null;
+        const res = allocateSeats(sessionStudents, selectedHalls, strategy, { traversal, mixGranularity, roomDeptQuota: quotaOpt });
+        if (res.allocatedSeats.length > 0) {
+          return res.allocatedSeats.map((s) => ({
+            ...s,
+            examId: selectedExam.id,
+            examDate: selectedExam.date,
+            session: selectedExam.session,
+            examKey: `${selectedExam.date}_${selectedExam.session}`,
+            student: {
+              ...s.student,
+              examId: selectedExam.id,
+              examDate: selectedExam.date,
+              session: selectedExam.session,
+              examKey: `${selectedExam.date}_${selectedExam.session}`,
+            },
+          }));
+        }
+      } catch {
+        // Fall back to savedForSession if allocation fails
+      }
+    }
+
+    if (savedForSession.length > 0) {
+      return savedForSession;
+    }
+
+    return [];
+  }, [allocatedSeats, selectedExam, sessionStudents, selectedHalls, strategy, traversal, mixGranularity, roomDeptQuota, isQuotaComplete]);
+
+  // Seats allocated for the current exam session and current viewing hall (validated)
+  const currentViewingHallSeats = useMemo(() => {
+    if (!selectedExam || !currentViewingRoom) return [];
+    const targetIdNorm = normRoomStr(currentViewingRoom.id);
+    const targetNumNorm = normRoomStr(currentViewingRoom.roomNumber);
+
+    return activeSessionAllocatedSeats.filter((s) => {
+      const sIdNorm = normRoomStr(s.roomId);
+      const sNumNorm = normRoomStr(s.roomNumber);
+      return (
+        (targetIdNorm && sIdNorm === targetIdNorm) ||
+        (targetNumNorm && sNumNorm === targetNumNorm) ||
+        (targetNumNorm && sIdNorm === targetNumNorm) ||
+        (targetIdNorm && sNumNorm === targetIdNorm)
+      );
+    });
+  }, [activeSessionAllocatedSeats, currentViewingRoom]);
+
+  // Adjacency conflict validation for the current viewing hall
+  const currentHallConflicts = useMemo(
+    () => detectConflicts(currentViewingHallSeats),
+    [currentViewingHallSeats]
+  );
 
   // Filtered seats for searching in the active hall
   const filteredHallSeats = useMemo(() => {
@@ -233,13 +507,90 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     });
   }, [currentViewingHallSeats, searchTerm, filterDept]);
 
-  // Department breakdown inside current viewing hall
+  // Department & Semester Breakdown (Image 1 summary bar) — aggregated by Department + Semester only
+  const deptSemBreakdown = useMemo(() => {
+    const map = new Map<string, { department: string; semester?: number | string; studentCount: number }>();
+    sessionStudents.forEach((std) => {
+      const semVal = std.semester || '—';
+      const key = `${std.department}_Sem${semVal}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          department: std.department,
+          semester: std.semester,
+          studentCount: 0,
+        });
+      }
+      map.get(key)!.studentCount += 1;
+    });
+    return Array.from(map.values()).sort(
+      (a, b) => a.department.localeCompare(b.department) || (Number(a.semester) || 0) - (Number(b.semester) || 0)
+    );
+  }, [sessionStudents]);
+
+  // Department, Semester & Subject breakdown inside current viewing hall (Image 2 requirement)
+  const currentHallSubjectBreakdown = useMemo(() => {
+    const map = new Map<string, { department: Department; semester?: number | string; subjectCode: string; subjectName?: string; count: number }>();
+    currentViewingHallSeats.forEach((seat) => {
+      const semVal = seat.student.semester || '5';
+      const subCode = seat.student.subjectCode || 'SUB';
+      const key = `${seat.student.department}_Sem${semVal}_${subCode}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          department: seat.student.department,
+          semester: seat.student.semester,
+          subjectCode: subCode,
+          subjectName: seat.student.subjectName,
+          count: 0,
+        });
+      }
+      map.get(key)!.count += 1;
+    });
+    return Array.from(map.values()).sort((a, b) =>
+      a.department.localeCompare(b.department) ||
+      (Number(a.semester) || 0) - (Number(b.semester) || 0) ||
+      a.subjectCode.localeCompare(b.subjectCode)
+    );
+  }, [currentViewingHallSeats]);
+
+  // Legacy department breakdown inside current viewing hall
   const currentHallDeptBreakdown = useMemo(() => {
     const counts: { [dept in Department]?: number } = {};
     currentViewingHallSeats.forEach((seat) => {
       counts[seat.student.department] = (counts[seat.student.department] || 0) + 1;
     });
     return counts;
+  }, [currentViewingHallSeats]);
+
+  // Department, Semester & Subject Register Number Range Summary for Hall Door Notice
+  const currentHallSubjectSummary = useMemo(() => {
+    const map = new Map<string, { department: string; semester: string; subjectCode: string; subjectName: string; regs: string[]; count: number }>();
+    currentViewingHallSeats.forEach((seat) => {
+      const std = seat.student;
+      const key = `${std.department}_Sem${std.semester || '5'}_${std.subjectCode}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          department: std.department,
+          semester: String(std.semester || '5'),
+          subjectCode: std.subjectCode || '—',
+          subjectName: std.subjectName || '',
+          regs: [],
+          count: 0,
+        });
+      }
+      const item = map.get(key)!;
+      if (std.registerNumber) item.regs.push(std.registerNumber);
+      item.count++;
+    });
+
+    return Array.from(map.values()).map((item) => {
+      item.regs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const minReg = item.regs[0] || '—';
+      const maxReg = item.regs[item.regs.length - 1] || '—';
+      return {
+        ...item,
+        regRange: item.regs.length > 1 ? `${minReg} TO ${maxReg}` : minReg,
+      };
+    });
   }, [currentViewingHallSeats]);
 
   // Handle Hall Checkbox Toggle
@@ -250,6 +601,12 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     } else {
       nextSelected = [...currentSelectedHallIds, roomId];
     }
+
+    const updatedHallsByExam = {
+      ...selectedHallIdsByExam,
+      [examQuotaKey]: nextSelected,
+    };
+    setSelectedHallIdsByExam(updatedHallsByExam);
 
     if (onUpdateExams) {
       const updatedExams = exams.map((ex) =>
@@ -262,6 +619,12 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
   // Auto-Select Optimal Halls based on Student Strength
   const handleAutoSelectOptimalHalls = () => {
     const optimalIds = findOptimalHalls(totalRequiredStrength, activeRooms);
+    const updatedHallsByExam = {
+      ...selectedHallIdsByExam,
+      [examQuotaKey]: optimalIds,
+    };
+    setSelectedHallIdsByExam(updatedHallsByExam);
+
     if (onUpdateExams) {
       const updatedExams = exams.map((ex) =>
         ex.id === selectedExam.id ? { ...ex, selectedHallIds: optimalIds } : ex
@@ -309,7 +672,8 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
             dept === 'AI&DS' ? '717621306' :
               dept === 'ECE' ? '717621106' :
                 dept === 'MECH' ? '717621114' :
-                  dept === 'CIVIL' ? '717621103' : '717621105';
+                  dept === 'CIVIL' ? '717621103' :
+                    dept === 'MBA' ? '420725631' : '717621105';
 
       const subName = existingForSub[0]?.subjectName || `${dept} Course`;
       const sem = existingForSub[0]?.semester || selectedExam.semester;
@@ -367,7 +731,8 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
           newSubjectDept === 'AI&DS' ? '717621306' :
             newSubjectDept === 'ECE' ? '717621106' :
               newSubjectDept === 'MECH' ? '717621114' :
-                newSubjectDept === 'CIVIL' ? '717621103' : '717621105';
+                newSubjectDept === 'CIVIL' ? '717621103' :
+                  newSubjectDept === 'MBA' ? '420725631' : '717621105';
 
     const newCandidates: Student[] = [];
     const yr = Math.ceil(selectedExam.semester / 2);
@@ -419,7 +784,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     setIsAddExamModalOpen(false);
   };
 
-  // Run Auto Allocation for the Selected Halls & Date/Session
+  // Run Auto Allocation for the Selected Halls & Date/Session (respects PROFORMA-1 quota if user fixed it)
   const handleRunAutoAllocation = () => {
     if (selectedHalls.length === 0) {
       alert('Please select at least one Exam Hall to allocate seats.');
@@ -431,8 +796,15 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
       return;
     }
 
+    // If user has started fixing the matrix, require it to be complete (each dept row = need, no hall overflow)
+    if (quotaGrandTotal > 0 && !isQuotaComplete) {
+      alert('Please fix the PROFORMA-1 matrix: each department row total must equal its need and no hall may exceed capacity. Use Auto-Fill or correct the counts before executing.');
+      return;
+    }
+
+    const quotaOpt = isQuotaComplete ? roomDeptQuota : null;
     // Allocate specifically sessionStudents into selectedHalls
-    const result = allocateSeats(sessionStudents, selectedHalls, strategy);
+    const result = allocateSeats(sessionStudents, selectedHalls, strategy, { traversal, mixGranularity, roomDeptQuota: quotaOpt });
 
     // Keep allocated seats of OTHER exam dates intact, and update current exam's seats
     const otherExamSeats = allocatedSeats.filter(
@@ -460,6 +832,131 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     }
   };
 
+  // Save PROFORMA-1 Quota Matrix to Firestore
+  const handleSaveQuotaMatrix = async () => {
+    try {
+      const updatedQuotaByExam = {
+        ...roomDeptQuotaByExam,
+        [examQuotaKey]: roomDeptQuota,
+      };
+      const updatedHallsByExam = {
+        ...selectedHallIdsByExam,
+        [examQuotaKey]: currentSelectedHallIds,
+      };
+      await setDoc(
+        doc(db, 'exam_cell_settings', 'seating_allocation'),
+        {
+          roomDeptQuotaByExam: updatedQuotaByExam,
+          selectedHallIdsByExam: updatedHallsByExam,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      if (onUpdateAllocatedSeats) {
+        onUpdateAllocatedSeats(allocatedSeats, updatedQuotaByExam, updatedHallsByExam);
+      }
+      triggerToast('✓ PROFORMA-1 Allocation Matrix & Selected Halls saved successfully!');
+    } catch (err) {
+      console.error('Save matrix failed:', err);
+      triggerToast('Failed to save allocation matrix to database.', 'error');
+    }
+  };
+
+  // Save Seating Arrangement Plan to Firestore
+  const handleSaveSeatingPlan = async () => {
+    try {
+      if (!selectedExam) {
+        triggerToast('No active exam session selected to save seating plan.', 'error');
+        return;
+      }
+
+      // Preserve exact live displayed seats (including candidate seat swaps & active strategy layout)
+      let currentExamSeats = activeSessionAllocatedSeats.map((s) => ({
+        ...s,
+        examId: selectedExam.id,
+        examDate: selectedExam.date,
+        session: selectedExam.session,
+        examKey: `${selectedExam.date}_${selectedExam.session}`,
+        student: {
+          ...s.student,
+          examId: selectedExam.id,
+          examDate: selectedExam.date,
+          session: selectedExam.session,
+          examKey: `${selectedExam.date}_${selectedExam.session}`,
+        },
+      }));
+
+      // Fallback: if no active seats yet, generate allocation preview
+      if (currentExamSeats.length === 0 && sessionStudents.length > 0 && selectedHalls.length > 0) {
+        const quotaOpt = isQuotaComplete ? roomDeptQuota : null;
+        const res = allocateSeats(sessionStudents, selectedHalls, strategy, { traversal, mixGranularity, roomDeptQuota: quotaOpt });
+        currentExamSeats = res.allocatedSeats.map((s) => ({
+          ...s,
+          examId: selectedExam.id,
+          examDate: selectedExam.date,
+          session: selectedExam.session,
+          examKey: `${selectedExam.date}_${selectedExam.session}`,
+          student: {
+            ...s.student,
+            examId: selectedExam.id,
+            examDate: selectedExam.date,
+            session: selectedExam.session,
+            examKey: `${selectedExam.date}_${selectedExam.session}`,
+          },
+        }));
+      }
+
+      if (currentExamSeats.length === 0) {
+        triggerToast('No seats allocated to save for this exam session.', 'error');
+        return;
+      }
+
+      const otherExamSeats = allocatedSeats.filter(
+        (s) => !isMatchingSession(s, selectedExam)
+      );
+
+      // Deduplicate seats array to prevent Firestore array explosion
+      const seatSlotMap = new Map<string, AllocatedSeat>();
+      [...otherExamSeats, ...currentExamSeats].forEach((s) => {
+        if (!s || !s.student || (!s.student.registerNumber && !s.student.name)) return;
+        const d = s.examDate || s.student?.examDate || 'd';
+        const sess = s.session || s.student?.session || 's';
+        const r = s.roomId || s.roomNumber || 'r';
+        const key = `${d}_${sess}_${r}_${s.deskNumber}_${s.slotPosition}`;
+        seatSlotMap.set(key, s);
+      });
+      const fullNewSeats = Array.from(seatSlotMap.values());
+
+      const updatedByExam = {
+        ...roomDeptQuotaByExam,
+        [examQuotaKey]: roomDeptQuota,
+      };
+      const updatedHallsByExam = {
+        ...selectedHallIdsByExam,
+        [examQuotaKey]: currentSelectedHallIds,
+      };
+
+      await setDoc(
+        doc(db, 'exam_cell_settings', 'seating_allocation'),
+        {
+          allocatedSeats: fullNewSeats,
+          roomDeptQuotaByExam: updatedByExam,
+          selectedHallIdsByExam: updatedHallsByExam,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      if (onUpdateAllocatedSeats) {
+        onUpdateAllocatedSeats(fullNewSeats, updatedByExam, updatedHallsByExam);
+      }
+      triggerToast(`✓ Seating Arrangement Plan & Selected Halls saved successfully (${currentExamSeats.length} seats allocated)!`);
+    } catch (err) {
+      console.error('Save seating plan failed:', err);
+      triggerToast('Failed to save seating plan to database.', 'error');
+    }
+  };
+
   // Handle seat swap
   const handleSeatClick = (seat: AllocatedSeat) => {
     if (!swapSourceSeat) {
@@ -470,8 +967,10 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
         return;
       }
 
-      // Perform candidate swap
-      const updated = allocatedSeats.map((s) => {
+      // Base swap on activeSessionAllocatedSeats so swap operates on live displayed seats
+      const baseList = activeSessionAllocatedSeats.length > 0 ? activeSessionAllocatedSeats : allocatedSeats;
+
+      const updatedSessionSeats = baseList.map((s) => {
         if (s.seatId === swapSourceSeat.seatId) {
           return { ...s, student: seat.student };
         }
@@ -481,18 +980,29 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
         return s;
       });
 
-      onUpdateAllocatedSeats(updated);
+      // Recalculate adjacency conflicts on the swapped seating layout
+      const newConflicts = detectConflicts(updatedSessionSeats);
+      const conflictSet = new Set(newConflicts.flatMap((c) => [c.seatA, c.seatB]));
+      const finalSeats = updatedSessionSeats.map((s) => ({
+        ...s,
+        hasConflict: conflictSet.has(s.seatId),
+      }));
+
+      // Keep allocated seats of OTHER exam dates/sessions intact
+      const otherExamSeats = allocatedSeats.filter(
+        (s) =>
+          s.student.examDate !== selectedExam.date ||
+          s.student.session !== selectedExam.session
+      );
+
+      onUpdateAllocatedSeats([...otherExamSeats, ...finalSeats]);
       setSwapSourceSeat(null);
     }
   };
 
   // Export CSV for this date & session
   const handleExportCSV = () => {
-    const sessionSeats = allocatedSeats.filter(
-      (s) =>
-        s.student.examDate === selectedExam.date &&
-        s.student.session === selectedExam.session
-    );
+    const sessionSeats = activeSessionAllocatedSeats;
 
     const headers = [
       'Hall Number',
@@ -500,6 +1010,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
       'Row',
       'Column',
       'Slot',
+      'Serial Number',
       'Register Number',
       'Student Name',
       'Department',
@@ -515,6 +1026,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
       s.row.toString(),
       s.col.toString(),
       s.slotPosition,
+      s.serialNumber != null ? s.serialNumber.toString() : '',
       s.student.registerNumber,
       s.student.name,
       s.student.department,
@@ -530,8 +1042,381 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
     ]);
   };
 
-  // Department colors
-  const getDeptColor = (dept: Department) => {
+  // Dedicated Single-Page A4 Landscape Hall Door Notice print window handler
+  const handlePrintDoorNotice = () => {
+    if (!currentViewingRoom || currentViewingHallSeats.length === 0) {
+      triggerToast('No candidate seating data available in this room to print.', 'error');
+      return;
+    }
+
+    const printWin = window.open('', '_blank', 'width=1100,height=800');
+    if (!printWin) {
+      window.print();
+      return;
+    }
+
+    const summaryRows = currentHallSubjectSummary
+      .map(
+        (item, idx) => `
+      <tr style="border-bottom: 1px solid #1e293b; font-weight: bold; text-align: center; font-size: 9.5px;">
+        <td style="border: 1px solid #1e293b; padding: 2px 4px;">${idx + 1}</td>
+        <td style="border: 1px solid #1e293b; padding: 2px 6px; text-align: left; font-weight: 900;">${item.department}</td>
+        <td style="border: 1px solid #1e293b; padding: 2px 4px;">Sem ${item.semester}</td>
+        <td style="border: 1px solid #1e293b; padding: 2px 6px; text-align: left; font-family: monospace; font-weight: 900; color: #0f172a;">${item.subjectCode}</td>
+        <td style="border: 1px solid #1e293b; padding: 2px 6px; font-family: monospace; font-weight: 900; color: #1e1b4b;">${item.regRange}</td>
+        <td style="border: 1px solid #1e293b; padding: 2px 4px; font-weight: 900; font-size: 11px;">${item.count}</td>
+      </tr>`
+      )
+      .join('');
+
+    const maxRows = Math.max(
+      currentViewingRoom.rows,
+      ...(currentViewingRoom.columnRows && currentViewingRoom.columnRows.length > 0
+        ? currentViewingRoom.columnRows
+        : [currentViewingRoom.rows])
+    );
+
+    let deskGridHtml = '';
+    for (let rIdx = 0; rIdx < maxRows; rIdx++) {
+      const rowNum = rIdx + 1;
+      for (let cIdx = 0; cIdx < currentViewingRoom.columns; cIdx++) {
+        const colNum = cIdx + 1;
+        const colRowCount = currentViewingRoom.columnRows?.[cIdx] ?? currentViewingRoom.rows;
+        if (rowNum > colRowCount) {
+          deskGridHtml += `<div style="border: 1px dashed #cbd5e1; min-height: 24px; background: #f8fafc; border-radius: 3px;"></div>`;
+          continue;
+        }
+
+        const deskId = `R${rowNum}-C${colNum}`;
+        const isAisle = currentViewingRoom.disabledDesks?.includes(deskId);
+        const deskSeats = currentViewingHallSeats.filter((s) => s.deskNumber === deskId);
+        const perDesk = currentViewingRoom.columnStudentsPerDesk?.[cIdx] ?? currentViewingRoom.studentsPerDesk ?? 1;
+
+        if (isAisle) {
+          deskGridHtml += `
+            <div style="border: 1px dashed #94a3b8; background: #f1f5f9; text-align: center; padding: 2px; font-size: 9px; color: #64748b; border-radius: 4px;">
+              <strong>${deskId}</strong> Aisle
+            </div>`;
+          continue;
+        }
+
+        let seatsInnerHtml = '';
+        if (perDesk === 1) {
+          const seatA = deskSeats.find((s) => s.slotPosition === 'A' || s.slotPosition === 'Single');
+          if (seatA) {
+            seatsInnerHtml = `
+              <div style="padding: 2px 4px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 3px; font-size: 10px; text-align: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: #64748b; font-size: 8px; font-weight: bold;">Single</span>
+                  ${seatA.serialNumber != null ? `<span style="background: #120c7a; color: white; padding: 0 3px; border-radius: 2px; font-weight: bold; font-size: 8px;">S${seatA.serialNumber}</span>` : ''}
+                </div>
+                <div style="font-family: monospace; font-weight: 900; color: #000000; font-size: 11.5px; margin-top: 1px;">${seatA.student.registerNumber}</div>
+              </div>`;
+          } else {
+            seatsInnerHtml = `<div style="text-align: center; font-size: 8.5px; color: #cbd5e1; padding: 4px; border: 1px dashed #e2e8f0; border-radius: 3px;">Vacant</div>`;
+          }
+        } else {
+          let slotsHtml = '';
+          for (let sIdx = 0; sIdx < perDesk; sIdx++) {
+            const slotLetter = String.fromCharCode(65 + sIdx);
+            const seat = deskSeats.find((s) => s.slotPosition === slotLetter);
+            if (seat) {
+              slotsHtml += `
+                <div style="padding: 2px 3px; background: #f8fafc; border: 1px solid #64748b; border-radius: 3px; text-align: center;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #64748b; font-size: 7.5px; font-weight: bold;">${slotLetter}</span>
+                    ${seat.serialNumber != null ? `<span style="background: #120c7a; color: white; padding: 0 2px; border-radius: 2px; font-size: 7px; font-weight: bold;">S${seat.serialNumber}</span>` : ''}
+                  </div>
+                  <div style="font-family: monospace; font-weight: 900; color: #000000; font-size: 11px; margin-top: 1px; letter-spacing: -0.3px;">${seat.student.registerNumber}</div>
+                </div>`;
+            } else {
+              slotsHtml += `<div style="padding: 2px 1px; text-align: center; font-size: 7.5px; color: #cbd5e1; border: 1px dashed #e2e8f0; border-radius: 2px;">${slotLetter}</div>`;
+            }
+          }
+          seatsInnerHtml = `<div style="display: grid; grid-template-columns: repeat(${perDesk}, 1fr); gap: 2px;">${slotsHtml}</div>`;
+        }
+
+        const startLane = (currentViewingRoom.columnStudentsPerDesk || []).slice(0, cIdx).reduce((acc, val) => acc + (val || perDesk), 0) + 1;
+        const endLane = startLane + perDesk - 1;
+        const laneLabel = perDesk === 1 ? `Col ${startLane}` : `Cols ${startLane}–${endLane}`;
+
+        deskGridHtml += `
+          <div style="background: white; border: 1px solid #0f172a; border-radius: 4px; padding: 3px; display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="display: flex; justify-content: space-between; font-size: 8.5px; font-weight: bold; border-bottom: 1px solid #e2e8f0; padding-bottom: 1px; margin-bottom: 2px;">
+              <span>Desk ${deskId}</span>
+              <span style="color: #4338ca; font-weight: 900;">${laneLabel}</span>
+            </div>
+            ${seatsInnerHtml}
+          </div>`;
+      }
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Door Notice - Hall ${currentViewingRoom.roomNumber}</title>
+        <style>
+          @page { size: A4 landscape; margin: 4mm 6mm; }
+          html, body { font-family: 'Times New Roman', Times, serif; margin: 0; padding: 0; color: #0f172a; background: white; width: 100%; height: 100%; box-sizing: border-box; }
+          .header { border-bottom: 1.5px solid #0f172a; padding-bottom: 3px; margin-bottom: 4px; text-align: center; }
+          .logo-img { height: 48px; width: auto; object-fit: contain; margin: 0 auto; display: block; }
+          .sub-title { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px; color: #0f172a; margin: 2px 0 4px 0; text-align: center; }
+          .title-tag { background: #0f172a; color: white; padding: 4px 8px; font-size: 12.5px; font-weight: 900; text-transform: uppercase; border-radius: 4px; letter-spacing: 0.8px; text-align: center; margin: 3px 0; }
+          .meta-bar { display: flex; justify-content: space-between; font-size: 9.5px; font-weight: bold; border-top: 1px solid #cbd5e1; padding-top: 2px; margin-top: 3px; }
+          .summary-table { width: 100%; border-collapse: collapse; border: 1.5px solid #0f172a; margin: 4px 0; font-size: 9.5px; }
+          .summary-table th { background: #0f172a; color: white; padding: 2.5px 4px; text-transform: uppercase; font-size: 8.5px; border: 1px solid #1e293b; }
+          .podium-bar { background: #1e293b; color: white; text-align: center; padding: 2px; font-size: 9px; font-weight: 900; letter-spacing: 1px; border-radius: 3px; margin: 4px 0; text-transform: uppercase; }
+          .grid-container { display: grid; grid-template-columns: repeat(${currentViewingRoom.columns}, minmax(0, 1fr)); gap: 4px; padding: 3px; background: #f8fafc; border: 1.5px solid #0f172a; border-radius: 4px; }
+          .signatures { display: flex; justify-content: space-between; margin-top: 16px; padding-top: 4px; border-top: 1.5px solid #0f172a; font-size: 9.5px; font-weight: bold; }
+          .sig-box { text-align: center; min-width: 140px; }
+          .sig-space { height: 32px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div style="text-align: center; margin-bottom: 2px;">
+            <img src="/logo.png" class="logo-img" alt="CKCET Logo" onerror="this.style.display='none'" />
+          </div>
+          <div class="sub-title">CONTINUES INTERNAL ASSESSMENT</div>
+          <div class="title-tag">
+            EXAMINATION HALL DOOR SEATING NOTICE — HALL ${currentViewingRoom.roomNumber}
+          </div>
+          <div class="meta-bar">
+            <span>Date & Session: <strong>${selectedExam?.date || '—'} (${selectedExam?.session || 'FN'})</strong></span>
+            <span>Time: <strong>${selectedExam?.timeSlot || '09:30 AM - 12:30 PM'}</strong></span>
+            <span>Location: <strong>${currentViewingRoom.block} (${currentViewingRoom.floor})</strong></span>
+            <span>Total Seated: <strong>${currentViewingHallSeats.length} Candidates</strong></span>
+          </div>
+        </div>
+
+        <div style="font-size: 9px; font-weight: 900; text-transform: uppercase; margin-bottom: 1px;">Candidate Allocation Summary by Department & Exam Subject:</div>
+        <table class="summary-table">
+          <thead>
+            <tr>
+              <th style="width: 20px;">#</th>
+              <th style="text-align: left;">Department</th>
+              <th style="width: 40px;">Sem</th>
+              <th style="text-align: left; width: 110px;">Subject Code</th>
+              <th>Register Number Range</th>
+              <th style="width: 40px;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${summaryRows}
+          </tbody>
+        </table>
+
+        <div class="podium-bar">[ FRONT PODIUM / BLACKBOARD & CHIEF INVIGILATOR DESK ]</div>
+
+        <div class="grid-container">
+          ${deskGridHtml}
+        </div>
+
+        <div class="signatures">
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Hall Invigilator / Superintendent</span>
+          </div>
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Exam Cell Coordinator</span>
+          </div>
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Controller of Examinations (COE)</span>
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 50);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWin.document.open();
+    printWin.document.write(htmlContent);
+    printWin.document.close();
+  };
+
+  // Dedicated A4 Landscape PROFORMA-1 Print Window Handler
+  const handlePrintProforma1 = () => {
+    if (selectedHalls.length === 0 || subjectStrengthList.length === 0) {
+      triggerToast('No active halls or subjects to print PROFORMA-1 matrix.', 'error');
+      return;
+    }
+
+    const printWin = window.open('', '_blank', 'width=1100,height=800');
+    if (!printWin) {
+      window.print();
+      return;
+    }
+
+    // Build Table Headers (Hall Columns)
+    const hallHeaders = selectedHalls
+      .map((h) => {
+        const cap = getRoomNetCapacity(h);
+        const allocated = quotaColTotals[h.id] || 0;
+        return `<th style="border: 1px solid #1e293b; padding: 5px 6px; text-align: center; background: #0f172a; color: white;">
+          <div style="font-size: 11px; font-weight: 900;">${h.roomNumber}</div>
+          <div style="font-size: 8.5px; opacity: 0.85;">${allocated}/${cap}</div>
+        </th>`;
+      })
+      .join('');
+
+    // Build Table Body Rows
+    const tableRows = subjectStrengthList
+      .map((subj) => {
+        const key = getQuotaSubjectKey(subj);
+        const need = subj.studentCount;
+        const totalAllocated = quotaRowTotals[key] || 0;
+        const isComplete = totalAllocated === need;
+
+        const hallCells = selectedHalls
+          .map((h) => {
+            const count = getQuotaCell(h.id, key);
+            return `<td style="border: 1px solid #1e293b; padding: 5px 6px; text-align: center; font-weight: 900; font-size: 11px; ${count > 0 ? 'background: #f8fafc; color: #1e1b4b;' : 'color: #cbd5e1;'}">
+              ${count}
+            </td>`;
+          })
+          .join('');
+
+        return `
+        <tr style="border-bottom: 1px solid #1e293b; font-size: 10px;">
+          <td style="border: 1px solid #1e293b; padding: 5px 8px; text-align: left;">
+            <div style="font-weight: 900; color: #0f172a; font-size: 10.5px;">${subj.department} <span style="font-size: 9px; background: #e0e7ff; color: #3730a3; padding: 1px 4px; border-radius: 3px; font-weight: bold;">Sem ${subj.semester || '—'}</span></div>
+            <div style="font-family: monospace; font-weight: 900; color: #2563eb; font-size: 10px; margin-top: 1px;">${subj.subjectCode} ${subj.subjectTitle ? `— ${subj.subjectTitle}` : ''}</div>
+          </td>
+          ${hallCells}
+          <td style="border: 1px solid #1e293b; padding: 5px 6px; text-align: center; font-weight: 900; font-size: 11px; ${isComplete ? 'background: #ecfdf5; color: #047857;' : 'color: #b91c1c;'}">
+            ${totalAllocated} / ${need} ${isComplete ? '✓' : ''}
+          </td>
+        </tr>`;
+      })
+      .join('');
+
+    // Build Table Footer (Hall Capacity & Totals)
+    const hallFooters = selectedHalls
+      .map((h) => {
+        const cap = getRoomNetCapacity(h);
+        const allocated = quotaColTotals[h.id] || 0;
+        return `<td style="border: 1px solid #1e293b; padding: 5px 6px; text-align: center; font-weight: 900; font-size: 11px; background: #047857; color: white;">
+          ${allocated} / ${cap}
+        </td>`;
+      })
+      .join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>PROFORMA - 1 Consolidated Hall Allocation</title>
+        <style>
+          @page { size: A4 landscape; margin: 5mm 8mm; }
+          html, body { font-family: 'Times New Roman', Times, serif; margin: 0; padding: 0; color: #0f172a; background: white; box-sizing: border-box; }
+          .header { text-align: center; border-bottom: 1.5px solid #0f172a; padding-bottom: 4px; margin-bottom: 6px; }
+          .logo-img { height: 46px; width: auto; object-fit: contain; margin: 0 auto 3px auto; display: block; }
+          .sub-title { font-size: 10.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.8px; color: #0f172a; margin-bottom: 4px; text-align: center; }
+          .title-tag { background: #0f172a; color: white; padding: 4px 8px; font-size: 12px; font-weight: 900; text-transform: uppercase; border-radius: 4px; letter-spacing: 0.8px; text-align: center; margin: 3px 0; }
+          .meta-bar { display: flex; justify-content: space-between; font-size: 9.5px; font-weight: bold; border-top: 1px solid #cbd5e1; padding-top: 3px; margin-top: 3px; }
+          .matrix-table { width: 100%; border-collapse: collapse; border: 2px solid #0f172a; margin: 8px 0; font-size: 10px; }
+          .matrix-table th { border: 1px solid #1e293b; }
+          .signatures { display: flex; justify-content: space-between; margin-top: 24px; padding-top: 6px; border-top: 1.5px solid #0f172a; font-size: 9.5px; font-weight: bold; }
+          .sig-box { text-align: center; min-width: 140px; }
+          .sig-space { height: 32px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <img src="/logo.png" class="logo-img" alt="CKCET Logo" onerror="this.style.display='none'" />
+          <div class="sub-title">CONTINUES INTERNAL ASSESSMENT</div>
+          <div class="title-tag">
+            PROFORMA - 1 &nbsp;•&nbsp; CONSOLIDATED HALL ALLOCATION MATRIX
+          </div>
+          <div class="meta-bar">
+            <span>Center: <strong>4207 - CKCET</strong></span>
+            <span>Date & Session: <strong>${selectedExam?.date || '—'} (${selectedExam?.session || 'FN'})</strong></span>
+            <span>Time: <strong>${selectedExam?.timeSlot || '09:30 AM - 11:30 AM'}</strong></span>
+            <span>Total Candidates: <strong>${totalRequiredStrength}</strong></span>
+          </div>
+        </div>
+
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th style="border: 1px solid #1e293b; padding: 6px; text-align: left; background: #0f172a; color: white; width: 260px;">
+                Dept / Semester / Subject
+              </th>
+              ${hallHeaders}
+              <th style="border: 1px solid #1e293b; padding: 6px; text-align: center; background: #0f172a; color: white; width: 90px;">
+                Row Total / Need
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+          <tfoot>
+            <tr style="background: #047857; color: white; font-weight: 900;">
+              <td style="border: 1px solid #1e293b; padding: 6px 8px; text-align: left; font-size: 10.5px;">
+                Hall Total / Capacity
+              </td>
+              ${hallFooters}
+              <td style="border: 1px solid #1e293b; padding: 6px; text-align: center; font-size: 11px; background: #047857; color: white;">
+                ${quotaGrandTotal} / ${totalRequiredStrength}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div class="signatures">
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Exam Cell Superintendent</span>
+          </div>
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Exam Cell Coordinator</span>
+          </div>
+          <div class="sig-box">
+            <div class="sig-space"></div>
+            <span>Controller of Examinations (COE)</span>
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 50);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWin.document.open();
+    printWin.document.write(htmlContent);
+    printWin.document.close();
+  };
+
+  // Department colors — handles both short codes (CIVIL) and full labels (B.E. Civil Engineering) dynamically
+  const getDeptColor = (dept: any) => {
+    const d = String(dept || '').toLowerCase();
+    if (d.includes('mba') || d.includes('business') || d.includes('administration')) return 'bg-orange-100 text-orange-800 border-orange-200';
+    if (d.includes('bme') || d.includes('bio') || d.includes('medical')) return 'bg-pink-100 text-pink-800 border-pink-200';
+    if (d === 'cse' || d.includes('computer') || d.includes('cse')) return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+    if (d === 'it' || d.includes('information')) return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+    if (d.includes('ai&ds') || d.includes('aids') || d.includes('artificial')) return 'bg-purple-100 text-purple-800 border-purple-200';
+    if (d.includes('electrical') || d === 'eee') return 'bg-cyan-100 text-cyan-800 border-cyan-200';
+    if (d.includes('electronics') || d === 'ece') return 'bg-amber-100 text-amber-800 border-amber-200';
+    if (d.includes('mech') || d.includes('mechanical')) return 'bg-rose-100 text-rose-800 border-rose-200';
+    if (d.includes('civil')) return 'bg-teal-100 text-teal-800 border-teal-200';
     switch (dept) {
       case 'CSE':
         return 'bg-indigo-100 text-indigo-800 border-indigo-200';
@@ -549,13 +1434,39 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
         return 'bg-cyan-100 text-cyan-800 border-cyan-200';
       case 'BME':
         return 'bg-pink-100 text-pink-800 border-pink-200';
+      case 'MBA':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
       default:
         return 'bg-slate-100 text-slate-800 border-slate-200';
     }
   };
 
+  // Total Student Column Lanes (e.g. 3 Desk Columns x 3 Seats/Desk = 9 Student Columns)
+  const totalStudentLanes = useMemo(() => {
+    if (!currentViewingRoom) return 0;
+    const colCount = currentViewingRoom.columns || 1;
+    const defaultPerDesk = Math.max(1, currentViewingRoom.studentsPerDesk || 1);
+    let sum = 0;
+    for (let c = 0; c < colCount; c++) {
+      const p = currentViewingRoom.columnStudentsPerDesk?.[c] ?? defaultPerDesk;
+      sum += p;
+    }
+    return sum;
+  }, [currentViewingRoom]);
+
   return (
     <div className="space-y-6">
+      {/* Toast Alert Banner */}
+      {saveToast && (
+        <div className={`px-4 py-3 rounded-2xl flex items-center justify-between font-bold text-xs shadow-md transition-all ${saveToast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{saveToast.message}</span>
+          </div>
+          <button onClick={() => setSaveToast(null)} className="opacity-80 hover:opacity-100 font-black cursor-pointer px-2">✕</button>
+        </div>
+      )}
+
       {/* ─────────────────────────────────────────────────────────────
           SECTION 2: EXAMINATION TIMETABLE & SCHEDULES (SAME AS EXAM SCHEDULES PAGE)
           ───────────────────────────────────────────────────────────── */}
@@ -570,6 +1481,17 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
             setActiveCandidateCount(count);
             setActiveSubjectCount(subjCount);
           }}
+          onExamDateFilterChange={(stdDate) => {
+            // Keep the hall grid bound to the exact date pill the user selected,
+            // so only that date's real candidate register numbers fill the seats.
+            if (!stdDate) return;
+            const normDate = (d: any) => String(d || '').includes('T') ? String(d).split('T')[0] : String(d || '');
+            const next = exams.find((e) => normDate(e.date) === normDate(stdDate));
+            if (next && onSelectExam) {
+              onSelectExam(next);
+            }
+          }}
+          onRegisterNumbersChange={setTableStudents}
         />
       </div>
 
@@ -706,34 +1628,233 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
           </div>
         </div>
 
+        {/* ── PROFORMA-1: Consolidated Hall Allocation (ANNA UNIVERSITY) ── */}
+        <div className="rounded-2xl border border-zinc-200 overflow-hidden shadow-sm bg-white">
+          <div className="bg-gradient-to-r from-[#120c7a] via-blue-800 to-indigo-900 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-white">
+            <div>
+              <h3 className="text-sm font-black tracking-wide">PROFORMA - 1 &nbsp;•&nbsp; Consolidated Hall Allocation</h3>
+              <p className="text-[11px] text-blue-100 font-medium">Center: 4207 - CKCET &nbsp;|&nbsp; Date: {selectedExam?.date || '-'} &nbsp;|&nbsp; Session: {selectedExam?.session || '-'} &nbsp;|&nbsp; Time: {selectedExam?.timeSlot || '-'}</p>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button onClick={() => handleAutoDistributeQuota('sequential')} disabled={selectedHalls.length === 0 || subjectStrengthList.length === 0} className="px-3 py-1.5 rounded-xl bg-white text-[#120c7a] text-[11px] font-black shadow disabled:opacity-40 cursor-pointer" title="Fill halls sequentially like image: G202-1 gets 15+10, G210 mixed">Auto-Fill (Sequential)</button>
+              <button onClick={() => handleAutoDistributeQuota('even')} disabled={selectedHalls.length === 0 || subjectStrengthList.length === 0} className="px-3 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-[11px] font-black shadow disabled:opacity-40 cursor-pointer" title="Distribute each dept evenly across halls">Auto-Distribute (Even)</button>
+              <button onClick={handleClearQuota} className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white text-[11px] font-bold cursor-pointer">Clear</button>
+              <button onClick={handleSaveQuotaMatrix} className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-black shadow-md cursor-pointer flex items-center gap-1.5 transition-all" title="Save PROFORMA-1 matrix configuration permanently to database">
+                <Save className="w-3.5 h-3.5" />
+                <span>Save Matrix</span>
+              </button>
+              <button onClick={handlePrintProforma1} className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-black shadow-md cursor-pointer flex items-center gap-1.5 transition-all" title="Print official PROFORMA-1 Consolidated Hall Allocation report">
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print PROFORMA-1</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Department & Semester Breakdown Bar (Image 1: Dept + Sem wise candidate count) */}
+          {deptSemBreakdown.length > 0 && (
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-zinc-200 flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-black text-slate-700 mr-1 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-[#120c7a]" /> Dept & Semester Breakdown ({deptSemBreakdown.length} Batches):
+              </span>
+              {deptSemBreakdown.map((item) => (
+                <span key={`${item.department}_Sem${item.semester}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-800 font-extrabold shadow-2xs">
+                  <span className="text-indigo-800 font-black">{item.department}</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold">Sem {item.semester || '—'}</span>
+                  <span className="ml-1 px-2 py-0.2 rounded-full bg-slate-900 text-white font-black text-[10px]">{item.studentCount} candidates</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {selectedHalls.length === 0 ? (
+            <div className="p-6 text-center text-sm text-zinc-500 font-semibold">Select halls above to configure the allocation matrix.</div>
+          ) : subjectStrengthList.length === 0 ? (
+            <div className="p-6 text-center text-sm text-zinc-500 font-semibold">No subjects for this date & session.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 border-b border-zinc-200">
+                    <th className="text-left px-3 py-2 font-black text-zinc-700 whitespace-nowrap border-r border-zinc-200 min-w-[180px]">Dept / Semester / Subject</th>
+                    {selectedHalls.map((h) => {
+                      const cap = getRoomNetCapacity(h);
+                      const colTot = quotaColTotals[h.id] || 0;
+                      const over = colTot > cap;
+                      return (
+                        <th key={h.id} className="text-center px-2 py-2 font-black border-r border-zinc-200 min-w-[90px]">
+                          <div className="text-[#120c7a]">{h.roomNumber}</div>
+                          <div className={`text-[10px] font-bold ${over ? 'text-rose-600' : 'text-zinc-500'}`}>{colTot}/{cap} {over ? 'OVER' : ''}</div>
+                        </th>
+                      );
+                    })}
+                    <th className="text-center px-3 py-2 font-black text-zinc-700 bg-amber-50 whitespace-nowrap min-w-[95px]">Row Total / Need</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotaSubjects.map((subj) => {
+                    const dept = subj.department;
+                    const need = subj.studentCount;
+                    const subjKey = getQuotaSubjectKey(subj);
+                    const rowTot = quotaRowTotals[subjKey] || 0;
+                    const rowOk = rowTot === need;
+                    const rowOver = rowTot > need;
+                    return (
+                      <tr key={subjKey} className="border-b border-zinc-100 hover:bg-zinc-50/60">
+                        <td className="px-3 py-2 border-r border-zinc-200">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="font-black text-zinc-900 leading-tight">{dept}</span>
+                            {subj.semester && (
+                              <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                Sem {subj.semester}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] font-bold text-[#120c7a] mt-0.5">{subj.subjectCode}</div>
+                          <div className="text-[10px] text-zinc-500 leading-tight truncate max-w-[170px]">{subj.subjectName}</div>
+                          <div className={`text-[10px] font-black mt-0.5 ${rowOk ? 'text-emerald-600' : rowOver ? 'text-rose-600' : 'text-amber-600'}`}>{rowTot} / {need} {rowOk ? '✓' : '•'}</div>
+                        </td>
+                        {selectedHalls.map((h) => (
+                          <td key={h.id} className="px-2 py-2 text-center border-r border-zinc-100">
+                            <input
+                              type="number"
+                              min={0}
+                              max={Math.min(getRoomNetCapacity(h), need)}
+                              value={getQuotaCell(h.id, subjKey)}
+                              onChange={(e) => handleQuotaCellChange(h.id, subjKey, e.target.value)}
+                              className={`w-[72px] text-center px-2 py-1.5 rounded-lg border text-xs font-black focus:outline-none focus:ring-2 ${rowOk ? 'border-zinc-200 focus:ring-indigo-200' : 'border-amber-200 focus:ring-amber-200 bg-amber-50/50'}`}
+                              placeholder="0"
+                            />
+                          </td>
+                        ))}
+                        <td className={`text-center px-2 py-2 font-black whitespace-nowrap ${rowOk ? 'bg-emerald-50 text-emerald-700' : rowOver ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {rowTot} / {need}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-zinc-900 text-white font-black">
+                    <td className="px-3 py-2 text-left">Hall Total / Capacity</td>
+                    {selectedHalls.map((h) => {
+                      const cap = getRoomNetCapacity(h);
+                      const colTot = quotaColTotals[h.id] || 0;
+                      return (
+                        <td key={h.id} className={`text-center px-2 py-2 ${colTot > cap ? 'bg-rose-600' : colTot === cap ? 'bg-emerald-600' : 'bg-zinc-800'}`}>
+                          {colTot} / {cap}
+                        </td>
+                      );
+                    })}
+                    <td className={`text-center px-3 py-2 ${quotaGrandTotal === totalRequiredStrength ? 'bg-emerald-600' : 'bg-amber-600'}`}>
+                      {quotaGrandTotal} / {totalRequiredStrength}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+          <div className="px-4 py-2.5 bg-amber-50/70 border-t border-zinc-200 flex flex-wrap items-center gap-2 text-[11px]">
+            {!isQuotaComplete ? (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span className="font-bold text-amber-800"> Fix the matrix so each department row total = need and each hall does not exceed capacity. Then Execute Allocation will use these exact per-hall dept counts.</span>
+                <span className="text-zinc-500">• Sequential fills like image (G202-1: 15 EEE +10 Mech); Even spreads evenly.</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="font-black text-emerald-700"> Matrix complete — each hall will receive exactly the counts you fixed above, seat numbers column-wise C1-R1(A)=#1, C1-R2(A)=#2.</span>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* Strategy and Action Execution Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-3 border-t border-slate-100 bg-slate-50/50 p-4 rounded-xl">
-          <div className="flex items-center space-x-3 text-xs">
-            <span className="font-bold text-slate-700 flex items-center space-x-1.5">
-              <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
-              <span>Interleaving Strategy:</span>
-            </span>
-            <select
-              id="allocation-strategy-select"
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value as AllocationStrategy)}
-              aria-label="Select student distribution strategy"
-              className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs cursor-pointer"
-            >
-              <option value="interleaved-dept">Multi-Department Interleaving (Anti-Malpractice Standard)</option>
-              <option value="sequential-dept">Sequential by Department</option>
-              <option value="alternate-roll">Alternate Roll Number Order</option>
-            </select>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-3 border-t border-slate-100 bg-slate-50/50 p-4 rounded-xl">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <div className="flex items-center space-x-1.5">
+              <SlidersHorizontal className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span className="font-bold text-slate-700">Interleaving Strategy:</span>
+              <select
+                id="allocation-strategy-select"
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value as AllocationStrategy)}
+                aria-label="Select student distribution strategy"
+                className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs cursor-pointer"
+              >
+                <option value="anna-univ-9lane-column">🏛️ Anna Univ Student-Column Lane Interleaving (9-Lane Column-Wise)</option>
+                <option value="interleaved-dept">⚡ Multi-Department Desegregated Interleaving (Anna Univ Standard)</option>
+                <option value="random-interleave">🎲 Anti-Malpractice Randomized Interleave (Group Shuffle)</option>
+                <option value="alternate-department">🔄 Strict Department Alternation Sequence</option>
+                <option value="reverse-interleave">🔀 Reverse Round-Robin Interleave</option>
+                <option value="dept-then-roll">🔢 Department Reverse-Roll Interleave</option>
+                <option value="alternate-roll">📋 Pure Register Number / Roll Order</option>
+                <option value="sequential-dept">🏛️ Sequential Block by Department</option>
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-1.5">
+              <Grid3X3 className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span className="font-bold text-slate-700">Seat Matrix Layout:</span>
+              <select
+                id="seat-traversal-select"
+                value={traversal}
+                onChange={(e) => setTraversal(e.target.value as SeatTraversal)}
+                aria-label="Select seat matrix fill order"
+                className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs cursor-pointer"
+              >
+                <option value="serpentine-column">🐍 Serpentine Column (Anna Univ Zig-Zag Top→Bottom→Top)</option>
+                <option value="serpentine-reverse-start">🔄 Reverse Serpentine Column (Rightmost Column First)</option>
+                <option value="column">⬇️ Straight Column-Major (Top to Bottom)</option>
+                <option value="from-back-column">⬆️ Bottom-to-Top Column-Major (Back Desk First)</option>
+                <option value="row">➡️ Straight Row-Major (Left to Right)</option>
+                <option value="serpentine-row">〰️ Serpentine Row-Major (Row Zig-Zag)</option>
+                <option value="diagonal">📐 Staircase Anti-Diagonal Fill</option>
+                <option value="spiral">🌀 Clockwise Concentric Spiral Ring Fill</option>
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-1.5">
+              <Layers className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span className="font-bold text-slate-700">Grouping:</span>
+              <select
+                id="mix-granularity-select"
+                value={mixGranularity}
+                onChange={(e) => setMixGranularity(e.target.value as MixGranularity)}
+                aria-label="Select mixing granularity"
+                className="bg-white border border-slate-200 px-3 py-1.5 rounded-xl font-semibold text-slate-800 focus:outline-none focus:border-indigo-500 shadow-2xs cursor-pointer"
+              >
+                <option value="department">By Department (e.g. CSE vs IT vs ECE vs MBA)</option>
+                <option value="department-section">By Dept + Section (e.g. CSE-A vs CSE-B vs IT-A)</option>
+              </select>
+            </div>
+
+            {currentHallConflicts.length > 0 && (
+              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 text-[11px] font-bold">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>{currentHallConflicts.length} same-dept adjacency conflicts</span>
+              </span>
+            )}
           </div>
 
           <div className="flex items-center space-x-2">
             <button
               id="run-allocation-btn"
               onClick={handleRunAutoAllocation}
-              className="flex items-center space-x-2 px-5 py-2.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer"
+              className="flex items-center space-x-2 px-4 py-2.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
               <span>Execute Allocation for Selected Halls</span>
+            </button>
+
+            <button
+              id="save-seating-plan-btn"
+              onClick={handleSaveSeatingPlan}
+              className="flex items-center space-x-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer"
+              title="Save current seating allocation plan permanently to database"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Seating Plan</span>
             </button>
 
             <button
@@ -761,11 +1882,8 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
           </span>
           {selectedHalls.map((room) => {
             const isSelected = currentViewingRoom?.id === room.id;
-            const seatedCount = allocatedSeats.filter(
-              (s) =>
-                s.roomId === room.id &&
-                s.student.examDate === selectedExam.date &&
-                s.student.session === selectedExam.session
+            const seatedCount = activeSessionAllocatedSeats.filter(
+              (s) => s.roomId === room.id
             ).length;
             const netCap = getRoomNetCapacity(room);
 
@@ -820,19 +1938,56 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
             <option value="MECH">MECH</option>
             <option value="CIVIL">CIVIL</option>
             <option value="EEE">EEE</option>
+            <option value="MBA">MBA</option>
           </select>
 
           <button
             id="print-hall-chart-btn"
-            onClick={() => onNavigateToReports(currentViewingRoom?.id)}
-            className="flex items-center space-x-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-semibold transition-colors"
-            title="Generate print-ready door chart for this hall"
+            onClick={handlePrintDoorNotice}
+            className="flex items-center space-x-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-600 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+            title="Instant print visual A4 door notice for this examination hall"
           >
             <Printer className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Print Door Notice</span>
           </button>
         </div>
       </div>
+
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 6mm 8mm;
+          }
+          html, body {
+            background: white !important;
+            color: black !important;
+            font-family: 'Times New Roman', Times, serif !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          #printable-hall-seating-stage, #printable-hall-seating-stage * {
+            visibility: visible !important;
+          }
+          #printable-hall-seating-stage {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: white !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
 
       {/* Swap Mode Indicator Banner */}
       {swapSourceSeat && (
@@ -857,9 +2012,60 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
 
       {/* Seating Layout Visual Stage */}
       {currentViewingRoom && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
+        <div id="printable-hall-seating-stage" className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
+          {/* Print Only Banner Header (Hall Door Notice Header) */}
+          <div className="hidden print:block text-center pb-2 mb-2 border-b-2 border-slate-900 space-y-1">
+            <div className="flex justify-center mb-1">
+              <img src="/logo.png" className="h-12 w-auto object-contain mx-auto" alt="CKCET Logo" />
+            </div>
+            <p className="text-xs font-black uppercase tracking-wider text-slate-900">
+              CONTINUES INTERNAL ASSESSMENT
+            </p>
+            <div className="py-1 text-sm font-black uppercase bg-slate-900 text-white rounded tracking-wider my-1">
+              EXAMINATION HALL DOOR SEATING NOTICE — HALL {currentViewingRoom.roomNumber}
+            </div>
+            <div className="flex items-center justify-between text-xs font-extrabold text-slate-900 pt-1 border-t border-slate-300 px-1">
+              <span>Date & Session: <strong>{selectedExam?.date} ({selectedExam?.session})</strong></span>
+              <span>Time: <strong>{selectedExam?.timeSlot || '09:30 AM - 12:30 PM'}</strong></span>
+              <span>Location: <strong>{currentViewingRoom.block} ({currentViewingRoom.floor})</strong></span>
+              <span>Total Seated: <strong>{currentViewingHallSeats.length} Candidates</strong></span>
+            </div>
+          </div>
+
+          {/* Department & Register Number Range Summary Table (Door Notice Summary Table) */}
+          {currentHallSubjectSummary.length > 0 && (
+            <div className="hidden print:block my-3">
+              <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-900 mb-1">
+                Candidate Allocation Summary by Department & Exam Subject:
+              </h4>
+              <table className="w-full text-xs border-collapse border-2 border-slate-900 text-center">
+                <thead>
+                  <tr className="bg-slate-900 text-white text-[10px] font-black uppercase">
+                    <th className="border border-slate-800 py-1 px-1.5 w-8">#</th>
+                    <th className="border border-slate-800 py-1 px-2 text-left">Department</th>
+                    <th className="border border-slate-800 py-1 px-1.5 w-14">Sem</th>
+                    <th className="border border-slate-800 py-1 px-2 text-left">Subject Code & Name</th>
+                    <th className="border border-slate-800 py-1 px-2">Register Number Range</th>
+                    <th className="border border-slate-800 py-1 px-1.5 w-16">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentHallSubjectSummary.map((item, idx) => (
+                    <tr key={idx} className="border-b border-slate-800 font-bold text-[11px]">
+                      <td className="border border-slate-800 py-1 px-1.5">{idx + 1}</td>
+                      <td className="border border-slate-800 py-1 px-2 text-left font-black">{item.department}</td>
+                      <td className="border border-slate-800 py-1 px-1.5 font-bold">Sem {item.semester}</td>
+                      <td className="border border-slate-800 py-1 px-2 text-left font-mono font-bold">{item.subjectCode} {item.subjectName ? `— ${item.subjectName}` : ''}</td>
+                      <td className="border border-slate-800 py-1 px-2 font-mono font-black text-indigo-950">{item.regRange}</td>
+                      <td className="border border-slate-800 py-1 px-1.5 font-black text-sm">{item.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {/* Hall Meta Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2 print:hidden">
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-xl font-bold text-slate-900">
@@ -868,8 +2074,9 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                 <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-medium">
                   {currentViewingRoom.block} • {currentViewingRoom.floor}
                 </span>
-                <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold">
-                  {getRoomNetCapacity(currentViewingRoom)} Total Capacity
+                <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
+                  <span>{getRoomNetCapacity(currentViewingRoom)} Capacity</span>
+                  <span className="text-[10px] text-indigo-800 font-black">• {currentViewingRoom.columns} Desk Cols ({totalStudentLanes} Student Columns / Lanes 1–{totalStudentLanes})</span>
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -877,16 +2084,19 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
               </p>
             </div>
 
-            {/* Department Breakdown Badges */}
+            {/* Department, Semester & Subject Breakdown Badges for this specific Hall (Image 2) */}
             <div className="flex flex-wrap items-center gap-1.5">
-              {Object.entries(currentHallDeptBreakdown).map(([dept, count]) => (
+              {currentHallSubjectBreakdown.map((item) => (
                 <span
-                  key={dept}
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getDeptColor(
-                    dept as Department
+                  key={`${item.department}_${item.semester}_${item.subjectCode}`}
+                  className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border flex items-center space-x-1.5 shadow-2xs ${getDeptColor(
+                    item.department
                   )}`}
                 >
-                  {dept}: {count}
+                  <span className="font-black">{item.department}</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/70 font-bold border border-black/10">Sem {item.semester || '—'}</span>
+                  <span className="font-mono text-[10.5px] font-bold">{item.subjectCode}</span>
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-slate-900 text-white font-black text-[10px]">{item.count}</span>
                 </span>
               ))}
             </div>
@@ -953,12 +2163,19 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                         className="bg-white rounded-xl border border-slate-200 shadow-2xs hover:shadow-md transition-shadow p-2 flex flex-col justify-between"
                       >
                         {/* Desk Header */}
-                        <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500">
-                          <span>Desk {deskId}</span>
-                          <span className="text-[9px] text-slate-400 font-normal">
-                            Col {colNum} • {perDesk} Seats
-                          </span>
-                        </div>
+                        {(() => {
+                          const startLane = (currentViewingRoom.columnStudentsPerDesk || []).slice(0, cIdx).reduce((acc, val) => acc + (val || perDesk), 0) + 1;
+                          const endLane = startLane + perDesk - 1;
+                          const laneLabel = perDesk === 1 ? `Col ${startLane}` : `Cols ${startLane}–${endLane}`;
+                          return (
+                            <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500">
+                              <span>Desk {deskId}</span>
+                              <span className="text-[9.5px] text-indigo-700 font-black bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100/80">
+                                {laneLabel} ({perDesk} Seats)
+                              </span>
+                            </div>
+                          );
+                        })()}
 
                         {/* Seats Content */}
                         {perDesk === 1 ? (
@@ -980,6 +2197,11 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                   >
                                     {seatA.student.department}
                                   </span>
+                                  {seatA.serialNumber != null && (
+                                    <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-[#120c7a] text-white font-mono">
+                                      S{seatA.serialNumber}
+                                    </span>
+                                  )}
                                   <span className="text-[9px] font-bold text-blue-700 font-mono">
                                     {seatA.student.subjectCode}
                                   </span>
@@ -987,7 +2209,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                 <span className="font-mono font-black text-[#120c7a] text-xs block truncate mt-1">
                                   {seatA.student.registerNumber}
                                 </span>
-                                <p className="font-medium text-slate-600 text-[10px] truncate mt-0.5">
+                                <p className="font-bold text-slate-800 text-[10.5px] truncate mt-0.5" title={seatA.student.name}>
                                   {seatA.student.name}
                                 </p>
                               </div>
@@ -1010,11 +2232,18 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                     onClick={() => handleSeatClick(seatA)}
                                     className={`p-1.5 rounded-lg border transition-all cursor-pointer ${swapSourceSeat?.seatId === seatA.seatId
                                       ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-400'
-                                      : 'bg-slate-50/80 hover:bg-indigo-50/60 border-slate-200 hover:border-indigo-300'
+                                      : seatA.hasConflict
+                                        ? 'bg-red-50 border-red-400 ring-1 ring-red-300'
+                                        : 'bg-slate-50/80 hover:bg-indigo-50/60 border-slate-200 hover:border-indigo-300'
                                       }`}
                                   >
                                     <div className="flex items-center justify-between">
                                       <span className="text-[8px] font-bold text-slate-400">L</span>
+                                      {seatA.serialNumber != null && (
+                                        <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-[#120c7a] text-white">
+                                          S{seatA.serialNumber}
+                                        </span>
+                                      )}
                                       <span
                                         className={`text-[8px] font-bold px-1 py-0.2 rounded border ${getDeptColor(
                                           seatA.student.department
@@ -1026,7 +2255,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                     <span className="font-mono font-black text-[#120c7a] text-[10px] block truncate mt-0.5">
                                       {seatA.student.registerNumber}
                                     </span>
-                                    <p className="font-medium text-slate-600 text-[9px] truncate">
+                                    <p className="font-bold text-slate-800 text-[9.5px] truncate mt-0.5" title={seatA.student.name}>
                                       {seatA.student.name}
                                     </p>
                                   </div>
@@ -1042,11 +2271,18 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                     onClick={() => handleSeatClick(seatB)}
                                     className={`p-1.5 rounded-lg border transition-all cursor-pointer ${swapSourceSeat?.seatId === seatB.seatId
                                       ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-400'
-                                      : 'bg-slate-50/80 hover:bg-indigo-50/60 border-slate-200 hover:border-indigo-300'
+                                      : seatB.hasConflict
+                                        ? 'bg-red-50 border-red-400 ring-1 ring-red-300'
+                                        : 'bg-slate-50/80 hover:bg-indigo-50/60 border-slate-200 hover:border-indigo-300'
                                       }`}
                                   >
                                     <div className="flex items-center justify-between">
                                       <span className="text-[8px] font-bold text-slate-400">R</span>
+                                      {seatB.serialNumber != null && (
+                                        <span className="text-[8px] font-bold px-1 py-0.2 rounded bg-[#120c7a] text-white">
+                                          S{seatB.serialNumber}
+                                        </span>
+                                      )}
                                       <span
                                         className={`text-[8px] font-bold px-1 py-0.2 rounded border ${getDeptColor(
                                           seatB.student.department
@@ -1058,7 +2294,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                     <span className="font-mono font-black text-[#120c7a] text-[10px] block truncate mt-0.5">
                                       {seatB.student.registerNumber}
                                     </span>
-                                    <p className="font-medium text-slate-600 text-[9px] truncate">
+                                    <p className="font-bold text-slate-800 text-[9.5px] truncate mt-0.5" title={seatB.student.name}>
                                       {seatB.student.name}
                                     </p>
                                   </div>
@@ -1083,11 +2319,18 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                   onClick={() => handleSeatClick(seat)}
                                   className={`p-1 rounded-md border transition-all cursor-pointer ${swapSourceSeat?.seatId === seat.seatId
                                     ? 'bg-amber-100 border-amber-400 ring-2 ring-amber-400'
-                                    : 'bg-slate-50 hover:bg-indigo-50 border-slate-200'
+                                    : seat.hasConflict
+                                      ? 'bg-red-50 border-red-400 ring-1 ring-red-300'
+                                      : 'bg-slate-50 hover:bg-indigo-50 border-slate-200'
                                     }`}
                                 >
                                   <div className="flex items-center justify-between">
                                     <span className="text-[8px] font-bold text-slate-400">{slotLetter}</span>
+                                    {seat.serialNumber != null && (
+                                      <span className="text-[7px] font-bold px-1 py-0.2 rounded bg-[#120c7a] text-white">
+                                        S{seat.serialNumber}
+                                      </span>
+                                    )}
                                     <span
                                       className={`text-[7px] font-bold px-1 py-0.2 rounded border ${getDeptColor(
                                         seat.student.department
@@ -1099,7 +2342,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                                   <span className="font-mono font-black text-[#120c7a] text-[9px] block truncate tracking-tight mt-0.5" title={`${seat.student.name} (${seat.student.registerNumber})`}>
                                     {seat.student.registerNumber}
                                   </span>
-                                  <p className="font-medium text-slate-600 text-[8px] truncate">
+                                  <p className="font-bold text-slate-800 text-[8.5px] truncate mt-0.5" title={seat.student.name}>
                                     {seat.student.name}
                                   </p>
                                 </div>
@@ -1153,6 +2396,22 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
               </span>
             </div>
           </div>
+
+          {/* Official Signatures Row for Print (Door Notice) */}
+          <div className="hidden print:flex items-center justify-between pt-6 text-xs font-bold text-slate-900 border-t-2 border-slate-900 mt-6">
+            <div className="text-center">
+              <div className="h-8"></div>
+              <span>Hall Invigilator / Superintendent</span>
+            </div>
+            <div className="text-center">
+              <div className="h-8"></div>
+              <span>Exam Cell Coordinator</span>
+            </div>
+            <div className="text-center">
+              <div className="h-8"></div>
+              <span>Controller of Examinations (COE)</span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1198,6 +2457,7 @@ export const SeatAllocationView: React.FC<SeatAllocationViewProps> = ({
                   <option value="MECH">Mechanical Engineering (MECH)</option>
                   <option value="CIVIL">Civil Engineering (CIVIL)</option>
                   <option value="EEE">Electrical & Electronics (EEE)</option>
+                  <option value="MBA">Master of Business Administration (MBA)</option>
                 </select>
               </div>
 

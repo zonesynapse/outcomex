@@ -210,6 +210,8 @@ export function generateSampleStudents(): Student[] {
         section: i <= 16 ? 'A' : 'B',
         subjectCode: sub.code,
         subjectName: sub.name,
+        academicYear: '2026-2027',
+        batch: '2023-2027',
         examDate: '2026-08-25',
         session: 'FN',
       });
@@ -241,6 +243,8 @@ export function generateSampleStudents(): Student[] {
         section: i <= 15 ? 'A' : 'B',
         subjectCode: sub.code,
         subjectName: sub.name,
+        academicYear: '2026-2027',
+        batch: '2024-2028',
         examDate: '2026-08-25',
         session: 'AN',
       });
@@ -248,6 +252,7 @@ export function generateSampleStudents(): Student[] {
   });
 
   const exam3Batches: Array<{ dept: Department; count: number }> = [
+    { dept: 'CSE', count: 30 },
     { dept: 'AI&DS', count: 26 },
     { dept: 'MECH', count: 22 },
     { dept: 'CIVIL', count: 18 },
@@ -255,7 +260,7 @@ export function generateSampleStudents(): Student[] {
   ];
 
   exam3Batches.forEach((batch, deptIdx) => {
-    const deptPrefix = batch.dept === 'AI&DS' ? '717620306' : batch.dept === 'MECH' ? '717620114' : batch.dept === 'CIVIL' ? '717620103' : '717620105';
+    const deptPrefix = batch.dept === 'CSE' ? '717623104' : batch.dept === 'AI&DS' ? '717620306' : batch.dept === 'MECH' ? '717620114' : batch.dept === 'CIVIL' ? '717620103' : '717620105';
     const sub = DEPT_SUBJECTS[7][batch.dept] || { code: 'SUB701', name: `${batch.dept} Advanced Course` };
 
     for (let i = 1; i <= batch.count; i++) {
@@ -273,6 +278,8 @@ export function generateSampleStudents(): Student[] {
         section: 'A',
         subjectCode: sub.code,
         subjectName: sub.name,
+        academicYear: '2026-2027',
+        batch: '2023-2027',
         examDate: '2026-08-26',
         session: 'FN',
       });
@@ -303,6 +310,8 @@ export function generateSampleStudents(): Student[] {
         section: 'A',
         subjectCode: sub.code,
         subjectName: sub.name,
+        academicYear: '2026-2027',
+        batch: '2023-2027',
         examDate: '2026-08-27',
         session: 'FN',
       });

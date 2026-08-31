@@ -5,7 +5,8 @@ import { doc, collection, onSnapshot, getDoc, getDocs, query, where, deleteDoc, 
 import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
-  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2, Layers
+  Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2, Layers,
+  Lock, Unlock
 } from "lucide-react";
 
 import Layout from "../components/Layout";
@@ -153,9 +154,85 @@ export default function FacultyDashboard() {
 
   const [pendingLoading, setPendingLoading] = useState(true);
   const [pendingQps, setPendingQps] = useState([]);
+  const [allMasterQps, setAllMasterQps] = useState([]);
   const [statusTab, setStatusTab] = useState("all");
   const [semesterTab, setSemesterTab] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+
+  const isExamTimeReached = useCallback((examDateStr, startTimeStr, sessionStr) => {
+    if (!examDateStr) return false;
+
+    const now = new Date();
+
+    const parseIsoOrFormattedDate = (str) => {
+      if (!str) return null;
+      const s = String(str).trim();
+
+      // 1. Try ISO date pattern YYYY-MM-DD
+      const isoMatch = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return {
+          yr: parseInt(isoMatch[1], 10),
+          mo: parseInt(isoMatch[2], 10),
+          dy: parseInt(isoMatch[3], 10),
+        };
+      }
+
+      // 2. Try DD-MM-YYYY or DD/MM/YYYY
+      const dmyMatch = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+      if (dmyMatch) {
+        return {
+          yr: parseInt(dmyMatch[3], 10),
+          mo: parseInt(dmyMatch[2], 10),
+          dy: parseInt(dmyMatch[1], 10),
+        };
+      }
+
+      // 3. Try named month e.g. "01 Sep 2026" or "Sep 01 2026"
+      const monthMap = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+      const sLower = s.toLowerCase();
+      let month = 0;
+      Object.keys(monthMap).forEach(m => { if (sLower.includes(m)) month = monthMap[m]; });
+
+      const nums = s.match(/\d+/g);
+      if (nums && nums.length >= 2) {
+        const yr = parseInt(nums.find(n => n.length === 4) || '2026', 10);
+        const rest = nums.filter(n => n !== String(yr));
+        const dy = parseInt(rest[0] || '1', 10);
+        const mo = month || parseInt(rest[1] || '1', 10);
+        return { yr, mo, dy };
+      }
+
+      return null;
+    };
+
+    const parsed = parseIsoOrFormattedDate(examDateStr);
+    if (!parsed || isNaN(parsed.yr) || isNaN(parsed.mo) || isNaN(parsed.dy)) return false;
+
+    const { yr, mo, dy } = parsed;
+
+    let hours = 9;
+    let minutes = 30;
+
+    if (startTimeStr) {
+      const timeMatch = String(startTimeStr).match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (timeMatch) {
+        let h = parseInt(timeMatch[1], 10);
+        const m = parseInt(timeMatch[2], 10);
+        const ampm = timeMatch[3] ? timeMatch[3].toUpperCase() : '';
+        if (ampm === 'PM' && h < 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        hours = h;
+        minutes = m;
+      }
+    } else if (sessionStr === 'AN') {
+      hours = 13;
+      minutes = 30;
+    }
+
+    const examStartDateTime = new Date(yr, mo - 1, dy, hours, minutes, 0, 0);
+    return now.getTime() >= examStartDateTime.getTime();
+  }, []);
 
   const [timetableData, setTimetableData] = useState({});
   const [loadingTimetable, setLoadingTimetable] = useState(false);
@@ -806,10 +883,12 @@ export default function FacultyDashboard() {
             return bt - at;
           });
 
+        setAllMasterQps(all);
         setPendingQps(pending);
         setPendingLoading(false);
       },
       () => {
+        setAllMasterQps([]);
         setPendingQps([]);
         setPendingLoading(false);
       }
@@ -1333,7 +1412,25 @@ export default function FacultyDashboard() {
     const todayStr = formatDateKey(new Date());
     const normBatch = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     return qpSetterTasks
-      .filter(task => task.examDate && String(task.examDate).trim().length > 0)
+      .filter((task) => {
+        if (!task.examDate || String(task.examDate).trim().length === 0) return false;
+
+        // Auto-hide task card 2 days after the submission window end date (toDate + 2 days)
+        if (task.toDate) {
+          const match = String(task.toDate).match(/(\d{4})-(\d{2})-(\d{2})/);
+          if (match) {
+            const endDate = new Date(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10), 23, 59, 59, 999);
+            const hideAfterDate = new Date(endDate);
+            hideAfterDate.setDate(hideAfterDate.getDate() + 2);
+            const now = new Date();
+            if (now.getTime() > hideAfterDate.getTime()) {
+              return false;
+            }
+          }
+        }
+
+        return true;
+      })
       .map(task => {
         const rawCode = String(task.code || '').trim().toUpperCase();
         // Resolve to CourseBank canonical code using subject name when available.
@@ -1860,6 +1957,56 @@ export default function FacultyDashboard() {
                           </div>
                         )}
                       </div>
+
+                      {/* Allocated QP Status & Time-Lock Banner */}
+                      {(() => {
+                        const allocatedQP = allMasterQps.find((q) => {
+                          if (!q || !q.allocated || !q.allocatedTo) return false;
+                          const targetCode = String(task.code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                          const qSubjCode = String(q.allocatedTo.subjectCode || parseSubjectField(q.subject).code || q.subject || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                          return targetCode === qSubjCode;
+                        });
+
+                        if (!allocatedQP) return null;
+
+                        const isTimeReached = isExamTimeReached(
+                          allocatedQP.allocatedTo?.examDate || task.examDate,
+                          allocatedQP.allocatedTo?.startTime || task.startTime,
+                          allocatedQP.allocatedTo?.session || task.session
+                        );
+
+                        return isTimeReached ? (
+                          <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3 space-y-1.5 mt-3 shadow-2xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                                <Unlock size={14} className="text-emerald-600 shrink-0" />
+                                Official Paper: {allocatedQP.exam_name || allocatedQP.qpaper_name} ({formatQPSetDisplay(allocatedQP)})
+                              </span>
+                              <button
+                                onClick={() => { setSelectedQP(allocatedQP); setShowQPModal(true); }}
+                                className="text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg shadow-2xs transition-all cursor-pointer shrink-0"
+                              >
+                                View Paper
+                              </button>
+                            </div>
+                            <p className="text-[10px] font-semibold text-emerald-800 leading-snug">
+                              🔓 Exam Cell has chosen this paper for the examination on {allocatedQP.allocatedTo?.examDate} at {allocatedQP.allocatedTo?.startTime || '09:30 AM'}.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3 space-y-1.5 mt-3 shadow-2xs">
+                            <div className="flex items-center gap-1.5 text-xs font-black text-amber-950">
+                              <Lock size={14} className="text-amber-600 shrink-0" />
+                              <span>Official Question Paper Allocated by Exam Cell</span>
+                            </div>
+                            <p className="text-[10px] font-semibold text-amber-900 leading-snug">
+                              🔒 Paper selection is time-locked. It will be revealed automatically on{' '}
+                              <strong className="font-black text-amber-950">{allocatedQP.allocatedTo?.examDate || task.examDate}</strong> at{' '}
+                              <strong className="font-black text-amber-950">{allocatedQP.allocatedTo?.startTime || '09:30 AM'}</strong> (Exam Start Time).
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Action Button */}
@@ -2790,6 +2937,20 @@ export default function FacultyDashboard() {
                           <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
                             {qp.academic_year || "-"}
                           </span>
+                          {qp.allocated && qp.allocatedTo && (
+                            (() => {
+                              const timeReached = isExamTimeReached(
+                                qp.allocatedTo.examDate,
+                                qp.allocatedTo.startTime,
+                                qp.allocatedTo.session
+                              );
+                              return timeReached ? (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 text-emerald-950 px-2 py-0.5 text-[10px] font-black border border-emerald-300">
+                                  <Unlock size={10} className="text-emerald-700" /> Allocated & Released ({qp.allocatedTo.examDate})
+                                </span>
+                              ) : null;
+                            })()
+                          )}
                         </div>
                         {qp.status === 'forwarded' && (
                           <div className="mt-2.5 flex items-center gap-2 text-xs font-medium text-zinc-700 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5 w-fit">
@@ -2903,10 +3064,29 @@ export default function FacultyDashboard() {
                 .qp-print-wrapper .logo-img { max-width: 100%; width: 754px !important; height: 60px !important; object-fit: contain; }
                 .qp-print-wrapper p { margin: 0 0 5px 0; }
               `}</style>
-              <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
-                style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}>
-                <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(fullQPForModal || selectedQP) }} />
-              </div>
+              {selectedQP.allocated && !isExamTimeReached(selectedQP.allocatedTo?.examDate, selectedQP.allocatedTo?.startTime, selectedQP.allocatedTo?.session) && selectedQP.created_by !== currentUid ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center space-y-4 bg-white rounded-2xl p-8 border border-amber-200 shadow-sm max-w-xl mx-auto my-12">
+                  <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto border border-amber-300">
+                    <Lock size={32} />
+                  </div>
+                  <div>
+                    <h4 className="text-xl font-black text-slate-900">Question Paper Time-Locked</h4>
+                    <p className="text-sm font-semibold text-amber-900 mt-1 max-w-md mx-auto">
+                      This official examination paper has been allocated by the Exam Cell for the exam on{' '}
+                      <span className="font-black underline">{selectedQP.allocatedTo?.examDate}</span> at{' '}
+                      <span className="font-black underline">{selectedQP.allocatedTo?.startTime || '09:30 AM'}</span>.
+                    </p>
+                    <p className="text-xs text-slate-500 mt-3 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                      🔒 Paper contents will be automatically unlocked and viewable on the exam date at start time.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white shadow-xl mx-auto qp-print-wrapper rounded-xl"
+                  style={{ width: '210mm', minHeight: '297mm', padding: '15mm', boxSizing: 'border-box' }}>
+                  <div dangerouslySetInnerHTML={{ __html: renderQuestionPaper(fullQPForModal || selectedQP) }} />
+                </div>
+              )}
             </div>
           </div>
         </div>

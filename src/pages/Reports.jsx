@@ -23,7 +23,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatProgrammeKey, formatBatchDisplay, parseSubjectField } from "../lib/utils";
-import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
+import { getQuestionPaperHTML, buildQuestionPaperPrintShell } from "../utils/questionPaperUtils";
 import { typesetMath } from "../utils/mathJaxUtils";
 
 import Layout from "../components/Layout";
@@ -1004,73 +1004,8 @@ export default function Reports() {
       const printWindow = window.open('', '_blank', 'width=900,height=1200');
       if (!printWindow) { showToast('Please allow popups to download PDF.', 'error'); return; }
 
-      const contentNoInnerStyle = content.replace(/<style[\s\S]*?<\/style>/gi, '');
-
-      printWindow.document.write(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>${qp.qpaper_name || 'Question Paper'}</title>
-<style>
-  /* Senior QP exact: EVERY page needs top gap - @page alone is trimmed by Chrome, so content clone padding repeats on each page fragment */
-  @page {
-    size: A4 portrait;
-    margin: 10mm 12mm 14mm 12mm;
-  }
-  *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-  html,body{margin:0!important;padding:0!important;font-family:'Times New Roman',Times,serif;font-size:12pt;color:#000;background:#fff!important;line-height:1.4}
-  .page-shell{width:100%;max-width:186mm;margin:0 auto}
-  table{border-collapse:collapse;width:100%}
-  td,th{border:1px solid #000!important;padding:5px 6px;font-family:'Times New Roman',Times,serif;font-size:12pt;vertical-align:top}
-  img{max-width:100%;height:auto}
-  .logo-img{height:58px!important;width:auto!important;max-width:100%!important;display:block;margin:0 auto;object-fit:contain}
-  thead{display:table-header-group}
-  tfoot{display:table-footer-group}
-  tr{page-break-inside:avoid;break-inside:avoid}
-  .outcomes-summary-section{page-break-inside:avoid}
-  /* keep Part header together with at least 1 question — prevents orphan Part B header alone at page bottom */
-  .part-header{break-after:avoid!important;page-break-after:avoid!important;break-inside:avoid!important;page-break-inside:avoid!important}
-  .part-questions{break-before:avoid!important;page-break-before:avoid!important}
-  .part-questions tbody tr:first-child{break-after:avoid!important;page-break-after:avoid!important}
-  .part-questions{orphans:2;widows:2}
-  .qp-preview-container{font-family:'Times New Roman',Times,serif;color:#000;line-height:1.4;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-  .qp-preview-container table{border-collapse:collapse!important;width:100%!important}
-  .qp-preview-container table th,.qp-preview-container table td{border:1px solid #000!important;font-size:12pt!important}
-  .print-bar{position:fixed;top:0;left:0;right:0;background:#202124;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:9999;font-family:system-ui,-apple-system,sans-serif;font-size:13px}
-  .print-bar button{background:#1a73e8;color:#fff;border:none;padding:8px 18px;border-radius:4px;cursor:pointer;font-weight:600}
-  @media screen{
-    html,body{background:#525659!important}
-    .paper-frame{background:#fff;width:210mm;min-height:297mm;margin:52px auto 24px;box-shadow:0 6px 28px rgba(0,0,0,.45);overflow:hidden;padding:0}
-    .page-shell{padding:16mm 12mm 14mm 12mm}
-  }
-  @media print{
-    html,body{background:#fff!important;width:auto!important;margin:0!important;padding:0!important}
-    .paper-frame{box-shadow:none!important;margin:0!important;width:auto!important;min-height:auto!important;background:#fff!important;padding:0!important}
-    .page-shell{padding:0!important;margin:0 auto!important}
-    /* clone padding repeats top gap on EVERY page fragment (senior QP style) */
-    .qp-preview-container{padding-top:8mm!important;box-decoration-break:clone!important;-webkit-box-decoration-break:clone!important}
-    .print-bar{display:none!important}
-  }
-</style>
-<script>
-window.MathJax={
-  tex:{inlineMath:[['\\\\(','\\\\)']],displayMath:[['\\\\[','\\\\]']]},
-  svg:{fontCache:'global'},
-  startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{setTimeout(()=>{window.focus();window.print()},800)})}
-};
-</script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
-</head><body>
-<div class="print-bar no-print">
-  <span>Question Paper — A4 Portrait &bull; 14mm top/bottom, 12mm left/right margins on every page</span>
-  <button onclick="window.print()">Print / Save as PDF</button>
-</div>
-<div class="paper-frame">
-  <div class="page-shell">
-    ${contentNoInnerStyle}
-  </div>
-</div>
-<script>
-  setTimeout(()=>{if(!window.MathJax||!window.MathJax.typesetPromise){window.focus();window.print()}},2000);
-</script>
-</body></html>`);
+      const printHtml = buildQuestionPaperPrintShell(content, qp.qpaper_name || 'Question Paper');
+      printWindow.document.write(printHtml);
       printWindow.document.close();
     } catch (err) {
       console.error('PDF export failed:', err);

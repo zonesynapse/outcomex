@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
-import { getQuestionPaperHTML } from "../../utils/questionPaperUtils";
+import { getQuestionPaperHTML, buildQuestionPaperPrintShell } from "../../utils/questionPaperUtils";
 import { useRegulations } from "../../hooks/useRegulations";
 import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay } from "../../lib/utils";
 import { typesetMath } from "../../utils/mathJaxUtils";
@@ -339,6 +339,63 @@ export default function ExamCellQPReview() {
     return getQuestionPaperHTML(qp, modalCourseOutcomes, facultySignatureForQP, selectedQP?.hod_signature_url || "", ciaConfigs, null, coeSignature);
   }, [modalCourseOutcomes, facultySignatureForQP, selectedQP, ciaConfigs, coeSignature]);
 
+  const handleDownloadAllocatedQP = async (qp) => {
+    try {
+      if (!qp) return;
+
+      // Resolve Course Outcomes (fresh Firestore fetch, fall back to embedded config)
+      let coList = [];
+      try {
+        const embedded = Array.isArray(qp.course_outcomes) ? qp.course_outcomes
+          : (Array.isArray(qp.courseOutcomes) ? qp.courseOutcomes : []);
+        coList = embedded;
+      } catch (e) { coList = []; }
+
+      const progKey = formatProgrammeKey(qp.programme);
+      const regulation = getRegulationForBatch(progKey, qp.batch);
+      if (regulation) {
+        const coDocId = `${sanitizeKey(qp.department)}_${sanitizeKey(regulation)}_${sanitizeKey(qp.subject)}_${sanitizeKey(qp.academic_year)}`;
+        try {
+          const coSnap = await getDoc(doc(db, 'course_outcomes', coDocId));
+          if (coSnap.exists()) {
+            const data = coSnap.data();
+            coList = Object.entries(data)
+              .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
+              .sort((a, b) => (parseInt(a.code.replace(/\D/g, ''), 10) || 0) - (parseInt(b.code.replace(/\D/g, ''), 10) || 0));
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      // Resolve subject faculty signature
+      let facultySig = qp.faculty_signature_url || qp.facultySignatureUrl || '';
+      if (!facultySig && qp.forwarded_by) {
+        try {
+          const snap = await getDoc(doc(db, 'users', qp.forwarded_by));
+          if (snap.exists()) facultySig = snap.data().signatureUrl || '';
+        } catch (e) { /* ignore */ }
+      }
+
+      const content = getQuestionPaperHTML(
+        qp,
+        coList,
+        facultySig,
+        qp.hod_signature_url || qp.hodSignatureUrl || '',
+        ciaConfigs,
+        null,
+        qp.coe_signature_url || coeSignature
+      );
+
+      const w = window.open('', '_blank', 'width=900,height=1200');
+      if (!w) { showToast('Please allow popups to download the PDF.', 'error'); return; }
+      w.document.write(buildQuestionPaperPrintShell(content, qp.qpaper_name || 'Question Paper'));
+      w.document.close();
+      setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 1200);
+    } catch (err) {
+      console.error('QP download failed:', err);
+      showToast('QP download failed. Please try again.', 'error');
+    }
+  };
+
   useEffect(() => {
     const fetchDetails = async () => {
       if (!selectedQP) {
@@ -607,8 +664,56 @@ export default function ExamCellQPReview() {
   }, [filteredPublished, scheduleDocs, syllabusCodeMap, courseBankDeptMap]);
 
   const [pubSearchQuery, setPubSearchQuery] = useState("");
+  const [selectedPubExamDateFilter, setSelectedPubExamDateFilter] = useState("ALL");
+
+  const availablePublishedExamDates = useMemo(() => {
+    const dateMap = new Map();
+    publishedBySubject.forEach(group => {
+      const firstQp = group.qps[0];
+      const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
+      const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
+        const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
+        const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
+        const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
+        const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
+        const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
+        return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
+      }) : null;
+
+      const rawDate = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || "";
+      if (rawDate) {
+        const normDate = rawDate.trim();
+        if (!dateMap.has(normDate)) {
+          dateMap.set(normDate, { rawDate: normDate, displayDate: fmtDate(normDate), count: 0 });
+        }
+        dateMap.get(normDate).count += 1;
+      }
+    });
+
+    return Array.from(dateMap.values()).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+  }, [publishedBySubject, scheduleDocs]);
+
   const filteredPublishedSubjects = useMemo(() => {
     let result = publishedBySubject;
+
+    if (selectedPubExamDateFilter !== "ALL") {
+      result = result.filter(group => {
+        const firstQp = group.qps[0];
+        const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
+        const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
+          const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
+          const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
+          const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
+          const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
+          const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
+          return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
+        }) : null;
+
+        const rawDate = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || "";
+        return rawDate.trim() === selectedPubExamDateFilter;
+      });
+    }
+
     if (pubSearchQuery.trim()) {
       const q = pubSearchQuery.trim().toLowerCase();
       result = result.filter(g => {
@@ -621,7 +726,7 @@ export default function ExamCellQPReview() {
       });
     }
     return result;
-  }, [publishedBySubject, pubSearchQuery]);
+  }, [publishedBySubject, pubSearchQuery, selectedPubExamDateFilter, scheduleDocs]);
 
   const renderQpCard = (qp, published) => {
     const name = resolveName(published ? qp.coe_approved_by || qp.forwarded_by : qp.forwarded_by);
@@ -695,12 +800,7 @@ export default function ExamCellQPReview() {
             )}
             {isAllocated && (
               <button
-                onClick={() => {
-                  const w = window.open('', '_blank');
-                  w.document.write(getQuestionPaperHTML(qp, [], "", "", ciaConfigs, null, qp.coe_signature_url || ""));
-                  w.document.close();
-                  setTimeout(() => { w.print(); }, 800);
-                }}
+                onClick={() => handleDownloadAllocatedQP(qp)}
                 className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[#120c7a] hover:bg-[#0f0a66] text-white text-[11px] font-extrabold transition-all shadow-sm cursor-pointer">
                 <Download size={12} /> Download
               </button>
@@ -832,20 +932,73 @@ export default function ExamCellQPReview() {
             </div>
           ) : (
             <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-              {/* Published Table Search */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 pt-6 pb-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={15} />
-                  <input
-                    value={pubSearchQuery}
-                    onChange={(e) => setPubSearchQuery(e.target.value)}
-                    placeholder="Search course code, subject name, department, or batch..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold bg-zinc-50 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
-                  />
+              {/* Published Table Search & Date Filter Header */}
+              <div className="px-6 pt-6 pb-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={15} />
+                    <input
+                      value={pubSearchQuery}
+                      onChange={(e) => setPubSearchQuery(e.target.value)}
+                      placeholder="Search course code, subject name, department, or batch..."
+                      className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold bg-zinc-50 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                    />
+                  </div>
+                  <span className="text-xs font-extrabold text-zinc-400 shrink-0">
+                    {filteredPublishedSubjects.length} Subject{filteredPublishedSubjects.length !== 1 ? "s" : ""} · {filteredPublished.length} Total QPs
+                  </span>
                 </div>
-                <span className="text-xs font-extrabold text-zinc-400 shrink-0">
-                  {filteredPublishedSubjects.length} Subject{filteredPublishedSubjects.length !== 1 ? "s" : ""} · {filteredPublished.length} Total QPs
-                </span>
+
+                {/* Dynamic Exam Date Filter Bar */}
+                {availablePublishedExamDates.length > 0 && (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={14} className="text-[#120c7a]" />
+                        <span className="text-xs font-extrabold text-slate-800">Filter Published Exams by Schedule Date</span>
+                      </div>
+                      <span className="text-[10.5px] font-bold text-slate-500">
+                        {availablePublishedExamDates.length} Exam Date{availablePublishedExamDates.length !== 1 ? 's' : ''} Available
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setSelectedPubExamDateFilter("ALL")}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          selectedPubExamDateFilter === "ALL"
+                            ? "bg-[#120c7a] text-white shadow-xs"
+                            : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                        }`}
+                      >
+                        📅 All Dates ({publishedBySubject.length} Subjects)
+                      </button>
+                      {availablePublishedExamDates.map((item) => {
+                        const isSelected = selectedPubExamDateFilter === item.rawDate;
+                        return (
+                          <button
+                            key={item.rawDate}
+                            onClick={() => setSelectedPubExamDateFilter(item.rawDate)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                              isSelected
+                                ? "bg-[#120c7a] text-white shadow-xs"
+                                : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                            }`}
+                          >
+                            <span>📅 {item.displayDate}</span>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                                isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {item.count} Subj
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Allocated Info Banner */}
@@ -1073,12 +1226,7 @@ export default function ExamCellQPReview() {
                                         )}
                                         {isAlloc && (
                                           <button
-                                            onClick={() => {
-                                              const w = window.open('', '_blank');
-                                              w.document.write(getQuestionPaperHTML(qp, [], "", "", ciaConfigs, null, qp.coe_signature_url || ""));
-                                              w.document.close();
-                                              setTimeout(() => { w.print(); }, 800);
-                                            }}
+                                            onClick={() => handleDownloadAllocatedQP(qp)}
                                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#120c7a] hover:bg-[#0f0a66] text-white text-[10px] font-extrabold transition-all shadow-sm cursor-pointer">
                                             <Download size={10} /> Download
                                           </button>

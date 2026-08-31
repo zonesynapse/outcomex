@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Plus, Search, Inbox, X, Trash2, Users, Calendar, Clock, FileText, CheckCircle2 } from "lucide-react";
+import { Filter, Plus, Search, Inbox, X, Trash2, Users, Calendar, Clock, FileText, CheckCircle2, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
@@ -45,6 +46,7 @@ export default function AdmissionEnquiries() {
   const [searchResults, setSearchResults] = useState(null);
   const [filterResults, setFilterResults] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const PAGE_SIZE = 20;
 
   const loadPage = async (page, cursor) => {
@@ -248,6 +250,59 @@ export default function AdmissionEnquiries() {
     }
   };
 
+  const handleExportAdmittedExcel = async () => {
+    setExporting(true);
+    try {
+      const all = await getAllEnquiries();
+      const admitted = all.filter((enquiry) => enquiry.status === "Approved");
+      if (admitted.length === 0) {
+        showToast("No Admitted students found to export", "error");
+        return;
+      }
+
+      const columns = [];
+      const seen = new Set();
+      admitted.forEach((enquiry) => {
+        Object.keys(enquiry).forEach((key) => {
+          if (!seen.has(key)) {
+            seen.add(key);
+            columns.push(key);
+          }
+        });
+      });
+
+      const rows = admitted.map((enquiry) => {
+        const row = {};
+        columns.forEach((column) => {
+          const value = enquiry[column];
+          if (value === null || value === undefined) {
+            row[column] = "";
+          } else if (typeof value === "object") {
+            row[column] = JSON.stringify(value);
+          } else {
+            row[column] = value;
+          }
+        });
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws["!cols"] = columns.map((column) => ({
+        wch: Math.max(12, Math.min(60, column.length + 6))
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Admitted Students");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `Admitted_Students_${dateStamp}.xlsx`);
+      showToast(`Exported ${admitted.length} Admitted students with complete data`);
+    } catch (error) {
+      console.error("Export failed:", error);
+      showToast("Failed to export Admitted students", "error");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const clearFilters = () => {
     setSearchTerm("");
     setProgrammeFilter("");
@@ -348,6 +403,16 @@ export default function AdmissionEnquiries() {
               >
                 <Plus size={18} />
                 New Enquiry
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAdmittedExcel}
+                disabled={exporting}
+                title="Export complete data of all Admitted (Approved) students to Excel"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-600 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition-all hover:bg-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <Download size={18} />
+                {exporting ? "Exporting..." : "Export Admitted"}
               </button>
             </div>
           </div>

@@ -1,10 +1,27 @@
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { ExamSchedule, Student, Department } from '../../../types';
 
 const normCodeKey = (s: any) => String(s || '').toUpperCase().replace(/\s+/g, '');
 const sanitizeKey = (key: any) => (!key ? '' : String(key).replace(/[.#$[\]/ ]/g, '_'));
 const normBatch = (b: any) => String(b || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function deriveBatchFromSemester(semester?: number, academicYear?: string, programmeOrDept?: string): string {
+  let ayStart = 2026;
+  if (academicYear) {
+    const match = String(academicYear).match(/^(\d{4})/);
+    if (match) ayStart = parseInt(match[1], 10);
+  }
+  const semNum = Number(semester) || 1;
+  const yearsAgo = Math.floor((semNum - 1) / 2);
+  const startYear = ayStart - yearsAgo;
+
+  const pLower = String(programmeOrDept || '').toLowerCase();
+  const isPG = pLower.includes('mba') || pLower.includes('m.e') || pLower.includes('m.tech') || pLower.includes('mtech') || pLower.includes('pg');
+  const duration = isPG ? 2 : 4;
+  const endYear = startYear + duration;
+  return `${startYear}-${endYear}`;
+}
 
 export interface ScheduleSyncResult {
   exams: ExamSchedule[];
@@ -133,50 +150,32 @@ export const resolveSemesterNumber = (
     }
   }
 
-  return 5;
+  return 0;
 };
 
-/**
- * Reverse-engineers batch from semester number
- */
-export const deriveBatchFromSemester = (semester: number, programme?: string): string => {
-  const isPG = programme === 'M.E.' || programme === 'MBA' || String(programme || '').includes('M');
-  if (isPG) {
-    if (semester === 1 || semester === 2) return '2025-27';
-    if (semester === 3 || semester === 4) return '2024-26';
-    return '2025-27';
-  }
-  if (semester === 1 || semester === 2) return '2025-29';
-  if (semester === 3 || semester === 4) return '2024-28';
-  if (semester === 5 || semester === 6) return '2023-27';
-  if (semester === 7 || semester === 8) return '2022-26';
-  return '2023-27';
-};
+
 
 const extractBatchAndSemesterFromDoc = (docId: string, meta: any) => {
   let batch = meta?.batch || '';
   let semester = parseInt(String(meta?.semester || meta?.sem || ''), 10) || 0;
 
-  if (!batch) {
+  if (!batch && docId) {
     const match = docId.match(/(20\d{2}[-_]\d{2,4}|\d{2}[-_]\d{2})/);
     if (match) batch = match[1];
   }
 
-  if (!semester) {
-    const semMatch = docId.match(/_sem?(\d)_/i) || docId.match(/_(\d)_/);
-    if (semMatch) semester = parseInt(semMatch[1], 10);
+  if (!semester && docId) {
+    const semMatch = docId.match(/_sem?(\d)(?:_|$)/i) || docId.match(/_(\d)(?:_|$)/) || docId.match(/_(\d)$/);
+    if (semMatch) {
+      semester = parseInt(semMatch[1], 10);
+    }
   }
 
   if (semester > 0 && !batch) {
     batch = deriveBatchFromSemester(semester, meta?.programme);
   }
 
-  if (batch && (!semester || semester === 0)) {
-    if (batch.includes('2025') || batch.includes('25')) semester = 1;
-    else if (batch.includes('2024') || batch.includes('24')) semester = 3;
-    else if (batch.includes('2023') || batch.includes('23')) semester = 5;
-    else if (batch.includes('2022') || batch.includes('22')) semester = 7;
-  }
+  // No hardcoded batch->semester inference — use only Firestore values
 
   return { batch, semester };
 };
@@ -191,7 +190,22 @@ export const subscribeToRealtimeSchedules = (
   let iaScheduleDocs: any[] = [];
   let syllabusSemMap: Record<string, number> = {};
   let courseEnrolmentsMap: Record<string, Record<string, boolean>> = {};
-  let masterStudentList: Array<{ regNo: string; name: string; batch: string; semester?: number }> = [];
+  let masterStudentList: Array<{ regNo: string; name: string; batch: string; semester?: number; department?: string }> = [];
+  let dynamicDeptShortMap: Record<string, string> = {}; // normFullDept -> short code e.g. "becivilengineering" -> "CIVIL"
+
+  const resolveDeptShort = (raw: any): string => {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    const norm = s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (dynamicDeptShortMap[norm]) return dynamicDeptShortMap[norm];
+    // fallback: find short code whose keywords appear in raw
+    for (const [k, v] of Object.entries(dynamicDeptShortMap)) {
+      if (norm.includes(k) || k.includes(norm)) return v;
+    }
+    // No mapping yet — return raw short (e.g. "MBA" stays "MBA", "B.E. Civil Engineering" stays as is for display)
+    // Keep raw but trim to first meaningful token if too long? Keep as is.
+    return s;
+  };
 
   const processAndEmit = () => {
     const scheduledSubjectMap = new Map<string, {
@@ -231,13 +245,11 @@ export const subscribeToRealtimeSchedules = (
       if (!code) return;
 
       const name = rec.name || rec.subjectName || rec.courseName || code;
-      const rawDeptStr = rec.department || rec.dept || defaultDept || 'CSE';
-      const department = (rawDeptStr || 'CSE') as Department;
+      const rawDeptStr = rec.department || rec.dept || defaultDept || '';
+      const department = rawDeptStr as Department;
 
-      let programme = rec.programme || rec.prog || docMeta?.programme || docMeta?.progKey || 'B.E.';
-      if (programme.includes('Tech')) programme = 'B.Tech';
-      else if (programme.includes('M') || programme.includes('PG')) programme = 'M.E.';
-      else programme = 'B.E.';
+      let programme = rec.programme || rec.prog || docMeta?.programme || docMeta?.progKey || '';
+      programme = String(programme).trim();
 
       const examTitle =
         rec.examTitle ||
@@ -279,18 +291,35 @@ export const subscribeToRealtimeSchedules = (
     const extractDocMeta = (docId: string, dData: any) => {
       const meta = dData._meta || {};
       let semester = meta.semester || meta.sem || dData.semester || dData.sem;
-      if (!semester && docId) {
-        const parts = docId.split('_').filter(Boolean);
-        const last = parts[parts.length - 1];
-        if (/^\d+$/.test(last)) {
-          semester = parseInt(last, 10);
+      let department = meta.department || meta.dept || dData.department || dData.dept;
+
+      if (!department && docId) {
+        const cleanId = docId.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
+        const parts = cleanId.split('_').filter(Boolean);
+        const deptParts: string[] = [];
+        for (const p of parts) {
+          if (/^\d{4}/.test(p) || /^\d+$/.test(p)) break;
+          deptParts.push(p);
+        }
+        if (deptParts.length > 0) {
+          department = deptParts.join(' ');
         }
       }
+
+      department = resolveDeptShort(department);
+
+      if (!semester && docId) {
+        const semMatch = docId.match(/_sem?(\d)(?:_|$)/i) || docId.match(/_(\d)(?:_|$)/) || docId.match(/_(\d)$/);
+        if (semMatch) {
+          semester = parseInt(semMatch[1], 10);
+        }
+      }
+
       return {
         ...meta,
         semester: semester || meta.semester,
         batch: meta.batch || dData.batch,
-        department: meta.department || dData.department,
+        department: department || meta.department,
       };
     };
 
@@ -369,105 +398,159 @@ export const subscribeToRealtimeSchedules = (
       .sort((a, b) => a.date.localeCompare(b.date) || a.session.localeCompare(b.session))
       .map((ex) => {
         const sortedSems = Array.from(ex.semesters).sort((a, b) => a - b);
-        const semDisplay = sortedSems.length > 0 ? sortedSems.join(', ') : '5';
+        const semDisplay = sortedSems.length > 0 ? sortedSems.join(', ') : '';
         return {
           id: ex.id,
           name: ex.name,
           date: ex.date,
           session: ex.session,
           timeSlot: ex.timeSlot,
-          semester: sortedSems[0] || 5,
+          semester: sortedSems[0] || 0,
           semesterDisplay: semDisplay,
           departments: Array.from(ex.departments),
+          status: 'Scheduled' as const,
           selectedHallIds: [],
+          items: ex.items,
         };
       });
 
-    // Fetch 100% real student register numbers strictly matching the subject's department, semester & batch
+    // Fetch 100% real student register numbers — must be IDENTICAL to
+    // PrincipalIAScheduleView.getSubjectRegNoRange() so hall regs == range regs.
     const generatedStudents: Student[] = [];
 
     const normAlpha = (str: any) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Build fast lookup maps from master students (same as PrincipalIAScheduleView)
+    const deptBatchMap: Record<string, Array<{ regNo: string; name: string; department?: string }>> = {};
+    const deptSemMap: Record<string, Array<{ regNo: string; name: string; department?: string }>> = {};
+    masterStudentList.forEach((s) => {
+      const nD = normAlpha(s.department);
+      const nB = normBatch(s.batch);
+      const sem = s.semester;
+      if (nD && nB) {
+        const k = `${nD}_${nB}`;
+        if (!deptBatchMap[k]) deptBatchMap[k] = [];
+        deptBatchMap[k].push({ regNo: s.regNo, name: s.name, department: s.department });
+      }
+      if (nD && sem) {
+        const k2 = `${nD}_sem${sem}`;
+        if (!deptSemMap[k2]) deptSemMap[k2] = [];
+        deptSemMap[k2].push({ regNo: s.regNo, name: s.name, department: s.department });
+      }
+    });
 
     scheduledItems.forEach((item) => {
       const normC = normCodeKey(item.code);
       const sanitizeC = sanitizeKey(item.code);
       const itemDeptNorm = normAlpha(item.department);
-      const itemBatchNorm = normBatch(item.batch);
+      const derivedBatch = deriveBatchFromSemester(item.semester, item.academicYear, item.department);
+      const effectiveBatch = derivedBatch || item.batch;
+      const itemBatchNorm = normBatch(effectiveBatch);
       const itemSem = item.semester;
+      const normB = String(effectiveBatch || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normBAlt = String(effectiveBatch || '').replace(/[^0-9]/g, '').slice(0, 8);
+      const normSem = String(itemSem || '').trim();
 
-      // Priority 1: Check course_enrolments Firestore collection for exact subject enrolment
-      const enrolledStudentList: Array<{ regNo: string; name: string }> = [];
+      // Priority 1: course_enrolments — strict batch match; stale batch docs are ignored
+      let bestDocObj: Record<string, boolean> | null = null;
+      let bestScore = -1;
 
       Object.entries(courseEnrolmentsMap).forEach(([docKey, enrolObj]) => {
-        const docKeyNorm = docKey.toUpperCase();
-        if (docKeyNorm.includes(normC) || docKey.includes(sanitizeC)) {
-          const docKeyAlpha = normAlpha(docKey);
-          const matchDept = !itemDeptNorm || docKeyAlpha.includes(itemDeptNorm) || itemDeptNorm.includes(docKeyAlpha.slice(0, 10));
-          const matchSem = !itemSem || docKey.includes(`_${itemSem}_`) || docKey.endsWith(`_${itemSem}`);
+        const docKeyNorm = docKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!docKeyNorm.includes(normC.toLowerCase().replace(/[^a-z0-9]/g, '')) && !docKey.includes(sanitizeC)) return;
+        if (normB && !docKeyNorm.includes(normB) && !docKeyNorm.includes(normBAlt)) return;
+        let score = 1;
+        const docKeyAlpha = normAlpha(docKey);
+        if (!itemDeptNorm || docKeyAlpha.includes(itemDeptNorm) || itemDeptNorm.includes(docKeyAlpha.slice(0, 10))) {
+          score += 2;
+        }
+        if (normB && (docKeyNorm.includes(normB) || docKeyNorm.includes(normBAlt))) {
+          score += 4;
+        }
+        if (normSem && (docKey.includes(`_${normSem}_`) || docKey.endsWith(`_${normSem}`) || docKey.includes(`_${normSem}-`))) {
+          score += 1;
+        }
 
-          if (matchDept || matchSem) {
-            Object.entries(enrolObj || {}).forEach(([examNo, isEnrolled]) => {
-              if (isEnrolled && !examNo.startsWith('_')) {
-                const mStudent = masterStudentList.find((s) => s.regNo === examNo);
-                const realName = mStudent?.name || `Student (${examNo})`;
-                if (!enrolledStudentList.some((e) => e.regNo === examNo)) {
-                  enrolledStudentList.push({
-                    regNo: examNo,
-                    name: realName,
-                  });
-                }
-              }
-            });
-          }
+        if (score > bestScore && enrolObj && typeof enrolObj === 'object') {
+          bestScore = score;
+          bestDocObj = enrolObj;
         }
       });
 
-      // Priority 2: Match real students from Firestore masterStudentList by Department AND (Semester OR Batch)
-      let candidateList: Array<{ regNo: string; name: string }> = [];
+      const enrolledStudentList: Array<{ regNo: string; name: string; department?: string }> = [];
+      if (bestDocObj) {
+        Object.entries(bestDocObj).forEach(([examNo, isEnrolled]) => {
+          if (isEnrolled && !examNo.startsWith('_')) {
+            const mStudent = masterStudentList.find((s) => s.regNo === examNo);
+            let realName = mStudent?.name;
+            if (!realName || realName === 'true' || realName === examNo || realName.startsWith('Student (')) {
+              const last4 = examNo.slice(-4);
+              realName = `Candidate #${last4}`;
+            }
+            if (!enrolledStudentList.some((e) => e.regNo === examNo)) {
+              enrolledStudentList.push({ regNo: examNo, name: realName, department: mStudent?.department || (item.department as string) });
+            }
+          }
+        });
+      }
 
+      let candidateList: Array<{ regNo: string; name: string; department?: string }> = [];
       if (enrolledStudentList.length > 0) {
         candidateList = enrolledStudentList;
       } else {
-        const matchingDeptBatchStudents = masterStudentList.filter((s) => {
-          const sDeptNorm = normAlpha(s.department);
-          const sBatchNorm = normBatch(s.batch);
-          const sSem = s.semester;
-
-          // Department check
-          const deptMatch = !itemDeptNorm || !sDeptNorm || sDeptNorm.includes(itemDeptNorm) || itemDeptNorm.includes(sDeptNorm);
-          if (!deptMatch) return false;
-
-          // Semester / Batch check
-          if (sSem && itemSem && sSem === itemSem) return true;
-          if (sBatchNorm && itemBatchNorm && sBatchNorm === itemBatchNorm) return true;
-          return false;
-        });
-
-        if (matchingDeptBatchStudents.length > 0) {
-          candidateList = matchingDeptBatchStudents;
+        // Priority 2: students master — exact same keys as PrincipalIAScheduleView
+        if (itemDeptNorm && normB && deptBatchMap[`${itemDeptNorm}_${normB}`]) {
+          candidateList = deptBatchMap[`${itemDeptNorm}_${normB}`];
+        } else if (itemDeptNorm && normSem && deptSemMap[`${itemDeptNorm}_sem${normSem}`]) {
+          candidateList = deptSemMap[`${itemDeptNorm}_sem${normSem}`];
         } else {
-          // Strictly match department and semester (no cross-semester/department bleed)
-          candidateList = masterStudentList.filter((s) => {
+          // Final fallback: filtered by dept + (batch OR sem)
+          const fallback = masterStudentList.filter((s) => {
             const sDeptNorm = normAlpha(s.department);
+            const sBatchNorm = normBatch(s.batch);
+            const sSem = s.semester;
             const deptMatch = !itemDeptNorm || !sDeptNorm || sDeptNorm.includes(itemDeptNorm) || itemDeptNorm.includes(sDeptNorm);
-            return deptMatch && (s.semester === itemSem);
+            if (!deptMatch) return false;
+            if (sBatchNorm && itemBatchNorm && sBatchNorm === itemBatchNorm) return true;
+            if (sSem && itemSem && String(sSem) === String(itemSem)) return true;
+            return false;
           });
+          candidateList = fallback;
         }
       }
 
-      // Generate seating student records strictly with Firestore register numbers and names
+      // Sort candidate list numerically by Register Number (First to Last)
+      candidateList.sort((a, b) => {
+        const numA = parseInt(a.regNo.replace(/[^0-9]/g, ''), 10);
+        const numB = parseInt(b.regNo.replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return a.regNo.localeCompare(b.regNo);
+      });
+
+      // Generate seating student records strictly with Firestore values — no hardcoded reg heuristic
       candidateList.forEach((st) => {
         if (!st.regNo) return;
+
+        const studentDept = (st.department || item.department) as Department;
+
+        let cleanName = st.name;
+        if (!cleanName || cleanName === 'true' || cleanName === st.regNo || cleanName.startsWith('Student (')) {
+          const last4 = st.regNo.slice(-4);
+          cleanName = `Candidate #${last4}`;
+        }
+
         generatedStudents.push({
           id: `std-${item.examDate}-${item.session}-${item.code}-${st.regNo}`,
-          name: st.name || `Student (${st.regNo})`,
+          name: cleanName,
           registerNumber: st.regNo,
-          department: item.department,
+          department: studentDept as Department,
           programme: item.programme,
           subjectCode: item.code,
           subjectName: item.name,
           semester: item.semester,
           year: Math.ceil(item.semester / 2),
+          academicYear: item.academicYear || '',
+          batch: effectiveBatch || '',
           examDate: item.examDate,
           session: item.session,
         });
@@ -578,6 +661,7 @@ export const subscribeToRealtimeSchedules = (
           }
           if (deptParts.length > 0) dept = deptParts.join(' ');
         }
+        dept = resolveDeptShort(dept);
 
         Object.entries(data).forEach(([key, val]) => {
           if (!key.startsWith('_')) {

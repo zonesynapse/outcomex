@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Activity } from 'lucide-react';
 import Layout from '../../components/Layout';
@@ -11,16 +11,26 @@ import {
   generateSampleStudents 
 } from './examHallSuite/initialData';
 import { allocateSeats } from './examHallSuite/allocationEngine';
+import { subscribeToRealtimeSchedules } from './examHallSuite/scheduleSync';
 
 export default function LiveExamDashboardPage() {
   const navigate = useNavigate();
   const [rooms] = useState(INITIAL_ROOMS);
-  const [exams] = useState(INITIAL_EXAMS);
+  const [exams, setExams] = useState(INITIAL_EXAMS);
   const [dutyAllocations] = useState(INITIAL_DUTY_ALLOCATIONS);
   const [notifications] = useState(INITIAL_NOTIFICATIONS);
-  const [students] = useState(() => generateSampleStudents());
+  const [students, setStudents] = useState(() => generateSampleStudents());
+
+  useEffect(() => {
+    const unsub = subscribeToRealtimeSchedules(({ exams: fetchedExams, students: fetchedStudents }) => {
+      if (fetchedExams.length > 0) setExams(fetchedExams);
+      if (fetchedStudents.length > 0) setStudents(fetchedStudents);
+    });
+    return () => unsub();
+  }, []);
+
   const [allocatedSeats, setAllocatedSeats] = useState(() => {
-    const res = allocateSeats(generateSampleStudents(), INITIAL_ROOMS, 'interleaved-dept');
+    const res = allocateSeats(students.length > 0 ? students : generateSampleStudents(), INITIAL_ROOMS, 'interleaved-dept');
     return res.allocatedSeats;
   });
 

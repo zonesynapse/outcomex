@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Grid3X3, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Grid3X3 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import { SeatAllocationView } from './examHallSuite/SeatAllocationView';
-import { allocateSeats } from './examHallSuite/allocationEngine';
 import { subscribeToRealtimeSchedules } from './examHallSuite/scheduleSync';
 import { db } from '../../firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
@@ -15,6 +14,8 @@ export default function SeatAllocationPage() {
   const [selectedExamId, setSelectedExamId] = useState('');
   const [students, setStudents] = useState([]);
   const [allocatedSeats, setAllocatedSeats] = useState([]);
+  const [roomDeptQuotaByExam, setRoomDeptQuotaByExam] = useState({});
+  const [selectedHallIdsByExam, setSelectedHallIdsByExam] = useState({});
   const [loading, setLoading] = useState(true);
 
   // 1. Sync Rooms from Firestore Room Master
@@ -48,24 +49,62 @@ export default function SeatAllocationPage() {
     return () => unsubSchedules();
   }, []);
 
-  // 3. Sync Seating Allocations from Firestore
+  // Helper to deduplicate array of seats by unique slot position per exam session
+  const cleanAndDeduplicateSeats = (rawSeats) => {
+    if (!Array.isArray(rawSeats)) return [];
+    const map = new Map();
+    rawSeats.forEach((s) => {
+      if (!s || !s.student || (!s.student.registerNumber && !s.student.name)) return;
+      const date = s.examDate || s.student?.examDate || 'default_date';
+      const sess = s.session || s.student?.session || 'default_sess';
+      const room = s.roomId || s.roomNumber || 'default_room';
+      const desk = s.deskNumber || 'default_desk';
+      const slot = s.slotPosition || 'default_slot';
+      const key = `${date}_${sess}_${room}_${desk}_${slot}`;
+      map.set(key, s);
+    });
+    return Array.from(map.values());
+  };
+
+  // 3. Sync Seating Allocations & Quotas from Firestore with automatic 1MB document explosion rescue
   useEffect(() => {
     const docRef = doc(db, 'exam_cell_settings', 'seating_allocation');
-    const unsubscribe = onSnapshot(docRef, (snap) => {
+    const unsubscribe = onSnapshot(docRef, async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (data.allocatedSeats && Array.isArray(data.allocatedSeats)) setAllocatedSeats(data.allocatedSeats);
+        if (data.allocatedSeats && Array.isArray(data.allocatedSeats)) {
+          const cleaned = cleanAndDeduplicateSeats(data.allocatedSeats);
+          setAllocatedSeats(cleaned);
+
+          // Auto-rescue Firestore document if array was bloated with duplicates
+          if (data.allocatedSeats.length > cleaned.length && data.allocatedSeats.length > 50) {
+            console.log(`Auto-cleaned ${data.allocatedSeats.length - cleaned.length} duplicate seats in Firestore.`);
+            try {
+              await setDoc(docRef, { allocatedSeats: cleaned, updatedAt: new Date().toISOString() }, { merge: true });
+            } catch (e) {
+              console.warn("Auto-clean write failed:", e);
+            }
+          }
+        }
+        if (data.roomDeptQuotaByExam && typeof data.roomDeptQuotaByExam === 'object') setRoomDeptQuotaByExam(data.roomDeptQuotaByExam);
+        if (data.selectedHallIdsByExam && typeof data.selectedHallIdsByExam === 'object') setSelectedHallIdsByExam(data.selectedHallIdsByExam);
       }
-    }, () => {});
+    }, (err) => {
+      console.error("Error reading seating allocation from Firestore:", err);
+    });
 
     return () => unsubscribe();
   }, []);
 
-  const handleUpdateAllocatedSeats = async (newSeats) => {
+  const handleUpdateAllocatedSeats = async (newSeats, updatedQuotaByExam, updatedHallIdsByExam) => {
     setAllocatedSeats(newSeats);
+    if (updatedQuotaByExam) setRoomDeptQuotaByExam(updatedQuotaByExam);
+    if (updatedHallIdsByExam) setSelectedHallIdsByExam(updatedHallIdsByExam);
     try {
       await setDoc(doc(db, 'exam_cell_settings', 'seating_allocation'), {
         allocatedSeats: newSeats,
+        roomDeptQuotaByExam: updatedQuotaByExam || roomDeptQuotaByExam,
+        selectedHallIdsByExam: updatedHallIdsByExam || selectedHallIdsByExam,
         exams,
         updatedAt: new Date().toISOString()
       }, { merge: true });
@@ -95,8 +134,8 @@ export default function SeatAllocationPage() {
                 <Grid3X3 size={24} />
               </div>
               <div>
-                <h1 className="text-xl md:text-2xl font-black leading-tight">Smart Seating Allocation Engine</h1>
-                <p className="text-sm text-blue-100/90 font-medium">Continuous Internal Assessment (CIA) & Model Exam Hall Seating Matrix Generator</p>
+                <h1 className="text-xl md:text-2xl font-black tracking-tight">Seat Allocation Engine & Matrix</h1>
+                <p className="text-xs text-blue-200 mt-0.5">Autonomous Anna University Anti-Copying Algorithm • Visual Room Grid & Door Notices</p>
               </div>
             </div>
           </div>
@@ -114,6 +153,8 @@ export default function SeatAllocationPage() {
               rooms={rooms}
               students={students}
               allocatedSeats={allocatedSeats}
+              initialRoomDeptQuotaByExam={roomDeptQuotaByExam}
+              initialSelectedHallIdsByExam={selectedHallIdsByExam}
               onUpdateAllocatedSeats={handleUpdateAllocatedSeats}
               exams={exams}
               selectedExam={selectedExam}

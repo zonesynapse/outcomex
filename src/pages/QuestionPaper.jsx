@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { CKEditor } from 'ckeditor4-react';
 import { db, auth } from "../firebase";
 import { doc, collection, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { 
-  ChevronDown, 
-  Download, 
-  FileText, 
+import {
+  ChevronDown,
+  Download,
+  FileText,
   CheckCircle2,
   LayoutDashboard,
   Settings,
@@ -99,10 +99,10 @@ export default function QuestionPaper() {
 
   const filteredExams = useMemo(() => {
     if (!programme || !department || !batch || !academicYear || !semester) return [];
-    
+
     const semNum = deriveSemesterNumber(semester);
-    
-    return ciaConfigs.filter(config => 
+
+    return ciaConfigs.filter(config =>
       config.program === programme &&
       (config.department === department || !config.department) &&
       (!config.batch || config.batch === batch) &&
@@ -136,11 +136,11 @@ export default function QuestionPaper() {
         Object.entries(docData).forEach(([, payload]) => {
           if (payload && typeof payload === 'object' && payload.subject) {
             if (norm(payload.department || '') === norm(department) &&
-                (!payload.programme || norm(payload.programme) === norm(programme)) &&
-                norm(payload.batch || '') === norm(batch) &&
-                norm(payload.academic_year || '') === norm(academicYear) &&
-                String(payload.semester || '').trim() === semNum &&
-                norm(payload.subject || '') === norm(subCode)) {
+              (!payload.programme || norm(payload.programme) === norm(programme)) &&
+              norm(payload.batch || '') === norm(batch) &&
+              norm(payload.academic_year || '') === norm(academicYear) &&
+              String(payload.semester || '').trim() === semNum &&
+              norm(payload.subject || '') === norm(subCode)) {
               found = true;
             }
           }
@@ -214,14 +214,14 @@ export default function QuestionPaper() {
         const snapshot = await getDoc(syllabusRef);
         const data = snapshot.data();
         let fetchedSubjects = [];
-        
+
         if (data && data.semesters && data.semesters[semNum]) {
           fetchedSubjects = data.semesters[semNum]
             .filter(s => s != null && s.isActive !== false)
             .map(s => ({
-            value: s.code,
-            text: `${s.code} - ${s.name}`
-          }));
+              value: s.code,
+              text: `${s.code} - ${s.name}`
+            }));
         }
 
         // 2. Fetch Assignments for current user
@@ -241,11 +241,11 @@ export default function QuestionPaper() {
         const compositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}`;
         const assignmentRef = doc(db, 'subject_assignments', compositeKey);
         const assignmentSnap = await getDoc(assignmentRef);
-        
+
         if (assignmentSnap.exists()) {
           const assignments = assignmentSnap.data();
           const userAssignments = assignments[currentUser.uid] || [];
-          
+
           // Filter syllabus subjects by user assignments
           const filteredSubjects = fetchedSubjects.filter(s => userAssignments.includes(s.value));
           setSubjects(filteredSubjects);
@@ -327,7 +327,7 @@ export default function QuestionPaper() {
       </table>
       <table style="width: 100%; border-collapse: collapse; margin-top: 10px;" border="1">
         <tr>
-          <td><strong>Internal Assessment Test</strong></td>
+          <td><strong>Continuous Internal Assessment Test</strong></td>
           <td colspan="3">${exam === 'custom' ? customExam : (ciaConfigs.find(c => c.id === exam)?.examName || exam)}</td>
           <td><strong>Academic Year</strong></td>
           <td>${academicYear}</td>
@@ -569,7 +569,7 @@ export default function QuestionPaper() {
             <p className="text-slate-500 text-sm mt-1">Configure and generate professional question papers</p>
           </div>
           <div className="flex gap-3">
-            <button 
+            <button
               onClick={downloadDocx}
               disabled={!editorData}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-slate-700 font-semibold hover:bg-slate-50 transition-all disabled:opacity-50"
@@ -577,7 +577,7 @@ export default function QuestionPaper() {
               <Download size={18} />
               Download Word
             </button>
-            <button 
+            <button
               onClick={generateTables}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-xl text-white font-semibold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all"
             >
@@ -594,7 +594,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Programme</label>
               <div className="relative">
-                <select 
+                <select
                   value={programme}
                   onChange={(e) => { setProgramme(e.target.value); setDepartment(""); }}
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
@@ -613,7 +613,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Department</label>
               <div className="relative">
-                <select 
+                <select
                   value={department}
                   disabled={!programme}
                   onChange={(e) => setDepartment(e.target.value)}
@@ -632,7 +632,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Batch</label>
               <div className="relative">
-                <select 
+                <select
                   value={batch}
                   onChange={(e) => { setBatch(e.target.value); setAcademicYear(""); setSemester(""); }}
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
@@ -650,7 +650,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Academic Year</label>
               <div className="relative">
-                <select 
+                <select
                   value={academicYear}
                   disabled={!batch}
                   onChange={(e) => { setAcademicYear(e.target.value); setSemester(""); }}
@@ -669,7 +669,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Semester</label>
               <div className="relative">
-                <select 
+                <select
                   value={semester}
                   disabled={!academicYear}
                   onChange={(e) => setSemester(e.target.value)}
@@ -688,7 +688,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Subject</label>
               <div className="relative">
-                <select 
+                <select
                   value={typeof subject === 'object' ? subject.value : subject}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -712,7 +712,7 @@ export default function QuestionPaper() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Exam</label>
               <div className="relative">
-                <select 
+                <select
                   value={exam}
                   onChange={(e) => { setExam(e.target.value); setEseMarkType(''); }}
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
@@ -732,7 +732,7 @@ export default function QuestionPaper() {
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Mark Type</label>
                 <div className="relative">
-                  <select 
+                  <select
                     value={eseMarkType}
                     onChange={(e) => setEseMarkType(e.target.value)}
                     className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
@@ -751,7 +751,7 @@ export default function QuestionPaper() {
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Number of Parts</label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <select 
+                  <select
                     value={numParts}
                     onChange={(e) => setNumParts(e.target.value)}
                     className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl appearance-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-slate-700 font-medium"
@@ -763,7 +763,7 @@ export default function QuestionPaper() {
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
                 </div>
-                <button 
+                <button
                   onClick={handleGenerateParts}
                   className="p-2.5 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-all"
                   title="Configure Parts"
@@ -778,7 +778,7 @@ export default function QuestionPaper() {
           {exam === 'custom' && (
             <div className="mt-4 max-w-md">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Custom Exam Name</label>
-              <input 
+              <input
                 type="text"
                 value={customExam}
                 onChange={(e) => setCustomExam(e.target.value)}
@@ -797,7 +797,7 @@ export default function QuestionPaper() {
                 <LayoutDashboard size={20} className="text-blue-600" />
                 Parts Configuration
               </h2>
-              <button 
+              <button
                 onClick={generateTables}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-xl text-white text-sm font-semibold hover:bg-blue-700 transition-all shadow-md"
               >
@@ -812,7 +812,7 @@ export default function QuestionPaper() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Questions</label>
-                      <input 
+                      <input
                         type="number"
                         value={p.numQuestions}
                         onChange={(e) => updatePart(p.id, 'numQuestions', parseInt(e.target.value) || 0)}
@@ -821,7 +821,7 @@ export default function QuestionPaper() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase">Marks/Q</label>
-                      <select 
+                      <select
                         value={p.marksPerQuestion}
                         onChange={(e) => updatePart(p.id, 'marksPerQuestion', parseInt(e.target.value) || 0)}
                         className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-500"

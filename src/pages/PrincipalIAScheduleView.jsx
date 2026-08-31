@@ -395,7 +395,9 @@ export default function PrincipalIAScheduleView({
   filterSession = null,
   studentStrengthMap = null,
   onTotalCandidatesChange = null,
-  onPendingCountChange = null
+  onExamDateFilterChange = null,
+  onPendingCountChange = null,
+  onRegisterNumbersChange = null
 }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
@@ -410,25 +412,32 @@ export default function PrincipalIAScheduleView({
   const [previewSelectedBatch, setPreviewSelectedBatch] = useState("ALL");
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [batchStudentsCountMap, setBatchStudentsCountMap] = useState({});
+  const [courseEnrolmentsRawMap, setCourseEnrolmentsRawMap] = useState({});
+  const [studentsMasterRegsMap, setStudentsMasterRegsMap] = useState({});
 
-  // Listen to course_enrolments & students collections for exact student strength counts
+  // Listen to course_enrolments & students collections for exact student strength counts & register number lists
   useEffect(() => {
     const unsubEnrol = onSnapshot(
       collection(db, "course_enrolments"),
       (snap) => {
         const map = {};
+        const rawMap = {};
         snap.forEach((doc) => {
           const data = doc.data() || {};
           let count = 0;
+          const regList = [];
           Object.entries(data).forEach(([key, val]) => {
             if (key.startsWith('_')) return;
             if (val === true || (val && typeof val === 'object' && val.enrolled !== false)) {
               count++;
+              regList.push(key);
             }
           });
           map[doc.id] = count;
+          rawMap[doc.id] = regList;
         });
         setCourseEnrolmentsMap(map);
+        setCourseEnrolmentsRawMap(rawMap);
       },
       (err) => console.warn("Error loading course_enrolments:", err)
     );
@@ -437,16 +446,32 @@ export default function PrincipalIAScheduleView({
       collection(db, "students"),
       (snap) => {
         const counts = {};
+        const regsMap = {};
         snap.forEach((doc) => {
           const data = doc.data() || {};
           const meta = data._meta || {};
-          const dept = meta.department || data.department || "";
+          let dept = meta.department || data.department || "";
           const batch = meta.batch || data.batch || "";
           const sem = meta.semester || data.semester || "";
 
+          if (!dept && doc.id) {
+            const cleanId = doc.id.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
+            const parts = cleanId.split('_').filter(Boolean);
+            const deptParts = [];
+            for (const p of parts) {
+              if (/^\d{4}/.test(p) || /^\d+$/.test(p)) break;
+              deptParts.push(p);
+            }
+            if (deptParts.length > 0) dept = deptParts.join(' ');
+          }
+
           let studentCount = 0;
+          const regList = [];
           Object.keys(data).forEach((k) => {
-            if (!k.startsWith('_')) studentCount++;
+            if (!k.startsWith('_')) {
+              studentCount++;
+              regList.push(k);
+            }
           });
 
           const normD = String(dept).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -455,12 +480,17 @@ export default function PrincipalIAScheduleView({
 
           if (normD && normB) {
             counts[`${normD}_${normB}`] = (counts[`${normD}_${normB}`] || 0) + studentCount;
+            if (!regsMap[`${normD}_${normB}`]) regsMap[`${normD}_${normB}`] = [];
+            regsMap[`${normD}_${normB}`].push(...regList);
           }
           if (normD && normS) {
             counts[`${normD}_sem${normS}`] = (counts[`${normD}_sem${normS}`] || 0) + studentCount;
+            if (!regsMap[`${normD}_sem${normS}`]) regsMap[`${normD}_sem${normS}`] = [];
+            regsMap[`${normD}_sem${normS}`].push(...regList);
           }
         });
         setBatchStudentsCountMap(counts);
+        setStudentsMasterRegsMap(regsMap);
       },
       (err) => console.warn("Error loading students collection:", err)
     );
@@ -471,43 +501,121 @@ export default function PrincipalIAScheduleView({
     };
   }, []);
 
-  const getSubjectStrength = (code, rawCode, deptLabel, semester, batch) => {
+  // Helper to derive Batch (e.g. 2024-2028) from Semester & Academic Year
+  const deriveBatchFromSemester = (semester, academicYear, deptLabel) => {
+    let ayStart = 2026;
+    if (academicYear) {
+      const match = String(academicYear).match(/^(\d{4})/);
+      if (match) ayStart = parseInt(match[1], 10);
+    }
+    const semNum = Number(semester) || 1;
+    const yearsAgo = Math.floor((semNum - 1) / 2);
+    const startYear = ayStart - yearsAgo;
+    
+    const normD = String(deptLabel || '').toLowerCase();
+    const isPG = normD.includes('mba') || normD.includes('m.e') || normD.includes('mtech') || normD.includes('pg');
+    const duration = isPG ? 2 : 4;
+    const endYear = startYear + duration;
+    return `${startYear}-${endYear}`;
+  };
+
+  const getSubjectRegList = (code, rawCode, deptLabel, semester, batch, academicYear) => {
     const normC = String(code || rawCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     const normD = String(deptLabel || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-    const normB = String(batch || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const derivedBatch = deriveBatchFromSemester(semester, academicYear, deptLabel);
+    const effectiveBatch = derivedBatch || batch;
+    const normB = String(effectiveBatch || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normBAlt = String(effectiveBatch || "").replace(/[^0-9]/g, "").slice(0, 8);
     const normSem = String(semester || "").trim();
 
-    // Priority 1: Match course_enrolments collection doc (CourseEnrolment.jsx)
-    let enrolledCount = null;
-    Object.entries(courseEnrolmentsMap).forEach(([docKey, count]) => {
+    let bestDocRegs = null;
+    let bestScore = -1;
+
+    Object.entries(courseEnrolmentsRawMap).forEach(([docKey, regList]) => {
       const normKey = docKey.toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (normKey.includes(normC)) {
-        if (!normD || normKey.includes(normD) || normD.includes(normKey.substring(0, 8))) {
-          enrolledCount = count;
-        }
+      if (!normKey.includes(normC)) return;
+      const docNormB = docKey.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normB && !docNormB.includes(normB) && !docNormB.includes(normBAlt)) {
+        return;
+      }
+      let score = 1;
+      if (normD && (normKey.includes(normD) || normD.includes(normKey.substring(0, 8)))) {
+        score += 2;
+      }
+      if (normB && (docNormB.includes(normB) || docNormB.includes(normBAlt))) {
+        score += 4;
+      }
+      if (normSem && (docKey.includes(`_${normSem}_`) || docKey.endsWith(`_${normSem}`) || docKey.includes(`_${normSem}-`))) {
+        score += 1;
+      }
+
+      if (score > bestScore && Array.isArray(regList) && regList.length > 0) {
+        bestScore = score;
+        bestDocRegs = regList;
       }
     });
 
-    if (enrolledCount !== null && enrolledCount > 0) {
-      return enrolledCount;
+    let regsToUse = bestDocRegs || [];
+
+    if (regsToUse.length === 0) {
+      if (normD && normB && studentsMasterRegsMap[`${normD}_${normB}`]) {
+        regsToUse = studentsMasterRegsMap[`${normD}_${normB}`];
+      } else if (normD && normSem && studentsMasterRegsMap[`${normD}_sem${normSem}`]) {
+        regsToUse = studentsMasterRegsMap[`${normD}_sem${normSem}`];
+      }
     }
 
-    // Priority 2: Check batchStudentsCountMap for exact dept & batch
-    if (normD && normB && batchStudentsCountMap[`${normD}_${normB}`]) {
-      return batchStudentsCountMap[`${normD}_${normB}`];
+    if (regsToUse && regsToUse.length > 0) {
+      return Array.from(new Set(regsToUse)).sort((a, b) => {
+        const numA = parseInt(a.replace(/[^0-9]/g, ''), 10);
+        const numB = parseInt(b.replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return a.localeCompare(b);
+      });
     }
 
-    // Priority 3: Check batchStudentsCountMap for dept & semester
-    if (normD && normSem && batchStudentsCountMap[`${normD}_sem${normSem}`]) {
-      return batchStudentsCountMap[`${normD}_sem${normSem}`];
-    }
+    return [];
+  };
 
-    // Priority 4: Check studentStrengthMap prop passed from SeatAllocationView
+  const getSubjectStrength = (code, rawCode, deptLabel, semester, batch, academicYear) => {
+    const list = getSubjectRegList(code, rawCode, deptLabel, semester, batch, academicYear);
+    if (list.length > 0) return list.length;
+
+    const normC = String(code || rawCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     if (studentStrengthMap && studentStrengthMap[normC] !== undefined && studentStrengthMap[normC] > 0) {
       return studentStrengthMap[normC];
     }
+    return 0;
+  };
 
-    return enrolledCount || 0;
+  // Helper to compute First Register Number & Last Register Number range for a class/subject
+  const getSubjectRegNoRange = (code, rawCode, deptLabel, semester, batch, academicYear) => {
+    const uniqueSorted = getSubjectRegList(code, rawCode, deptLabel, semester, batch, academicYear);
+    if (uniqueSorted && uniqueSorted.length > 0) {
+      const first = uniqueSorted[0];
+      const last = uniqueSorted[uniqueSorted.length - 1];
+      return {
+        first,
+        last,
+        range: first === last ? first : `${first} - ${last}`
+      };
+    }
+
+    const normC = String(code || rawCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (studentStrengthMap) {
+      const mapKey = `${deptLabel}_${code}`;
+      const strengthObj = studentStrengthMap[mapKey] || studentStrengthMap[normC];
+      if (strengthObj && strengthObj.regNoRange) {
+        const parts = strengthObj.regNoRange.split(' - ');
+        return {
+          first: parts[0] || '',
+          last: parts[1] || '',
+          range: strengthObj.regNoRange
+        };
+      }
+    }
+
+    return null;
   };
 
   // Preload logo on mount
@@ -981,7 +1089,7 @@ export default function PrincipalIAScheduleView({
     const normProg = String(progKey || "").toLowerCase();
     const normDept = String(dept || "").toLowerCase();
 
-    const isPG = normProg.includes("pg") || normProg.startsWith("m_") || normDept.startsWith("m.e.") || normDept.startsWith("m.tech.") || normDept.startsWith("m.b.a.") || normDept.startsWith("m.c.a.");
+    const isPG = normProg.includes("pg") || normProg.includes("mba") || normProg.startsWith("m_") || normDept.startsWith("m.e.") || normDept.startsWith("m.tech.") || normDept.startsWith("m.b.a.") || normDept.startsWith("m.c.a.") || normDept.includes("mba") || normDept.includes("business");
 
     if (isPG) {
       return duration === 2;
@@ -1361,6 +1469,41 @@ export default function PrincipalIAScheduleView({
     }
   }, [totalFilterCandidates, displayScheduledItems.length, onTotalCandidatesChange]);
 
+  useEffect(() => {
+    if (typeof onExamDateFilterChange === 'function') {
+      if (selectedExamDateFilter !== "ALL") {
+        onExamDateFilterChange(selectedExamDateFilter);
+      } else if (displayScheduledItems.length > 0 && displayScheduledItems[0].examDate) {
+        onExamDateFilterChange(displayScheduledItems[0].examDate);
+      }
+    }
+  }, [selectedExamDateFilter, displayScheduledItems, onExamDateFilterChange]);
+
+  useEffect(() => {
+    if (typeof onRegisterNumbersChange === 'function') {
+      const list = [];
+      displayScheduledItems.forEach((r) => {
+        const regs = getSubjectRegList(r.code, r.rawCode, r.deptLabel, r.semester, r.batch, r.academicYear);
+        regs.forEach((reg) => {
+          list.push({
+            id: `std-${r.examDate}-${r.session || 'FN'}-${r.code}-${reg}`,
+            name: `Student (${reg})`,
+            registerNumber: reg,
+            department: r.deptLabel,
+            programme: r.programme || '',
+            subjectCode: r.code,
+            subjectName: r.courseName || r.code,
+            semester: r.semester,
+            year: Math.ceil((r.semester || 1) / 2),
+            examDate: formatStandardDate(r.examDate),
+            session: r.session || 'FN',
+          });
+        });
+      });
+      onRegisterNumbersChange(list);
+    }
+  }, [displayScheduledItems, courseEnrolmentsRawMap, studentsMasterRegsMap, onRegisterNumbersChange]);
+
   const totalScheduled = useMemo(() => rows.reduce((sum, g) => sum + g.items.length, 0), [rows]);
   const approvedCount = useMemo(() => {
     return rows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
@@ -1511,7 +1654,10 @@ export default function PrincipalIAScheduleView({
                     <Calendar size={14} className="text-[#120c7a]" /> Filter by Exam Date:
                   </span>
                   <button
-                    onClick={() => setSelectedExamDateFilter("ALL")}
+                    onClick={() => {
+                      setSelectedExamDateFilter("ALL");
+                      if (onExamDateFilterChange) onExamDateFilterChange("ALL");
+                    }}
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       selectedExamDateFilter === "ALL"
                         ? "bg-[#120c7a] text-white shadow-md"
@@ -1525,7 +1671,10 @@ export default function PrincipalIAScheduleView({
                     return (
                       <button
                         key={d.stdDate}
-                        onClick={() => setSelectedExamDateFilter(d.stdDate)}
+                        onClick={() => {
+                          setSelectedExamDateFilter(d.stdDate);
+                          if (onExamDateFilterChange) onExamDateFilterChange(d.stdDate);
+                        }}
                         className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
                           isSelected
                             ? "bg-[#120c7a] text-white shadow-md"
@@ -1560,6 +1709,7 @@ export default function PrincipalIAScheduleView({
                     <th className="px-4 py-3">Course Code</th>
                     <th className="px-4 py-3">Course Name</th>
                     <th className="px-4 py-3">Semester</th>
+                    <th className="px-4 py-3">Register Number Range</th>
                     <th className="px-4 py-3">Exam</th>
                     <th className="px-4 py-3">Exam Date & Session</th>
                     <th className="px-4 py-3 text-center">Student Strength</th>
@@ -1567,7 +1717,8 @@ export default function PrincipalIAScheduleView({
                 </thead>
                 <tbody className="divide-y divide-zinc-100 bg-white">
                   {displayScheduledItems.map((r, idx) => {
-                  const strength = getSubjectStrength(r.code, r.rawCode, r.deptLabel, r.semester, r.batch);
+                  const strength = getSubjectStrength(r.code, r.rawCode, r.deptLabel, r.semester, r.batch, r.academicYear);
+                  const regRange = getSubjectRegNoRange(r.code, r.rawCode, r.deptLabel, r.semester, r.batch, r.academicYear);
                   return (
                     <tr key={`${r.docId}_${r.code}_${idx}`} className="hover:bg-blue-50/40 transition-colors">
                       <td className="px-4 py-3 text-xs font-semibold text-zinc-800">
@@ -1585,6 +1736,22 @@ export default function PrincipalIAScheduleView({
                         <span className="inline-flex items-center text-xs font-extrabold px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
                           Semester {r.semester}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {regRange ? (
+                          <div className="space-y-0.5">
+                            <span className="font-mono text-xs font-black text-[#120c7a] bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200 inline-block shadow-2xs">
+                              {regRange.range}
+                            </span>
+                            <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-medium">
+                              <span>First: <strong className="text-zinc-800 font-mono">{regRange.first}</strong></span>
+                              <span>•</span>
+                              <span>Last: <strong className="text-zinc-800 font-mono">{regRange.last}</strong></span>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-zinc-400 font-medium italic">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-zinc-600 font-medium">
                         {r.examName || "-"}

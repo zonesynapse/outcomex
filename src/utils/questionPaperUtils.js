@@ -159,7 +159,7 @@ export const getQuestionPaperHTML = (
     </tr>
   </tbody>
 </table>
-<table style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #000;" border="1">
+<table class="header-box-table" style="width: 100%; border-collapse: collapse; margin-top: 10px; border: 1.5px solid #000;" border="1">
   <tr>
     <td style="padding: 6px; border: 1px solid #000;"><strong>${isAssignment ? (qp.assessment_type === 'Project' ? 'Project' : qp.assessment_type === 'Practical' ? 'Practical' : qp.assessment_type === 'Indirect' ? 'Indirect Assessment' : 'Assignment') : 'Internal Assessment Test'}</strong></td>
     <td colspan="3" style="padding: 6px; border: 1px solid #000;">${examDisplay}${isAssignment && qp.assignment_kl_domain ? ` (${qp.assignment_kl_domain})` : ''}</td>
@@ -198,12 +198,12 @@ export const getQuestionPaperHTML = (
 <table border="1" style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; text-align: left; font-size: 12px;">
   <thead>
     <tr>
-      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000;">Q. No.</th>
-      <th style="width: 52%; text-align: center; padding: 4px; border: 1px solid #000;">Question(s)</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">KL</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">CO</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">PI</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">Marks</th>
+      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">Q. No.</th>
+      <th style="width: 52%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">PI</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">Marks</th>
     </tr>
   </thead>
   <tbody>`;
@@ -227,30 +227,21 @@ export const getQuestionPaperHTML = (
   } else {
     (qp.parts || []).forEach((part, index) => {
       const partLetter = String.fromCharCode(64 + index + 1);
-      const totalMarks = `
-<span style="font-weight: bold;">
-  <span>${part.num_questions}</span>
-  <span>&times;</span>
-  <span>${part.marks_per_question}</span>
-  <span>=</span>
-  <span>${part.num_questions * part.marks_per_question}</span>
-</span>`;
+      const totalMarks = `<span>${part.num_questions} &times; ${part.marks_per_question} = ${part.num_questions * part.marks_per_question}</span>`;
 
       html += `
-<table class="part-header" style="width: 100%; border-collapse: collapse; font-weight: bold; font-size: 14px; margin-bottom: 6px; border: 1.5px solid black; margin-top: 15px; break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;">
-  <tr>
-    <td style="width: 50%; padding: 6px; border: none;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 13px;">(Answer all questions)</span></td>
-    <td style="width: 50%; padding: 6px; border: none; text-align: right;">${totalMarks} Marks</td>
-  </tr>
-</table>
-<table class="part-questions" border="1" style="width: 100%; border-collapse: collapse; margin-bottom: 15px; text-align: left; font-size: 12px; border: 1.5px solid #000; break-before: avoid; page-break-before: avoid;">
-  <thead>
-    <tr>
-      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000;">Q. No.</th>
-      <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #000;">Question(s)</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">KL</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">CO</th>
-      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000;">PI</th>
+<table class="part-section-table" border="1" style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; text-align: left; font-size: 12px; border: 1.5px solid #000;">
+  <thead style="display: table-header-group;">
+    <tr class="part-title-row" style="break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;">
+      <td colspan="3" style="padding: 6px; border: 1px solid #000; border-right: none; font-size: 12px; font-weight: normal;">Part ${partLetter} <span style="font-weight: normal; font-style: italic; font-size: 12px;">(Answer all questions)</span></td>
+      <td colspan="2" style="padding: 6px; border: 1px solid #000; border-left: none; text-align: right; font-size: 12px; font-weight: normal;">${totalMarks} Marks</td>
+    </tr>
+    <tr class="part-column-headers-row" style="break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;">
+      <th style="width: 8%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">Q. No.</th>
+      <th style="width: 62%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">Question(s)</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">KL</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">CO</th>
+      <th style="width: 10%; text-align: center; padding: 4px; border: 1px solid #000; font-weight: normal;">PI</th>
     </tr>
   </thead>
   <tbody>`;
@@ -278,7 +269,7 @@ export const getQuestionPaperHTML = (
                 t.querySelectorAll('th, td').forEach(c => {
                   c.style.border = '1px solid #000';
                   c.style.padding = '4px 6px';
-                  c.style.fontSize = '11px';
+                  c.style.fontSize = '12px';
                   c.style.textAlign = 'center';
                 });
               });
@@ -293,25 +284,20 @@ export const getQuestionPaperHTML = (
             str = str.replace(/(?:<\/span>|\\\))\s*<br\s*\/?>\s*(?=[a-z0-9,.\)\(])/gi, ' ');
           }
 
-          // 0. Remove any leftover error markers like [Math Processing Error]
           str = str.replace(/\[Math Processing Error\]/gi, '');
 
-          // 1. Auto-wrap matrix environments (\begin{bmatrix} ... \end{bmatrix}), including optional equation prefix like A=, B=, X=
           str = str.replace(/(?:\\\()?([A-Za-z0-9_\s\^\{\}-]*\s*=\s*)?\\begin\{(bmatrix|pmatrix|matrix|vmatrix|Bmatrix|cases|align|array)\}([\s\S]*?)\\end\{\2\}(?:\\\))?/gi, (match, prefix, envName, innerText) => {
             const cleanPrefix = prefix ? prefix.trim() : '';
             const cleanInner = innerText ? innerText.trim() : '';
             return `\\(${cleanPrefix ? `${cleanPrefix} ` : ''}\\begin{${envName}} ${cleanInner} \\end{${envName}}\\)`;
           });
 
-          // 2. Auto-wrap exponent / power expressions like A^{4} or A^{-1} if not wrapped in \(...\)
           str = str.replace(/(?:\\\()?([A-Za-z]\^\{[^{}]+\})(?:\\\))?/gi, (match, powerExp) => {
             return `\\(${powerExp}\\)`;
           });
 
-          // Clean up any double-wrapped \(\( ... \)\)
           str = str.replace(/\\\(\s*\\\(/g, '\\(').replace(/\\\)\s*\\\)/g, '\\)');
 
-          // 3. Wrap any \(...\) or \[...\] math blocks in <span class="math-tex">...</span> if not already wrapped
           str = str.replace(/(?:<span class="math-tex">)?(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])(?:<\/span>)?/gi, (match, mathContent) => {
             return `<span class="math-tex">${mathContent}</span>`;
           });
@@ -324,21 +310,21 @@ export const getQuestionPaperHTML = (
             if (q.sub === 'a') {
               const nextQ = filteredQuestions[qIdx + 1];
               html += `
-                <tr>
+                <tr class="either-or-row either-or-start" style="break-after: avoid !important; page-break-after: avoid !important;">
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;">${q.qno}</td>
                   <td style="padding: 4px; border: 1px solid #000;">${formatMathText(q.question || '')}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.kl || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.co || ''}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${q.pi || ''}</td>
                 </tr>
-                <tr>
+                <tr class="either-or-row either-or-middle" style="break-before: avoid !important; page-break-before: avoid !important; break-after: avoid !important; page-break-after: avoid !important;">
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
-                  <td style="text-align: center; padding: 4px; border: 1px solid #000;"><strong>(Or)</strong></td>
+                  <td style="text-align: center; padding: 4px; border: 1px solid #000;">(Or)</td>
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 </tr>
-                <tr>
+                <tr class="either-or-row either-or-end" style="break-before: avoid !important; page-break-before: avoid !important;">
                   <td style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.qno || ""}</td>
                   <td style="padding: 4px; border: 1px solid #000;">${formatMathText(nextQ?.question || "")}</td>
                   <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;">${nextQ?.kl || ''}</td>
@@ -360,26 +346,25 @@ export const getQuestionPaperHTML = (
           }
         });
       } else {
-        // Generate placeholders
-        let questionCounter = 1; // This counter should be passed or managed differently if parts are dynamic
+        let questionCounter = 1;
         for (let j = 0; j < part.num_questions; j++) {
           if (part.isEitherOr) {
             html += `
-              <tr>
+              <tr class="either-or-row either-or-start" style="break-after: avoid !important; page-break-after: avoid !important;">
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;">${questionCounter}(a)</td>
                 <td style="padding: 4px; border: 1px solid #000;"></td>
                 <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>
-              <tr>
+              <tr class="either-or-row either-or-middle" style="break-before: avoid !important; page-break-before: avoid !important; break-after: avoid !important; page-break-after: avoid !important;">
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
-                <td style="text-align: center; padding: 4px; border: 1px solid #000;"><strong>(Or)</strong></td>
+                <td style="text-align: center; padding: 4px; border: 1px solid #000;">(Or)</td>
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
               </tr>
-              <tr>
+              <tr class="either-or-row either-or-end" style="break-before: avoid !important; page-break-before: avoid !important;">
                 <td style="text-align: center; padding: 4px; border: 1px solid #000;">${questionCounter}(b)</td>
                 <td style="padding: 4px; border: 1px solid #000;"></td>
                 <td contenteditable="true" style="text-align: center; padding: 4px; border: 1px solid #000;"></td>
@@ -444,7 +429,6 @@ export const getQuestionPaperHTML = (
     });
   }
 
-  // Resolve Course Outcomes list robustly (from passed cos, qp.course_outcomes, qp.courseOutcomes, or activeCOs)
   const hasRealDescs = (arr) => Array.isArray(arr) && arr.length > 0 && arr.some(co => {
     const d = (co.description || '').trim();
     return d && d.toUpperCase() !== (co.code || '').toUpperCase();
@@ -452,7 +436,6 @@ export const getQuestionPaperHTML = (
 
   let effectiveCos = [];
   const qpSavedCos = qp?.course_outcomes || qp?.courseOutcomes;
-  // Prefer saved COs from the QP payload if they have real descriptions
   if (hasRealDescs(qpSavedCos)) {
     effectiveCos = qpSavedCos;
   } else if (cos && Array.isArray(cos) && cos.length > 0 && hasRealDescs(cos)) {
@@ -468,7 +451,6 @@ export const getQuestionPaperHTML = (
     }));
   }
 
-  // Filter effectiveCos so only covered COs in this paper are shown in the summary table (matching QuestionPaperGenerator)
   const coveredCos = effectiveCos.filter((co) => {
     const coCode = (co.code || co.co_code || co.co || '').toUpperCase();
     return activeCOs.has(coCode) || (coWeightage[coCode] && coWeightage[coCode] > 0) || (co.weightage && co.weightage > 0) || co.tick === '✓';
@@ -476,31 +458,31 @@ export const getQuestionPaperHTML = (
 
   const listToRender = coveredCos.length > 0 ? coveredCos : effectiveCos;
 
-const extractCleanSubjectTitle = (input) => {
-  if (!input) return '';
-  let str = input;
-  if (typeof str === 'object' && str !== null) {
-    str = str.name || str.title || str.label || str.subjectName || str.code || '';
-  } else if (typeof str === 'string') {
-    str = str.trim();
-    if (str.startsWith('{') && str.endsWith('}')) {
-      try {
-        const parsed = JSON.parse(str);
-        str = parsed.name || parsed.title || parsed.label || parsed.subjectName || parsed.code || '';
-      } catch (e) { }
+  const extractCleanSubjectTitle = (input) => {
+    if (!input) return '';
+    let str = input;
+    if (typeof str === 'object' && str !== null) {
+      str = str.name || str.title || str.label || str.subjectName || str.code || '';
+    } else if (typeof str === 'string') {
+      str = str.trim();
+      if (str.startsWith('{') && str.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(str);
+          str = parsed.name || parsed.title || parsed.label || parsed.subjectName || parsed.code || '';
+        } catch (e) { }
+      }
     }
-  }
-  str = String(str || '').trim();
-  if (str.includes('-')) {
-    const parts = str.split('-');
-    const codePart = parts[0].trim();
-    const titlePart = parts.slice(1).join('-').trim();
-    if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
-      return titlePart;
+    str = String(str || '').trim();
+    if (str.includes('-')) {
+      const parts = str.split('-');
+      const codePart = parts[0].trim();
+      const titlePart = parts.slice(1).join('-').trim();
+      if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
+        return titlePart;
+      }
     }
-  }
-  return str;
-};
+    return str;
+  };
 
   let coRows = '';
   if (listToRender && listToRender.length > 0) {
@@ -514,10 +496,10 @@ const extractCleanSubjectTitle = (input) => {
       const w = coWeightage[coCode] || co.weightage || '';
       return `
         <tr>
-          <td style="padding: 6px; border: 1px solid #000; text-align: center;">${coCode}</td>
-          <td style="padding: 6px; border: 1px solid #000; text-align: left;">${coDesc}</td>
-          <td style="text-align: center; padding: 6px; border: 1px solid #000;">${tick}</td>
-          <td style="text-align: center; padding: 6px; border: 1px solid #000;">${w || ''}</td>
+          <td style="padding: 6px; border: 1px solid #000; text-align: center; word-wrap: break-word; overflow-wrap: break-word;">${coCode}</td>
+          <td style="padding: 6px; border: 1px solid #000; text-align: left; word-wrap: break-word; overflow-wrap: break-word;">${coDesc}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #000; word-wrap: break-word; overflow-wrap: break-word;">${tick}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #000; word-wrap: break-word; overflow-wrap: break-word;">${w || ''}</td>
         </tr>
       `;
     }).join('');
@@ -533,15 +515,15 @@ const extractCleanSubjectTitle = (input) => {
   }
 
   html += `
-      <div class="outcomes-summary-section" style="margin-top: 25px;">
-        <h3 style="font-size: 14px; font-weight: bold; margin-bottom: 8px;">Details of Course Outcomes</h3>
-        <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px; border: 1px solid #000;">
+      <div class="outcomes-summary-section" style="margin-top: 25px; page-break-inside: avoid; break-inside: avoid;">
+        <h3 style="font-size: 12px; margin-bottom: 8px; font-weight: normal;">Details of Course Outcomes</h3>
+        <table class="co-summary-table" border="1" style="border-collapse: collapse; width: 100%; font-size: 12px; border: 1.5px solid #000; box-sizing: border-box; table-layout: fixed;">
             <thead>
                 <tr>
-                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Course Outcome Code</th>
-                    <th style="padding: 6px; border: 1px solid #000; text-align: left;">Description</th>
-                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Tick the CO's covered in this QP</th>
-                    <th style="padding: 6px; border: 1px solid #000; text-align: center;">Weightage of marks allotted to each CO</th>
+                    <th style="width: 16%; padding: 6px; border: 1px solid #000; text-align: center; font-weight: normal;">Course Outcome Code</th>
+                    <th style="width: 52%; padding: 6px; border: 1px solid #000; text-align: left; font-weight: normal;">Description</th>
+                    <th style="width: 16%; padding: 6px; border: 1px solid #000; text-align: center; font-weight: normal;">Tick the CO's covered in this QP</th>
+                    <th style="width: 16%; padding: 6px; border: 1px solid #000; text-align: center; font-weight: normal;">Weightage of marks allotted to each CO</th>
                 </tr>
             </thead>
             <tbody>
@@ -550,19 +532,93 @@ const extractCleanSubjectTitle = (input) => {
         </table>
       </div>
 
-<table border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 11px; border: 1.5px solid #000;">
+<table class="signatures-table" border="1" style="width: 100%; border-collapse: collapse; margin-top: 30px; font-size: 12px; border: 1.5px solid #000; box-sizing: border-box; table-layout: fixed;">
   <tr>
-    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${facultySignatureHtml}</td>
-    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${acSignatureHtml}</td>
-    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px;">${hodSignatureHtml}</td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px; border: 1px solid #000;">${facultySignatureHtml}</td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px; border: 1px solid #000;">${acSignatureHtml}</td>
+    <td style="height: 65px; width: 33.33%; text-align: center; vertical-align: bottom; padding: 5px; border: 1px solid #000;">${hodSignatureHtml}</td>
   </tr>
   <tr>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Subject Faculty Signature</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">Academic Coordinator Signature</td>
-    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: bold;">HOD Signature</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: normal;">Subject Faculty Signature</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: normal;">Academic Coordinator Signature</td>
+    <td style="text-align: center; padding: 6px; border: 1px solid #000; font-weight: normal;">HOD Signature</td>
   </tr>
 </table>
 </div>
   `;
   return html;
+};
+
+export const buildQuestionPaperPrintShell = (content, title = 'Question Paper') => {
+  const contentNoInnerStyle = (content || '').replace(/<style[\s\S]*?<\/style>/gi, '');
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>${title}</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 14mm 12mm;
+  }
+  *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+  html,body{margin:0!important;padding:0!important;font-family:'Times New Roman',Times,serif!important;font-size:12px!important;color:#000!important;background:#fff!important;line-height:1.4}
+  .page-shell{width:100%;max-width:186mm;margin:0 auto}
+  table{border-collapse:collapse;width:100%;box-sizing:border-box!important}
+  td,th{border:1px solid #000!important;padding:4px 6px;font-family:'Times New Roman',Times,serif!important;font-size:12px!important;vertical-align:top;box-sizing:border-box!important}
+  .qp-preview-container,.qp-preview-container *{font-family:'Times New Roman',Times,serif!important;font-size:12px!important}
+  .co-summary-table,.signatures-table,.header-box-table,.part-section-table{box-sizing:border-box!important;width:100%!important}
+  /* STRICT BOLD REMOVAL: Only .header-box-table elements can be bold. Everything else in QP is font-weight: normal */
+  .qp-preview-container *:not(.header-box-table):not(.header-box-table *){font-weight:normal!important}
+  b,strong,th,td,h3,span,div,p{font-weight:normal}
+  .header-box-table,.header-box-table *,.header-box-table b,.header-box-table strong,.header-box-table td strong{font-weight:bold!important}
+  img{max-width:100%;height:auto}
+  .logo-img{height:58px!important;width:auto!important;max-width:100%!important;display:block;margin:0 auto;object-fit:contain}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
+  tr{page-break-inside:avoid;break-inside:avoid}
+  .outcomes-summary-section{page-break-inside:avoid}
+  /* Prevent Orphan Part Headers (Part title + column headers + 1st question stay together) */
+  .part-title-row,.part-column-headers-row{break-after:avoid!important;page-break-after:avoid!important;break-inside:avoid!important;page-break-inside:avoid!important}
+  .part-section-table tbody tr:first-child{break-before:avoid!important;page-break-before:avoid!important}
+  .part-section-table{orphans:2;widows:2}
+  /* Unbreakable Either/Or Question Pair Binding */
+  tr.either-or-start,tr.either-or-start td{break-after:avoid!important;page-break-after:avoid!important}
+  tr.either-or-middle,tr.either-or-middle td{break-before:avoid!important;page-break-before:avoid!important;break-after:avoid!important;page-break-after:avoid!important}
+  tr.either-or-end,tr.either-or-end td{break-before:avoid!important;page-break-before:avoid!important}
+  tr.either-or-row{break-inside:avoid!important;page-break-inside:avoid!important}
+  .print-bar{position:fixed;top:0;left:0;right:0;background:#202124;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:9999;font-family:system-ui,-apple-system,sans-serif;font-size:13px}
+  .print-bar button{background:#1a73e8;color:#fff;border:none;padding:8px 18px;border-radius:4px;cursor:pointer;font-weight:600}
+  @media screen{
+    html,body{background:#525659!important}
+    .paper-frame{background:#fff;width:210mm;min-height:297mm;margin:52px auto 24px;box-shadow:0 6px 28px rgba(0,0,0,.45);overflow:hidden;padding:0}
+    .page-shell{padding:16mm 12mm 14mm 12mm}
+  }
+  @media print{
+    html,body{background:#fff!important;width:auto!important;margin:0!important;padding:0!important}
+    .paper-frame{box-shadow:none!important;margin:0!important;width:auto!important;min-height:auto!important;background:#fff!important;padding:0!important}
+    .page-shell{padding:0!important;margin:0 auto!important}
+    .qp-preview-container{padding-top:8mm!important;box-decoration-break:clone!important;-webkit-box-decoration-break:clone!important}
+    .print-bar{display:none!important}
+  }
+</style>
+<script>
+window.MathJax={
+  tex:{inlineMath:[['\\\\(','\\\\)']],displayMath:[['\\\\[','\\\\]']]},
+  svg:{fontCache:'global'},
+  startup:{pageReady:()=>MathJax.startup.defaultPageReady().then(()=>{setTimeout(()=>{window.focus();window.print()},800)})}
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+</head><body>
+<div class="print-bar no-print">
+  <span>Question Paper — A4 Portrait &bull; 14mm top/bottom, 12mm left/right margins on every page</span>
+  <button onclick="window.print()">Print / Save as PDF</button>
+</div>
+<div class="paper-frame">
+  <div class="page-shell">
+    ${contentNoInnerStyle}
+  </div>
+</div>
+<script>
+  setTimeout(()=>{if(!window.MathJax||!window.MathJax.typesetPromise){window.focus();window.print()}},2000);
+</script>
+</body></html>`;
 };

@@ -50,7 +50,7 @@ export interface Room {
   disabledDesks?: string[];
 }
 
-export type Department = 'CSE' | 'IT' | 'AI&DS' | 'ECE' | 'MECH' | 'CIVIL' | 'EEE' | 'BME';
+export type Department = 'CSE' | 'IT' | 'AI&DS' | 'ECE' | 'MECH' | 'CIVIL' | 'EEE' | 'BME' | 'MBA';
 
 export interface DeskPosition {
   row: number;
@@ -71,6 +71,8 @@ export interface Student {
   section: string;
   subjectCode: string;
   subjectName: string;
+  academicYear?: string;
+  batch?: string;
   examDate: string;
   session: 'FN' | 'AN';
 }
@@ -82,10 +84,11 @@ export interface AllocatedSeat {
   deskNumber: string;
   row: number;
   col: number;
-  slotPosition: 'A' | 'B' | 'Single' | string;
+  slotPosition: string;
   student: Student;
-  status: 'Allocated' | 'Present' | 'Absent' | 'Malpractice';
-  bookletNumber?: string;
+  status: 'Allocated' | 'Reserved' | 'Blocked';
+  serialNumber?: number;
+  hasConflict?: boolean;
 }
 
 export interface SubjectStrength {
@@ -111,6 +114,16 @@ export interface ExamSchedule {
   semesterDisplay?: string;
   status: 'Scheduled' | 'In Progress' | 'Completed';
   selectedHallIds?: string[];
+  items?: Array<{
+    code: string;
+    name: string;
+    department: Department;
+    programme: string;
+    semester: number;
+    batch: string;
+    examDate: string;
+    session: 'FN' | 'AN';
+  }>;
 }
 
 export interface DeptDutyQuota {
