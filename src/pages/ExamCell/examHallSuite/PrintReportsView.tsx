@@ -1,21 +1,4 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import {
-  Printer,
-  Download,
-  FileText,
-  Building2,
-  UserCheck,
-  Layers,
-  QrCode,
-  CheckCircle2,
-  FileSpreadsheet,
-  Sliders,
-  Sparkles,
-  Package,
-  BookOpen,
-  Inbox,
-  Check
-} from 'lucide-react';
 import { Room, Student, AllocatedSeat, DutyAllocation, Faculty, ExamSchedule, Department, ExamDutyWorkflow } from '../../../types';
 import { useDepartments } from '../../../hooks/useDepartments';
 import { collection, onSnapshot } from 'firebase/firestore';
@@ -142,8 +125,8 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [groupByDept, setGroupByDept] = useState<boolean>(true);
   const [includeSignatures, setIncludeSignatures] = useState<boolean>(true);
-  const [collegeName, setCollegeName] = useState<string>('C.K. COLLEGE OF ENGINEERING & TECHNOLOGY (AUTONOMOUS)');
-  const [examSubTitle, setExamSubTitle] = useState<string>('Internal Assessment Cell');
+  const [collegeName, setCollegeName] = useState<string>('');
+  const [examSubTitle, setExamSubTitle] = useState<string>('Continues Internal test');
 
   // QP Distribution Report specific state
   const [qpViewMode, setQpViewMode] = useState<'matrix' | 'subject-summary' | 'envelope-slips'>('matrix');
@@ -492,33 +475,58 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         const docSem = data.semester || data.sem || 0;
         const docProg = data.programme || data._meta?.programme || '';
 
-        const rawAssignments = data.assignments || data.courses || data;
+        const rawAssignments = data.assignments || data.courses || null;
+        // Skip if no assignments map (avoid iterating over meta fields)
+        if (!rawAssignments || typeof rawAssignments !== 'object') return;
         let items: any[] = [];
         if (Array.isArray(rawAssignments)) {
           items = rawAssignments;
-        } else if (typeof rawAssignments === 'object' && rawAssignments !== null) {
+        } else {
           items = Object.values(rawAssignments);
         }
 
         items.forEach((it: any) => {
-          if (it && typeof it === 'object') {
+          if (it && typeof it === 'object' && !Array.isArray(it)) {
             const code = String(it.subjectCode || it.code || it.courseCode || '').trim();
+            // Skip meta-ish entries without a subject code (e.g. batch/academicYear strings stored as values)
+            if (!code || code.length < 2 || code.length > 12) return;
+            // Guard: ignore entries that are clearly not assignments (numeric doc keys etc.)
+            if (!it.subjectCode && !it.code && !it.courseCode) return;
             const name = String(it.subjectName || it.name || it.subject || it.courseName || '').trim();
-            const dateStr = String(it.examDate ?? it.exam_date ?? it.date ?? it.assignedDate ?? it.fromDate ?? data.examDate ?? data.date ?? '').trim();
-            if (code) {
-              list.push({
-                docId: data.id,
-                updatedAt: data.updatedAt || '',
-                batch: it.batch || docBatch,
-                department: it.department || it.dept || docDept,
-                programme: it.programme || docProg,
-                semester: it.semester || it.sem || docSem,
-                subjectCode: code,
-                subjectName: name,
-                examDate: dateStr,
-                session: it.session || 'FN',
-              });
+            const rawDate = it.examDate ?? it.exam_date ?? it.date ?? it.assignedDate ?? it.fromDate ?? data.examDate ?? data.date ?? '';
+            let dateStr = '';
+            if (rawDate) {
+              if (typeof rawDate === 'string') dateStr = rawDate.trim();
+              else if (rawDate instanceof Date) dateStr = rawDate.toISOString().slice(0, 10);
+              else if (typeof rawDate === 'object' && typeof (rawDate as any).toDate === 'function') { try { dateStr = (rawDate as any).toDate().toISOString().slice(0, 10); } catch { dateStr = String(rawDate).trim(); } }
+              else if (typeof rawDate === 'object' && typeof (rawDate as any).seconds === 'number') { try { dateStr = new Date((rawDate as any).seconds * 1000).toISOString().slice(0, 10); } catch { dateStr = String(rawDate).trim(); } }
+              else dateStr = String(rawDate).trim();
             }
+            // Resolve department: prefer it.departments array (common subjects), then single string fields
+            let deptStr = '';
+            let deptArr: any[] = [];
+            if (Array.isArray(it.departments) && it.departments.length > 0) {
+              deptArr = it.departments;
+              for (const d of it.departments) {
+                const cand = typeof d === 'string' ? String(d).trim() : String((d as any).dept || (d as any).deptKey || (d as any).name || (d as any).department || (d as any).key || '').trim();
+                if (cand) { deptStr = cand; break; }
+              }
+            }
+            if (!deptStr) deptStr = String(it.department || it.dept || docDept || '').trim();
+            // Always push — even if deptStr is empty, batchSubjectCodes has fallback fuzzy matching
+            list.push({
+              docId: data.id,
+              updatedAt: data.updatedAt || '',
+              batch: it.batch || docBatch,
+              department: deptStr,
+              departments: deptArr,
+              programme: it.programme || docProg,
+              semester: it.semester || it.sem || docSem,
+              subjectCode: code,
+              subjectName: name,
+              examDate: dateStr,
+              session: it.session || it.slot || 'FN',
+            });
           }
         });
       });
@@ -568,7 +576,18 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     const targetSem = selectedSemester ? parseInt(selectedSemester, 10) : 0;
 
     const matches = scheduledAssignments.filter((a) => {
-      const deptMatch = !targetDeptNorm || normalizeDeptName(a.department) === targetDeptNorm;
+      let deptMatch = !targetDeptNorm;
+      if (!deptMatch) {
+        if (Array.isArray(a.departments) && a.departments.length > 0) {
+          deptMatch = a.departments.some((d: any) => normalizeDeptName(d.dept || d.deptKey || d.name) === targetDeptNorm);
+        }
+        if (!deptMatch) deptMatch = normalizeDeptName(a.department) === targetDeptNorm;
+        // Fallback fuzzy match via normalize incase assignment stored as short code
+        if (!deptMatch) {
+          const candNorm = normalizeDeptName(a.department);
+          deptMatch = !!candNorm && !!targetDeptNorm && (candNorm.includes(targetDeptNorm.replace(/[^a-z]/gi,'')) || targetDeptNorm.includes(candNorm.replace(/[^a-z]/gi,'')));
+        }
+      }
       const batchMatch = !targetBatch || normalizeBatch(a.batch) === targetBatch;
       const semMatch = !targetSem || parseInt(String(a.semester), 10) === targetSem;
       return deptMatch && batchMatch && semMatch && a.subjectCode;
@@ -588,25 +607,11 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   }, [scheduledAssignments, selectedDepartment, selectedBatch, derivedReportBatch, selectedSemester]);
 
   // Scheduled subject codes with assigned exam dates in IAScheduleCreation.jsx (qp_setter_assignments)
+  // STRICT PARITY with PrincipalIAScheduleView.jsx: only returns dated exam subjects (GE3751, GE3791, OFD351, OPE353, OMG353) sorted by exam date
   const batchSubjectCodes = useMemo(() => {
     const targetDeptNorm = normalizeDeptName(selectedDepartment);
     const targetBatch = normalizeBatch(selectedBatch || derivedReportBatch);
     const targetSem = selectedSemester ? parseInt(selectedSemester, 10) : 0;
-
-    const normCleanLocal = (s: string) =>
-      String(s || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '')
-        .replace(/^departmentof|^department|^deptof|^dept/, '')
-        .replace(/^(be|btech|me|mtech|ug|pg)+/, '');
-
-    const extractYr = (s: string) => {
-      const m = String(s || '').match(/\d{4}/);
-      return m ? m[0] : '';
-    };
-
-    const targetDeptClean = normCleanLocal(selectedDepartment);
-    const targetBatchYr = extractYr(targetBatch);
 
     const isNonExam = (code: string, name: string) => {
       const c = String(code || '').trim().toUpperCase();
@@ -619,30 +624,47 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     const uniqueCodes: Array<{ code: string; name: string; examDate: string; session: string }> = [];
     const seen = new Set<string>();
 
-    // 1. Match subjects from qp_setter_assignments (ExamCellSchedules / IAScheduleCreation)
+    // 1. Match subjects from qp_setter_assignments — use authoritative departments array when present (common subjects)
     const matchesQP = scheduledAssignments.filter((a) => {
-      const itemDeptNorm = normalizeDeptName(a.department || a.docId);
-      const itemDeptClean = normCleanLocal(a.department + ' ' + a.docId);
-      const itemBatchYr = extractYr(a.batch + ' ' + a.docId);
-      const itemSem = parseInt(String(a.semester), 10);
-
-      const deptMatch =
-        !targetDeptNorm ||
-        itemDeptNorm === targetDeptNorm ||
-        (targetDeptClean && (itemDeptClean.includes(targetDeptClean) || targetDeptClean.includes(itemDeptClean)));
-
-      const batchMatch = !targetBatchYr || !itemBatchYr || itemBatchYr === targetBatchYr;
-      const semMatch = !targetSem || !itemSem || itemSem === targetSem;
-
+      let deptMatch = !targetDeptNorm;
+      if (!deptMatch) {
+        if (Array.isArray(a.departments) && a.departments.length > 0) {
+          deptMatch = a.departments.some((d: any) => {
+            const raw = typeof d === 'string' ? d : (d.dept || d.deptKey || d.name || d.department || d.key || '');
+            return normalizeDeptName(String(raw)) === targetDeptNorm;
+          });
+        }
+        if (!deptMatch) deptMatch = normalizeDeptName(a.department) === targetDeptNorm;
+        // Last-resort fuzzy: raw string contains (handles short codes like CSE vs full name)
+        if (!deptMatch) {
+          const candClean = String(a.department || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const targetClean = targetDeptNorm.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (candClean && targetClean) deptMatch = candClean.includes(targetClean) || targetClean.includes(candClean);
+        }
+        // Syllabus fallback like PrincipalIAScheduleView codeDeptMap: if assignment lost dept (old doc with no dept),
+        // check if this subject code is offered by target dept in this semester according to syllabus_data
+        if (!deptMatch) {
+          const codeU = String(a.subjectCode || '').trim().toUpperCase();
+          const semNum = parseInt(String(a.semester), 10);
+          if (codeU && syllabusSubjects.length > 0) {
+            deptMatch = syllabusSubjects.some(s => {
+              const sCodeU = String(s.subjectCode || '').trim().toUpperCase();
+              const sSem = parseInt(String(s.semester), 10);
+              return sCodeU === codeU && sSem === semNum && normalizeDeptName(s.department) === targetDeptNorm;
+            });
+          }
+        }
+      }
+      const batchMatch = !targetBatch || normalizeBatch(a.batch) === targetBatch;
+      const semMatch = !targetSem || parseInt(String(a.semester), 10) === targetSem;
       return deptMatch && batchMatch && semMatch && a.subjectCode && !isNonExam(a.subjectCode, a.subjectName);
     });
 
-    // Priority 1: Extract ONLY subjects from matchesQP that HAVE an assigned exam date!
+    // Priority 1: ONLY dated subjects (parity with PrincipalIAScheduleView: if (!as?.examDate) return)
     matchesQP.forEach((m) => {
       const codeClean = String(m.subjectCode || '').trim().toUpperCase();
       const dateClean = String(m.examDate || '').trim();
-      const isValidDate = Boolean(dateClean && dateClean !== 'undefined' && dateClean !== 'null');
-
+      const isValidDate = Boolean(dateClean && dateClean !== 'undefined' && dateClean !== 'null' && dateClean !== '-');
       if (codeClean && isValidDate && !seen.has(codeClean)) {
         seen.add(codeClean);
         uniqueCodes.push({
@@ -654,13 +676,13 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
       }
     });
 
-    // If subjects with assigned exam dates exist, return STRICTLY THOSE (e.g. GE3751, GE3791, OFD351, OPE353, OMG353)!
+    // When dated subjects exist, return STRICTLY those sorted by exam date (exact same 5 as Principal view)
     if (uniqueCodes.length > 0) {
-      uniqueCodes.sort((a, b) => a.examDate.localeCompare(b.examDate));
+      uniqueCodes.sort((a, b) => String(a.examDate).localeCompare(String(b.examDate)));
       return uniqueCodes;
     }
 
-    // Priority 2: Remaining subjects in matchesQP if exam dates not yet assigned
+    // Priority 2: fallback to undated subjects only if no dated schedule exists yet (schedule not published)
     matchesQP.forEach((m) => {
       const codeClean = String(m.subjectCode || '').trim().toUpperCase();
       if (codeClean && !seen.has(codeClean)) {
@@ -675,7 +697,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     });
 
     return uniqueCodes;
-  }, [scheduledAssignments, selectedDepartment, selectedBatch, derivedReportBatch, selectedSemester]);
+  }, [scheduledAssignments, syllabusSubjects, selectedDepartment, selectedBatch, derivedReportBatch, selectedSemester]);
 
   // Real-time direct Firestore student listener matching Reports.jsx & Attendance.jsx concept
   const [directFirestoreStudents, setDirectFirestoreStudents] = useState<Student[]>([]);
@@ -1189,181 +1211,10 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     (d) => d.roomId === selectedHallId && d.examScheduleId === selectedExam.id
   );
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleExportCurrentReportCSV = () => {
-    if (reportType === 'qp-distribution') {
-      if (qpViewMode === 'subject-summary') {
-        const headers = [
-          'S.No',
-          'Subject Code',
-          'Subject Title / Course Name',
-          'Appearing Departments',
-          'Deployed Exam Halls & Counts',
-          'Total Candidate Strength / Required QPs',
-        ];
-        const rows = qpSubjectConsolidated.map((item, idx) => [
-          (idx + 1).toString(),
-          item.subjectCode,
-          item.subjectName,
-          Array.from(item.departments).join(', '),
-          item.halls.map((h) => `${h.roomNumber} (${h.studentCount})`).join('; '),
-          item.totalStudents.toString(),
-        ]);
-        downloadCSV(
-          `QP_Subject_Indent_Summary_${selectedExam.date}_${selectedExam.session}.csv`,
-          [headers, ...rows]
-        );
-      } else {
-        const headers = [
-          'S.No',
-          'Exam Date',
-          'Session',
-          'Hall Number',
-          'Block & Floor',
-          'Invigilator Name',
-          'Invigilator Dept',
-          'Department',
-          'Subject Code',
-          'Subject Title',
-          'Candidate Strength',
-          'Register Number Range',
-          'Invigilator Signature',
-        ];
-        let rowIdx = 1;
-        const rows: string[][] = [];
-        filteredQpHallGroups.forEach((group) => {
-          group.subjects.forEach((sub) => {
-            rows.push([
-              (rowIdx++).toString(),
-              selectedExam.date,
-              selectedExam.session,
-              group.room.roomNumber,
-              `${group.room.block} - ${group.room.floor}`,
-              group.invigilator?.facultyName || 'To be assigned',
-              group.invigilator?.facultyDept || '-',
-              sub.department,
-              sub.subjectCode,
-              sub.subjectName,
-              sub.studentCount.toString(),
-              sub.regNoRange,
-              '',
-            ]);
-          });
-        });
-        downloadCSV(
-          `QP_Distribution_Master_${selectedExam.date}_${selectedExam.session}.csv`,
-          [headers, ...rows]
-        );
-      }
-    } else if (reportType === 'dept-attendance') {
-      const headers = [
-        'S.No',
-        'Department',
-        'Register No',
-        'Candidate Name',
-        'Allocated Exam Hall',
-        'Hall Block & Floor',
-        'Desk No & Slot',
-        'Course / Subject',
-        'Exam Date',
-        'Session',
-        'Candidate Signature',
-      ];
-      const rows = departmentStudentsWithHall.map((item, idx) => [
-        (idx + 1).toString(),
-        item.student.department,
-        item.student.registerNumber,
-        item.student.name,
-        item.hallNumber,
-        item.hallBlock,
-        item.deskNumber,
-        `${item.student.subjectCode} - ${item.student.subjectName}`,
-        item.student.examDate,
-        item.student.session,
-        '',
-      ]);
-      downloadCSV(
-        `Department_Attendance_${selectedDepartment}_${selectedExam.date}_${selectedExam.session}.csv`,
-        [headers, ...rows]
-      );
-    } else if (reportType === 'door-notice') {
-      const headers = ['S.No', 'Department', 'Register No', 'Candidate Name', 'Desk No', 'Course Code', 'Course Title', 'Exam Date', 'Session', 'Signature'];
-      const rows = sortedHallSeats.map((s, idx) => [
-        (idx + 1).toString(),
-        s.student.department,
-        s.student.registerNumber,
-        s.student.name,
-        `${s.deskNumber} (${s.slotPosition})`,
-        s.student.subjectCode,
-        s.student.subjectName,
-        s.student.examDate,
-        s.student.session,
-        '',
-      ]);
-      downloadCSV(`Hall_Door_Notice_${selectedRoom?.roomNumber}_${selectedExam.date}_${sortBy}.csv`, [headers, ...rows]);
-    } else if (reportType === 'admin-oversight') {
-      const headers = ['Hall Number', 'Block', 'Floor', 'Capacity', 'Allocated Students', 'Utilization %', 'Invigilator Name', 'Department', 'Status'];
-      const rows = rooms.map((r) => {
-        const seated = allocatedSeats.filter((s) => s.roomId === r.id).length;
-        const inv = dutyAllocations.find((d) => d.roomId === r.id && d.examScheduleId === selectedExam.id);
-        return [
-          r.roomNumber,
-          r.block,
-          r.floor,
-          r.totalCapacity.toString(),
-          seated.toString(),
-          r.totalCapacity > 0 ? `${Math.round((seated / r.totalCapacity) * 100)}%` : '0%',
-          inv?.facultyName || 'Unassigned',
-          inv?.facultyDept || '-',
-          r.status,
-        ];
-      });
-      downloadCSV(`Exam_Cell_Oversight_Report_${selectedExam.date}.csv`, [headers, ...rows]);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Top Configuration Bar (Hidden on Print) */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs print:hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-100">
-          <div>
-            <div className="flex items-center space-x-2 text-indigo-600 font-semibold text-xs tracking-wider uppercase">
-              <Printer className="w-4 h-4" />
-              <span>Automated Report Generator & Print Publisher</span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 mt-1">
-              Examination Charts & Oversight Reports
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              High-resolution printable door notices, desk stickers, absentee statement sheets, and consolidated administrative oversight summaries.
-            </p>
-          </div>
-
-          <div className="flex items-center space-x-2.5">
-            <button
-              id="export-report-csv-btn"
-              onClick={handleExportCurrentReportCSV}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
-            </button>
-
-            <button
-              id="print-document-btn"
-              onClick={handlePrint}
-              className="flex items-center space-x-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
-            >
-              <Printer className="w-4 h-4" />
-              <span>Print Document (PDF)</span>
-            </button>
-          </div>
-        </div>
-
         {/* Report Selector Pills */}
         <div className="flex flex-wrap items-center gap-2 pt-4">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pr-1">
@@ -1767,7 +1618,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
             </div>
 
             {/* Department Meta Information Table */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs border border-slate-900 p-3 bg-slate-50/50">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs border border-slate-900 p-3 bg-slate-50/50">
               <div>
                 <span className="text-slate-500 block text-[10px] uppercase font-bold">Department / Branch:</span>
                 <span className="font-bold text-slate-900 text-sm">
@@ -1784,29 +1635,23 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                   {selectedExam.date} ({selectedExam.session}) • {selectedExam.timeSlot}
                 </span>
               </div>
-              <div>
-                <span className="text-slate-500 block text-[10px] uppercase font-bold">Subject / Course:</span>
-                <span className="font-bold text-slate-900 font-mono">
-                  {activeSubjectInfo}
-                </span>
-              </div>
             </div>
 
 
 
             {/* Department Students Table */}
             <div>
-              <table className="w-full text-left border-collapse border border-slate-900 text-xs">
+              <table className="w-full text-left border-collapse border border-slate-900 text-xs" style={{ borderCollapse: 'collapse' }}>
                 <thead>
                   <tr className="bg-slate-100 border-b border-slate-900 text-slate-900 font-bold uppercase text-[10px]">
-                    <th className="py-2.5 px-2 border-r border-slate-900 text-center w-12">S.No</th>
-                    <th className="py-2.5 px-3 border-r border-slate-900 w-36">Register Number</th>
-                    <th className="py-2.5 px-3 border-r border-slate-900 min-w-[180px]">Candidate Name</th>
+                    <th className="py-2.5 px-2 border border-slate-900 text-center w-12">S.No</th>
+                    <th className="py-2.5 px-3 border border-slate-900 w-36">Register Number</th>
+                    <th className="py-2.5 px-3 border border-slate-900 min-w-[180px]">Candidate Name</th>
                     {batchSubjectCodes.map((sub) => (
                       <th
                         key={sub.code}
                         title={`${sub.code} — ${sub.name} (${sub.examDate})`}
-                        className="py-2 px-2 border-r border-slate-900 text-center min-w-[100px] w-32 font-mono bg-indigo-50/90 text-indigo-950 font-black tracking-tight"
+                        className="py-2 px-2 border border-slate-900 text-center min-w-[100px] w-32 font-mono bg-indigo-50/90 text-indigo-950 font-black tracking-tight"
                       >
                         <div className="text-xs font-black text-slate-900">{sub.code}</div>
                         {sub.examDate && (
@@ -1818,35 +1663,50 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-300">
+                <tbody className="divide-y divide-slate-900">
                   {departmentStudentsWithHall.length === 0 ? (
                     <tr>
-                      <td colSpan={3 + Math.max(0, batchSubjectCodes.length)} className="py-8 text-center text-slate-500 font-semibold italic">
+                      <td colSpan={3 + Math.max(0, batchSubjectCodes.length)} className="py-8 text-center text-slate-500 font-semibold italic border border-slate-900">
                         No candidate records found for the selected department, batch ({selectedBatch || derivedReportBatch || 'All'}), and semester ({selectedSemester || 'All'}).
                       </td>
                     </tr>
                   ) : (
                     departmentStudentsWithHall.map((item, idx) => (
-                      <tr key={item.student.id} className="border-b border-slate-300 hover:bg-slate-50/50">
-                        <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-medium">
+                      <tr key={item.student.id} className="border-b border-slate-900 hover:bg-slate-50/50">
+                        <td className="py-2 px-2 border border-slate-900 text-center font-mono font-medium">
                           {idx + 1}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-900 font-mono font-bold text-slate-900">
+                        <td className="py-2 px-3 border border-slate-900 font-mono font-bold text-slate-900">
                           {item.student.registerNumber}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-900 font-semibold text-slate-800">
+                        <td className="py-2 px-3 border border-slate-900 font-semibold text-slate-800">
                           {item.student.name}
                         </td>
                         {batchSubjectCodes.map((sub) => (
                           <td
                             key={sub.code}
-                            className="py-2 px-2 border-r border-slate-900 text-center text-slate-300 font-mono text-[10px]"
+                            className="py-2 px-2 border border-slate-900 text-center text-slate-300 font-mono text-[10px]"
                           >
-                            {/* Signature / Attendance space */}
                           </td>
                         ))}
                       </tr>
                     ))
+                  )}
+                  {departmentStudentsWithHall.length > 0 && (
+                    <>
+                      <tr className="bg-slate-50 font-bold">
+                        <td colSpan={3} className="py-2 px-3 border border-slate-900 text-right text-[10px] uppercase tracking-wider text-slate-600">Present</td>
+                        {batchSubjectCodes.map((sub) => (
+                          <td key={sub.code} className="py-2 px-2 border border-slate-900"></td>
+                        ))}
+                      </tr>
+                      <tr className="bg-slate-50 font-bold">
+                        <td colSpan={3} className="py-2 px-3 border border-slate-900 text-right text-[10px] uppercase tracking-wider text-slate-600">Absent</td>
+                        {batchSubjectCodes.map((sub) => (
+                          <td key={sub.code} className="py-2 px-2 border border-slate-900"></td>
+                        ))}
+                      </tr>
+                    </>
                   )}
                 </tbody>
               </table>
@@ -1854,28 +1714,13 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
 
             {/* Attendance & Verification Box */}
             <div className="border border-slate-900 p-4 space-y-4 bg-slate-50/50 mt-6">
-              <div className="grid grid-cols-4 gap-4 text-xs font-bold">
+              <div className="text-xs font-bold flex items-end justify-between">
                 <div>Total Candidates: {departmentStudentsWithHall.length}</div>
-                <div>Present Count: ________</div>
-                <div>Absent Count: ________</div>
-                <div>Percentage: ________ %</div>
-              </div>
-
-              <div className="pt-8 flex items-center justify-between text-xs font-bold">
-                <div>
-                  <div className="border-t border-slate-900 pt-1 w-48 text-center">
-                    Department Exam Coordinator
-                  </div>
+                <div className="border-t border-slate-900 pt-1 w-48 text-center">
+                  Department Exam Coordinator
                 </div>
-                <div>
-                  <div className="border-t border-slate-900 pt-1 w-48 text-center">
-                    Head of Department (HOD)
-                  </div>
-                </div>
-                <div>
-                  <div className="border-t border-slate-900 pt-1 w-48 text-center">
-                    Chief Superintendent / COE
-                  </div>
+                <div className="border-t border-slate-900 pt-1 w-48 text-center">
+                  Head of Department (HOD)
                 </div>
               </div>
             </div>

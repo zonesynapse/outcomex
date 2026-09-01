@@ -287,7 +287,7 @@ export default function StepPoints() {
       const status = act.status || "Pending";
       const matchesTab = 
         activeTab === "pending" ? status === "Pending" :
-        activeTab === "approved" ? status === "Approved" :
+        activeTab === "approved" ? (status === "Approved" || status === "HOD_Pending") :
         activeTab === "returned" ? status === "Returned" : true;
 
       const matchesBatch = !selectedBatch || act.batch === selectedBatch;
@@ -383,14 +383,14 @@ export default function StepPoints() {
     try {
       const docRef = doc(db, "step_activities", reviewActivity.id);
       await setDoc(docRef, {
-        status: "Approved",
-        comments: "Approved by Advisor",
+        status: "HOD_Pending",
+        comments: "Forwarded to HOD for approval",
         reviewedBy: auth.currentUser?.uid || "",
         reviewedByName: currentUserData?.displayName || currentUserData?.studentName || "Faculty Advisor",
         updatedAt: new Date().toISOString()
       }, { merge: true });
 
-      alert("Activity claim successfully approved!");
+      alert("Activity forwarded to HOD for approval!");
       setReviewActivity(null);
     } catch (err) {
       console.error("Error approving:", err);
@@ -999,9 +999,10 @@ export default function StepPoints() {
               <div>
                 {reviewActivity.status !== "Pending" && (
                   <span className={`text-xs font-bold px-3 py-1 rounded-full ${
-                    reviewActivity.status === "Approved" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                    reviewActivity.status === "Approved" ? "bg-emerald-100 text-emerald-800" :
+                    reviewActivity.status === "HOD_Pending" ? "bg-blue-100 text-blue-800" : "bg-rose-100 text-rose-800"
                   }`}>
-                    Review Complete • {reviewActivity.status}
+                    {reviewActivity.status === "HOD_Pending" ? "Forwarded to HOD" : `Review Complete • ${reviewActivity.status}`}
                   </span>
                 )}
               </div>

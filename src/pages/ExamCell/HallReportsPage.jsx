@@ -62,6 +62,13 @@ export default function HallReportsPage() {
                 <p className="text-sm text-blue-100/90 font-medium">Exam Hall Door Cards, Seating Layout Sheets, Invigilation Slips & Consolidated Master Reports</p>
               </div>
             </div>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center space-x-2 px-5 py-2 bg-white text-[#120c7a] rounded-xl text-xs font-black shadow-md hover:bg-blue-50 transition-colors cursor-pointer"
+            >
+              <Printer size={14} />
+              <span>Print PDF</span>
+            </button>
           </div>
         </div>
 
