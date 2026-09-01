@@ -8,25 +8,36 @@ import {
   INITIAL_EXAMS, 
   INITIAL_DUTY_ALLOCATIONS, 
   INITIAL_DUTY_WORKFLOWS, 
-  INITIAL_FACULTY,
-  generateSampleStudents 
+  INITIAL_FACULTY
 } from './examHallSuite/initialData';
 import { allocateSeats } from './examHallSuite/allocationEngine';
+import { subscribeToRealtimeSchedules } from './examHallSuite/scheduleSync';
 
 export default function HallReportsPage() {
   const navigate = useNavigate();
   const [rooms] = useState(INITIAL_ROOMS);
-  const [exams] = useState(INITIAL_EXAMS);
+  const [exams, setExams] = useState(INITIAL_EXAMS);
   const [facultyList] = useState(INITIAL_FACULTY);
   const [dutyAllocations] = useState(INITIAL_DUTY_ALLOCATIONS);
   const [dutyWorkflows] = useState(INITIAL_DUTY_WORKFLOWS);
-  const [students] = useState(() => generateSampleStudents());
-  const [allocatedSeats] = useState(() => {
-    const res = allocateSeats(generateSampleStudents(), INITIAL_ROOMS, 'interleaved-dept');
-    return res.allocatedSeats;
-  });
+  const [students, setStudents] = useState([]);
+  const [allocatedSeats, setAllocatedSeats] = useState([]);
 
-  const selectedExam = exams[0];
+  React.useEffect(() => {
+    const unsub = subscribeToRealtimeSchedules(({ exams: fetchedExams, students: fetchedStudents }) => {
+      if (fetchedExams.length > 0) setExams(fetchedExams);
+      setStudents(fetchedStudents || []);
+      if (fetchedStudents && fetchedStudents.length > 0) {
+        const res = allocateSeats(fetchedStudents, INITIAL_ROOMS, 'interleaved-dept');
+        setAllocatedSeats(res.allocatedSeats);
+      } else {
+        setAllocatedSeats([]);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const selectedExam = exams[0] || INITIAL_EXAMS[0];
 
   return (
     <Layout title="Exam Cell — Printable Reports & Seating Charts">

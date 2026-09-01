@@ -40,11 +40,8 @@ export default function ExamHallSuitePage() {
   // App States
   const [exams, setExams] = useState(INITIAL_EXAMS);
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
-  const [students, setStudents] = useState(() => generateSampleStudents());
-  const [allocatedSeats, setAllocatedSeats] = useState(() => {
-    const res = allocateSeats(generateSampleStudents(), INITIAL_ROOMS, 'interleaved-dept');
-    return res.allocatedSeats;
-  });
+  const [students, setStudents] = useState([]);
+  const [allocatedSeats, setAllocatedSeats] = useState([]);
   const [facultyList, setFacultyList] = useState(INITIAL_FACULTY);
   const [dutyAllocations, setDutyAllocations] = useState(INITIAL_DUTY_ALLOCATIONS);
   const [dutyWorkflows, setDutyWorkflows] = useState(INITIAL_DUTY_WORKFLOWS);
@@ -64,8 +61,14 @@ export default function ExamHallSuitePage() {
     const unsubSchedules = subscribeToRealtimeSchedules(({ exams: fetchedExams, students: fetchedStudents }) => {
       if (fetchedExams.length > 0) {
         setExams(fetchedExams);
-        setStudents(fetchedStudents);
         setSelectedExamId((prev) => (fetchedExams.some((e) => e.id === prev) ? prev : fetchedExams[0].id));
+      }
+      setStudents(fetchedStudents || []);
+      if (fetchedStudents && fetchedStudents.length > 0) {
+        const res = allocateSeats(fetchedStudents, INITIAL_ROOMS, 'interleaved-dept');
+        setAllocatedSeats(res.allocatedSeats);
+      } else {
+        setAllocatedSeats([]);
       }
     });
 

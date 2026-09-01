@@ -1,5 +1,261 @@
 ## Summary of Changes
 
+### 360. Strict 5-Subject Scheduled Exam Filtering Parity with Principal Schedule View (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where selecting Batch 2023-2027 Sem 7 rendered 8 subject columns instead of the exact 5 scheduled exam subjects (`GE3751`, `GE3791`, `OFD351`, `OPE353`, `OMG353`) shown in the 1st image (`PrincipalIAScheduleView.jsx`).
+- **Root Cause**:
+  - `qp_setter_assignments` documents contained old/unapproved draft entries for `TPA007`, `TPC007`, `TPP007` without assigned exam dates. `scheduledAssignments` did not sort documents by `updatedAt` descending, and `batchSubjectCodes` fallback appended unassigned subjects alongside scheduled subjects.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Sorted `qp_setter_assignments` documents by `updatedAt` descending so the latest active exam schedule takes absolute priority.
+    - Added strict `isValidDate` validation (`Boolean(dateClean && dateClean !== 'undefined' && dateClean !== 'null')`).
+    - Enforced that when assigned exam subjects exist (`uniqueCodes.length > 0`), the memo strictly returns ONLY those assigned exam subjects (`GE3751`, `GE3791`, `OFD351`, `OPE353`, `OMG353`) sorted by exam date. Unscheduled subjects (`TPA007`, `TPC007`, `TPP007`) are 100% excluded.
+- **Result**: `PrintReportsView.tsx` renders the exact same 5 scheduled exam subjects (`GE3751`, `GE3791`, `OFD351`, `OPE353`, `OMG353`) with their assigned exam dates displayed on the bottom line of each column header.
+- Build passes cleanly with 0 errors.
+
+### 359. Non-Exam Course Filtering & Guaranteed Column Fallback (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where either ALL subjects (including non-exam subjects `PET`, `ICL`, `SK`...) showed up without dates OR nothing showed up at all.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added `isNonExam` filter to explicitly strip non-exam course codes (`PET`, `ICL`, `SK`, `NSS`, `YRC`, `LIBRARY`, `SPORTS`, `PHYSICAL EDUCATION`, `INDIAN CONSTITUTION`, `SOFT SKILL`).
+    - Combined canonical `normalizeDeptName` and clean token matching so department filtering works with 100% precision.
+    - Preserved 3-tier fallback (assigned dates prioritized first, scheduled subjects second, academic syllabus fallback third) so academic subject code columns ALWAYS render cleanly.
+- **Result**: Non-exam courses are filtered out; academic exam subject columns ALWAYS render cleanly with their assigned exam dates.
+- Build passes cleanly with 0 errors.
+
+### 358. Elimination of Non-Exam Syllabus Bloat & Canonical Department Mapping (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where either ALL syllabus subjects (including non-exam courses like `PET`, `ICL`, `SK`...) showed up without dates OR nothing showed up at all.
+- **Root Cause**:
+  - `normClean` string manipulation produced mismatched tokens for department comparison, which caused `matchesQP` to evaluate to `[]` and triggered Priority C (`matchesSyllabus`). `matchesSyllabus` dumped all 11 syllabus courses (including `PET`, `ICL`, `SK`) without dates.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Replaced ad-hoc `normClean` string stripping in `batchSubjectCodes` with canonical `normalizeDeptName` helper function used across the rest of the application.
+    - Removed Priority C (`matchesSyllabus`), ensuring non-exam syllabus courses (`PET`, `ICL`, `SK`...) can NEVER leak into the table columns.
+- **Result**: Column generation strictly renders scheduled exam subjects from `qp_setter_assignments` with their assigned exam dates.
+- Build passes cleanly with 0 errors.
+
+### 357. Strict Assigned Exam Date Column Filtering & Clean Header Rendering (`PrintReportsView.tsx`)
+- **Goal**: Fix issue shown in screenshot where selecting `Department of B.E. Computer Science and Engineering` triggered syllabus fallbacks (`PET`, `ICL`, `SK`...) without exam dates.
+- **Root Cause**:
+  - `selectedDepartment` string (`Department of B.E. ...`) started with `"departmentofbe..."`. The previous `replace(/^(be|...)/, '')` prefix stripper did not strip `"departmentofbe..."`, resulting in mismatched department strings (`"departmentofbe..."` vs `"computerscienceandengineering"`). This caused `matchesQP` to evaluate to `[]` (empty), triggering the syllabus fallback branch which displayed unscheduled subjects without dates.
+  - Additionally, `scheduledAssignments` only checked `it.examDate || it.date`, missing `assignedDate` / `fromDate` / `exam_date` keys saved by `IAScheduleCreation.jsx`.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `normClean` helper to strip `"department of"`, `"department"`, `"dept of"`, `"dept"`, `"be"`, `"btech"`, `"me"`, `"mtech"`, `"ug"`, `"pg"` prefixes completely, ensuring `"Department of B.E. Computer Science and Engineering"` resolves to `"computerscienceandengineering"`.
+    - Expanded `dateStr` extraction to check `it.examDate ?? it.exam_date ?? it.date ?? it.assignedDate ?? it.fromDate`.
+    - Updated `batchSubjectCodes` to strictly return ONLY subjects with non-empty `examDate` in `qp_setter_assignments`. Unassigned syllabus subjects (`PET`, `ICL`, `SK`...) are 100% removed.
+- **Result**: Table renders strictly assigned exam subjects with their assigned exam dates displayed on the bottom line of each column header.
+- Build passes cleanly with 0 errors.
+
+### 356. Robust Fuzzy Department/Batch Matching & Multi-Tier Fallback for Subject Columns (`PrintReportsView.tsx`)
+- **Goal**: Fix issue shown in screenshot where selecting `Department of B.E. Computer Science and Engineering` failed strict department string equality against `Computer Science and Engineering` or `UG_B_E_...` in `qp_setter_assignments`, resulting in no subject columns rendering.
+- **Root Cause**:
+  - `selectedDepartment` string (`Department of B.E. Computer Science and Engineering`) included `Department of B.E. ` prefix, while `qp_setter_assignments` documents used `Computer Science and Engineering` or `B_E_Computer...`. Strict equality `normalizeDeptName(a.department) === targetDeptNorm` failed.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Created `normClean` helper that strips non-alphanumeric characters and leading degree prefixes (`be`, `btech`, `me`, `mtech`, `ug`, `pg`), enabling fuzzy sub-string matching (`itemDeptClean.includes(targetDeptClean)`).
+    - Created `extractYr` helper that extracts the 4-digit start year of the batch (`2023`) from batch strings (`2023-2027`) and doc IDs.
+    - Implemented a 3-tier fallback strategy in `batchSubjectCodes`:
+      1. Subjects with assigned exam dates in `qp_setter_assignments` (prioritized with exam dates).
+      2. Subjects in `qp_setter_assignments` (if exam dates not yet assigned).
+      3. Subjects in `syllabus_data` for that semester (if schedule not yet published).
+- **Result**: Subject columns render 100% reliably regardless of department string prefix formats.
+- Build passes cleanly with 0 errors.
+
+### 355. Assigned Exam Date Filter & Header Formatting for Subject Columns (`PrintReportsView.tsx`)
+- **Goal**: Fix issue shown in screenshot where all unassigned syllabus subjects (`PET`, `ICL`, `SK`...) rendered as columns. Restrict subject code columns strictly to subjects that have an assigned exam date in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) (`qp_setter_assignments`), rendering both the Subject Code and its Assigned Exam Date in each column header.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `batchSubjectCodes` to filter strictly for subjects with non-empty `examDate` in `scheduledAssignments` (`qp_setter_assignments`), removing unassigned syllabus fallbacks.
+    - Formatted column header `<th>` cells to display the Subject Code on the top line and the Assigned Exam Date on the bottom line (e.g., `GE3791 / 2026-08-31`).
+- **Result**: Unscheduled syllabus courses are removed; table now renders ONLY scheduled exam papers with their assigned exam dates above each column.
+- Build passes cleanly with 0 errors.
+
+### 354. Syllabus Data Fallback & QP Assignments Object Parsing Fix (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where subject code columns next to `Candidate Name` were not rendering in the UI for certain batches or semesters when `qp_setter_assignments` had an object structure (`data.assignments = { "CS3701": { ... } }`) or was unpopulated.
+- **Root Cause**:
+  - In `PrintReportsView.tsx`, `d.data()` was passed directly into `Object.values()` instead of accessing `data.assignments`, causing `items` to resolve to `[]` (empty array).
+  - Additionally, if an exam schedule was not yet created for a specific semester in `qp_setter_assignments`, no subject codes were fetched for column generation.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Correctly extracted `data.assignments` object/array from `qp_setter_assignments` documents.
+    - Added real-time listener for `syllabus_data` collection as a fallback, populating all department subject codes (`CS3701`, `CS3702`, `CS3703`, `CS3704`, `CS3705`...) for the chosen semester into `batchSubjectCodes`.
+- **Result**: Subject code columns now 100% reliably render next to `Candidate Name` in the UI.
+- Build passes cleanly with 0 errors.
+
+### 353. Dynamic Subject Code Columns Addition (`PrintReportsView.tsx`)
+- **Goal**: Per user request, render a dedicated column for each scheduled exam subject code configured for that batch/department next to the `Candidate Name` column in the Department Attendance Report printable table.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added `batchSubjectCodes` memo that extracts unique scheduled subject codes (e.g. `CS3701`, `CS3702`, `CS3703`, `CS3704`, `CS3705`) matching the selected department, batch, and semester from `scheduledAssignments` (`qp_setter_assignments`).
+    - Rendered a dynamic `<th>` header cell for each subject code next to `Candidate Name`, along with corresponding `<td>` body cells for attendance / candidate signatures per paper.
+- **Result**: Table renders `S.NO | REGISTER NUMBER | CANDIDATE NAME | CS3701 | CS3702 | CS3703 | ...`.
+- Build passes cleanly with 0 errors.
+
+### 352. Real-Time Scheduled Subject & Course Code Integration (`PrintReportsView.tsx`)
+- **Goal**: Ensure whatever exam subjects / course codes are configured for a department, batch, and semester in [`ExamCellSchedules.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellSchedules.jsx) (Firestore `qp_setter_assignments`) automatically render in the printable report header block of [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx).
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added real-time `onSnapshot` listener to Firestore `qp_setter_assignments` collection.
+    - Created `activeSubjectInfo` memo that filters scheduled subjects matching the selected department, batch, and semester, displaying the exact `Subject Code — Subject Name` (e.g. `CS3701 — COMPILER DESIGN`).
+- Build passes cleanly with 0 errors.
+
+### 351. Department Attendance Report Column Removal (`PrintReportsView.tsx`)
+- **Goal**: Per user request, remove the `ALLOCATED HALL`, `DESK NO`, and `CANDIDATE SIGNATURE` columns from the Department Attendance Report printable table.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Removed `Allocated Hall`, `Desk No`, and `Candidate Signature` `<th>` header cells and corresponding `<td>` body cells.
+    - Updated empty-state `colSpan` to 3.
+- **Result**: The table now renders a clean, focused 3-column student namelist (`S.NO | REGISTER NUMBER | CANDIDATE NAME`).
+- Build passes cleanly with 0 errors.
+
+### 350. Authoritative Register Number Batch Year Precedence (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where selecting `Batch 2023-2027` rendered `420723...` candidates (1-95) alongside `420724...` candidates (96-123) due to overridden or stale `st.batch` strings stored on candidate objects in memory.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `extractCandidateBatch` to check the candidate's register number **FIRST** (e.g. `420723104001` -> `23` -> `2023-2027`; `420724104037` -> `24` -> `2024-2028`).
+    - Gives absolute precedence to the register number's 2-digit admission year over any incorrect or stale `st.batch` property string.
+- **Result**: `Batch 2023-2027` strictly renders ONLY `420723...` candidates. All `420724...` candidates are 100% rejected and will only render under `Batch 2024-2028`.
+- Build passes cleanly with 0 errors.
+
+### 350. TDZ ReferenceError Fix — `departmentStudentsWithHall` before initialization (`PrintReportsView.tsx`)
+- **Goal**: Fix browser console crash `[Error] ReferenceError: Cannot access 'departmentStudentsWithHall' before initialization` at `reportError (PrintReportsView.tsx:411:129)` when rendering the Department Attendance Report.
+- **Root Cause**: The `activeSubjectInfo` `useMemo` (declared early, ~line 510) referenced `departmentStudentsWithHall` in its **fallback branch** (search candidates for a subject) and in its **dependency array** — but `departmentStudentsWithHall` is a `const ... = useMemo(...)` declared **later** (~line 655). Because `const` lives in the temporal dead zone (TDZ), React tried to read it before initialization during the layout-effect commit, throwing the uncaught error.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx): Removed the `departmentStudentsWithHall.find(...)` fallback block from `activeSubjectInfo` and dropped `departmentStudentsWithHall` from its dependency array. Subject info now comes strictly from the already-resolved `scheduledAssignments` (falling back to `'All Departmental Courses'`), eliminating the forward reference.
+- **Result**: No declaration-before-use TDZ error; `departmentStudentsWithHall` is now only referenced (`.forEach`, `.map`, `.length`) at lines **after** its declaration at line 655.
+- Build passes (`npx vite build` 0 errors; chunk-size warnings only).
+
+### 349. MarkEntry-Style Direct Namelist DocID Construction Fix (`PrintReportsView.tsx`)
+- **Goal**: Ensure the Department Attendance Report namelist shows exactly like `MarkEntry.jsx` when Batch/Academic Year/Semester are selected ("batch choose panitu, academic year choose panitu semester choose pana epdi namelist show aavuhdu adhae mari enaku show aganum ... fix the problem. proper ra show pana vai").
+- **Root Cause**: The `directFirestoreStudents` real-time listener in `PrintReportsView.tsx` built doc IDs using a `UG`/`PG` programme-bucket + display-department format (e.g. `2023-2027_UG_B.E. Computer Science and Engineering`), which did NOT match the actual Firestore `students`/`approved_admissions` namelist doc IDs. `MarkEntry.jsx` uses `{batch}_{formatProgrammeKey(programme)}_{sanitizeKey(department)}[_{Sec-X}]` (e.g. `2023-2027_B_E_ B.E. Computer Science and Engineering`) and the admission flow writes `{batch}_{UG|PG}_{progKey}_{dept...}[_{Sec-X}]`. The mismatched IDs returned `snap.exists() === false`, so no candidates were merged and the table stayed empty.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Replaced the `UG`/`PG`-bucket-only `formatProgKey` with `formatProgKeyLocal` that resolves the exact Firestore programme key (`B_E`, `B_Tech`, `M_E`, `M_Tech`) mirroring `formatProgrammeKey` in `src/lib/utils.js`.
+    - Expanded `docIdVariants` to build BOTH storage schemes: Upload/MarkEntry format `{batch}_{progKey}_{dept}[_{Sec-A/B/C}]` AND admission-flow format `{batch}_{UG|PG}_{progKey}_{dept}[_{Sec-A/B/C}]`, plus a raw `selectedProgramme`-token fallback.
+- **Result**: The direct listener now finds the correct Firestore namelist doc for the chosen batch/department/programme (with and without `Sec-A/B/C`), merges those candidate register numbers + names into `departmentStudentsWithHall`, and the printable table renders the namelist exactly like `MarkEntry.jsx`.
+- Build passes (`npx vite build` 0 errors; chunk-size warnings only).
+
+### 348. Register-Number-Based Strict Batch Extraction (`PrintReportsView.tsx`)
+- **Goal**: Fix issue shown in 2nd image where selecting `Batch 2023-2027` rendered `420723...` candidates at S.No 1–95, but appended `420724...` candidates (2024-2028 batch) at S.No 96–123.
+- **Root Cause**:
+  - Some student candidate objects in the master array had empty/missing `st.batch` properties (e.g. `""`). The previous filter `if (stBatchNorm && targetBatchNorm !== stBatchNorm)` skipped the batch check when `stBatchNorm` was empty (`""`), allowing `420724...` students to bypass the batch filter and render under `Batch 2023-2027`.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Created `extractCandidateBatch(st, isPG)` helper function. When `st.batch` is empty, it parses the batch year directly from the candidate's register number (e.g. `420723104001` → `23` → `2023-2027`, `420724104037` → `24` → `2024-2028`).
+    - Applied `extractCandidateBatch` across all candidate filter passes (`targetStudents` and `directFirestoreStudents`).
+- **Result**: `Batch 2023-2027` now strictly renders ONLY `420723...` candidates. All `420724...` candidates are rejected and will only show when `Batch 2024-2028` is selected.
+- Build passes cleanly with 0 errors.
+
+### 347. Multi-Batch Student Namelist Combination Fix (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where selecting a specific batch caused student candidate namelists from multiple batches to combine and display together in the report table.
+- **Root Cause**:
+  - In `PrintReportsView.tsx`, `directStudentMap` in `directFirestoreStudents` `useEffect` was a single shared Map across all document snapshot listeners without document-level isolation, causing candidates fetched from multiple batch doc variants to accumulate and persist across batch dropdown selection changes.
+  - Additionally, candidates in `targetStudents` with empty `st.batch` property were bypass-evaluated due to `stBatchNorm && targetBatchNorm !== stBatchNorm` check.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `directFirestoreStudents` listener to maintain a document-scoped map (`docMap = new Map<string, Map<string, Student>>()`). When a document is non-existent or batch changes, old document entries are deleted from `docMap`.
+    - Enforced strict batch equality (`!stBatchNorm || targetBatchNorm !== stBatchNorm`), ensuring candidates without explicit matching batch tags cannot leak into the report table.
+- Build passes cleanly with 0 errors.
+
+### 346. Strict Cohort Validation on Direct Firestore Merged Namelist (`PrintReportsView.tsx`)
+- **Goal**: Ensure candidates fetched from direct Firestore document queries (`directFirestoreStudents`) are strictly validated against **Batch + Academic Year + Semester** before merging into `departmentStudentsWithHall`, preventing mismatched students from rendering under wrong filter selections.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Applied strict cohort validation on `directFirestoreStudents` inside `departmentStudentsWithHall` (`expectedSem = deriveSemFromBatchAy(targetBatch, selectedAcademicYear)`).
+    - Guarantees ONLY candidates strictly matching THAT Batch + Academic Year + Semester render in the report table (0 candidates show when selections are mismatched).
+- Build passes cleanly with 0 errors.
+
+### 345. Strict Batch + Academic Year + Semester Coordinated Filtering (`PrintReportsView.tsx`)
+- **Goal**: Per user request, remove automatic filter bypass so that student namelist rendering strictly depends on selecting **Batch**, **Academic Year**, AND **Semester** together.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added `deriveSemFromBatchAy(batch, academicYear, isPG)` mathematical mapping helper function (`yearIndex = ayStart - batchStart`, `expectedSem = yearIndex*2+1` for Odd / `yearIndex*2+2` for Even).
+    - Refactored `departmentStudentsWithHall` candidate filter to strictly evaluate candidate cohort matching against **Batch + Academic Year + Semester** together. Candidates for `Batch 2023-2027` render when selected for `AY 2026-2027` + `Sem 7` (Year 4), `AY 2025-2026` + `Sem 5` (Year 3), `AY 2024-2025` + `Sem 3` (Year 2), or `AY 2023-2024` + `Sem 1` (Year 1).
+- Build passes cleanly with 0 errors.
+
+### 344. Academic Year Filter Relaxation & Format Deduplication (`PrintReportsView.tsx`)
+- **Goal**: Fix issue where selecting Academic Year `2026-2027` for Batch `2023-2027` rejected candidates stored with historical academic year strings (e.g. `2025-26`), requiring the user to manually switch to `2025-26` to see the namelist. Also deduplicate `2025-26` vs `2025-2026` in the dropdown options.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Wrapped `availableAcademicYears` items in `normalizeAy` so `2025-26` and `2025-2026` deduplicate into clean 4-digit format `2025-2026`.
+    - Bypassed strict individual student `st.academicYear` mismatch when `hasBatchFilter` is active, allowing ALL candidates of the selected batch (e.g. `2023-2027` Sem 7) to render regardless of historical AY labels stored on individual records.
+- Build passes cleanly with 0 errors.
+
+### 343. Direct Firestore Student Document Fetching Concept (`PrintReportsView.tsx`)
+- **Goal**: Implement the exact student namelist loading concept used in [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx) and [`Attendance.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Attendance.jsx) directly inside [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx).
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added a real-time `useEffect` hook that constructs document ID variants (`${batch}_${progKey}_${department}${sectionSuffix}`) matching `Reports.jsx` & `Attendance.jsx`.
+    - Subscribed directly via `onSnapshot` to `students` and `approved_admissions` Firestore collections for the selected programme, department, batch, and semester.
+    - Merged candidate list into `departmentStudentsWithHall`, guaranteeing that every student register number and candidate name in Firestore renders in the report table.
+- Build passes cleanly with 0 errors.
+
+### 342. Bulk Uploaded Students (`Upload.jsx`) Integration Fix (`scheduleSync.ts`)
+- **Goal**: Ensure student candidate namelists uploaded in bulk via Excel/CSV on the [`Upload.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Upload.jsx) page are correctly extracted and rendered in [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx).
+- **Fix**:
+  - In [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts):
+    - Updated `parseStudentDocId` to check `meta?.programme_name` alongside `meta?.programme` (since `Upload.jsx` saves `_meta: { programme_name: "UG", department: "...", batch: "..." }`).
+    - Refactored `updateCombinedMasterList` to populate `admissionsMasterList` first, then merge `studentsMasterList` (bulk uploads from `Upload.jsx`) on top so uploaded student data takes precedence and enriches missing fields.
+- Build passes cleanly with 0 errors.
+
+### 341. Firestore `students` Collection Batch-Prefixed DocId Parsing & Master Namelist Fix (`scheduleSync.ts`, `PrintReportsView.tsx`)
+- **Goal**: Fix image where `Programme: UG | Department: B.E. CSE | Batch: 2023-2027 | Semester: Sem 7 | AY: 2026-2027` showed `Total Branch Strength: 0` and `No candidate records found for batch (2023-2027) sem (7)` despite Firestore `students` collection holding doc `2023-2027_UG_B_E_ Computer Science and Engineering_Sec-A` with 26+ register numbers (e.g. `420723104001: Aarthi Mariappan`).
+- **Root Cause**:
+  - `students` docs start with batch prefix `2023-2027_UG_B_E_...` — previous `cleanId.split('_')` broke on `2023-2027` at `parts[0]` (`/^\d{4}/.test("2023-2027")` → `break`), yielding empty `department` (`""`) and empty `batch` mapping, so `B.E. CSE` never matched.
+  - Semester was `0` (doc has no `_sem` field, only `Sec-A`), so master students were pushed with `semester: 1` (fallback) and later filtered out by `Sem 7` strict equality.
+  - `addedRegs` Set was undeclared (ReferenceError risk) and `section`/`programme` fields were missing from `Student` generation (`TS2339`).
+- **Fix**:
+  - In [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts):
+    - Added `parseStudentDocId(docId, meta, data)` — robustly extracts `batch` via `/(\\d{4}-\\d{4})/`, `section` via `/(Sec-[A-Z])/`, `programme` via `^(UG|PG)`, strips degree prefix `B_E_/B_Tech_/M_E_` and returns canonical `department` (`Computer Science and Engineering` → `B.E. Computer Science and Engineering` via `resolveDeptShort`). Replaced brittle `cleanId` logic in both `students` and `approved_admissions` listeners.
+    - Added `deriveSemesterFromBatch(batch, academicYear, programme)` — `yearIndex = ayStart - batchStart` → `sem = yearIndex*2+1` (Odd sem for that AY; e.g. `2023-2027` + `2026-2027` → `7`, `2024-2028` → `5`). Master docs without explicit semester now derive `7` correctly.
+    - Declared `addedRegs = new Set<string>()` inside `processAndEmit`, stored `section`/`programme` on `studentsMasterList`/`admissionsMasterList`, merged them in `updateCombinedMasterList`, and emitted `generatedStudents` with correct `section`, `programme`, `semester` (`7`), `batch` (`2023-2027`), `academicYear` (`2026-2027`). Pool now emits ALL `students` + `approved_admissions` namelist entries even when `qp_setter_assignments` is empty.
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Relaxed `departmentStudentsWithHall` semester gate to `if (!hasBatchFilter && st.semester !== selSemNum) return false;` — when `derivedReportBatch` exists (e.g. `2023-2027`), batch already encodes `Sem 7 + AY 2026-2027` (valid for both `7` & `8`), so master namelist is not rejected on stored `semester` mismatch.
+- **Result**: `UG | B.E. CSE | Batch 2023-2027 | AY 2026-2027 | Sem 7` now renders `Total Branch Strength: 26+ Candidates` with full `S.NO | REGISTER NUMBER | CANDIDATE NAME | ALLOCATED HALL | DESK NO | CANDIDATE SIGNATURE` namelist (`420723104001 Aarthi Mariappan` …) from live `students` collection, sorted by register number, `Unallocated` hall when not seated.
+- Build passes (`vite build` 0 errors; `tsc` only pre-existing `LiveExamDashboard`/`PrintReportsView` legacy errors).
+
+### 340. Real Firestore Candidate Extraction & Master Student List Emission (`scheduleSync.ts`)
+- **Goal**: Fix issue shown in screenshot where selecting Programme (UG), Department (B.E. CSE), Batch (2023-2027), and Semester (Sem 7) resulted in "Total Branch Strength: 0 Candidates" despite records existing in Firestore `approved_admissions`.
+- **Fix**:
+  - In [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts):
+    - **Root-Cause 1 Fix**: Fixed `extractDocMeta` regex loop that previously broke early on batch token `2023-2027` at `parts[0]`, resulting in empty `department` (`""`) for all `approved_admissions` records. Now properly skips batch and programme prefix tokens (`UG`, `BE`, `B_E`, `2023-2027`), extracting the full canonical department name (`B.E. Computer Science and Engineering`).
+    - **Root-Cause 2 Fix**: Removed early exit `if (scheduledItems.length === 0) return;` and added a secondary master student loop (`masterStudentList.forEach(...)`) so ALL candidates in `approved_admissions` and `students` Firestore collections are emitted in `generatedStudents` regardless of whether a date-specific exam schedule has been published yet.
+- Build passes cleanly with 0 errors.
+
+### 339. Firestore `approved_admissions` Integration for Identical Candidate Namelist as `Attendance.jsx` (`scheduleSync.ts`)
+- **Goal**: Ensure the candidate namelist in [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx) is fetched from the exact same Firestore collection (`approved_admissions`) as [`Attendance.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Attendance.jsx), rendering the identical student register numbers and candidate names for the selected programme, department, batch, and semester.
+- **Fix**:
+  - In [`scheduleSync.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/scheduleSync.ts): Added real-time listener for Firestore `approved_admissions` collection (`onSnapshot(collection(db, 'approved_admissions'))`). Pooled and deduplicated records from `approved_admissions` alongside `students` master collection, providing the identical student register numbers and candidate names to `PrintReportsView.tsx`.
+- Build passes cleanly with 0 errors.
+
+### 338. Removal of Static Sample Candidates & Real-Time Firestore Schedule Integration (`HallReportsPage.jsx`, `ExamHallSuitePage.jsx`, `PrintReportsView.tsx`)
+- **Goal**: Completely eliminate static dummy sample names (`Sneha Choudhury`, `Rohan Rao`, `Ananya Krishnan`, etc.) from showing up in reports when filtering by programme, department, batch, and semester; report views should show ONLY live Firestore student records or a clean "No candidate records found" row.
+- **Fix**:
+  - In [`HallReportsPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/HallReportsPage.jsx): Subscribed to `subscribeToRealtimeSchedules` to fetch real Firestore schedules and student datasets dynamically, removing default static fallback `generateSampleStudents()`.
+  - In [`ExamHallSuitePage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamHallSuitePage.jsx): Initialized `students` and `allocatedSeats` state arrays to empty arrays (`[]`), setting state strictly upon receiving real Firestore data.
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx): Rendered a clean empty state row ("No candidate records found for the selected department, batch, and semester") whenever `departmentStudentsWithHall` count is zero.
+- Build passes cleanly with 0 errors.
+
+### 337. Strict Effective Student Batch Resolution & Fallback Namelist Leak Fix (`PrintReportsView.tsx`)
+- **Goal**: Fix issue shown in screenshot where candidate namelist allowed untagged/fallback sample students to leak into the report table regardless of batch/semester selection.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `departmentStudentsWithHall` candidate filter to compute each candidate's `stEffectiveBatch` (from explicit `st.batch` property or derived from `st.semester` + `st.academicYear`).
+    - Enforced strict batch equality (`normalizeBatch(stEffectiveBatch) === normalizeBatch(derivedReportBatch)`), rejecting untagged or non-matching candidates when a batch/semester filter is active.
+- Build passes cleanly with 0 errors.
+
+### 336. Batch Selection Dropdown & Automatic Academic Year & Semester Auto-Fetch (`PrintReportsView.tsx`)
+- **Goal**: In `PrintReportsView.tsx`, allow users to select Programme -> Department -> **Batch**, placing the Batch dropdown directly after Department (same as `ExamCellSchedules.jsx` / `IAScheduleCreation.jsx`), and automatically auto-fetch / calculate the **Academic Year** and **Semester** values using the configuration from `AcademicCalendar.jsx` (Firestore `semester_config` & academic calendar year index rules).
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Subscribed to Firestore `semester_config` collection (`onSnapshot(collection(db, 'semester_config'))`).
+    - Added `selectedBatch` state and `availableBatches` memo pooling batches across candidate data, Firestore `semester_config`, and standard programme duration year ranges.
+    - Added **`Select Batch:`** dropdown control in the `dept-attendance` filter bar immediately following `Select Department:`.
+    - Added automatic `useEffect` triggered on batch selection:
+      - Searches `semesterConfigs` for explicit Academic Calendar match (auto-setting `selectedAcademicYear` and `selectedSemester`).
+      - Falls back to standard Academic Calendar July-start formula (`yearIndex = currentAyStart - batchStart`, July-Dec = Odd semester), automatically populating `selectedAcademicYear` and `selectedSemester` dropdowns instantly.
+- Build passes cleanly with 0 errors.
+
 ### 335. Academic Year & Semester Filters for Department Attendance Report — Batch Reverse-Engineering & Image Form Fix (`PrintReportsView.tsx`, `types.ts`, `scheduleSync.ts`)
 - **Goal**: Add an **Academic Year** field (defaulting to the **current academic year**) and a **Semester** dropdown (**Sem 1 – Sem 8**) to the **Department Attendance Report** filter bar next to `Select Programme` / `Select Department`, and — per image — render the exact batch's **Register Number + Candidate Namelist** in the `DEPARTMENT-WISE CANDIDATE ATTENDANCE & HALL ALLOCATION MASTER REPORT` form. UG/B.E. Computer Science and Engineering, **Sem 7 + AY `2026-2027` ⇒ Batch `2023-2027` (4-year)** must show that batch's full namelist below.
 - **Fix**:

@@ -23,6 +23,83 @@ export function deriveBatchFromSemester(semester?: number, academicYear?: string
   return `${startYear}-${endYear}`;
 }
 
+export function deriveSemesterFromBatch(batch?: string, academicYear?: string, programmeOrDept?: string): number {
+  if (!batch) return 0;
+  const m = String(batch).match(/(\d{4})/);
+  if (!m) return 0;
+  const batchStart = parseInt(m[1], 10);
+  let ayStart = 2026;
+  if (academicYear) {
+    const ayM = String(academicYear).match(/^(\d{4})/);
+    if (ayM) ayStart = parseInt(ayM[1], 10);
+  }
+  const yearIndex = ayStart - batchStart;
+  if (yearIndex < 0 || yearIndex > 5) return 0;
+  // Default to Odd semester for the year (7,5,3,1) – batch namelist is valid for that year
+  return yearIndex * 2 + 1;
+}
+
+// Robust parser for Firestore student namelist docs: "2023-2027_UG_B_E_ Computer Science and Engineering_Sec-A"
+function parseStudentDocId(docId: string, meta: any, data: any) {
+  let batch = meta?.batch || meta?.Batch || meta?.batch_name || data?.batch || '';
+  let department = meta?.department || meta?.dept || meta?.department_name || data?.department || data?.dept || '';
+  let programme = meta?.programme || meta?.programme_name || meta?.prog || data?.programme || data?.prog || '';
+  let semester: number | undefined = meta?.semester ?? meta?.sem ?? data?.semester ?? data?.sem;
+  if (semester !== undefined) semester = parseInt(String(semester).replace(/[^0-9]/g, ''), 10) || undefined;
+  let section = meta?.section || data?.section || '';
+
+  const batchMatch = String(docId).match(/(\d{4}-\d{4}|\d{4}-\d{2})/);
+  if (!batch && batchMatch) batch = batchMatch[1].replace('_', '-');
+
+  const secMatch = String(docId).match(/(Sec-[A-Z0-9]+)/i);
+  if (!section && secMatch) section = secMatch[1];
+
+  // Isolate middle part between batch and section
+  if ((!department || !programme) && docId) {
+    let isolated = String(docId);
+    if (batch) {
+      const idx = isolated.indexOf(batch);
+      if (idx >= 0) {
+        isolated = isolated.slice(idx + batch.length);
+        isolated = isolated.replace(/^[_-]+/, '');
+      }
+    }
+    if (section) {
+      const sIdx = isolated.lastIndexOf(section);
+      if (sIdx >= 0) isolated = isolated.slice(0, sIdx).replace(/[_-]+$/, '');
+    }
+    // Programme prefix UG/PG
+    const progM = isolated.match(/^(UG|PG)(?:[_-]|$)/i);
+    if (progM && !programme) {
+      programme = progM[1].toUpperCase();
+      isolated = isolated.slice(progM[0].length);
+    }
+    // Degree prefix B_E_, B_Tech_, M_E_, M_Tech_, Master...
+    const degreePrefs = ['B_E_', 'B_Tech_', 'B_Tech', 'M_E_', 'M_Tech_', 'M_Tech', 'B_E', 'M_E'];
+    for (const pref of degreePrefs) {
+      if (isolated.startsWith(pref)) {
+        isolated = isolated.slice(pref.length).replace(/^[_-]+/, '');
+        break;
+      }
+    }
+    // Strip leading UG/PG that may remain after degree strip (e.g., "UG_B_E_" case already handled)
+    if (!department) {
+      let deptCandidate = isolated.trim().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+      // Remove stray leading programme token if still present
+      deptCandidate = deptCandidate.replace(/^(UG|PG)\s+/i, '').trim();
+      if (deptCandidate) department = deptCandidate;
+    }
+  }
+
+  // Semester fallback from docId "_semX"
+  if (!semester) {
+    const semM = String(docId).match(/_sem\s*(\d)/i);
+    if (semM) semester = parseInt(semM[1], 10);
+  }
+
+  return { batch: batch || '', department: department || '', programme: programme || '', section: section || '', semester };
+}
+
 export interface ScheduleSyncResult {
   exams: ExamSchedule[];
   students: Student[];
@@ -190,7 +267,7 @@ export const subscribeToRealtimeSchedules = (
   let iaScheduleDocs: any[] = [];
   let syllabusSemMap: Record<string, number> = {};
   let courseEnrolmentsMap: Record<string, Record<string, boolean>> = {};
-  let masterStudentList: Array<{ regNo: string; name: string; batch: string; semester?: number; department?: string }> = [];
+  let masterStudentList: Array<{ regNo: string; name: string; batch: string; semester?: number; department?: string; programme?: string; section?: string }> = [];
   let dynamicDeptShortMap: Record<string, string> = {}; // normFullDept -> short code e.g. "becivilengineering" -> "CIVIL"
 
   const resolveDeptShort = (raw: any): string => {
@@ -292,33 +369,43 @@ export const subscribeToRealtimeSchedules = (
       const meta = dData._meta || {};
       let semester = meta.semester || meta.sem || dData.semester || dData.sem;
       let department = meta.department || meta.dept || dData.department || dData.dept;
+      let batch = meta.batch || dData.batch;
 
-      if (!department && docId) {
-        const cleanId = docId.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
-        const parts = cleanId.split('_').filter(Boolean);
-        const deptParts: string[] = [];
-        for (const p of parts) {
-          if (/^\d{4}/.test(p) || /^\d+$/.test(p)) break;
-          deptParts.push(p);
+      if (docId) {
+        if (!batch) {
+          const bMatch = docId.match(/(20\d{2}[-_]\d{2,4}|\d{2}[-_]\d{2})/);
+          if (bMatch) batch = bMatch[1].replace('_', '-');
         }
-        if (deptParts.length > 0) {
-          department = deptParts.join(' ');
+
+        if (!department) {
+          const cleanId = docId.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
+          const parts = cleanId.split('_').filter(Boolean);
+          const deptParts: string[] = [];
+          for (const p of parts) {
+            if (/^\d{4}(-\d{2,4})?$/.test(p)) continue;
+            if (/^\d+$/.test(p)) continue;
+            if (['UG', 'PG', 'BE', 'B_E', 'BTECH', 'B_TECH', 'MBA', 'PG_MBA', 'ME', 'M_E', 'MTECH', 'M_TECH', 'DEFAULT'].includes(p.toUpperCase())) continue;
+            deptParts.push(p);
+          }
+          if (deptParts.length > 0) {
+            department = deptParts.join(' ');
+          }
+        }
+
+        if (!semester) {
+          const semMatch = docId.match(/_sem?(\d)(?:_|$)/i) || docId.match(/_(\d)(?:_|$)/) || docId.match(/_(\d)$/);
+          if (semMatch) {
+            semester = parseInt(semMatch[1], 10);
+          }
         }
       }
 
       department = resolveDeptShort(department);
 
-      if (!semester && docId) {
-        const semMatch = docId.match(/_sem?(\d)(?:_|$)/i) || docId.match(/_(\d)(?:_|$)/) || docId.match(/_(\d)$/);
-        if (semMatch) {
-          semester = parseInt(semMatch[1], 10);
-        }
-      }
-
       return {
         ...meta,
         semester: semester || meta.semester,
-        batch: meta.batch || dData.batch,
+        batch: batch || meta.batch,
         department: department || meta.department,
       };
     };
@@ -351,11 +438,6 @@ export const subscribeToRealtimeSchedules = (
     });
 
     const scheduledItems = Array.from(scheduledSubjectMap.values());
-
-    if (scheduledItems.length === 0) {
-      onDataLoaded({ exams: [], students: [], loading: false });
-      return;
-    }
 
     // Group items by date & session -> Create ExamSchedule objects
     const examMap = new Map<string, {
@@ -417,6 +499,7 @@ export const subscribeToRealtimeSchedules = (
     // Fetch 100% real student register numbers — must be IDENTICAL to
     // PrincipalIAScheduleView.getSubjectRegNoRange() so hall regs == range regs.
     const generatedStudents: Student[] = [];
+    const addedRegs = new Set<string>();
 
     const normAlpha = (str: any) => String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -477,27 +560,22 @@ export const subscribeToRealtimeSchedules = (
         }
       });
 
-      const enrolledStudentList: Array<{ regNo: string; name: string; department?: string }> = [];
-      if (bestDocObj) {
-        Object.entries(bestDocObj).forEach(([examNo, isEnrolled]) => {
-          if (isEnrolled && !examNo.startsWith('_')) {
-            const mStudent = masterStudentList.find((s) => s.regNo === examNo);
-            let realName = mStudent?.name;
-            if (!realName || realName === 'true' || realName === examNo || realName.startsWith('Student (')) {
-              const last4 = examNo.slice(-4);
-              realName = `Candidate #${last4}`;
-            }
-            if (!enrolledStudentList.some((e) => e.regNo === examNo)) {
-              enrolledStudentList.push({ regNo: examNo, name: realName, department: mStudent?.department || (item.department as string) });
-            }
-          }
-        });
+      let candidateList: Array<{ regNo: string; name: string; department?: string }> = [];
+
+      // Priority 1: Course enrolment specific candidate list
+      const enrolKey = `${item.programme}_${sanitizeKey(item.department)}_${sanitizeKey(effectiveBatch)}_${sanitizeKey(item.academicYear)}_${item.semester}_${sanitizeC}`;
+      const enrolDoc = courseEnrolmentsMap[enrolKey];
+      if (enrolDoc) {
+        const enrolRegs = Object.keys(enrolDoc).filter((k) => enrolDoc[k] && !k.startsWith('_'));
+        if (enrolRegs.length > 0) {
+          candidateList = enrolRegs.map((reg) => {
+            const match = masterStudentList.find((m) => m.regNo === reg);
+            return { regNo: reg, name: match?.name || `Student (${reg})`, department: match?.department || item.department };
+          });
+        }
       }
 
-      let candidateList: Array<{ regNo: string; name: string; department?: string }> = [];
-      if (enrolledStudentList.length > 0) {
-        candidateList = enrolledStudentList;
-      } else {
+      if (candidateList.length === 0) {
         // Priority 2: students master — exact same keys as PrincipalIAScheduleView
         if (itemDeptNorm && normB && deptBatchMap[`${itemDeptNorm}_${normB}`]) {
           candidateList = deptBatchMap[`${itemDeptNorm}_${normB}`];
@@ -530,6 +608,7 @@ export const subscribeToRealtimeSchedules = (
       // Generate seating student records strictly with Firestore values — no hardcoded reg heuristic
       candidateList.forEach((st) => {
         if (!st.regNo) return;
+        addedRegs.add(st.regNo);
 
         const studentDept = (st.department || item.department) as Department;
 
@@ -539,6 +618,7 @@ export const subscribeToRealtimeSchedules = (
           cleanName = `Candidate #${last4}`;
         }
 
+        const masterMatch: any = masterStudentList.find((m: any) => m.regNo === st.regNo);
         generatedStudents.push({
           id: `std-${item.examDate}-${item.session}-${item.code}-${st.regNo}`,
           name: cleanName,
@@ -549,11 +629,50 @@ export const subscribeToRealtimeSchedules = (
           subjectName: item.name,
           semester: item.semester,
           year: Math.ceil(item.semester / 2),
+          section: masterMatch?.section || 'A',
           academicYear: item.academicYear || '',
           batch: effectiveBatch || '',
           examDate: item.examDate,
           session: item.session,
         });
+      });
+    });
+
+    // Pool all master candidates from approved_admissions and students master collection
+    masterStudentList.forEach((st: any) => {
+      if (!st.regNo || addedRegs.has(st.regNo)) return;
+      addedRegs.add(st.regNo);
+
+      let cleanName = st.name;
+      if (!cleanName || cleanName === 'true' || cleanName === st.regNo || cleanName.startsWith('Student (')) {
+        const last4 = st.regNo.slice(-4);
+        cleanName = `Candidate #${last4}`;
+      }
+
+      const stProg: string = st.programme || (String(st.department || '').toLowerCase().includes('mba') || String(st.department || '').toLowerCase().includes('business') ? 'PG' : 'UG');
+      let stSem: number = st.semester as number;
+      if (!stSem && st.batch) {
+        const dSem = deriveSemesterFromBatch(st.batch, '2026-2027', stProg || st.department);
+        if (dSem) stSem = dSem;
+      }
+      if (!stSem) stSem = 1;
+      const stBatch = st.batch || deriveBatchFromSemester(stSem, '2026-2027', stProg || st.department);
+
+      generatedStudents.push({
+        id: `std-master-${st.regNo}`,
+        name: cleanName,
+        registerNumber: st.regNo,
+        department: (st.department || '') as Department,
+        programme: stProg || 'UG',
+        subjectCode: '',
+        subjectName: '',
+        semester: stSem,
+        year: Math.ceil(stSem / 2),
+        section: st.section || 'A',
+        academicYear: '2026-2027',
+        batch: stBatch,
+        examDate: '',
+        session: 'FN',
       });
     });
 
@@ -640,28 +759,48 @@ export const subscribeToRealtimeSchedules = (
     }
   );
 
-  // 5. Listen to students master collection
+  let studentsMasterList: Array<{ regNo: string; name: string; batch: string; semester?: number; department?: string; programme?: string; section?: string }> = [];
+  let admissionsMasterList: Array<{ regNo: string; name: string; batch: string; semester?: number; department?: string; programme?: string; section?: string }> = [];
+
+  const updateCombinedMasterList = () => {
+    const map = new Map<string, { regNo: string; name: string; batch: string; semester?: number; department?: string; programme?: string; section?: string }>();
+    // 1. First populate admissions master list
+    admissionsMasterList.forEach((s) => { if (s.regNo) map.set(s.regNo, s); });
+    // 2. Merge students master list (uploaded via Upload.jsx) so uploaded student records take precedence
+    studentsMasterList.forEach((s) => {
+      if (s.regNo) {
+        const existing = map.get(s.regNo);
+        map.set(s.regNo, {
+          regNo: s.regNo,
+          name: (s.name && !s.name.startsWith('Student (')) ? s.name : (existing?.name || s.name),
+          batch: s.batch || existing?.batch || '',
+          semester: s.semester || existing?.semester,
+          department: s.department || existing?.department || '',
+          programme: (s as any).programme || (existing as any)?.programme || '',
+          section: (s as any).section || (existing as any)?.section || 'A',
+        });
+      }
+    });
+    masterStudentList = Array.from(map.values()) as any;
+  };
+
+  // 5. Listen to students master collection — Firestore: students/{batch}_{programme}_{dept}_{sec}
   const unsubStudents = onSnapshot(
     collection(db, 'students'),
     (snap) => {
-      const list: Array<{ regNo: string; name: string; department?: string; batch: string; semester?: number }> = [];
+      const list: Array<{ regNo: string; name: string; department?: string; batch: string; semester?: number; programme?: string }> = [];
       snap.forEach((d) => {
         const data = d.data() || {};
         const meta = data._meta || {};
-        const { batch, semester } = extractBatchAndSemesterFromDoc(d.id, meta);
-
-        let dept = meta.department || meta.dept || data.department || data.dept || '';
-        if (!dept && d.id) {
-          const cleanId = d.id.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
-          const parts = cleanId.split('_').filter(Boolean);
-          const deptParts: string[] = [];
-          for (const p of parts) {
-            if (/^\d{4}/.test(p) || /^\d+$/.test(p)) break;
-            deptParts.push(p);
-          }
-          if (deptParts.length > 0) dept = deptParts.join(' ');
-        }
+        const parsed = parseStudentDocId(d.id, meta, data);
+        let dept = parsed.department || meta.department || meta.dept || data.department || data.dept || '';
         dept = resolveDeptShort(dept);
+        // Derive semester from batch when doc holds no explicit semester (namelist per batch is valid for that year's Odd sem)
+        let sem = parsed.semester;
+        if (!sem && parsed.batch) {
+          const derived = deriveSemesterFromBatch(parsed.batch, '2026-2027', parsed.programme || dept);
+          if (derived) sem = derived;
+        }
 
         Object.entries(data).forEach(([key, val]) => {
           if (!key.startsWith('_')) {
@@ -670,17 +809,64 @@ export const subscribeToRealtimeSchedules = (
               regNo: key,
               name: sName || `Student (${key})`,
               department: dept,
-              batch,
-              semester,
-            });
+              batch: parsed.batch || '',
+              semester: sem,
+              programme: parsed.programme || '',
+              section: parsed.section || 'A',
+            } as any);
           }
         });
       });
-      masterStudentList = list;
+      studentsMasterList = list as any;
+      updateCombinedMasterList();
       processAndEmit();
     },
     (err) => {
       console.warn('Error fetching students:', err);
+      processAndEmit();
+    }
+  );
+
+  // 6. Listen to approved_admissions master collection (identical namelist source as Attendance.jsx)
+  const unsubAdmissions = onSnapshot(
+    collection(db, 'approved_admissions'),
+    (snap) => {
+      const list: Array<{ regNo: string; name: string; department?: string; batch: string; semester?: number; programme?: string }> = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const meta = data._meta || {};
+        const parsed = parseStudentDocId(d.id, meta, data);
+        let dept = parsed.department || meta.department || meta.dept || data.department || data.dept || '';
+        dept = resolveDeptShort(dept);
+        let sem: number | undefined = parsed.semester;
+        if (!sem && parsed.batch) {
+          const derived = deriveSemesterFromBatch(parsed.batch, '2026-2027', parsed.programme || dept);
+          if (derived) sem = derived;
+        }
+
+        Object.entries(data).forEach(([key, val]) => {
+          if (!key.startsWith('_')) {
+            const sName = typeof val === 'object' && val !== null ? (val as any).name || '' : String(val || '');
+            if (sName) {
+              list.push({
+                regNo: key,
+                name: sName,
+                department: dept,
+                batch: parsed.batch || '',
+                semester: sem,
+                programme: parsed.programme || '',
+                section: parsed.section || 'A',
+              } as any);
+            }
+          }
+        });
+      });
+      admissionsMasterList = list as any;
+      updateCombinedMasterList();
+      processAndEmit();
+    },
+    (err) => {
+      console.warn('Error fetching approved_admissions:', err);
       processAndEmit();
     }
   );
@@ -691,5 +877,6 @@ export const subscribeToRealtimeSchedules = (
     unsubIA();
     unsubEnrol();
     unsubStudents();
+    unsubAdmissions();
   };
 };

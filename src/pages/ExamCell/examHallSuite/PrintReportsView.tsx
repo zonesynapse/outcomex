@@ -17,8 +17,9 @@ import {
   Check
 } from 'lucide-react';
 import { Room, Student, AllocatedSeat, DutyAllocation, Faculty, ExamSchedule, Department, ExamDutyWorkflow } from '../../../types';
-import { downloadCSV } from './allocationEngine';
 import { useDepartments } from '../../../hooks/useDepartments';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../../../firebase';
 
 interface PrintReportsViewProps {
   rooms: Room[];
@@ -59,6 +60,21 @@ function deriveBatchFromSemesterAy(semester?: string, academicYear?: string, isP
   return `${startYear}-${startYear + duration}`;
 }
 
+// Calculate expected semester for a student batch in a given academic year
+function deriveSemFromBatchAy(batch?: string, academicYear?: string, isPG?: boolean): number {
+  if (!batch || !academicYear) return 0;
+  const bMatch = normalizeBatch(batch).match(/^(\d{4})/);
+  const ayMatch = normalizeAy(academicYear).match(/^(\d{4})/);
+  if (!bMatch || !ayMatch) return 0;
+
+  const batchStart = parseInt(bMatch[1], 10);
+  const ayStart = parseInt(ayMatch[1], 10);
+  const yearIndex = ayStart - batchStart; // 0=1st yr, 1=2nd yr, 2=3rd yr, 3=4th yr
+
+  if (yearIndex < 0 || yearIndex > 4) return 0;
+  return yearIndex * 2 + 1; // Default to Odd sem (1, 3, 5, 7) for that year of study
+}
+
 // Normalize AY / batch for comparison (handles 2026-2027 vs 2026-27 vs 2026/2027)
 function normalizeAy(ay?: string): string {
   if (!ay) return '';
@@ -80,6 +96,28 @@ function normalizeBatch(batch?: string): string {
   return `${start}-${end}`;
 }
 
+// Extract canonical batch for a candidate (register number 420723104001 -> 23 -> 2023-2027 takes precedence)
+function extractCandidateBatch(st: Student, isPG?: boolean): string {
+  const reg = String(st.registerNumber || '').trim();
+  // Register number format e.g. 420723104001 -> 23 -> 2023-2027
+  const regM = reg.match(/^\d{4}(\d{2})\d{5,}$/) || reg.match(/(\d{2})\d{6,}$/);
+  if (regM) {
+    const yr = parseInt(regM[1], 10);
+    if (yr >= 18 && yr <= 45) {
+      const startYr = 2000 + yr;
+      const duration = isPG ? 2 : 4;
+      return `${startYr}-${startYr + duration}`;
+    }
+  }
+
+  if (st.batch) {
+    const norm = normalizeBatch(st.batch);
+    if (norm) return norm;
+  }
+
+  return '';
+}
+
 export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   rooms,
   students,
@@ -95,8 +133,10 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   const [selectedHallId, setSelectedHallId] = useState<string>(defaultHallId || rooms[0]?.id || '');
   const [selectedProgramme, setSelectedProgramme] = useState<string>('');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('');
+  const [selectedBatch, setSelectedBatch] = useState<string>('');
   const [selectedAcademicYear, setSelectedAcademicYear] = useState<string>('');
   const [selectedSemester, setSelectedSemester] = useState<string>('');
+  const [semesterConfigs, setSemesterConfigs] = useState<any[]>([]);
   const [deptSortBy, setDeptSortBy] = useState<'regNo' | 'hall' | 'name'>('regNo');
   const [sortBy, setSortBy] = useState<SeatingSortOrder>('department');
   const [deptFilter, setDeptFilter] = useState<string>('all');
@@ -256,12 +296,23 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
       .sort((a, b) => a.localeCompare(b));
   }, [firestoreDeptMap, selectedProgramme]);
 
-  // Auto-select first programme when none selected
+  // Auto-select programme when none selected — prefer the programme whose configured
+  // department list contains the MOST departments present in the live candidate dataset,
+  // so the default selection doesn't land on a programme with no (or fewer) matching candidates.
   useEffect(() => {
     if (availableProgrammes.length > 0 && (!selectedProgramme || selectedProgramme.trim() === '')) {
-      setSelectedProgramme(availableProgrammes[0].key);
+      let best = availableProgrammes[0].key;
+      let bestCount = -1;
+      const candidates = new Set(allExamDepartments.map((d) => normalizeDeptName(d)));
+      for (const p of availableProgrammes) {
+        const list = (firestoreDeptMap as any)?.[p.key];
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const overlap = list.filter((d: string) => candidates.has(normalizeDeptName(d))).length;
+        if (overlap > bestCount) { best = p.key; bestCount = overlap; }
+      }
+      setSelectedProgramme(best);
     }
-  }, [availableProgrammes, selectedProgramme]);
+  }, [availableProgrammes, selectedProgramme, allExamDepartments, firestoreDeptMap]);
 
   // Auto-select first department when none selected
   useEffect(() => {
@@ -270,32 +321,147 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     }
   }, [availableDepartments, selectedDepartment]);
 
-  // Academic Year options — distinct years present in candidate data, plus current academic year
+  // Subscribe to Firestore semester_config (Academic Calendar configurations)
+  useEffect(() => {
+    const semRef = collection(db, 'semester_config');
+    const unsub = onSnapshot(semRef, (snap) => {
+      const list: any[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setSemesterConfigs(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Available Batches — pooled from students candidate data, Academic Calendar (semester_config), and standard durations
+  const availableBatches = useMemo(() => {
+    const set = new Set<string>();
+    const isPG = isPgProgramme(selectedProgramme);
+    const expectedDuration = isPG ? 2 : 4;
+
+    students.forEach((s) => {
+      if (s.batch && String(s.batch).trim()) {
+        const normB = normalizeBatch(s.batch);
+        const parts = normB.split('-');
+        if (parts.length === 2) {
+          const dur = parseInt(parts[1], 10) - parseInt(parts[0], 10);
+          if (dur === expectedDuration) set.add(normB);
+        } else {
+          set.add(normB);
+        }
+      }
+    });
+
+    semesterConfigs.forEach((cfg) => {
+      const bList = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+      bList.forEach((b: any) => {
+        if (b && String(b).trim()) {
+          const normB = normalizeBatch(b);
+          const parts = normB.split('-');
+          if (parts.length === 2) {
+            const dur = parseInt(parts[1], 10) - parseInt(parts[0], 10);
+            if (dur === expectedDuration) set.add(normB);
+          } else {
+            set.add(normB);
+          }
+        }
+      });
+    });
+
+    const currYear = new Date().getFullYear();
+    for (let i = 0; i < 5; i++) {
+      const start = currYear - i;
+      set.add(`${start}-${start + expectedDuration}`);
+    }
+
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [students, semesterConfigs, selectedProgramme]);
+
+  // Auto-select first batch with candidate data or first valid batch in availableBatches
+  useEffect(() => {
+    if (availableBatches.length > 0) {
+      const normSel = selectedBatch ? normalizeBatch(selectedBatch) : '';
+      if (!normSel || !availableBatches.includes(normSel)) {
+        // Find batch that has candidates for this department if possible
+        const matchingWithData = availableBatches.find((b) =>
+          students.some((s) => normalizeDeptName(s.department) === normalizeDeptName(selectedDepartment) && normalizeBatch(s.batch) === b)
+        );
+        setSelectedBatch(matchingWithData || availableBatches[0]);
+      }
+    }
+  }, [availableBatches, selectedDepartment, students]);
+
+  // Academic Year options — distinct normalized years present in candidate data, plus current academic year
   const availableAcademicYears = useMemo(() => {
     const set = new Set<string>();
-    students.forEach((s) => { if (s.academicYear) set.add(s.academicYear); });
-    set.add(getAcademicYearForDate(new Date()));
+    students.forEach((s) => { if (s.academicYear) set.add(normalizeAy(s.academicYear)); });
+    set.add(normalizeAy(getAcademicYearForDate(new Date())));
     const recent = getAcademicYearForDate(new Date());
     const startY = parseInt(String(recent).split('-')[0], 10);
     for (let i = -3; i <= 1; i++) set.add(`${startY + i}-${startY + i + 1}`);
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [students]);
 
-  // Default Academic Year slot to the current academic year
+  // Auto-fetch Academic Year & Semester whenever Batch is selected
+  useEffect(() => {
+    if (!selectedBatch || selectedBatch.trim() === '') return;
+
+    const normTargetBatch = normalizeBatch(selectedBatch);
+
+    // 1. Check AcademicCalendar semester_config in Firestore first
+    const matchingConfig = semesterConfigs.find((cfg) => {
+      const bList = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+      return bList.some((b: any) => normalizeBatch(b) === normTargetBatch);
+    });
+
+    if (matchingConfig && matchingConfig.startDate) {
+      const startY = parseInt(String(matchingConfig.startDate).split('-')[0], 10);
+      const computedAy = `${startY}-${startY + 1}`;
+      setSelectedAcademicYear(computedAy);
+
+      const batchStart = parseInt(normTargetBatch.split('-')[0], 10);
+      const yearNumber = startY - batchStart + 1;
+      const isOdd = matchingConfig.semesterType === 'Odd';
+      const computedSem = isOdd ? (yearNumber * 2 - 1) : (yearNumber * 2);
+      if (computedSem > 0 && computedSem <= 8) {
+        setSelectedSemester(String(computedSem));
+        return;
+      }
+    }
+
+    // 2. Default Academic Calendar calculation (July-start academic year)
+    const currentAyStr = getAcademicYearForDate(new Date());
+    setSelectedAcademicYear(currentAyStr);
+
+    const currAyStart = parseInt(currentAyStr.split('-')[0], 10);
+    const batchStart = parseInt(normTargetBatch.split('-')[0], 10);
+    if (!isNaN(batchStart)) {
+      const yearIndex = currAyStart - batchStart;
+      if (yearIndex >= 0 && yearIndex < 5) {
+        const currentMonth = new Date().getMonth();
+        const isOdd = currentMonth >= 6; // July-Dec is Odd sem (Sem 1, 3, 5, 7)
+        const computedSem = (yearIndex * 2) + (isOdd ? 1 : 2);
+        if (computedSem > 0 && computedSem <= 8) {
+          setSelectedSemester(String(computedSem));
+        }
+      }
+    }
+  }, [selectedBatch, semesterConfigs, selectedProgramme]);
+
+  // Default Academic Year slot to the current academic year if empty
   useEffect(() => {
     if (!selectedAcademicYear || selectedAcademicYear.trim() === '') {
       setSelectedAcademicYear(getAcademicYearForDate(new Date()));
     }
   }, [selectedAcademicYear]);
 
-  // Reverse-engineered batch from the chosen semester + academic year
+  // Reverse-engineered batch from chosen semester + academic year or explicit selection
   const derivedReportBatch = useMemo(() => {
+    if (selectedBatch && selectedBatch.trim() !== '') return selectedBatch;
     if (!selectedSemester || !selectedAcademicYear) return '';
     const isPG = isPgProgramme(selectedProgramme) && !isUgProgramme(selectedProgramme) ? true : selectedProgramme === 'PG_MBA' || selectedProgramme === 'M_E' || selectedProgramme === 'M_TECH';
-    // For generic UG key, keep 4-year duration; for generic PG key, 2-year
     const pgFlag = selectedProgramme === 'PG' || selectedProgramme === 'PG_MBA' || selectedProgramme === 'M_E' || selectedProgramme === 'M_TECH';
     return deriveBatchFromSemesterAy(selectedSemester, selectedAcademicYear, pgFlag);
-  }, [selectedSemester, selectedAcademicYear, selectedProgramme]);
+  }, [selectedBatch, selectedSemester, selectedAcademicYear, selectedProgramme]);
 
   // Map for fast room lookup
   const roomMap = useMemo(() => {
@@ -303,6 +469,332 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
     rooms.forEach((r) => map.set(r.id, r));
     return map;
   }, [rooms]);
+
+  // Listen to Firestore qp_setter_assignments and syllabus_data to get authoritative scheduled subjects for columns
+  const [scheduledAssignments, setScheduledAssignments] = useState<any[]>([]);
+  const [syllabusSubjects, setSyllabusSubjects] = useState<any[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'qp_setter_assignments'), (snap) => {
+      const docs: any[] = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        docs.push({ id: d.id, ...data });
+      });
+
+      // Sort documents by updatedAt descending (latest schedule document first)
+      docs.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+
+      const list: any[] = [];
+      docs.forEach((data) => {
+        const docBatch = data.batch || data._meta?.batch || data.id || '';
+        const docDept = data.department || data.dept || data._meta?.department || data.id || '';
+        const docSem = data.semester || data.sem || 0;
+        const docProg = data.programme || data._meta?.programme || '';
+
+        const rawAssignments = data.assignments || data.courses || data;
+        let items: any[] = [];
+        if (Array.isArray(rawAssignments)) {
+          items = rawAssignments;
+        } else if (typeof rawAssignments === 'object' && rawAssignments !== null) {
+          items = Object.values(rawAssignments);
+        }
+
+        items.forEach((it: any) => {
+          if (it && typeof it === 'object') {
+            const code = String(it.subjectCode || it.code || it.courseCode || '').trim();
+            const name = String(it.subjectName || it.name || it.subject || it.courseName || '').trim();
+            const dateStr = String(it.examDate ?? it.exam_date ?? it.date ?? it.assignedDate ?? it.fromDate ?? data.examDate ?? data.date ?? '').trim();
+            if (code) {
+              list.push({
+                docId: data.id,
+                updatedAt: data.updatedAt || '',
+                batch: it.batch || docBatch,
+                department: it.department || it.dept || docDept,
+                programme: it.programme || docProg,
+                semester: it.semester || it.sem || docSem,
+                subjectCode: code,
+                subjectName: name,
+                examDate: dateStr,
+                session: it.session || 'FN',
+              });
+            }
+          }
+        });
+      });
+      setScheduledAssignments(list);
+    }, (err) => console.warn('qp_setter_assignments fetch error in PrintReportsView:', err));
+
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'syllabus_data'), (snap) => {
+      const list: any[] = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const docId = d.id;
+        const semesters = data.semesters || {};
+        Object.entries(semesters).forEach(([semNumStr, rawSubs]) => {
+          const semNum = parseInt(semNumStr, 10);
+          const subList = Array.isArray(rawSubs) ? rawSubs : (typeof rawSubs === 'object' && rawSubs !== null ? Object.values(rawSubs) : []);
+          subList.forEach((s: any) => {
+            if (s && typeof s === 'object') {
+              const code = String(s.code || s.subjectCode || s.courseCode || '').trim();
+              const name = String(s.name || s.subjectName || s.courseName || '').trim();
+              if (code && !s.isNonOBE && s.isActive !== false) {
+                list.push({
+                  docId,
+                  department: data.department || docId,
+                  semester: semNum,
+                  subjectCode: code,
+                  subjectName: name,
+                });
+              }
+            }
+          });
+        });
+      });
+      setSyllabusSubjects(list);
+    }, (err) => console.warn('syllabus_data fetch error in PrintReportsView:', err));
+
+    return () => unsub();
+  }, []);
+
+  // Subject / Exams scheduled in ExamCellSchedules.jsx for chosen department, batch & semester
+  const activeSubjectInfo = useMemo(() => {
+    const targetDeptNorm = normalizeDeptName(selectedDepartment);
+    const targetBatch = normalizeBatch(selectedBatch || derivedReportBatch);
+    const targetSem = selectedSemester ? parseInt(selectedSemester, 10) : 0;
+
+    const matches = scheduledAssignments.filter((a) => {
+      const deptMatch = !targetDeptNorm || normalizeDeptName(a.department) === targetDeptNorm;
+      const batchMatch = !targetBatch || normalizeBatch(a.batch) === targetBatch;
+      const semMatch = !targetSem || parseInt(String(a.semester), 10) === targetSem;
+      return deptMatch && batchMatch && semMatch && a.subjectCode;
+    });
+
+    if (matches.length > 0) {
+      const uniqueSubjects = new Map<string, string>();
+      matches.forEach((m) => {
+        if (!uniqueSubjects.has(m.subjectCode)) {
+          uniqueSubjects.set(m.subjectCode, `${m.subjectCode} — ${m.subjectName}`);
+        }
+      });
+      return Array.from(uniqueSubjects.values()).join(' | ');
+    }
+
+    return 'All Departmental Courses';
+  }, [scheduledAssignments, selectedDepartment, selectedBatch, derivedReportBatch, selectedSemester]);
+
+  // Scheduled subject codes with assigned exam dates in IAScheduleCreation.jsx (qp_setter_assignments)
+  const batchSubjectCodes = useMemo(() => {
+    const targetDeptNorm = normalizeDeptName(selectedDepartment);
+    const targetBatch = normalizeBatch(selectedBatch || derivedReportBatch);
+    const targetSem = selectedSemester ? parseInt(selectedSemester, 10) : 0;
+
+    const normCleanLocal = (s: string) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .replace(/^departmentof|^department|^deptof|^dept/, '')
+        .replace(/^(be|btech|me|mtech|ug|pg)+/, '');
+
+    const extractYr = (s: string) => {
+      const m = String(s || '').match(/\d{4}/);
+      return m ? m[0] : '';
+    };
+
+    const targetDeptClean = normCleanLocal(selectedDepartment);
+    const targetBatchYr = extractYr(targetBatch);
+
+    const isNonExam = (code: string, name: string) => {
+      const c = String(code || '').trim().toUpperCase();
+      const n = String(name || '').trim().toUpperCase();
+      if (['PET', 'ICL', 'SK', 'NSS', 'YRC', 'LIBRARY', 'SPORTS'].includes(c)) return true;
+      if (n.includes('PHYSICAL EDUCATION') || n.includes('INDIAN CONSTITUTION') || n.includes('SOFT SKILL') || n.includes('VALUE ADDED')) return true;
+      return false;
+    };
+
+    const uniqueCodes: Array<{ code: string; name: string; examDate: string; session: string }> = [];
+    const seen = new Set<string>();
+
+    // 1. Match subjects from qp_setter_assignments (ExamCellSchedules / IAScheduleCreation)
+    const matchesQP = scheduledAssignments.filter((a) => {
+      const itemDeptNorm = normalizeDeptName(a.department || a.docId);
+      const itemDeptClean = normCleanLocal(a.department + ' ' + a.docId);
+      const itemBatchYr = extractYr(a.batch + ' ' + a.docId);
+      const itemSem = parseInt(String(a.semester), 10);
+
+      const deptMatch =
+        !targetDeptNorm ||
+        itemDeptNorm === targetDeptNorm ||
+        (targetDeptClean && (itemDeptClean.includes(targetDeptClean) || targetDeptClean.includes(itemDeptClean)));
+
+      const batchMatch = !targetBatchYr || !itemBatchYr || itemBatchYr === targetBatchYr;
+      const semMatch = !targetSem || !itemSem || itemSem === targetSem;
+
+      return deptMatch && batchMatch && semMatch && a.subjectCode && !isNonExam(a.subjectCode, a.subjectName);
+    });
+
+    // Priority 1: Extract ONLY subjects from matchesQP that HAVE an assigned exam date!
+    matchesQP.forEach((m) => {
+      const codeClean = String(m.subjectCode || '').trim().toUpperCase();
+      const dateClean = String(m.examDate || '').trim();
+      const isValidDate = Boolean(dateClean && dateClean !== 'undefined' && dateClean !== 'null');
+
+      if (codeClean && isValidDate && !seen.has(codeClean)) {
+        seen.add(codeClean);
+        uniqueCodes.push({
+          code: codeClean,
+          name: m.subjectName || '',
+          examDate: dateClean,
+          session: m.session || 'FN',
+        });
+      }
+    });
+
+    // If subjects with assigned exam dates exist, return STRICTLY THOSE (e.g. GE3751, GE3791, OFD351, OPE353, OMG353)!
+    if (uniqueCodes.length > 0) {
+      uniqueCodes.sort((a, b) => a.examDate.localeCompare(b.examDate));
+      return uniqueCodes;
+    }
+
+    // Priority 2: Remaining subjects in matchesQP if exam dates not yet assigned
+    matchesQP.forEach((m) => {
+      const codeClean = String(m.subjectCode || '').trim().toUpperCase();
+      if (codeClean && !seen.has(codeClean)) {
+        seen.add(codeClean);
+        uniqueCodes.push({
+          code: codeClean,
+          name: m.subjectName || '',
+          examDate: String(m.examDate || '').trim(),
+          session: m.session || 'FN',
+        });
+      }
+    });
+
+    return uniqueCodes;
+  }, [scheduledAssignments, selectedDepartment, selectedBatch, derivedReportBatch, selectedSemester]);
+
+  // Real-time direct Firestore student listener matching Reports.jsx & Attendance.jsx concept
+  const [directFirestoreStudents, setDirectFirestoreStudents] = useState<Student[]>([]);
+
+  useEffect(() => {
+    const activeBatch = selectedBatch || derivedReportBatch;
+    if (!selectedProgramme || !selectedDepartment || !activeBatch) {
+      setDirectFirestoreStudents([]);
+      return;
+    }
+
+    // Resolve the exact Firestore programme key (e.g. B_E, B_Tech, M_E) — mirrors
+    // MarkEntry.jsx / Upload.jsx `formatProgrammeKey`. The students namelist docs are
+    // written under `{batch}_{progKey}_{deptKey}` (Upload/MarkEntry) and also under the
+    // `{batch}_UG_{progKey}_{deptKey}` admission-flow variant, so we build BOTH.
+    const formatProgKeyLocal = (p: string) => {
+      const s = String(p || '').trim();
+      const u = s.toUpperCase();
+      if (u === 'B_E' || u === 'B.E.' || u === 'BE' || u.startsWith('B.E')) return 'B_E';
+      if (u === 'B_TECH' || u === 'B.TECH' || u === 'BTECH' || u.startsWith('B.TECH') || u.startsWith('B_TECH')) return 'B_Tech';
+      if (u === 'M_E' || u === 'M.E.' || u === 'ME' || u.startsWith('M.E')) return 'M_E';
+      if (u === 'M_TECH' || u === 'M.TECH' || u === 'MTECH' || u.startsWith('M.TECH') || u.startsWith('M_TECH')) return 'M_Tech';
+      if (u === 'UG' || u === 'PG' || u.includes('MBA') || u.includes('ADMINISTRATION')) return s;
+      return s.replace(/[^A-Z0-9]+/gi, '_');
+    };
+
+    const sanitizeK = (k: string) => String(k || '').replace(/[.#$[\]]/g, '_');
+    const sanitizeKStr = (k: string) => String(k || '').replace(/[.#$[\]/ ]/g, '_');
+
+    const progKey = formatProgKeyLocal(selectedProgramme);
+    const progBucket = isPgProgramme(selectedProgramme) ? 'PG' : 'UG';
+    const sanitizedBatch = sanitizeK(activeBatch);
+    const sanitizedDept = sanitizeK(selectedDepartment);
+
+    const docIdVariants = [
+      // Upload / MarkEntry format: {batch}_{progKey}_{dept}[_{Sec-X}]
+      `${sanitizedBatch}_${progKey}_${sanitizedDept}`,
+      `${sanitizedBatch}_${progKey}_${sanitizedDept}_Sec-A`,
+      `${sanitizedBatch}_${progKey}_${sanitizedDept}_Sec-B`,
+      `${sanitizedBatch}_${progKey}_${sanitizedDept}_Sec-C`,
+      // Admission-flow format: {batch}_{UG|PG}_{progKey}_{dept}[_{Sec-X}]
+      `${sanitizedBatch}_${progBucket}_${progKey}_${sanitizedDept}`,
+      `${sanitizedBatch}_${progBucket}_${progKey}_${sanitizedDept}_Sec-A`,
+      `${sanitizedBatch}_${progBucket}_${progKey}_${sanitizedDept}_Sec-B`,
+      `${sanitizedBatch}_${progBucket}_${progKey}_${sanitizedDept}_Sec-C`,
+      // Fallback: raw selectedProgramme token in place of programme key
+      `${sanitizedBatch}_${sanitizeKStr(selectedProgramme)}_${sanitizedDept}`,
+      `${sanitizedBatch}_${sanitizeKStr(selectedProgramme)}_${sanitizedDept}_Sec-A`,
+      `${sanitizedBatch}_${sanitizeKStr(selectedProgramme)}_${sanitizedDept}_Sec-B`,
+    ];
+
+    const collections = ['students', 'approved_admissions'];
+    const unsubs: Array<() => void> = [];
+    const docMap = new Map<string, Map<string, Student>>();
+
+    const emitDirectStudents = () => {
+      const allDirect: Student[] = [];
+      docMap.forEach((studentsInDoc) => {
+        studentsInDoc.forEach((s) => allDirect.push(s));
+      });
+      allDirect.sort((a, b) => {
+        const numA = parseInt(a.registerNumber.replace(/[^0-9]/g, ''), 10);
+        const numB = parseInt(b.registerNumber.replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return a.registerNumber.localeCompare(b.registerNumber);
+      });
+      setDirectFirestoreStudents(allDirect);
+    };
+
+    collections.forEach((collName) => {
+      docIdVariants.forEach((docId) => {
+        try {
+          const docRef = doc(db, collName, docId);
+          const unsub = onSnapshot(docRef, (snap) => {
+            const keyInDocMap = `${collName}-${docId}`;
+            if (snap.exists()) {
+              const data = snap.data() || {};
+              const meta = data._meta || {};
+              const studentsInDoc = new Map<string, Student>();
+              Object.entries(data).forEach(([key, val]) => {
+                if (!key.startsWith('_')) {
+                  const sName = typeof val === 'object' && val !== null ? (val as any).name || '' : String(val || '');
+                  if (sName) {
+                    const semNum = parseInt(selectedSemester || '7', 10) || 7;
+                    studentsInDoc.set(key, {
+                      id: `std-direct-${collName}-${docId}-${key}`,
+                      name: sName,
+                      registerNumber: key,
+                      department: (meta.department || selectedDepartment) as Department,
+                      programme: selectedProgramme,
+                      subjectCode: '',
+                      subjectName: '',
+                      semester: semNum,
+                      year: Math.ceil(semNum / 2),
+                      academicYear: selectedAcademicYear || '2026-2027',
+                      batch: activeBatch,
+                      examDate: selectedExam?.date || '',
+                      session: selectedExam?.session || 'FN',
+                    });
+                  }
+                }
+              });
+              docMap.set(keyInDocMap, studentsInDoc);
+            } else {
+              docMap.delete(keyInDocMap);
+            }
+            emitDirectStudents();
+          });
+          unsubs.push(unsub);
+        } catch (e) {
+          // ignore
+        }
+      });
+    });
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [selectedProgramme, selectedDepartment, selectedBatch, derivedReportBatch, selectedAcademicYear, selectedSemester, selectedExam]);
 
   // Department-Wise Attendance Students Data (Aggregated across ALL exam halls)
   const departmentStudentsWithHall = useMemo(() => {
@@ -331,7 +823,19 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         const progDeptList = (firestoreDeptMap as any)?.[selectedProgramme];
         if (Array.isArray(progDeptList) && progDeptList.length > 0) {
           const progSet = new Set(progDeptList.map((d: string) => normalizeDeptName(d)));
-          if (!progSet.has(normStDept)) return false;
+          if (!progSet.has(normStDept)) {
+            // The department is not explicitly listed for this programme — fall back to
+            // programme-bucket matching so candidates whose department uses a slightly
+            // different label (or isn't listed in the config) are not silently dropped.
+            const stProg = getProgrammeForDept(normStDept);
+            if (isUgProgramme(selectedProgramme)) {
+              if (!(stProg === 'B_E' || stProg === 'B_Tech' || stProg === 'UG')) return false;
+            } else if (isPgProgramme(selectedProgramme)) {
+              if (!(stProg === 'PG_MBA' || stProg === 'M_E' || stProg === 'M_Tech' || stProg === 'PG')) return false;
+            } else {
+              return false;
+            }
+          }
         } else {
           const stProg = getProgrammeForDept(normStDept);
           const selNorm = String(selectedProgramme).trim().toUpperCase();
@@ -357,32 +861,68 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         if (normStDept !== normSelDept && st.department !== selectedDepartment) return false;
       }
 
-      // Academic Year filter — normalized (2026-27 == 2026-2027) and skipped when empty
-      if (selectedAcademicYear && selectedAcademicYear.trim() !== '') {
-        const selAyNorm = normalizeAy(selectedAcademicYear);
-        const stAyNorm = normalizeAy(st.academicYear);
-        if (stAyNorm && selAyNorm && stAyNorm !== selAyNorm) return false;
+      const targetBatch = selectedBatch || derivedReportBatch;
+      const isPG = isPgProgramme(selectedProgramme);
+
+      // Strict Batch filter — check st.batch property OR derive from register number (e.g. 420723104001 -> 2023-2027)
+      if (targetBatch) {
+        const targetBatchNorm = normalizeBatch(targetBatch);
+        const stEffectiveBatch = extractCandidateBatch(st, isPG);
+        if (targetBatchNorm && stEffectiveBatch !== targetBatchNorm) {
+          return false;
+        }
       }
 
-      // Semester filter (disabled when empty)
-      if (selectedSemester && selectedSemester.trim() !== '') {
-        if (st.semester !== parseInt(selectedSemester, 10)) return false;
-      }
+      // Strict Academic Year & Semester Coordinated Filter
+      if (targetBatch && selectedAcademicYear && selectedSemester) {
+        const selSemNum = parseInt(selectedSemester, 10);
+        const expectedSem = deriveSemFromBatchAy(targetBatch, selectedAcademicYear, isPG);
 
-      // Derived batch filter — reverse-engineering: semester + academicYear -> batch (e.g. Sem 7 + AY 2026-2027 → 2023-2027)
-      // This is the authoritative namelist gate for the image's form.
-      if (derivedReportBatch) {
-        const stBatchNorm = normalizeBatch(st.batch);
-        const derivedNorm = normalizeBatch(derivedReportBatch);
-        if (stBatchNorm && derivedNorm && stBatchNorm !== derivedNorm) return false;
-        // When batch is targeted, students without a batch tag are kept (they will be filtered by sem+dept above)
+        // Check if expected semester for (targetBatch + selectedAcademicYear) matches selectedSemester
+        if (expectedSem > 0 && Math.abs(expectedSem - selSemNum) > 1) {
+          return false;
+        }
+
+        // Check candidate's stored semester if present
+        if (st.semester && Math.abs(st.semester - selSemNum) > 1) {
+          if (expectedSem > 0 && Math.abs(expectedSem - selSemNum) > 1) {
+            return false;
+          }
+        }
       }
 
       return true;
     });
 
+    // Merge direct Firestore student query results (matching Reports.jsx & Attendance.jsx concept)
+    const candidateMap = new Map<string, Student>();
+    targetStudents.forEach((st) => candidateMap.set(st.registerNumber, st));
+
+    const targetBatch = selectedBatch || derivedReportBatch;
+    const isPG = isPgProgramme(selectedProgramme);
+    const selSemNum = selectedSemester ? parseInt(selectedSemester, 10) : 0;
+
+    directFirestoreStudents.forEach((st) => {
+      // Validate directFirestoreStudents against Batch + Academic Year + Semester
+      if (targetBatch) {
+        const targetBatchNorm = normalizeBatch(targetBatch);
+        const stEffectiveBatch = extractCandidateBatch(st, isPG);
+        if (targetBatchNorm && stEffectiveBatch !== targetBatchNorm) return;
+      }
+      if (targetBatch && selectedAcademicYear && selSemNum > 0) {
+        const expectedSem = deriveSemFromBatchAy(targetBatch, selectedAcademicYear, isPG);
+        if (expectedSem > 0 && Math.abs(expectedSem - selSemNum) > 1) return;
+      }
+
+      if (!candidateMap.has(st.registerNumber)) {
+        candidateMap.set(st.registerNumber, st);
+      }
+    });
+
+    const candidateList = Array.from(candidateMap.values());
+
     // 2. Map with their allocated seat and hall info
-    const enrichedList = targetStudents.map((st) => {
+    const enrichedList = candidateList.map((st) => {
       const seat = allocatedSeats.find(
         (s) => s.student.id === st.id || s.student.registerNumber === st.registerNumber
       );
@@ -990,6 +1530,25 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
               </select>
             </div>
 
+            {/* Select Batch Dropdown */}
+            <div className="flex items-center space-x-2">
+              <span className="font-semibold text-slate-700">Select Batch:</span>
+              <select
+                id="select-batch-attendance"
+                value={selectedBatch}
+                onChange={(e) => setSelectedBatch(e.target.value)}
+                aria-label="Select batch for attendance sheet"
+                className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl font-bold text-indigo-900 focus:outline-none"
+              >
+                <option value="">All Batches</option>
+                {availableBatches.map((b) => (
+                  <option key={b} value={b}>
+                    Batch {b}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Academic Year Dropdown */}
             <div className="flex items-center space-x-2">
               <span className="font-semibold text-slate-700">Academic Year:</span>
@@ -1189,11 +1748,8 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         )}
       </div>
 
-      {/* PRINTABLE CANVAS CONTAINER */}
-      <div
-        ref={printAreaRef}
-        className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 max-w-5xl mx-auto print:border-none print:shadow-none print:p-0 print:m-0 text-slate-900"
-      >
+      {/* PRINTABLE CANVAS CONTAINER - outer card removed, namelist shows directly at this place */}
+      <div ref={printAreaRef} className="text-slate-900">
         {/* DOCUMENT 1: DEPARTMENT-WISE ATTENDANCE & HALL MAPPING REPORT */}
         {reportType === 'dept-attendance' && (
           <div className="space-y-6">
@@ -1231,31 +1787,12 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
               <div>
                 <span className="text-slate-500 block text-[10px] uppercase font-bold">Subject / Course:</span>
                 <span className="font-bold text-slate-900 font-mono">
-                  {departmentStudentsWithHall[0]?.student.subjectCode
-                    ? `${departmentStudentsWithHall[0]?.student.subjectCode} — ${departmentStudentsWithHall[0]?.student.subjectName}`
-                    : 'All Departmental Courses'}
+                  {activeSubjectInfo}
                 </span>
               </div>
             </div>
 
-            {/* Hall Distribution Summary Box */}
-            <div className="border border-slate-900 bg-slate-100/80 px-4 py-2.5 text-xs flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-800">Assigned Exam Halls:</span>
-                {Object.entries(deptHallDistribution).map(([hallNo, count]) => (
-                  <span
-                    key={hallNo}
-                    className="inline-flex items-center space-x-1 bg-white border border-slate-400 px-2 py-0.5 rounded text-slate-900 font-mono text-[11px]"
-                  >
-                    <span className="font-bold text-indigo-700">{hallNo}:</span>
-                    <span>{count} Students</span>
-                  </span>
-                ))}
-              </div>
-              <div className="font-bold text-slate-900 text-xs">
-                Total Branch Strength: <span className="text-indigo-800 font-mono text-sm">{departmentStudentsWithHall.length}</span> Candidates
-              </div>
-            </div>
+
 
             {/* Department Students Table */}
             <div>
@@ -1264,50 +1801,53 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                   <tr className="bg-slate-100 border-b border-slate-900 text-slate-900 font-bold uppercase text-[10px]">
                     <th className="py-2.5 px-2 border-r border-slate-900 text-center w-12">S.No</th>
                     <th className="py-2.5 px-3 border-r border-slate-900 w-36">Register Number</th>
-                    <th className="py-2.5 px-3 border-r border-slate-900">Candidate Name</th>
-                    <th className="py-2.5 px-3 border-r border-slate-900 text-center w-36 bg-indigo-50 text-indigo-950 font-black">
-                      Allocated Hall
-                    </th>
-                    <th className="py-2.5 px-3 border-r border-slate-900 text-center w-28">Desk No</th>
-                    {includeSignatures && (
-                      <th className="py-2.5 px-4 border-r border-slate-900 text-center w-48">
-                        Candidate Signature
+                    <th className="py-2.5 px-3 border-r border-slate-900 min-w-[180px]">Candidate Name</th>
+                    {batchSubjectCodes.map((sub) => (
+                      <th
+                        key={sub.code}
+                        title={`${sub.code} — ${sub.name} (${sub.examDate})`}
+                        className="py-2 px-2 border-r border-slate-900 text-center min-w-[100px] w-32 font-mono bg-indigo-50/90 text-indigo-950 font-black tracking-tight"
+                      >
+                        <div className="text-xs font-black text-slate-900">{sub.code}</div>
+                        {sub.examDate && (
+                          <div className="text-[9px] font-sans font-bold text-indigo-800 mt-0.5 tracking-normal">
+                            {sub.examDate}
+                          </div>
+                        )}
                       </th>
-                    )}
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-300">
-                  {departmentStudentsWithHall.map((item, idx) => (
-                    <tr key={item.student.id} className="border-b border-slate-300 hover:bg-slate-50/50">
-                      <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-medium">
-                        {idx + 1}
+                  {departmentStudentsWithHall.length === 0 ? (
+                    <tr>
+                      <td colSpan={3 + Math.max(0, batchSubjectCodes.length)} className="py-8 text-center text-slate-500 font-semibold italic">
+                        No candidate records found for the selected department, batch ({selectedBatch || derivedReportBatch || 'All'}), and semester ({selectedSemester || 'All'}).
                       </td>
-                      <td className="py-2 px-3 border-r border-slate-900 font-mono font-bold text-slate-900">
-                        {item.student.registerNumber}
-                      </td>
-                      <td className="py-2 px-3 border-r border-slate-900 font-semibold text-slate-800">
-                        {item.student.name}
-                      </td>
-                      <td className="py-2 px-3 border-r border-slate-900 text-center bg-indigo-50/50">
-                        <span className="font-extrabold font-mono text-indigo-900 text-xs">
-                          {item.hallNumber}
-                        </span>
-                        {item.room && (
-                          <span className="block text-[9px] text-slate-500 font-sans">
-                            {item.room.block} ({item.room.floor})
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 border-r border-slate-900 text-center font-bold font-mono text-slate-800">
-                        {item.deskNumber}
-                      </td>
-                      {includeSignatures && (
-                        <td className="py-2 px-4 border-r border-slate-900 text-center text-slate-300">
-                          {/* Empty space for Candidate Signature */}
-                        </td>
-                      )}
                     </tr>
-                  ))}
+                  ) : (
+                    departmentStudentsWithHall.map((item, idx) => (
+                      <tr key={item.student.id} className="border-b border-slate-300 hover:bg-slate-50/50">
+                        <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-medium">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-900 font-mono font-bold text-slate-900">
+                          {item.student.registerNumber}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-900 font-semibold text-slate-800">
+                          {item.student.name}
+                        </td>
+                        {batchSubjectCodes.map((sub) => (
+                          <td
+                            key={sub.code}
+                            className="py-2 px-2 border-r border-slate-900 text-center text-slate-300 font-mono text-[10px]"
+                          >
+                            {/* Signature / Attendance space */}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
