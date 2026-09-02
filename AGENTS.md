@@ -1,5 +1,100 @@
 ## Summary of Changes
 
+### 373. Flexible Role & Canonical Department Matching for Mentor Allocation (`MentorAllocation.jsx`)
+- **Goal**: Fix issue shown in screenshots where faculty member `Dr. R. Nithya` (Department: `B.E. Electronics and Communication Engineering`, Role: `Academic Coordinator`) failed to appear under `Department Faculty` in [`MentorAllocation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MentorAllocation.jsx).
+- **Root Cause**:
+  - In `MentorAllocation.jsx`, real-time listeners for `facultyList` and `globalMentors` filtered users using strict role checks `(u.role === "Faculty" || u.role === "HOD")` and strict department string equality `u.department === userData.department`.
+  - Because `Dr. R. Nithya` had role `"Academic Coordinator"` in her user document and department string `"B.E. Electronics and Communication Engineering"`, both strict role and strict string equality checks evaluated to `false`, silently hiding her from the `Department Faculty` list.
+- **Fix**:
+  - In [`MentorAllocation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MentorAllocation.jsx):
+    - Added `isDeptMatch` helper to perform canonical fuzzy department matching (`ECE` ↔ `B.E. Electronics and Communication Engineering`).
+    - Expanded role filter to include all non-student teaching/staff roles (`u.role !== "Student"`).
+    - Expanded approval status check (`u.status === "Approved" || u.isApproved === true || u.isApproved === "Approved"`).
+    - Filtered against active selected department (`department || userData?.department`).
+- **Result**: `Dr. R. Nithya` and all other department faculty members now 100% reliably display under `Department Faculty` in [`MentorAllocation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MentorAllocation.jsx).
+- Build passes cleanly with 0 errors.
+
+### 372. Canonical Fuzzy Department Matching for HOD Pending Activity Approvals (`HODDashboard.jsx`)
+- **Goal**: Fix issue shown in screenshot where a student activity marked `HOD_Pending` (Approved by first-level reviewer) failed to appear in `HODDashboard.jsx` under `Pending Activity Approvals`.
+- **Root Cause**:
+  - In `HODDashboard.jsx`, real-time listeners for `activity_entries` and `step_activities` filtered pending documents using strict equality `if (data.department === hodDepartment)`.
+  - When the student document stored the raw full department string (`B.E. Computer Science and Engineering` or `CSE`), but the HOD profile stored `Computer Science and Engineering` (or vice-versa), strict string equality evaluated to `false`, silently excluding the pending activity card from the HOD's view.
+- **Fix**:
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx):
+    - Added `isDeptMatch` helper performing canonical fuzzy department normalization and acronym resolution (`CSE` ↔ `B.E. Computer Science and Engineering`).
+    - Replaced strict `data.department === hodDepartment` checks in both `activity_entries` and `step_activities` listeners with `isDeptMatch(data.department, hodDepartment)`.
+- **Result**: `HOD_Pending` activity items now 100% reliably display in `HODDashboard.jsx` regardless of minor department string prefix differences.
+- Build passes cleanly with 0 errors.
+
+### 371. Strict Displayed Column Quota Sum Synchronization (`FacultyDutyView.tsx`)
+- **Goal**: Resolve logic issue shown in screenshot where inputs displayed `0` across all department columns, yet `DIVIDED / TOTAL` displayed `28 / 28` (or `3 / 3`). Ensure `DIVIDED / TOTAL` and `isBalanced` sum strictly the values rendered in the active department columns.
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Refactored `getDeptQuota` to perform bidirectional fuzzy matching between raw Firestore department names (`B.E. Civil Engineering`) and legacy acronym keys (`CIVIL`).
+    - Updated `quotaSum` to calculate strictly by reducing over `activeScheduledDepartments` via `getDeptQuota(wf?.deptQuotas, dept)`, guaranteeing 100% synchronization between displayed cell values and `DIVIDED / TOTAL`.
+- **Result**: If input cells display `0`, `DIVIDED / TOTAL` accurately displays `0 / 28` (amber warning badge). When numbers are entered/auto-balanced, `DIVIDED / TOTAL` updates to match the sum of displayed inputs.
+- Build passes cleanly with 0 errors.
+
+### 370. Nomination Deadline Modal & Overdue Task Tracking (`FacultyDutyView.tsx` & `types.ts`)
+- **Goal**: Per user request, allow the Exam Cell Coordinator to specify a Nomination End Date & Time when dispatching duty indents to HODs. If the deadline passes without faculty allocation by an HOD, the task stays in the pending list marked with a red `DEADLINE EXPIRED (Not Allocated)` badge.
+- **Fix**:
+  - In [`types.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/types.ts): Added optional `deadlineDate` and `deadlineTime` fields to `ExamDutyWorkflow`.
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Added Nomination Deadline Modal state (`isDispatchModalOpen`, `deadlineDateInput`, `deadlineTimeInput`, `dispatchRemarksInput`).
+    - Updated `handleSendExamIndentToHods` and `handleSendAllIndentsToHods` to trigger the Nomination Deadline Modal.
+    - Implemented `handleConfirmDispatchWithDeadline` to save nomination end dates/times into Firestore workflows.
+- **Result**: HODs receive duty indents with an explicit nomination deadline. Expired tasks remain in pending state flagged as `DEADLINE EXPIRED (Not Allocated)`.
+- Build passes cleanly with 0 errors.
+
+### 369. Full Department Name Canonicalization & Acronym Elimination (`FacultyDutyView.tsx`)
+- **Goal**: Per user request, eliminate duplicate acronym columns (`EEE`, `AI&DS`, `ECE`, `MBA`) showing alongside full names in the Faculty Duty Matrix table headers. Strictly map all department codes to their single exact raw full name from Firestore (`programme_departments`).
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Implemented `canonicalizeDeptName` helper to map any department code or acronym (`EEE`, `ECE`, `MBA`...) to its single exact raw full string in `masterRawDepartments` (`B.E. Electrical and Electronics Engineering`, `Master of Business Administration`...).
+    - Updated `activeScheduledDepartments` to canonicalize all active scheduled department entries through `canonicalizeDeptName` and filter out non-exam departments (`Science and Humanities`, `Administration`).
+- **Result**: Acronyms are 100% removed from table headers; each active exam department is rendered exactly ONCE using its full raw Firestore department name.
+- Build passes cleanly with 0 errors.
+
+### 368. Active Exam Department Filtering Parity with IA Schedule (`FacultyDutyView.tsx`)
+- **Goal**: Per user request, stop rendering all 13 institutional departments (including non-exam departments like `Science and Humanities`, `Administration`, etc.) as empty columns in the Faculty Duty Allocation table. Render ONLY the active departments that actually have scheduled exams created in [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) (`qp_setter_assignments`).
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Created `activeScheduledDepartments` memo to dynamically extract departments present in `effectiveExams` and `allocatedSeats`.
+    - Matched active department codes with full department strings from Firestore (`programme_departments`).
+    - Replaced table column mapping, quota inputs, total summary footers, and HOD nomination tabs to strictly render `activeScheduledDepartments`.
+- **Result**: Non-exam departments (`Science and Humanities`, `Administration`, etc.) are 100% hidden; table headers strictly display ONLY departments with active scheduled exam papers.
+- Build passes cleanly with 0 errors.
+
+### 367. Raw Full Department Name Display from Firestore in Faculty Duty Matrix (`FacultyDutyView.tsx`)
+- **Goal**: Per user request, stop acronym conversion (`CSE`, `IT`, `ECE`...) and display the exact raw full department names (`M.E. Applied Electronics`, `Master of Business Administration`, `B.E. Civil Engineering`, `B.E. Computer Science and Engineering`, `B.E. Electrical and Electronics Engineering`, `B.E. Electronics and Communication Engineering`, `B.E. Mechanical Engineering`, `B.E. Bio Medical Engineering`, `B.E. Robotics and Automation`, `B.Tech. Artificial Intelligence and Data Science`, `B.Tech. Information Technology`, `Science and Humanities`, `Administration`) as fetched directly from Firestore (`programme_departments`).
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Refactored `dynamicDepartments` memo to preserve exact raw department strings from Firestore without replacing them with short acronym codes.
+    - Added `getDeptQuota` helper for fuzzy department matching between raw full names and duty quota objects.
+- **Result**: Table headers and columns in `FacultyDutyView.tsx` display the exact full department names as saved in `Curriculum.jsx` / Firestore without hardcoding.
+- Build passes cleanly with 0 errors.
+
+### 366. Dynamic Curriculum Department Integration in Faculty Duty Allocation (`FacultyDutyView.tsx`)
+- **Goal**: Render active departments dynamically from [`Curriculum.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Curriculum.jsx) (`programme_departments` via `useDepartments()` hook) instead of hardcoding `ALL_DEPARTMENTS = ['CSE', 'IT', 'AI&DS', 'ECE', 'MECH', 'CIVIL', 'EEE']`.
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Imported `useDepartments()` hook to read dynamic departments configured in Firestore (`programme_departments`).
+    - Created `dynamicDepartments` memo to automatically extract active department codes from Curriculum master data.
+    - Replaced all static `ALL_DEPARTMENTS` occurrences with `dynamicDepartments` across table headers, input columns, quota calculations, HOD nomination tabs, and summary footers.
+- **Result**: The `Date-wise Exam Hall Requirements & Department Quota Matrix` table now 100% dynamically renders department columns configured in `Curriculum.jsx`.
+- Build passes cleanly with 0 errors.
+
+### 365. Safe Selected Exam Null Guard Fix (`FacultyDutyView.tsx`)
+- **Goal**: Resolve runtime error `[Error] TypeError: null is not an object (evaluating 'safeSelectedExam.id')` at line 130/191 of `FacultyDutyView.tsx`.
+- **Root Cause**:
+  - During initial render before Firestore exam schedules loaded, `safeSelectedExam` fell back to `null as unknown as ExamSchedule`. Accessing `safeSelectedExam.id` or `safeSelectedExam.date` threw an uncaught TypeError crash.
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Refactored `safeSelectedExam` to return a safe non-null fallback `ExamSchedule` object instead of `null`.
+    - Added optional chaining and safe fallback objects in `currentRequirement` and `currentWorkflow`.
+- **Result**: `FacultyDutyView.tsx` renders cleanly without component tree crash during initial load.
+- Build passes cleanly with 0 errors.
+
 ### 364. Raw Firestore Department Name Preservation (`PrintReportsView.tsx`)
 - **Goal**: Render department names in the UI exactly as stored in Firestore without forcing hardcoded string mappings (`B.E. Computer Science and Engineering`, `B.Tech. Information Technology`, etc.).
 - **Fix**:

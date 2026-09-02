@@ -167,6 +167,8 @@ export interface ExamDutyWorkflow {
   status: DutyWorkflowStatus;
   coordinatorRemarks?: string;
   issuedAt?: string;
+  deadlineDate?: string;
+  deadlineTime?: string;
   submittedAt?: string;
   principalApproval?: PrincipalApproval;
 }

@@ -22,7 +22,8 @@ import {
   Check,
   Zap,
   Layers,
-  ArrowUpRight
+  ArrowUpRight,
+  AlertCircle
 } from 'lucide-react';
 import { 
   Faculty, 
@@ -38,6 +39,7 @@ import {
 } from '../../../types';
 import { downloadCSV } from './allocationEngine';
 import { subscribeToRealtimeSchedules } from './scheduleSync';
+import { useDepartments } from '../../../hooks/useDepartments';
 
 const ALL_DEPARTMENTS: Department[] = ['CSE', 'IT', 'AI&DS', 'ECE', 'MECH', 'CIVIL', 'EEE'];
 
@@ -96,8 +98,137 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   const safeSelectedExam = useMemo<ExamSchedule>(() => {
     if (selectedExam) return selectedExam;
     if (effectiveExams.length > 0) return effectiveExams[0];
-    return null as unknown as ExamSchedule;
+    return {
+      id: 'default-exam',
+      name: 'Continuous Internal Assessment',
+      date: '2026-08-31',
+      session: 'FN',
+      timeSlot: '09:30 AM - 12:30 PM',
+      departments: ['CSE', 'IT', 'ECE'],
+      semester: 5,
+      status: 'Scheduled',
+    };
   }, [selectedExam, effectiveExams]);
+
+  // Fetch dynamic departments directly from Curriculum page (programme_departments Firestore collection)
+  const { departments: firestoreDeptObject } = useDepartments();
+
+  // Master list of raw department strings from Firestore (programme_departments)
+  const masterRawDepartments = useMemo<string[]>(() => {
+    const rawList = Object.values(firestoreDeptObject || {}).flat();
+    if (!rawList || rawList.length === 0) return [];
+    const res: string[] = [];
+    rawList.forEach((raw) => {
+      if (raw && typeof raw === 'string') {
+        const trim = raw.trim();
+        if (trim && !res.includes(trim)) res.push(trim);
+      }
+    });
+    return res;
+  }, [firestoreDeptObject]);
+
+  // Canonicalize any department string or acronym to its exact raw Firestore name in programme_departments
+  const canonicalizeDeptName = (rawDept: string): string => {
+    if (!rawDept) return '';
+    const trimmed = rawDept.trim();
+    const lower = trimmed.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // 1. Exact match in master list
+    const exact = masterRawDepartments.find((m) => m.trim() === trimmed);
+    if (exact) return exact;
+
+    // 2. Normalized match against acronyms/keywords in master list
+    const matched = masterRawDepartments.find((m) => {
+      const mLower = m.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (mLower === lower) return true;
+      if (lower === 'cse' && mLower.includes('computerscience')) return true;
+      if (lower === 'it' && mLower.includes('informationtechnology')) return true;
+      if (lower === 'aids' && mLower.includes('artificialintelligence')) return true;
+      if (lower === 'ece' && mLower.includes('electronicsandcommunication')) return true;
+      if (lower === 'eee' && mLower.includes('electricalandelectronics')) return true;
+      if (lower === 'mech' && mLower.includes('mechanicalengineering')) return true;
+      if (lower === 'civil' && mLower.includes('civilengineering')) return true;
+      if (lower === 'bme' && mLower.includes('biomedical')) return true;
+      if (lower === 'robotics' && mLower.includes('roboticsandautomation')) return true;
+      if (lower === 'mba' && (mLower.includes('businessadministration') || mLower === 'administration')) return true;
+      return false;
+    });
+
+    if (matched) return matched;
+    return trimmed;
+  };
+
+  const dynamicDepartments = useMemo<Department[]>(() => {
+    if (masterRawDepartments.length > 0) return masterRawDepartments as Department[];
+    return ALL_DEPARTMENTS;
+  }, [masterRawDepartments]);
+
+  // Active departments that actually have scheduled exams in IAScheduleCreation.jsx / qp_setter_assignments
+  const activeScheduledDepartments = useMemo<Department[]>(() => {
+    const deptsSet = new Set<string>();
+
+    // 1. Collect departments from active scheduled exams (effectiveExams)
+    (effectiveExams || []).forEach((exam) => {
+      if (Array.isArray(exam.departments)) {
+        exam.departments.forEach((d) => {
+          if (d && typeof d === 'string') {
+            const canonical = canonicalizeDeptName(d);
+            if (canonical) deptsSet.add(canonical);
+          }
+        });
+      }
+    });
+
+    // 2. Collect departments from allocated seats if any
+    (allocatedSeats || []).forEach((seat) => {
+      const d = seat.student?.department;
+      if (d && typeof d === 'string') {
+        const canonical = canonicalizeDeptName(d);
+        if (canonical) deptsSet.add(canonical);
+      }
+    });
+
+    // Filter out non-exam administrative departments unless explicitly scheduled
+    const filteredDepts = Array.from(deptsSet).filter((d) => {
+      const lower = d.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (lower === 'scienceandhumanities' || lower === 'administration') return false;
+      return true;
+    });
+
+    if (filteredDepts.length > 0) {
+      return filteredDepts as Department[];
+    }
+
+    return masterRawDepartments.filter((d) => {
+      const lower = d.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return lower !== 'scienceandhumanities' && lower !== 'administration';
+    }) as Department[];
+  }, [effectiveExams, allocatedSeats, masterRawDepartments]);
+
+  const getDeptQuota = (deptQuotas: { [key: string]: DeptDutyQuota | undefined } | undefined, deptName: string): DeptDutyQuota | undefined => {
+    if (!deptQuotas) return undefined;
+    if (deptQuotas[deptName as Department]) return deptQuotas[deptName as Department];
+
+    const targetLower = deptName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const foundKey = Object.keys(deptQuotas).find((k) => {
+      const kLower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (kLower === targetLower) return true;
+      if ((targetLower.includes('computerscience') || targetLower === 'cse') && (kLower.includes('computerscience') || kLower === 'cse')) return true;
+      if ((targetLower.includes('informationtechnology') || targetLower === 'it') && (kLower.includes('informationtechnology') || kLower === 'it')) return true;
+      if ((targetLower.includes('artificialintelligence') || targetLower === 'aids') && (kLower.includes('artificialintelligence') || kLower === 'aids')) return true;
+      if ((targetLower.includes('electronicsandcommunication') || targetLower === 'ece') && (kLower.includes('electronicsandcommunication') || kLower === 'ece')) return true;
+      if ((targetLower.includes('electricalandelectronics') || targetLower === 'eee') && (kLower.includes('electricalandelectronics') || kLower === 'eee')) return true;
+      if ((targetLower.includes('mechanicalengineering') || targetLower === 'mech') && (kLower.includes('mechanicalengineering') || kLower === 'mech')) return true;
+      if ((targetLower.includes('civilengineering') || targetLower === 'civil') && (kLower.includes('civilengineering') || kLower === 'civil')) return true;
+      if ((targetLower.includes('biomedical') || targetLower === 'bme') && (kLower.includes('biomedical') || kLower === 'bme')) return true;
+      if ((targetLower.includes('roboticsandautomation') || targetLower === 'robotics') && (kLower.includes('roboticsandautomation') || kLower === 'robotics')) return true;
+      if ((targetLower.includes('businessadministration') || targetLower === 'mba') && (kLower.includes('businessadministration') || kLower === 'mba')) return true;
+      return kLower.includes(targetLower) || targetLower.includes(kLower);
+    });
+
+    return foundKey ? deptQuotas[foundKey as Department] : undefined;
+  };
 
   // Main workflow tab
   const [activeWorkflowTab, setActiveWorkflowTab] = useState<'coordinator' | 'hod-portal' | 'principal-approval' | 'roster-grid'>('coordinator');
@@ -112,6 +243,13 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   const [principalRemarksInput, setPrincipalRemarksInput] = useState<string>('Approved. Ensure all Hall Superintendents and Standby Relievers report to the Central Exam Control Room 30 minutes prior to exam commencement.');
   const [principalNameInput, setPrincipalNameInput] = useState<string>('Dr. S. K. Narayanan, Ph.D.');
 
+  // Nomination Deadline Modal State
+  const [isDispatchModalOpen, setIsDispatchModalOpen] = useState<boolean>(false);
+  const [dispatchTargetExamId, setDispatchTargetExamId] = useState<string>('ALL');
+  const [deadlineDateInput, setDeadlineDateInput] = useState<string>('2026-08-29');
+  const [deadlineTimeInput, setDeadlineTimeInput] = useState<string>('17:00');
+  const [dispatchRemarksInput, setDispatchRemarksInput] = useState<string>('Please nominate available faculty members for assigned invigilation quota before the deadline.');
+
   // Filters for Roster Table
   const [filterRole, setFilterRole] = useState<string>('all');
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -125,7 +263,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
   // Calculate Date-wise & Session-wise Exam Hall counts and requirements for ALL exams
   const dateWiseHallRequirements = useMemo(() => {
-    return effectiveExams.map((exam) => {
+    return (effectiveExams || []).map((exam) => {
       // Count distinct rooms used in allocated seats or selectedHallIds
       const seatsForExam = allocatedSeats.filter(
         (s) => s.student.examDate === exam.date && s.student.session === exam.session
@@ -141,18 +279,20 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       const bufferRequirement = 1; // 1 buffer superintendent
       const totalRequired = hallSuperintendentRequirement + bufferRequirement;
 
-      // Find or build existing workflow
+      // Find or build existing workflow — canonicalize dept keys to avoid duplicate acronym/full-name quotas
       let wf = dutyWorkflows.find((w) => w.examScheduleId === exam.id);
       if (!wf) {
-        // Create initial default workflow object
+        // Create initial default workflow object (empty quotas — user must Auto/ allocate; no auto-split to avoid 10 vs 5 surprises)
         const initialQuotas: { [dept in Department]?: DeptDutyQuota } = {};
-        const deptsToUse = exam.departments.length > 0 ? exam.departments : ALL_DEPARTMENTS;
+        // Only create skeleton with 0 counts for active departments; do NOT auto-split totalRequired here
+        const deptsToUse = (exam.departments.length > 0
+          ? Array.from(new Set(exam.departments.map((d) => canonicalizeDeptName(d)).filter(Boolean)))
+          : activeScheduledDepartments.slice()) as Department[];
         
-        deptsToUse.forEach((dept, idx) => {
-          const share = Math.floor(totalRequired / deptsToUse.length) + (idx < totalRequired % deptsToUse.length ? 1 : 0);
+        deptsToUse.forEach((dept) => {
           initialQuotas[dept] = {
             department: dept,
-            requiredCount: share,
+            requiredCount: 0,
             nominatedFacultyIds: [],
             hodStatus: 'Pending',
           };
@@ -183,19 +323,53 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
         workflow: wf,
       };
     });
-  }, [exams, allocatedSeats, dutyWorkflows]);
+  }, [effectiveExams, allocatedSeats, dutyWorkflows, activeScheduledDepartments]);
 
   // Current active exam requirement info
   const currentRequirement = useMemo(() => {
+    const targetId = safeSelectedExam?.id || '';
     return (
-      dateWiseHallRequirements.find((r) => r.exam.id === safeSelectedExam.id) ||
-      dateWiseHallRequirements[0]
+      dateWiseHallRequirements.find((r) => r.exam.id === targetId) ||
+      dateWiseHallRequirements[0] || {
+        exam: safeSelectedExam,
+        hallCount: 0,
+        hallSuperintendentRequirement: 0,
+        bufferRequirement: 1,
+        totalRequired: 1,
+        workflow: {
+          id: 'wf-default',
+          examScheduleId: 'default-exam',
+          date: '2026-08-31',
+          session: 'FN',
+          timeSlot: '09:30 AM - 12:30 PM',
+          noOfHalls: 0,
+          hallSuperintendentCount: 0,
+          bufferCount: 1,
+          totalRequired: 1,
+          deptQuotas: {},
+          status: 'Draft',
+          coordinatorRemarks: '',
+        },
+      }
     );
-  }, [dateWiseHallRequirements, safeSelectedExam.id]);
+  }, [dateWiseHallRequirements, safeSelectedExam]);
 
   // Current workflow for selected exam
   const currentWorkflow = useMemo<ExamDutyWorkflow>(() => {
-    return currentRequirement.workflow;
+    return currentRequirement?.workflow || {
+      id: 'wf-default',
+      examScheduleId: 'default-exam',
+      date: '2026-08-31',
+      session: 'FN',
+      timeSlot: '09:30 AM - 12:30 PM',
+      noOfHalls: 0,
+      hallSuperintendentCount: 0,
+      bufferCount: 1,
+      totalRequired: 1,
+      deptQuotas: {},
+      status: 'Draft',
+      coordinatorRemarks: '',
+    };
   }, [currentRequirement]);
 
   // Helper to update workflow for ANY exam schedule
@@ -249,25 +423,26 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     handleSetExamDeptQuota(examId, dept, newCount);
   };
 
-  // Automated Quota Division Handler for a specific exam
+  // Automated Quota Division Handler for a specific exam — strictly over displayed columns
   const handleAutoDistributeExamQuota = (examId: string) => {
     const req = dateWiseHallRequirements.find((r) => r.exam.id === examId);
     if (!req) return;
 
     const totalNeeded = req.totalRequired;
-    const depts = req.exam.departments.length > 0 ? req.exam.departments : ALL_DEPARTMENTS;
+    const depts = activeScheduledDepartments as Department[];
 
     const newQuotas: { [dept in Department]?: DeptDutyQuota } = {};
     
-    // Distribute quota across departments
+    // Distribute quota across displayed departments only (synced with table columns)
     depts.forEach((d, idx) => {
       const quota = Math.floor(totalNeeded / depts.length) + (idx < totalNeeded % depts.length ? 1 : 0);
+      const existing = getDeptQuota(req.workflow.deptQuotas, d);
       newQuotas[d] = {
         department: d,
         requiredCount: quota,
-        nominatedFacultyIds: req.workflow.deptQuotas[d]?.nominatedFacultyIds || [],
-        hodStatus: req.workflow.deptQuotas[d]?.hodStatus || 'Pending',
-        hodRemarks: req.workflow.deptQuotas[d]?.hodRemarks,
+        nominatedFacultyIds: existing?.nominatedFacultyIds || [],
+        hodStatus: existing?.hodStatus || 'Pending',
+        hodRemarks: existing?.hodRemarks,
       };
     });
 
@@ -277,21 +452,22 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     });
   };
 
-  // Auto-distribute quotas for ALL exams in one click
+  // Auto-distribute quotas for ALL exams in one click — strictly over displayed columns
   const handleAutoDistributeAllExams = () => {
     const updatedWorkflows: ExamDutyWorkflow[] = dateWiseHallRequirements.map((req) => {
       const totalNeeded = req.totalRequired;
-      const depts = req.exam.departments.length > 0 ? req.exam.departments : ALL_DEPARTMENTS;
+      const depts = activeScheduledDepartments as Department[];
       const newQuotas: { [dept in Department]?: DeptDutyQuota } = {};
 
       depts.forEach((d, idx) => {
         const quota = Math.floor(totalNeeded / depts.length) + (idx < totalNeeded % depts.length ? 1 : 0);
+        const existing = getDeptQuota(req.workflow.deptQuotas, d);
         newQuotas[d] = {
           department: d,
           requiredCount: quota,
-          nominatedFacultyIds: req.workflow.deptQuotas[d]?.nominatedFacultyIds || [],
-          hodStatus: req.workflow.deptQuotas[d]?.hodStatus || 'Pending',
-          hodRemarks: req.workflow.deptQuotas[d]?.hodRemarks,
+          nominatedFacultyIds: existing?.nominatedFacultyIds || [],
+          hodStatus: existing?.hodStatus || 'Pending',
+          hodRemarks: existing?.hodRemarks,
         };
       });
 
@@ -306,95 +482,141 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     alert('✅ Auto-balanced Superintendent quotas across all exam dates and departments.');
   };
 
-  // Issue Indent for a specific exam
+  // Open Dispatch Modal for a specific exam — strict sync with displayed columns
   const handleSendExamIndentToHods = (examId: string) => {
     const req = dateWiseHallRequirements.find((r) => r.exam.id === examId);
     if (!req) return;
 
-    const quotas = Object.values(req.workflow.deptQuotas || {}) as (DeptDutyQuota | undefined)[];
-    const totalAllocated = quotas.reduce((sum, q) => sum + (q?.requiredCount || 0), 0);
+    // Must match exactly what the table displays: sum over activeScheduledDepartments via getDeptQuota
+    const totalAllocated = activeScheduledDepartments.reduce((sum, dept) => {
+      const q = getDeptQuota(req.workflow.deptQuotas, dept);
+      return sum + (q?.requiredCount || 0);
+    }, 0);
 
     if (totalAllocated !== req.totalRequired) {
       alert(`For ${req.exam.date} (${req.exam.session}), the sum of department quotas (${totalAllocated}) must equal the total required superintendents (${req.totalRequired} = ${req.hallCount} Halls + ${req.bufferRequirement} Buffer). Please adjust before sending.`);
       return;
     }
 
-    const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    updateWorkflowForExam(examId, {
-      status: 'Indent Sent to HODs',
-      issuedAt: timestamp,
-    });
+    let defDate = '2026-08-29';
+    try {
+      const dObj = new Date(req.exam.date);
+      dObj.setDate(dObj.getDate() - 2);
+      defDate = dObj.toISOString().split('T')[0];
+    } catch (_) {}
 
-    if (onAddNotification) {
-      onAddNotification({
-        title: 'Duty Indent Sent to HODs',
-        message: `Exam Cell issued duty indent of ${req.totalRequired} superintendents for ${req.exam.name} (${req.exam.date} ${req.exam.session}).`,
-        type: 'info',
-        read: false,
-      });
-    }
-
-    alert(`✅ Duty Indent for ${req.exam.date} (${req.exam.session}) successfully dispatched to respective Department HODs.`);
+    setDispatchTargetExamId(examId);
+    setDeadlineDateInput(defDate);
+    setDeadlineTimeInput('17:00');
+    setIsDispatchModalOpen(true);
   };
 
-  // Issue Indent for ALL exams
+  // Open Dispatch Modal for ALL exams — strict sync with displayed columns
   const handleSendAllIndentsToHods = () => {
     let unallocatedCount = 0;
     dateWiseHallRequirements.forEach((req) => {
-      const quotas = Object.values(req.workflow.deptQuotas || {}) as (DeptDutyQuota | undefined)[];
-      const sum = quotas.reduce((s, q) => s + (q?.requiredCount || 0), 0);
+      const sum = activeScheduledDepartments.reduce((s, dept) => {
+        const q = getDeptQuota(req.workflow.deptQuotas, dept);
+        return s + (q?.requiredCount || 0);
+      }, 0);
       if (sum !== req.totalRequired) {
         unallocatedCount++;
       }
     });
 
     if (unallocatedCount > 0) {
-      if (!confirm(`Warning: ${unallocatedCount} exam session(s) do not have exact balanced quotas yet. Do you want to auto-balance them first and issue indents to all HODs?`)) {
+      if (!confirm(`Warning: ${unallocatedCount} exam session(s) do not have exact balanced quotas yet. Do you want to auto-balance them first and open deadline dispatch?`)) {
         return;
       }
     }
 
-    const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    const updatedWorkflows = dateWiseHallRequirements.map((req) => {
-      const totalNeeded = req.totalRequired;
-      const depts = req.exam.departments.length > 0 ? req.exam.departments : ALL_DEPARTMENTS;
-      const newQuotas = { ...req.workflow.deptQuotas };
+    setDispatchTargetExamId('ALL');
+    setDeadlineDateInput('2026-08-29');
+    setDeadlineTimeInput('17:00');
+    setIsDispatchModalOpen(true);
+  };
 
-      // Ensure balanced
-      const quotas = Object.values(newQuotas) as (DeptDutyQuota | undefined)[];
-      const currentSum = quotas.reduce((s, q) => s + (q?.requiredCount || 0), 0);
-      if (currentSum !== totalNeeded) {
-        depts.forEach((d, idx) => {
-          const quota = Math.floor(totalNeeded / depts.length) + (idx < totalNeeded % depts.length ? 1 : 0);
-          newQuotas[d] = {
-            department: d,
-            requiredCount: quota,
-            nominatedFacultyIds: newQuotas[d]?.nominatedFacultyIds || [],
-            hodStatus: newQuotas[d]?.hodStatus || 'Pending',
-          };
+  // Confirm Dispatch with Nomination End Date & Time
+  const handleConfirmDispatchWithDeadline = () => {
+    if (!deadlineDateInput) {
+      alert('Please select a valid nomination end date.');
+      return;
+    }
+
+    const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
+    if (dispatchTargetExamId === 'ALL') {
+      const updatedWorkflows = dateWiseHallRequirements.map((req) => {
+        const totalNeeded = req.totalRequired;
+        const depts = activeScheduledDepartments as Department[];
+        // Build newQuotas strictly with displayed dept keys to avoid duplicate legacy keys
+        const newQuotas: { [dept in Department]?: DeptDutyQuota } = {};
+        // Copy existing displayed quotas via getDeptQuota
+        depts.forEach((d) => {
+          const existing = getDeptQuota(req.workflow.deptQuotas, d);
+          if (existing) newQuotas[d] = { ...existing };
+        });
+
+        const currentSum = depts.reduce((s, d) => s + (newQuotas[d]?.requiredCount || 0), 0);
+        if (currentSum !== totalNeeded) {
+          depts.forEach((d, idx) => {
+            const quota = Math.floor(totalNeeded / depts.length) + (idx < totalNeeded % depts.length ? 1 : 0);
+            const existing = newQuotas[d];
+            newQuotas[d] = {
+              department: d,
+              requiredCount: quota,
+              nominatedFacultyIds: existing?.nominatedFacultyIds || [],
+              hodStatus: existing?.hodStatus || 'Pending',
+            };
+          });
+        }
+
+        return {
+          ...req.workflow,
+          deptQuotas: newQuotas,
+          status: 'Indent Sent to HODs' as const,
+          issuedAt: timestamp,
+          deadlineDate: deadlineDateInput,
+          deadlineTime: deadlineTimeInput,
+          coordinatorRemarks: dispatchRemarksInput || req.workflow.coordinatorRemarks,
+        };
+      });
+
+      onUpdateDutyWorkflows(updatedWorkflows);
+
+      if (onAddNotification) {
+        onAddNotification({
+          title: 'Master Duty Indent Issued to All HODs',
+          message: `Exam Cell issued invigilation requisitions across all ${dateWiseHallRequirements.length} dates with Nomination Deadline: ${deadlineDateInput} ${deadlineTimeInput}.`,
+          type: 'info',
+          read: false,
         });
       }
 
-      return {
-        ...req.workflow,
-        deptQuotas: newQuotas,
-        status: 'Indent Sent to HODs' as const,
+      alert(`✅ Master Indent successfully dispatched to HODs! Nomination Deadline set for: ${deadlineDateInput} (${deadlineTimeInput}).`);
+    } else {
+      updateWorkflowForExam(dispatchTargetExamId, {
+        status: 'Indent Sent to HODs',
         issuedAt: timestamp,
-      };
-    });
-
-    onUpdateDutyWorkflows(updatedWorkflows);
-
-    if (onAddNotification) {
-      onAddNotification({
-        title: 'Master Duty Indent Issued to All HODs',
-        message: `Exam Cell has dispatched invigilation requisitions across all ${dateWiseHallRequirements.length} examination dates.`,
-        type: 'info',
-        read: false,
+        deadlineDate: deadlineDateInput,
+        deadlineTime: deadlineTimeInput,
+        coordinatorRemarks: dispatchRemarksInput,
       });
+
+      const req = dateWiseHallRequirements.find((r) => r.exam.id === dispatchTargetExamId);
+      if (onAddNotification && req) {
+        onAddNotification({
+          title: 'Duty Indent Sent to HODs',
+          message: `Exam Cell issued duty indent of ${req.totalRequired} superintendents for ${req.exam.name} (${req.exam.date} ${req.exam.session}) with Deadline: ${deadlineDateInput} ${deadlineTimeInput}.`,
+          type: 'info',
+          read: false,
+        });
+      }
+
+      alert(`✅ Duty Indent successfully dispatched! Nomination Deadline set for: ${deadlineDateInput} (${deadlineTimeInput}).`);
     }
 
-    alert(`✅ Master Indent successfully dispatched to HODs of all departments for all ${dateWiseHallRequirements.length} exam dates!`);
+    setIsDispatchModalOpen(false);
   };
 
   // Quota Sum calculations for selected exam
@@ -416,7 +638,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     const deptTotalQuotas: { [dept in Department]?: number } = {};
     const deptTotalNominated: { [dept in Department]?: number } = {};
 
-    ALL_DEPARTMENTS.forEach((d) => {
+    activeScheduledDepartments.forEach((d) => {
       deptTotalQuotas[d] = 0;
       deptTotalNominated[d] = 0;
     });
@@ -426,7 +648,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       totalSuperintendentsReq += item.hallSuperintendentRequirement;
       totalBufferReq += item.bufferRequirement;
 
-      ALL_DEPARTMENTS.forEach((d) => {
+      activeScheduledDepartments.forEach((d) => {
         const q = item.workflow.deptQuotas[d];
         if (q) {
           deptTotalQuotas[d] = (deptTotalQuotas[d] || 0) + (q.requiredCount || 0);
@@ -1096,8 +1318,8 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                       Req (+1 Buf)
                     </th>
                     
-                    {/* ALL DEPARTMENTS IN COLUMN */}
-                    {ALL_DEPARTMENTS.map((dept) => (
+                    {/* ALL DEPARTMENTS WITH SCHEDULED EXAMS IN COLUMN */}
+                    {activeScheduledDepartments.map((dept) => (
                       <th
                         key={dept}
                         className="py-3 px-2 text-center bg-slate-50 border-l border-slate-200/80 font-black text-slate-800 min-w-[85px]"
@@ -1117,8 +1339,10 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                   {dateWiseHallRequirements.map((item) => {
                     const isSelected = item.exam.id === safeSelectedExam.id;
                     const wf = item.workflow;
-                    const quotas = Object.values(wf?.deptQuotas || {}) as (DeptDutyQuota | undefined)[];
-                    const quotaSum = quotas.reduce((s, q) => s + (q?.requiredCount || 0), 0);
+                    const quotaSum = activeScheduledDepartments.reduce((sum, dept) => {
+                      const q = getDeptQuota(wf?.deptQuotas, dept);
+                      return sum + (q?.requiredCount || 0);
+                    }, 0);
                     const isBalanced = quotaSum === item.totalRequired;
 
                     return (
@@ -1167,14 +1391,14 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                           {item.hallSuperintendentRequirement} + {item.bufferRequirement} = <span className="underline">{item.totalRequired}</span>
                         </td>
 
-                        {/* Department Quota Columns with direct text box input for any department */}
-                        {ALL_DEPARTMENTS.map((dept) => {
-                          const quota = wf.deptQuotas[dept]?.requiredCount ?? 0;
+                        {/* Department Quota Columns with direct text box input for scheduled departments */}
+                        {activeScheduledDepartments.map((dept) => {
+                          const quota = getDeptQuota(wf.deptQuotas, dept)?.requiredCount ?? 0;
 
                           return (
                             <td
                               key={dept}
-                              className="py-2 px-1.5 text-center border-l border-slate-100 bg-slate-50/30"
+                              className="py-2 px-1.5 text-center border-l border-slate-100 bg-slate-50/30 min-w-[120px]"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div className="flex items-center justify-center">
@@ -1272,9 +1496,14 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                     </td>
 
                     {/* Department Totals */}
-                    {ALL_DEPARTMENTS.map((dept) => {
+                    {activeScheduledDepartments.map((dept) => {
                       const totalQuotaForDept = aggregateStats.deptTotalQuotas[dept] || 0;
-                      const availCount = facultyList.filter((f) => f.department === dept && f.isAvailable).length;
+                      const availCount = facultyList.filter((f) => {
+                        if (!f.isAvailable) return false;
+                        const cleanF = (f.department || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                        const cleanD = dept.toLowerCase().replace(/[^a-z0-9]/g, '');
+                        return cleanF === cleanD || (cleanF && cleanD && (cleanF.includes(cleanD) || cleanD.includes(cleanF)));
+                      }).length;
 
                       return (
                         <td key={dept} className="py-3 px-2 text-center font-mono border-l border-slate-300">
@@ -1343,7 +1572,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
               {/* Department Selector Tabs */}
               <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
-                {ALL_DEPARTMENTS.map((dept) => {
+                {activeScheduledDepartments.map((dept) => {
                   const q = currentWorkflow.deptQuotas[dept]?.requiredCount || 0;
                   const nominatedCount = currentWorkflow.deptQuotas[dept]?.nominatedFacultyIds?.length || 0;
                   const isComplete = nominatedCount >= q && q > 0;
@@ -1697,7 +1926,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-300">
-                    {ALL_DEPARTMENTS.filter((d) => (currentWorkflow.deptQuotas[d]?.requiredCount || 0) > 0).map((dept) => {
+                    {activeScheduledDepartments.filter((d) => (currentWorkflow.deptQuotas[d]?.requiredCount || 0) > 0).map((dept) => {
                       const q = currentWorkflow.deptQuotas[dept];
                       const names = q?.nominatedFacultyIds
                         .map((id) => facultyList.find((f) => f.id === id)?.name)
@@ -1862,7 +2091,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                 className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-700 focus:outline-none"
               >
                 <option value="all">All Departments</option>
-                {ALL_DEPARTMENTS.map((d) => (
+                {activeScheduledDepartments.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
@@ -2233,6 +2462,106 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nomination Deadline & Dispatch Modal */}
+      {isDispatchModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-base font-black text-slate-900">Set Nomination Deadline & Issue Indent to HODs</h3>
+              </div>
+              <button
+                onClick={() => setIsDispatchModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="bg-indigo-50/80 p-3 rounded-xl border border-indigo-100 space-y-1">
+                <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider block">Requisition Target</span>
+                <p className="font-bold text-indigo-950 text-xs">
+                  {dispatchTargetExamId === 'ALL'
+                    ? `Master Indent across all ${dateWiseHallRequirements.length} examination dates`
+                    : `Exam Date: ${dateWiseHallRequirements.find((r) => r.exam.id === dispatchTargetExamId)?.exam.date} (${dateWiseHallRequirements.find((r) => r.exam.id === dispatchTargetExamId)?.exam.session})`}
+                </p>
+                <p className="text-[11px] text-indigo-700">
+                  Respective Department HODs will receive a task notification in their HOD Dashboard to nominate faculty within this deadline.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Nomination End Date (Deadline) *
+                  </label>
+                  <input
+                    id="dispatch-deadline-date"
+                    type="date"
+                    value={deadlineDateInput}
+                    onChange={(e) => setDeadlineDateInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    End Time *
+                  </label>
+                  <input
+                    id="dispatch-deadline-time"
+                    type="time"
+                    value={deadlineTimeInput}
+                    onChange={(e) => setDeadlineTimeInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Exam Cell Instructions / Remarks for HODs
+                </label>
+                <textarea
+                  id="dispatch-remarks-input"
+                  rows={3}
+                  value={dispatchRemarksInput}
+                  onChange={(e) => setDispatchRemarksInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Enter instructions..."
+                />
+              </div>
+
+              <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 text-[11px] text-amber-900 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Deadline Overdue Policy:</strong> If an HOD does not nominate faculty before <strong>{deadlineDateInput} ({deadlineTimeInput})</strong>, the task will remain in their HOD Pending Task list marked as <strong className="text-rose-700">DEADLINE EXPIRED (Not Allocated)</strong> until submitted.
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button
+                onClick={() => setIsDispatchModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                id="confirm-dispatch-indent-btn"
+                onClick={handleConfirmDispatchWithDeadline}
+                className="flex items-center space-x-1.5 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Dispatch Indent to HODs</span>
               </button>
             </div>
           </div>

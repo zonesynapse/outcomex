@@ -254,8 +254,8 @@ export default function ActivityEntry() {
         alert(`File ${f.name} is not a valid type. Only PDF, JPG, PNG allowed.`);
         return false;
       }
-      if (f.size > 10 * 1024 * 1024) {
-        alert(`File ${f.name} exceeds 10MB limit.`);
+      if (f.size > 300 * 1024) {
+        alert(`File ${f.name} exceeds 300KB limit.`);
         return false;
       }
       return true;
@@ -848,7 +848,7 @@ export default function ActivityEntry() {
             {activityConfig.evidenceRequired && (
               <div className="mt-6 pt-6 border-t border-zinc-100">
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-3">
-                  Supporting Evidence (PDF/JPG/PNG, Max 10MB each, Max 5 files) <span className="text-red-500">*</span>
+                  Supporting Evidence (PDF/JPG/PNG, Max 300KB each, Max 5 files) <span className="text-red-500">*</span>
                 </label>
                 <div
                   className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer ${dragOver ? 'border-emerald-400 bg-emerald-50/50' : 'border-zinc-200 hover:border-[#120c7a] hover:bg-[#120c7a]/5'}`}
@@ -860,7 +860,7 @@ export default function ActivityEntry() {
                 >
                   <Upload size={24} className={`mx-auto mb-2 ${dragOver ? 'text-emerald-500' : 'text-zinc-400'}`} />
                   <p className="text-xs text-zinc-500 font-medium">Drag & drop files here, click to browse, or paste an image</p>
-                  <p className="text-[9px] text-zinc-400 mt-1">Accepted: PDF, JPG, PNG • Max 10MB per file • Max 5 files</p>
+                  <p className="text-[9px] text-zinc-400 mt-1">Accepted: PDF, JPG, PNG • Max 300KB per file • Max 5 files</p>
                   <input
                     type="file"
                     accept=".pdf,.jpg,.jpeg,.png"

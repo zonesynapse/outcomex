@@ -68,27 +68,43 @@ export default function FacultyDutyPage() {
     return () => unsub();
   }, []);
 
+  const sanitizeForFirestore = (obj) => JSON.parse(JSON.stringify(obj, (_k, v) => v === undefined ? null : v));
+
   const handleUpdateDutyAllocations = async (newDuties) => {
-    setDutyAllocations(newDuties);
+    const safeDuties = Array.isArray(newDuties) ? newDuties : [];
+    setDutyAllocations(safeDuties);
     try {
-      await setDoc(doc(db, 'exam_cell_settings', 'faculty_duty_roster'), {
-        dutyAllocations: newDuties,
-        dutyWorkflows,
+      const payload = sanitizeForFirestore({
+        dutyAllocations: safeDuties,
+        dutyWorkflows: Array.isArray(dutyWorkflows) ? dutyWorkflows : [],
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      });
+      // Guard: never send empty document
+      if (Object.keys(payload).length === 0) return;
+      await setDoc(doc(db, 'exam_cell_settings', 'faculty_duty_roster'), payload, { merge: true });
     } catch (e) {
       console.warn("Error saving duty allocations to Firestore:", e);
     }
   };
 
   const handleUpdateDutyWorkflows = async (newWorkflows) => {
-    setDutyWorkflows(newWorkflows);
+    const safeWorkflows = Array.isArray(newWorkflows) ? newWorkflows : [];
+    // Drop empty/invalid workflows that would create empty maps inside array
+    const cleanedWorkflows = safeWorkflows.filter(w => w && w.examScheduleId && w.id);
+    setDutyWorkflows(cleanedWorkflows);
     try {
-      await setDoc(doc(db, 'exam_cell_settings', 'faculty_duty_roster'), {
-        dutyAllocations,
-        dutyWorkflows: newWorkflows,
+      const payload = sanitizeForFirestore({
+        dutyAllocations: Array.isArray(dutyAllocations) ? dutyAllocations : [],
+        dutyWorkflows: cleanedWorkflows,
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      });
+      if (Object.keys(payload).length === 0) return;
+      // Firestore rejects completely empty maps inside arrays — ensure at least updatedAt keeps doc non-empty
+      if (cleanedWorkflows.length === 0 && payload.dutyAllocations.length === 0) {
+        // Still allow empty roster to clear, but keep updatedAt so doc is not empty
+        payload._init = true;
+      }
+      await setDoc(doc(db, 'exam_cell_settings', 'faculty_duty_roster'), payload, { merge: true });
     } catch (e) {
       console.warn("Error saving duty workflows to Firestore:", e);
     }

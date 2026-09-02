@@ -33,6 +33,39 @@ const formatDateKey = (date) => {
   return `${y}-${m}-${d}`;
 };
 
+const createdAtMillis = (val) => {
+  if (!val) return 0;
+  if (typeof val === "number") return val;
+  if (typeof val === "object" && val !== null) {
+    if (typeof val.toMillis === "function") return val.toMillis();
+    if (typeof val.toDate === "function") return val.toDate().getTime();
+    if (val.seconds) return val.seconds * 1000;
+    if (val._seconds) return val._seconds * 1000;
+  }
+  const t = new Date(val).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+
+const isDeptMatch = (docDept, targetDept) => {
+  if (!targetDept) return true;
+  if (!docDept) return true;
+  const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+  const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+  if (norm1 === norm2) return true;
+  if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+  if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
+  if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
+  if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
+  if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
+  if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
+  if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
+  if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
+  if ((norm1 === 'bme' || norm1.includes('biomedical')) && (norm2 === 'bme' || norm2.includes('biomedical'))) return true;
+  if ((norm1 === 'robotics' || norm1.includes('roboticsandautomation')) && (norm2 === 'robotics' || norm2.includes('roboticsandautomation'))) return true;
+  if ((norm1 === 'mba' || norm1.includes('businessadministration')) && (norm2 === 'mba' || norm2.includes('businessadministration'))) return true;
+  return false;
+};
+
 const subjectStatPct = (st) => {
   const t = st?.total || 0;
   const od = st?.od || 0;
@@ -122,6 +155,11 @@ export default function AcademicCoordinatorDashboard() {
   const [returnComment, setReturnComment] = useState("");
   const [showReturnInput, setShowReturnInput] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
+  const [dutyIndents, setDutyIndents] = useState([]);
+  const [dutyIndentsLoading, setDutyIndentsLoading] = useState(true);
+  const [allocWfId, setAllocWfId] = useState(null);
+  const [allocSelected, setAllocSelected] = useState([]);
+  const [allocSaving, setAllocSaving] = useState(false);
 
   // HOD Batch Attendance Report state
   const [reportBatch, setReportBatch] = useState("");
@@ -753,50 +791,41 @@ export default function AcademicCoordinatorDashboard() {
   };
 
   useEffect(() => {
-    if (!hodDepartment) {
-      setActivitiesLoading(false);
-      return;
-    }
     setActivitiesLoading(true);
     let list1 = [];
     let list2 = [];
 
-    const q1 = query(
-      collection(db, "activity_entries"),
-      where("status", "==", "HOD_Pending")
-    );
+    // Mirror HOD logic: show Pending + HOD_Pending (and AC_Pending) so AC sees same cards as HOD
+    const q1 = query(collection(db, "activity_entries"));
     const unsub1 = onSnapshot(q1, (snapshot) => {
       list1 = [];
       snapshot.forEach((d) => {
         const data = d.data();
-        if (data.department === hodDepartment) {
+        const st = String(data.status || "").trim();
+        const isPending = st === "HOD_Pending" || st === "Pending" || st === "HOD Pending" || st === "AC_Pending";
+        if (isPending && isDeptMatch(data.department, hodDepartment)) {
           list1.push({ id: d.id, ...data });
         }
       });
       combineAndSet();
-    }, (err) => console.error("Error loading activity_entries:", err));
+    }, (err) => { console.error("Error loading activity_entries:", err); setActivitiesLoading(false); });
 
-    const q2 = query(
-      collection(db, "step_activities"),
-      where("status", "==", "HOD_Pending")
-    );
+    const q2 = query(collection(db, "step_activities"));
     const unsub2 = onSnapshot(q2, (snapshot) => {
       list2 = [];
       snapshot.forEach((d) => {
         const data = d.data();
-        if (data.department === hodDepartment) {
+        const st = String(data.status || "").trim();
+        const isPending = st === "HOD_Pending" || st === "Pending" || st === "HOD Pending" || st === "AC_Pending";
+        if (isPending && isDeptMatch(data.department, hodDepartment)) {
           list2.push({ id: d.id, isStep: true, ...data });
         }
       });
       combineAndSet();
-    }, (err) => console.error("Error loading step_activities:", err));
+    }, (err) => { console.error("Error loading step_activities:", err); setActivitiesLoading(false); });
 
     const combineAndSet = () => {
-      const combined = [...list1, ...list2].sort((a, b) => {
-        const dateA = a.createdAt || '';
-        const dateB = b.createdAt || '';
-        return dateB.localeCompare(dateA);
-      });
+      const combined = [...list1, ...list2].sort((a, b) => createdAtMillis(b.createdAt) - createdAtMillis(a.createdAt));
       setPendingActivities(combined);
       setActivitiesLoading(false);
     };
@@ -805,6 +834,33 @@ export default function AcademicCoordinatorDashboard() {
       unsub1();
       unsub2();
     };
+  }, [hodDepartment]);
+
+  // ─── Duty Indents (from Exam Cell) for this department ───
+  useEffect(() => {
+    setDutyIndentsLoading(true);
+    const ref = doc(db, 'exam_cell_settings', 'faculty_duty_roster');
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) { setDutyIndents([]); setDutyIndentsLoading(false); return; }
+      const workflows = snap.data().dutyWorkflows || [];
+      const filtered = workflows.filter((wf) => {
+        if (!wf) return false;
+        const st = String(wf.status || "");
+        if (st !== "Indent Sent to HODs" && st !== "Nominations In Progress" && st !== "Draft") return false;
+        const quotaEntry = Object.entries(wf.deptQuotas || {}).find(([k]) => isDeptMatch(k, hodDepartment));
+        if (!quotaEntry) return false;
+        const q = quotaEntry[1];
+        if (!q || (q.requiredCount || 0) <= 0) return false;
+        const nominated = (q.nominatedFacultyIds || []).length;
+        const required = q.requiredCount || 0;
+        if (st === "Indent Sent to HODs") return true;
+        if (st === "Nominations In Progress" && nominated < required) return true;
+        return false;
+      }).sort((a,b) => String(a.date).localeCompare(String(b.date)));
+      setDutyIndents(filtered);
+      setDutyIndentsLoading(false);
+    }, () => { setDutyIndents([]); setDutyIndentsLoading(false); });
+    return () => unsub();
   }, [hodDepartment]);
 
   const handleApproveActivity = async (act) => {
@@ -914,6 +970,65 @@ export default function AcademicCoordinatorDashboard() {
     );
     return () => unsub();
   }, []);
+
+  const dutyFacultyList = useMemo(() => {
+    const adminEmails = [import.meta.env.VITE_MASTER_ADMIN_EMAIL, import.meta.env.VITE_DEFAULT_ADMIN_EMAIL]
+      .map(e => String(e || '').toLowerCase().trim())
+      .filter(Boolean);
+    return Object.entries(usersMap || {})
+      .map(([uid, u]) => ({ uid, ...(u || {}) }))
+      .filter(u => u.isApproved === true || u.isApproved === 'Approved' || u.status === 'Approved')
+      .filter(u => isDeptMatch(u.department, hodDepartment))
+      .filter(u => !adminEmails.includes(String(u.email || '').toLowerCase().trim()))
+      .filter(u => String(u.role || '').toLowerCase() !== 'student')
+      .sort((a, b) => String(a.facultyName || a.displayName || a.name || '').localeCompare(String(b.facultyName || b.displayName || b.name || '')));
+  }, [usersMap, hodDepartment]);
+
+  const handleToggleAlloc = (wf) => {
+    if (allocWfId === wf.id) { setAllocWfId(null); setAllocSelected([]); return; }
+    const entry = Object.entries(wf.deptQuotas || {}).find(([k]) => isDeptMatch(k, hodDepartment));
+    setAllocSelected((entry && entry[1]?.nominatedFacultyIds) || []);
+    setAllocWfId(wf.id);
+  };
+
+  const handleSaveAlloc = async (wf) => {
+    if (!allocSelected.length) { alert("Select at least one faculty to nominate."); return; }
+    try {
+      setAllocSaving(true);
+      const entry = Object.entries(wf.deptQuotas || {}).find(([k]) => isDeptMatch(k, hodDepartment));
+      const quotaKey = entry ? entry[0] : null;
+      if (!quotaKey) { alert("Department quota not found for this indent."); return; }
+      const rosterRef = doc(db, 'exam_cell_settings', 'faculty_duty_roster');
+      const snap = await getDoc(rosterRef);
+      const data = snap.exists() ? snap.data() : {};
+      const workflows = Array.isArray(data.dutyWorkflows) ? data.dutyWorkflows.map(w => ({ ...w, deptQuotas: { ...(w.deptQuotas || {}) } })) : [];
+      const updated = workflows.map(w => {
+        if (String(w.id) === String(wf.id)) {
+          const deptQuotas = { ...w.deptQuotas };
+          deptQuotas[quotaKey] = {
+            ...(deptQuotas[quotaKey] || {}),
+            department: quotaKey,
+            requiredCount: deptQuotas[quotaKey]?.requiredCount || wf.deptQuotas?.[quotaKey]?.requiredCount || allocSelected.length,
+            nominatedFacultyIds: allocSelected,
+            hodStatus: allocSelected.length >= (deptQuotas[quotaKey]?.requiredCount || allocSelected.length) ? 'Nominated' : 'Pending',
+            hodRemarks: 'Faculty nominated from AC dashboard',
+            nominatedAt: new Date().toISOString(),
+          };
+          return { ...w, deptQuotas, status: 'Nominations In Progress' };
+        }
+        return w;
+      });
+      await setDoc(rosterRef, { dutyWorkflows: updated }, { merge: true });
+      setAllocWfId(null);
+      setAllocSelected([]);
+      alert("Faculty nominated successfully!");
+    } catch (err) {
+      console.error("Failed to save faculty nomination:", err);
+      alert("Could not save nominations. Check Firestore permissions.");
+    } finally {
+      setAllocSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!currentUid) {
@@ -2506,6 +2621,70 @@ export default function AcademicCoordinatorDashboard() {
                 })
               )}
             </div>
+          </div>
+        </div>
+
+        {/* ═══ Duty Indents (Exam Cell → AC/HOD) ═══ */}
+        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 mt-6">
+          <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4">
+            <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+              <ClipboardList size={18} className="text-[#120c7a]" />
+              Duty Indents for Your Department
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">{dutyIndents.length}</span>
+            </h2>
+          </div>
+          <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+            {dutyIndentsLoading ? (
+              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col items-center"><Loader2 className="animate-spin text-zinc-400 mb-2" size={24} /><span className="text-xs text-zinc-400">Loading indents...</span></div>
+            ) : dutyIndents.length === 0 ? (
+              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col items-center min-h-[140px] justify-center"><div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3"><CheckCircle2 size={24} /></div><h3 className="text-xs font-bold text-zinc-900">No pending indents</h3><p className="text-[11px] text-zinc-400 mt-1">Exam Cell has not sent a duty requisition for {hodDepartment || "your department"} yet.</p></div>
+            ) : (
+              dutyIndents.map((wf) => {
+                const entry = Object.entries(wf.deptQuotas || {}).find(([k]) => isDeptMatch(k, hodDepartment));
+                const q = entry ? entry[1] : null;
+                const required = q?.requiredCount || 0;
+                const nominated = (q?.nominatedFacultyIds || []).length;
+                const deadline = wf.deadlineDate ? `${wf.deadlineDate} ${wf.deadlineTime || ''}` : "-";
+                const isOverdue = wf.deadlineDate && new Date(wf.deadlineDate) < new Date(new Date().toISOString().split('T')[0]);
+                return (
+                  <div key={wf.id} className="bg-zinc-50/40 rounded-2xl border border-zinc-200 p-4 hover:shadow-md hover:bg-white transition-all">
+                    <div className="flex items-start justify-between gap-3">
+                      <div><p className="text-xs font-bold text-zinc-800">{wf.date} ({wf.session}) — {wf.timeSlot || ""}</p><p className="text-[10px] text-zinc-500 mt-0.5">Halls: {wf.noOfHalls} • Required: {wf.totalRequired} (Dept quota: {required}) {isOverdue ? <span className="text-rose-600 font-bold">• DEADLINE EXPIRED</span> : ""}</p><p className="text-[10px] text-zinc-400 mt-1">Deadline: {deadline} • Nominated: {nominated}/{required} • Status: {wf.status}</p></div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${nominated >= required ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{nominated >= required ? 'Ready' : 'Pending'}</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-[11px] text-zinc-500">Allocate {required} faculty for your department</span>
+                      <button onClick={() => handleToggleAlloc(wf)} className="px-3 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0f0a66]">{allocWfId === wf.id ? 'Cancel' : 'Allocate Faculty'}</button>
+                    </div>
+                    {allocWfId === wf.id && (
+                      <div className="mt-3 pt-3 border-t border-zinc-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Select Faculty ({allocSelected.length}/{required})</span>
+                          {allocSelected.length > 0 && <button onClick={() => setAllocSelected([])} className="text-[10px] font-bold text-rose-500 hover:underline">Clear</button>}
+                        </div>
+                        <div className="max-h-[180px] overflow-y-auto space-y-1.5 rounded-xl border border-zinc-200 bg-white p-2">
+                          {dutyFacultyList.length === 0 ? (
+                            <div className="text-[11px] text-zinc-400 text-center py-4">No approved faculty found under {hodDepartment || "your department"}.</div>
+                          ) : dutyFacultyList.map((f) => {
+                            const fid = f.facultyId || f.facultyCode || f.uid || "";
+                            const isSel = allocSelected.includes(f.uid);
+                            return (
+                              <button key={f.uid} onClick={() => setAllocSelected(prev => isSel ? prev.filter(x => x !== f.uid) : [...prev, f.uid])} className={`w-full text-left px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors ${isSel ? 'bg-[#120c7a] text-white border-[#120c7a]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+                                {f.facultyName || f.displayName || f.name || String(f.email || '').split('@')[0]}
+                                {fid ? <span className={isSel ? 'text-blue-200' : 'text-zinc-400'}>{' '}({fid})</span> : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button onClick={() => handleSaveAlloc(wf)} disabled={allocSaving || allocSelected.length === 0} className="mt-3 w-full py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-40">
+                          {allocSaving ? <Loader2 className="animate-spin mx-auto" size={16} /> : `Save Nominations (${allocSelected.length})`}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
