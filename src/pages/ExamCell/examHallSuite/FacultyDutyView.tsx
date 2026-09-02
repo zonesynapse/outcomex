@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   UserCheck, 
   Sparkles, 
@@ -37,6 +37,7 @@ import {
   NotificationLog
 } from '../../../types';
 import { downloadCSV } from './allocationEngine';
+import { subscribeToRealtimeSchedules } from './scheduleSync';
 
 const ALL_DEPARTMENTS: Department[] = ['CSE', 'IT', 'AI&DS', 'ECE', 'MECH', 'CIVIL', 'EEE'];
 
@@ -71,6 +72,33 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   onNavigateToAlteration,
   onAddNotification,
 }) => {
+  // Live real-time scheduled exams from Firestore qp_setter_assignments
+  const [liveExams, setLiveExams] = useState<ExamSchedule[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeToRealtimeSchedules(({ exams: fetchedExams }) => {
+      if (fetchedExams && fetchedExams.length > 0) {
+        setLiveExams(fetchedExams);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const effectiveExams = useMemo(() => {
+    if (liveExams.length > 0) return liveExams;
+    const nonSampleProps = (exams || []).filter((e) => !e.date.startsWith('2026-08-25') && !e.date.startsWith('2026-08-26') && !e.date.startsWith('2026-08-27'));
+    if (nonSampleProps.length > 0) return nonSampleProps;
+    return exams;
+  }, [liveExams, exams]);
+
+  // Guard against undefined selectedExam (e.g. before Firestore exams load) to prevent
+  // "Cannot read properties of undefined (reading 'id')" crashes on initial render.
+  const safeSelectedExam = useMemo<ExamSchedule>(() => {
+    if (selectedExam) return selectedExam;
+    if (effectiveExams.length > 0) return effectiveExams[0];
+    return null as unknown as ExamSchedule;
+  }, [selectedExam, effectiveExams]);
+
   // Main workflow tab
   const [activeWorkflowTab, setActiveWorkflowTab] = useState<'coordinator' | 'hod-portal' | 'principal-approval' | 'roster-grid'>('coordinator');
 
@@ -97,7 +125,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
   // Calculate Date-wise & Session-wise Exam Hall counts and requirements for ALL exams
   const dateWiseHallRequirements = useMemo(() => {
-    return exams.map((exam) => {
+    return effectiveExams.map((exam) => {
       // Count distinct rooms used in allocated seats or selectedHallIds
       const seatsForExam = allocatedSeats.filter(
         (s) => s.student.examDate === exam.date && s.student.session === exam.session
@@ -160,10 +188,10 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   // Current active exam requirement info
   const currentRequirement = useMemo(() => {
     return (
-      dateWiseHallRequirements.find((r) => r.exam.id === selectedExam.id) ||
+      dateWiseHallRequirements.find((r) => r.exam.id === safeSelectedExam.id) ||
       dateWiseHallRequirements[0]
     );
-  }, [dateWiseHallRequirements, selectedExam.id]);
+  }, [dateWiseHallRequirements, safeSelectedExam.id]);
 
   // Current workflow for selected exam
   const currentWorkflow = useMemo<ExamDutyWorkflow>(() => {
@@ -459,7 +487,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       ([_, q]) => (q?.requiredCount || 0) === 0 || (q?.nominatedFacultyIds.length || 0) >= (q?.requiredCount || 0)
     );
 
-    updateWorkflowForExam(selectedExam.id, {
+    updateWorkflowForExam(safeSelectedExam.id, {
       deptQuotas: updatedQuotas,
       status: allDone ? 'Nominations Complete' : 'Nominations In Progress',
     });
@@ -488,7 +516,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       ([_, q]) => (q?.requiredCount || 0) === 0 || (q?.nominatedFacultyIds.length || 0) >= (q?.requiredCount || 0)
     );
 
-    updateWorkflowForExam(selectedExam.id, {
+    updateWorkflowForExam(safeSelectedExam.id, {
       deptQuotas: updatedQuotas,
       status: allDone ? 'Nominations Complete' : 'Nominations In Progress',
     });
@@ -496,7 +524,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     if (onAddNotification) {
       onAddNotification({
         title: `HOD ${selectedHodDept} Submitted Duty Nominations`,
-        message: `${selectedHodDept} Department nominated ${currentDeptQuota.nominatedFacultyIds.length} faculty members for ${selectedExam.name} (${selectedExam.date} ${selectedExam.session}).`,
+        message: `${selectedHodDept} Department nominated ${currentDeptQuota.nominatedFacultyIds.length} faculty members for ${safeSelectedExam.name} (${safeSelectedExam.date} ${safeSelectedExam.session}).`,
         type: 'success',
         read: false,
       });
@@ -524,7 +552,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       .filter((f): f is Faculty => f !== undefined);
 
     const seatsForExam = allocatedSeats.filter(
-      (s) => s.student.examDate === selectedExam.date && s.student.session === selectedExam.session
+      (s) => s.student.examDate === safeSelectedExam.date && s.student.session === safeSelectedExam.session
     );
     const roomIdsFromSeats = Array.from(new Set(seatsForExam.map((s) => s.roomId)));
     const targetRooms = roomIdsFromSeats.length > 0
@@ -541,11 +569,11 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
     if (chiefCandidate) {
       newDuties.push({
-        id: `duty-${selectedExam.id}-cs`,
-        examScheduleId: selectedExam.id,
-        date: selectedExam.date,
-        session: selectedExam.session,
-        timeSlot: selectedExam.timeSlot,
+        id: `duty-${safeSelectedExam.id}-cs`,
+        examScheduleId: safeSelectedExam.id,
+        date: safeSelectedExam.date,
+        session: safeSelectedExam.session,
+        timeSlot: safeSelectedExam.timeSlot,
         roomId: 'all',
         roomNumber: 'Central Exam Control Cell',
         facultyId: chiefCandidate.id,
@@ -562,11 +590,11 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       const fac = nominatedFacultyObjects[facIdx % nominatedFacultyObjects.length];
       if (fac) {
         newDuties.push({
-          id: `duty-${selectedExam.id}-${room.id}`,
-          examScheduleId: selectedExam.id,
-          date: selectedExam.date,
-          session: selectedExam.session,
-          timeSlot: selectedExam.timeSlot,
+          id: `duty-${safeSelectedExam.id}-${room.id}`,
+          examScheduleId: safeSelectedExam.id,
+          date: safeSelectedExam.date,
+          session: safeSelectedExam.session,
+          timeSlot: safeSelectedExam.timeSlot,
           roomId: room.id,
           roomNumber: room.roomNumber,
           facultyId: fac.id,
@@ -584,11 +612,11 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     const bufferFac = nominatedFacultyObjects[facIdx % nominatedFacultyObjects.length] || nominatedFacultyObjects[0];
     if (bufferFac) {
       newDuties.push({
-        id: `duty-${selectedExam.id}-buffer-1`,
-        examScheduleId: selectedExam.id,
-        date: selectedExam.date,
-        session: selectedExam.session,
-        timeSlot: selectedExam.timeSlot,
+        id: `duty-${safeSelectedExam.id}-buffer-1`,
+        examScheduleId: safeSelectedExam.id,
+        date: safeSelectedExam.date,
+        session: safeSelectedExam.session,
+        timeSlot: safeSelectedExam.timeSlot,
         roomId: 'standby',
         roomNumber: 'Exam Cell Buffer / Standby',
         facultyId: bufferFac.id,
@@ -601,7 +629,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     }
 
     // Merge duties
-    const otherExamDuties = dutyAllocations.filter((d) => d.examScheduleId !== selectedExam.id);
+    const otherExamDuties = dutyAllocations.filter((d) => d.examScheduleId !== safeSelectedExam.id);
     const combinedDuties = [...otherExamDuties, ...newDuties];
     onUpdateDutyAllocations(combinedDuties);
 
@@ -615,7 +643,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     });
     onUpdateFacultyList(updatedFaculty);
 
-    updateWorkflowForExam(selectedExam.id, {
+    updateWorkflowForExam(safeSelectedExam.id, {
       status: 'Hall Mapped',
       coordinatorRemarks: `Mapped ${targetRooms.length} Hall Superintendents and 1 Buffer Superintendent from HOD nominated list.`,
     });
@@ -626,7 +654,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   // Submit to Principal
   const handleSubmitToPrincipal = () => {
     const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    updateWorkflowForExam(selectedExam.id, {
+    updateWorkflowForExam(safeSelectedExam.id, {
       status: 'Submitted to Principal',
       submittedAt: timestamp,
     });
@@ -634,7 +662,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     if (onAddNotification) {
       onAddNotification({
         title: 'Master Duty Roster Submitted to Principal',
-        message: `Consolidated duty schedule for ${selectedExam.name} (${selectedExam.date} ${selectedExam.session}) has been forwarded for Principal sanction.`,
+        message: `Consolidated duty schedule for ${safeSelectedExam.name} (${safeSelectedExam.date} ${safeSelectedExam.session}) has been forwarded for Principal sanction.`,
         type: 'info',
         read: false,
       });
@@ -646,9 +674,9 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
   // Principal Approve Action
   const handlePrincipalApprove = () => {
     const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    const token = `PRIN-AUTH-${selectedExam.date.replace(/-/g, '')}-${selectedExam.session}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const token = `PRIN-AUTH-${safeSelectedExam.date.replace(/-/g, '')}-${safeSelectedExam.session}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    updateWorkflowForExam(selectedExam.id, {
+    updateWorkflowForExam(safeSelectedExam.id, {
       status: 'Approved by Principal',
       principalApproval: {
         isApproved: true,
@@ -664,7 +692,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     if (onAddNotification) {
       onAddNotification({
         title: 'Duty Roster Approved by Principal',
-        message: `The Principal has officially approved and sanctioned the invigilation duty roster for ${selectedExam.name} (${selectedExam.date} ${selectedExam.session}).`,
+        message: `The Principal has officially approved and sanctioned the invigilation duty roster for ${safeSelectedExam.name} (${safeSelectedExam.date} ${safeSelectedExam.session}).`,
         type: 'success',
         read: false,
       });
@@ -675,8 +703,8 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
   // Current exam duties list
   const currentExamDuties = useMemo(() => {
-    return dutyAllocations.filter((d) => d.examScheduleId === selectedExam.id);
-  }, [dutyAllocations, selectedExam.id]);
+    return dutyAllocations.filter((d) => d.examScheduleId === safeSelectedExam.id);
+  }, [dutyAllocations, safeSelectedExam.id]);
 
   const filteredDuties = useMemo(() => {
     return currentExamDuties.filter((duty) => {
@@ -708,7 +736,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       const fac = facultyList.find((f) => f.id === d.facultyId);
       return [
         (idx + 1).toString(),
-        selectedExam.name,
+        safeSelectedExam.name,
         d.date,
         d.session,
         d.timeSlot,
@@ -724,7 +752,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     });
 
     downloadCSV(
-      `Consolidated_Master_Duty_Roster_${selectedExam.date}_${selectedExam.session}.csv`,
+      `Consolidated_Master_Duty_Roster_${safeSelectedExam.date}_${safeSelectedExam.session}.csv`,
       [headers, ...rows]
     );
   };
@@ -741,10 +769,10 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
     const newDuty: DutyAllocation = {
       id: `duty-${Date.now()}`,
-      examScheduleId: selectedExam.id,
-      date: selectedExam.date,
-      session: selectedExam.session,
-      timeSlot: selectedExam.timeSlot,
+      examScheduleId: safeSelectedExam.id,
+      date: safeSelectedExam.date,
+      session: safeSelectedExam.session,
+      timeSlot: safeSelectedExam.timeSlot,
       roomId: room?.id || 'standby',
       roomNumber: selectedRole === 'Reliever / Standby' ? 'Exam Cell Buffer / Standby' : (room?.roomNumber || 'Central Hall'),
       facultyId: fac.id,
@@ -781,6 +809,17 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     const updated = facultyList.map((f) => (f.id === facId ? { ...f, isAvailable: !f.isAvailable } : f));
     onUpdateFacultyList(updated);
   };
+
+  if (!safeSelectedExam) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-2xl p-8 border border-zinc-200 shadow-sm text-center">
+          <p className="text-sm font-semibold text-slate-500">Loading scheduled examinations&hellip;</p>
+          <p className="text-xs text-slate-400 mt-1">No active exam sessions found in Firestore yet.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -844,13 +883,13 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
             </div>
 
             <span className="text-[11px] text-slate-500">
-              Active: <strong className="text-indigo-900 font-mono">{selectedExam.date} ({selectedExam.session})</strong> • {currentWorkflow.noOfHalls} Halls • {currentWorkflow.totalRequired} Total Invigilators
+              Active: <strong className="text-indigo-900 font-mono">{safeSelectedExam.date} ({safeSelectedExam.session})</strong> • {currentWorkflow.noOfHalls} Halls • {currentWorkflow.totalRequired} Total Invigilators
             </span>
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
             {dateWiseHallRequirements.map((item) => {
-              const isSelected = item.exam.id === selectedExam.id;
+              const isSelected = item.exam.id === safeSelectedExam.id;
               const wf = item.workflow;
               const quotas = Object.values(wf?.deptQuotas || {}) as (DeptDutyQuota | undefined)[];
               const quotaSum = quotas.reduce((s, q) => s + (q?.requiredCount || 0), 0);
@@ -1076,7 +1115,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {dateWiseHallRequirements.map((item) => {
-                    const isSelected = item.exam.id === selectedExam.id;
+                    const isSelected = item.exam.id === safeSelectedExam.id;
                     const wf = item.workflow;
                     const quotas = Object.values(wf?.deptQuotas || {}) as (DeptDutyQuota | undefined)[];
                     const quotaSum = quotas.reduce((s, q) => s + (q?.requiredCount || 0), 0);
@@ -1263,7 +1302,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
             {/* Bottom Direct Link to Next Step */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs">
               <div className="text-slate-500">
-                Current Active Selection: <strong className="text-slate-800">{selectedExam.name} ({selectedExam.date} {selectedExam.session})</strong> • Next: Respective Department HODs nominate specific faculty.
+                Current Active Selection: <strong className="text-slate-800">{safeSelectedExam.name} ({safeSelectedExam.date} {safeSelectedExam.session})</strong> • Next: Respective Department HODs nominate specific faculty.
               </div>
 
               <div className="flex items-center space-x-2">
@@ -1348,7 +1387,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-emerald-900/80">
-                  <strong>Examination:</strong> {selectedExam.name} ({selectedExam.date} {selectedExam.session} • {selectedExam.timeSlot})
+                  <strong>Examination:</strong> {safeSelectedExam.name} ({safeSelectedExam.date} {safeSelectedExam.session} • {safeSelectedExam.timeSlot})
                 </p>
                 <p className="text-xs text-emerald-900/80">
                   <strong>Assigned Quota:</strong> Please nominate{' '}
@@ -1529,7 +1568,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                   Master Invigilation Duty Sanction & Official Order
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Review the compiled duty roster for <strong className="text-slate-800">{selectedExam.name} ({selectedExam.date} {selectedExam.session})</strong> with hall mappings and grant Principal approval.
+                  Review the compiled duty roster for <strong className="text-slate-800">{safeSelectedExam.name} ({safeSelectedExam.date} {safeSelectedExam.session})</strong> with hall mappings and grant Principal approval.
                 </p>
               </div>
 
@@ -1613,7 +1652,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
                 Master Invigilation Duty Allocation Roster
               </h1>
               <div className="text-xs font-semibold text-slate-700">
-                {selectedExam.name} • Session: {selectedExam.date} ({selectedExam.session}) • {selectedExam.timeSlot}
+                {safeSelectedExam.name} • Session: {safeSelectedExam.date} ({safeSelectedExam.session}) • {safeSelectedExam.timeSlot}
               </div>
             </div>
 
@@ -1621,7 +1660,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border border-slate-900 p-4 bg-slate-50">
               <div>
                 <span className="text-slate-500 uppercase text-[10px] font-bold block">Examination Date:</span>
-                <strong className="text-slate-900 font-mono text-sm">{selectedExam.date} ({selectedExam.session})</strong>
+                <strong className="text-slate-900 font-mono text-sm">{safeSelectedExam.date} ({safeSelectedExam.session})</strong>
               </div>
               <div>
                 <span className="text-slate-500 uppercase text-[10px] font-bold block">Active Exam Halls:</span>
@@ -1969,10 +2008,10 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
             <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 text-xs text-purple-950 space-y-1">
               <p>
-                <strong>Examination:</strong> {selectedExam.name}
+                <strong>Examination:</strong> {safeSelectedExam.name}
               </p>
               <p>
-                <strong>Date & Session:</strong> {selectedExam.date} ({selectedExam.session}) • {selectedExam.timeSlot}
+                <strong>Date & Session:</strong> {safeSelectedExam.date} ({safeSelectedExam.session}) • {safeSelectedExam.timeSlot}
               </p>
               <p>
                 <strong>Superintendents Required:</strong> {currentWorkflow.noOfHalls} Halls + {currentWorkflow.bufferCount} Buffer = {currentWorkflow.totalRequired} Total

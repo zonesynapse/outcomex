@@ -97,7 +97,7 @@ export const INITIAL_EXAMS: ExamSchedule[] = [
   {
     id: 'exam-1',
     name: 'Continuous Internal Assessment - I (CIA-I)',
-    date: '2026-08-25',
+    date: '2026-08-31',
     session: 'FN',
     timeSlot: '09:30 AM - 12:30 PM',
     departments: ['CSE', 'IT', 'AI&DS', 'ECE', 'MECH'],
@@ -108,9 +108,9 @@ export const INITIAL_EXAMS: ExamSchedule[] = [
   {
     id: 'exam-2',
     name: 'Continuous Internal Assessment - I (CIA-I)',
-    date: '2026-08-25',
-    session: 'AN',
-    timeSlot: '01:30 PM - 04:30 PM',
+    date: '2026-09-01',
+    session: 'FN',
+    timeSlot: '09:30 AM - 12:30 PM',
     departments: ['CSE', 'IT', 'ECE'],
     semester: 3,
     status: 'Scheduled',
@@ -119,7 +119,7 @@ export const INITIAL_EXAMS: ExamSchedule[] = [
   {
     id: 'exam-3',
     name: 'Continuous Internal Assessment - I (CIA-I)',
-    date: '2026-08-26',
+    date: '2026-09-02',
     session: 'FN',
     timeSlot: '09:30 AM - 12:30 PM',
     departments: ['AI&DS', 'MECH', 'CIVIL', 'EEE'],
@@ -130,7 +130,7 @@ export const INITIAL_EXAMS: ExamSchedule[] = [
   {
     id: 'exam-4',
     name: 'Model Theory Examination',
-    date: '2026-08-27',
+    date: '2026-09-03',
     session: 'FN',
     timeSlot: '09:30 AM - 12:30 PM',
     departments: ['CSE', 'ECE'],

@@ -58,18 +58,34 @@ export default function ExamHallSuitePage() {
   }, []);
 
   useEffect(() => {
+    const docRef = doc(db, 'exam_cell_settings', 'seating_allocation');
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (snap.exists() && snap.data().allocatedSeats && Array.isArray(snap.data().allocatedSeats)) {
+        setAllocatedSeats(snap.data().allocatedSeats);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const docRef = doc(db, 'exam_cell_settings', 'faculty_duty_roster');
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.dutyAllocations && Array.isArray(data.dutyAllocations)) setDutyAllocations(data.dutyAllocations);
+        if (data.dutyWorkflows && Array.isArray(data.dutyWorkflows)) setDutyWorkflows(data.dutyWorkflows);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
     const unsubSchedules = subscribeToRealtimeSchedules(({ exams: fetchedExams, students: fetchedStudents }) => {
       if (fetchedExams.length > 0) {
         setExams(fetchedExams);
         setSelectedExamId((prev) => (fetchedExams.some((e) => e.id === prev) ? prev : fetchedExams[0].id));
       }
       setStudents(fetchedStudents || []);
-      if (fetchedStudents && fetchedStudents.length > 0) {
-        const res = allocateSeats(fetchedStudents, INITIAL_ROOMS, 'interleaved-dept');
-        setAllocatedSeats(res.allocatedSeats);
-      } else {
-        setAllocatedSeats([]);
-      }
     });
 
     return () => unsubSchedules();

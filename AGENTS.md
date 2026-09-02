@@ -1,5 +1,50 @@
 ## Summary of Changes
 
+### 364. Raw Firestore Department Name Preservation (`PrintReportsView.tsx`)
+- **Goal**: Render department names in the UI exactly as stored in Firestore without forcing hardcoded string mappings (`B.E. Computer Science and Engineering`, `B.Tech. Information Technology`, etc.).
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Refactored `normalizeDeptName` to return the actual raw department string directly from Firestore (only stripping optional `"Department of "` prefix for clean rendering).
+    - Preserved 100% exact raw Firestore department strings across report headers, tables, and dropdowns.
+- **Result**: Department names in reports display exactly as saved in Firestore without forced prefix overrides.
+- Build passes cleanly with 0 errors.
+
+### 363. Dynamic Scheduled Exam Dates Sync in Faculty Duty Allocation (`FacultyDutyView.tsx`, `FacultyDutyPage.jsx` & `initialData.ts`)
+- **Goal**: Remove hardcoded sample dates (`2026-08-25 (FN)`, `2026-08-25 (AN)`, `2026-08-26 (FN)`, `2026-08-27 (FN)`) from the `Faculty Duty Allocation & Approval System` page, replacing them with dynamic scheduled exam dates (`2026-08-31`, `2026-09-01`, `2026-09-02`, `2026-09-03`, `2026-09-07`, `2026-09-09`...) fetched live from Firestore (`qp_setter_assignments`).
+- **Fix**:
+  - In [`FacultyDutyView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/FacultyDutyView.tsx):
+    - Added `subscribeToRealtimeSchedules` listener to populate `liveExams` directly from active scheduled exams in Firestore.
+    - Created `effectiveExams` memo prioritizing `liveExams` and filtering out old sample `2026-08-25` dates.
+    - Updated `dateWiseHallRequirements` and date selection buttons to render `effectiveExams` dynamically.
+  - In [`FacultyDutyPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/FacultyDutyPage.jsx):
+    - Added real-time `subscribeToRealtimeSchedules` sync for `exams`, `rooms`, and `allocatedSeats`.
+  - In [`initialData.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/initialData.ts):
+    - Updated `INITIAL_EXAMS` fallback dates from `2026-08-25` to active scheduled exam dates (`2026-08-31`, `2026-09-01`, `2026-09-02`, `2026-09-03`).
+- **Result**: The top exam session cards and `Date-wise Exam Hall Requirements & Department Quota Matrix` table now 100% dynamically display active scheduled exam dates from Firestore. Sample `2026-08-25` dates are completely removed.
+- Build passes cleanly with 0 errors.
+
+### 362. Firebase Firestore `doc` Function Import Fix (`PrintReportsView.tsx`)
+- **Goal**: Fix runtime error `[Error] ReferenceError: Can't find variable: doc` in `PrintReportsView.tsx`.
+- **Root Cause**:
+  - The Firestore `doc` function was called inside `onSnapshot(doc(db, 'exam_cell_settings', ...))` but `doc` was missing from the `import { collection, onSnapshot } from 'firebase/firestore'` statement at top of file.
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx): Added `doc` to the `firebase/firestore` import list (`import { collection, onSnapshot, doc } from 'firebase/firestore'`).
+- **Result**: ReferenceError resolved; `PrintReportsView` renders cleanly without component tree crash.
+- Build passes cleanly with 0 errors.
+
+### 361. Dynamic Firestore Room Seating & Invigilator Deployment Sync in Report 2 (`PrintReportsView.tsx` & `ExamHallSuitePage.jsx`)
+- **Goal**: Connect top exam session date dropdown (`selectedExam.date` & `selectedExam.session`) to Report 2 (`2. Admin Oversight Master Report` / `1. Hall Occupancy & Invigilator Deployment Matrix`) to calculate dynamic room occupancy (`Seated`, `Util %`), assigned invigilator faculty name & department, and total faculty deployed directly from Firestore (`exam_cell_settings/seating_allocation`, `exam_cell_settings/faculty_duty_roster`, `exam_cell_settings/room_master`).
+- **Fix**:
+  - In [`PrintReportsView.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/examHallSuite/PrintReportsView.tsx):
+    - Added real-time Firestore `onSnapshot` listeners for `seating_allocation`, `faculty_duty_roster`, and `room_master`.
+    - Created `effectiveAllocatedSeats`, `effectiveDutyAllocations`, and `effectiveRooms` fallback memos.
+    - Updated Report 2 matrix table to dynamically filter seats and invigilator duties per room matching the selected exam date & session (`selectedExam.date`, `selectedExam.session`).
+    - Dynamically computed per-room seated count, utilization percentage (`Math.round((seated / capacity) * 100)`), invigilator faculty name & department, total seated count, and total faculty deployed in the table body and footer.
+  - In [`ExamHallSuitePage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamHallSuitePage.jsx):
+    - Added real-time Firestore listeners for `seating_allocation` and `faculty_duty_roster` so parent component state stays continuously in sync with `SeatAllocationPage.jsx` and `FacultyDutyPage.jsx`.
+- **Result**: Report 2 (`Admin Oversight Master Report`) displays 100% dynamic Firestore seating & invigilator deployment data per selected exam date/session without hardcoded defaults.
+- Build passes cleanly with 0 errors.
+
 ### 360. Strict 5-Subject Scheduled Exam Filtering Parity with Principal Schedule View (`PrintReportsView.tsx`)
 - **Goal**: Fix issue where selecting Batch 2023-2027 Sem 7 rendered 8 subject columns instead of the exact 5 scheduled exam subjects (`GE3751`, `GE3791`, `OFD351`, `OPE353`, `OMG353`) shown in the 1st image (`PrincipalIAScheduleView.jsx`).
 - **Root Cause**:

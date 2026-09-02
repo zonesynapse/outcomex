@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Room, Student, AllocatedSeat, DutyAllocation, Faculty, ExamSchedule, Department, ExamDutyWorkflow } from '../../../types';
 import { useDepartments } from '../../../hooks/useDepartments';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 
 interface PrintReportsViewProps {
@@ -457,6 +457,60 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
   const [scheduledAssignments, setScheduledAssignments] = useState<any[]>([]);
   const [syllabusSubjects, setSyllabusSubjects] = useState<any[]>([]);
 
+  // Live Firestore sync for seating allocations, room master, and faculty duty roster
+  const [dbAllocatedSeats, setDbAllocatedSeats] = useState<AllocatedSeat[]>([]);
+  const [dbDutyAllocations, setDbDutyAllocations] = useState<DutyAllocation[]>([]);
+  const [dbRooms, setDbRooms] = useState<Room[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'exam_cell_settings', 'seating_allocation'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.allocatedSeats && Array.isArray(data.allocatedSeats)) {
+          setDbAllocatedSeats(data.allocatedSeats);
+        }
+      }
+    }, (err) => console.warn('seating_allocation sync error in PrintReportsView:', err));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'exam_cell_settings', 'faculty_duty_roster'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.dutyAllocations && Array.isArray(data.dutyAllocations)) {
+          setDbDutyAllocations(data.dutyAllocations);
+        }
+      }
+    }, (err) => console.warn('faculty_duty_roster sync error in PrintReportsView:', err));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'exam_cell_settings', 'room_master'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.rooms && Array.isArray(data.rooms)) {
+          setDbRooms(data.rooms);
+        }
+      }
+    }, (err) => console.warn('room_master sync error in PrintReportsView:', err));
+    return () => unsub();
+  }, []);
+
+  // Effective datasets combining Firestore real-time data with fallback props
+  const effectiveAllocatedSeats = useMemo(() => {
+    return dbAllocatedSeats.length > 0 ? dbAllocatedSeats : allocatedSeats;
+  }, [dbAllocatedSeats, allocatedSeats]);
+
+  const effectiveDutyAllocations = useMemo(() => {
+    return dbDutyAllocations.length > 0 ? dbDutyAllocations : dutyAllocations;
+  }, [dbDutyAllocations, dutyAllocations]);
+
+  const effectiveRooms = useMemo(() => {
+    return dbRooms.length > 0 ? dbRooms : rooms;
+  }, [dbRooms, rooms]);
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'qp_setter_assignments'), (snap) => {
       const docs: any[] = [];
@@ -585,7 +639,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
         // Fallback fuzzy match via normalize incase assignment stored as short code
         if (!deptMatch) {
           const candNorm = normalizeDeptName(a.department);
-          deptMatch = !!candNorm && !!targetDeptNorm && (candNorm.includes(targetDeptNorm.replace(/[^a-z]/gi,'')) || targetDeptNorm.includes(candNorm.replace(/[^a-z]/gi,'')));
+          deptMatch = !!candNorm && !!targetDeptNorm && (candNorm.includes(targetDeptNorm.replace(/[^a-z]/gi, '')) || targetDeptNorm.includes(candNorm.replace(/[^a-z]/gi, '')));
         }
       }
       const batchMatch = !targetBatch || normalizeBatch(a.batch) === targetBatch;
@@ -2494,12 +2548,28 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-300">
-                  {rooms.map((room) => {
-                    const seated = allocatedSeats.filter((s) => s.roomId === room.id).length;
-                    const duty = dutyAllocations.find(
-                      (d) => d.roomId === room.id && d.examScheduleId === selectedExam.id
-                    );
-                    const util = room.totalCapacity > 0 ? Math.round((seated / room.totalCapacity) * 100) : 0;
+                  {effectiveRooms.map((room) => {
+                    const roomSeats = effectiveAllocatedSeats.filter((s) => {
+                      const matchRoom = s.roomId === room.id || String(s.roomNumber || '').trim().toLowerCase() === String(room.roomNumber || '').trim().toLowerCase();
+                      const sDate = s.examDate || s.student?.examDate || '';
+                      const sSess = s.session || s.student?.session || '';
+                      const matchDate = !sDate || !selectedExam.date || sDate === selectedExam.date;
+                      const matchSess = !sSess || !selectedExam.session || sSess === selectedExam.session;
+                      return matchRoom && matchDate && matchSess;
+                    });
+                    const seated = roomSeats.length;
+
+                    const duty = effectiveDutyAllocations.find((d) => {
+                      const matchRoom = d.roomId === room.id || String(d.roomNumber || d.room || '').trim().toLowerCase() === String(room.roomNumber || '').trim().toLowerCase();
+                      const dDate = d.examDate || d.date || '';
+                      const dSess = d.session || '';
+                      const matchDate = !dDate || !selectedExam.date || dDate === selectedExam.date;
+                      const matchSess = !dSess || !selectedExam.session || dSess === selectedExam.session;
+                      return matchRoom && matchDate && matchSess;
+                    });
+
+                    const capacity = room.totalCapacity || room.capacity || 0;
+                    const util = capacity > 0 ? Math.round((seated / capacity) * 100) : 0;
 
                     return (
                       <tr key={room.id} className="border-b border-slate-300">
@@ -2507,10 +2577,10 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                           {room.roomNumber}
                         </td>
                         <td className="py-2 px-3 border-r border-slate-900 text-slate-600">
-                          {room.block}, {room.floor}
+                          {room.location || `${room.block || ''}, ${room.floor || ''}`}
                         </td>
                         <td className="py-2 px-2 border-r border-slate-900 text-center font-mono">
-                          {room.totalCapacity}
+                          {capacity}
                         </td>
                         <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-bold">
                           {seated}
@@ -2519,10 +2589,10 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                           {util}%
                         </td>
                         <td className="py-2 px-3 border-r border-slate-900 font-semibold">
-                          {duty?.facultyName || <span className="text-amber-600">Standby Assignment</span>}
+                          {duty?.facultyName || duty?.invigilatorName || <span className="text-amber-600 font-normal italic">Standby Assignment</span>}
                         </td>
-                        <td className="py-2 px-2 border-r border-slate-900 text-center">
-                          {duty?.facultyDept || '-'}
+                        <td className="py-2 px-2 border-r border-slate-900 text-center font-bold">
+                          {duty?.facultyDept || duty?.department || duty?.dept || '-'}
                         </td>
                         <td className="py-2 px-3">
                           <span className="font-semibold text-emerald-700">Operational</span>
@@ -2534,17 +2604,33 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                 <tfoot>
                   <tr className="bg-slate-100 font-bold border-t-2 border-slate-900">
                     <td colSpan={2} className="py-2 px-3 border-r border-slate-900">Total / Summary</td>
-                    <td className="py-2 px-2 border-r border-slate-900 text-center">
-                      {rooms.reduce((s, r) => s + r.totalCapacity, 0)}
+                    <td className="py-2 px-2 border-r border-slate-900 text-center font-mono">
+                      {effectiveRooms.reduce((s, r) => s + (r.totalCapacity || r.capacity || 0), 0)}
                     </td>
-                    <td className="py-2 px-2 border-r border-slate-900 text-center">
-                      {allocatedSeats.length}
+                    <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-bold text-indigo-950">
+                      {effectiveAllocatedSeats.filter((s) => {
+                        const sDate = s.examDate || s.student?.examDate || '';
+                        const sSess = s.session || s.student?.session || '';
+                        return (!sDate || !selectedExam.date || sDate === selectedExam.date) && (!sSess || !selectedExam.session || sSess === selectedExam.session);
+                      }).length}
                     </td>
-                    <td className="py-2 px-2 border-r border-slate-900 text-center">
-                      {Math.round((allocatedSeats.length / Math.max(1, rooms.reduce((s, r) => s + r.totalCapacity, 0))) * 100)}%
+                    <td className="py-2 px-2 border-r border-slate-900 text-center font-bold">
+                      {Math.round(
+                        (effectiveAllocatedSeats.filter((s) => {
+                          const sDate = s.examDate || s.student?.examDate || '';
+                          const sSess = s.session || s.student?.session || '';
+                          return (!sDate || !selectedExam.date || sDate === selectedExam.date) && (!sSess || !selectedExam.session || sSess === selectedExam.session);
+                        }).length /
+                          Math.max(1, effectiveRooms.reduce((s, r) => s + (r.totalCapacity || r.capacity || 0), 0))) *
+                        100
+                      )}%
                     </td>
-                    <td colSpan={3} className="py-2 px-3">
-                      {dutyAllocations.filter((d) => d.examScheduleId === selectedExam.id).length} Faculty Deployed
+                    <td colSpan={3} className="py-2 px-3 font-semibold text-slate-800">
+                      {effectiveDutyAllocations.filter((d) => {
+                        const dDate = d.examDate || d.date || '';
+                        const dSess = d.session || '';
+                        return (!dDate || !selectedExam.date || dDate === selectedExam.date) && (!dSess || !selectedExam.session || dSess === selectedExam.session);
+                      }).length} Faculty Deployed
                     </td>
                   </tr>
                 </tfoot>

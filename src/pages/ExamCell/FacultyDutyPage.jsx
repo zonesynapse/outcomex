@@ -15,18 +15,17 @@ import { generateSampleStudents } from './examHallSuite/initialData';
 import { db } from '../../firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
+import { subscribeToRealtimeSchedules } from './examHallSuite/scheduleSync';
+
 export default function FacultyDutyPage() {
   const navigate = useNavigate();
   const [facultyList, setFacultyList] = useState(INITIAL_FACULTY);
   const [dutyAllocations, setDutyAllocations] = useState(INITIAL_DUTY_ALLOCATIONS);
   const [dutyWorkflows, setDutyWorkflows] = useState(INITIAL_DUTY_WORKFLOWS);
-  const [exams, setExams] = useState(INITIAL_EXAMS);
-  const [selectedExamId, setSelectedExamId] = useState('exam-1');
+  const [exams, setExams] = useState([]);
+  const [selectedExamId, setSelectedExamId] = useState('');
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
-  const [allocatedSeats, setAllocatedSeats] = useState(() => {
-    const res = allocateSeats(generateSampleStudents(), INITIAL_ROOMS, 'interleaved-dept');
-    return res.allocatedSeats;
-  });
+  const [allocatedSeats, setAllocatedSeats] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Firestore sync for faculty duty allocation
@@ -42,6 +41,31 @@ export default function FacultyDutyPage() {
     }, () => setLoading(false));
 
     return () => unsubscribe();
+  }, []);
+
+  // Firestore sync for rooms and seating allocations
+  useEffect(() => {
+    const unsubRoom = onSnapshot(doc(db, 'exam_cell_settings', 'room_master'), (snap) => {
+      if (snap.exists() && snap.data().rooms) setRooms(snap.data().rooms);
+    });
+    const unsubSeat = onSnapshot(doc(db, 'exam_cell_settings', 'seating_allocation'), (snap) => {
+      if (snap.exists() && snap.data().allocatedSeats) setAllocatedSeats(snap.data().allocatedSeats);
+    });
+    return () => {
+      unsubRoom();
+      unsubSeat();
+    };
+  }, []);
+
+  // Sync scheduled exams in real-time from Firestore qp_setter_assignments
+  useEffect(() => {
+    const unsub = subscribeToRealtimeSchedules(({ exams: fetchedExams }) => {
+      if (fetchedExams && fetchedExams.length > 0) {
+        setExams(fetchedExams);
+        setSelectedExamId((prev) => (fetchedExams.some((e) => e.id === prev) ? prev : fetchedExams[0].id));
+      }
+    });
+    return () => unsub();
   }, []);
 
   const handleUpdateDutyAllocations = async (newDuties) => {
