@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore";
 import { 
@@ -18,6 +19,7 @@ import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
 import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
+import { fetchAllCourseNamesMap } from "../utils/courseUtils";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -45,10 +47,138 @@ const deriveSemesterNumber = (label) => {
   return m ? m[1] : '';
 };
 
+const parseSubjectCodeKey = (raw) => {
+  if (!raw) return '';
+  let candidate = raw;
+
+  // 1. If raw is an object, extract key property
+  if (typeof raw === 'object' && raw !== null) {
+    candidate = raw.code || raw.CODE || raw.subjectCode || raw.courseCode || raw.subject_code || raw.course_code || raw.subject || raw.course || raw.id || '';
+  }
+
+  let s = String(candidate || '').trim();
+  if (!s) return '';
+
+  // 2. If candidate is a string starting with '{', attempt JSON.parse
+  if (s.startsWith('{') && s.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(s);
+      if (parsed && typeof parsed === 'object') {
+        const inner = parsed.code || parsed.CODE || parsed.subjectCode || parsed.courseCode || parsed.subject_code || parsed.course_code || parsed.subject || parsed.course || parsed.id;
+        if (inner) s = String(inner).trim();
+      }
+    } catch { /* non-critical */ }
+  }
+
+  // 3. Strip raw composite Firestore keys like "CODEBM3551NAMEEMBEDDED..."
+  const m = s.match(/CODE([A-Z0-9]+)NAME/i);
+  if (m) s = m[1];
+  else {
+    // "CS25C09 - Java Programming" -> "CS25C09"
+    s = s.split(' - ')[0].split(' — ')[0].split(':')[0].trim();
+    s = s.split(/\s+/)[0];
+  }
+
+  const clean = s.toUpperCase().trim();
+
+  // 4. Strict Validation Guard:
+  // Subject code must NOT start with '{', '[', '"', or contain 'OBJECT'
+  if (/^[{\["']/.test(clean) || clean.includes('OBJECT') || clean.includes('{') || clean.includes('}') || clean.includes('"')) {
+    return '';
+  }
+
+  // Course code should be alphanumeric, optionally with dashes/underscores (e.g. CS25C09, GE3791, CCS334)
+  const codeMatch = clean.match(/^[A-Z0-9_-]+/);
+  return codeMatch ? codeMatch[0] : '';
+};
+
+// Canonicalize any batch representation into "XX Batch (YYYY-YY)" without double-wrapping.
+// e.g. "2025-2029" -> "25 Batch (2025-29)", "25 Batch (2025-29)" stays as-is.
+const canonicalizeBatch = (b) => {
+  if (!b) return '';
+  const s = String(b).trim();
+  if (/^\d{2}\s*Batch\s*\(/i.test(s)) return s;
+  const m = s.match(/(19|20)\d{2}\s*[-–—]\s*(\d{2,4})/);
+  if (!m) return s;
+  const start = s.match(/(19|20)\d{2}/)[0];
+  let end = (m[2] || '').replace(/\D/g, '');
+  if (end.length === 4) end = end.slice(-2);
+  if (end.length !== 2) {
+    // Derive from duration guess: if start year + 2 looks like PG handled elsewhere, default 4-yr UG
+    end = String((parseInt(start, 10) + 4) % 100).padStart(2, '0');
+  }
+  const yy = String(start).slice(-2);
+  return `${yy} Batch (${start}-${end})`;
+};
+
+const batchStartYear = (b) => {
+  if (!b) return null;
+  const m = String(b).match(/(19|20)\d{2}/);
+  return m ? parseInt(m[0], 10) : null;
+};
+
+const getBatchDurationYears = (b) => {
+  if (!b) return null;
+  const years = String(b).match(/(19|20)\d{2}/g);
+  if (!years || years.length < 2) {
+    // Try short form "2025-29"
+    const m = String(b).match(/(20\d{2})\s*[-–—]\s*(\d{2})\b/);
+    if (m) return 2000 + parseInt(m[2], 10) - parseInt(m[1], 10);
+    return null;
+  }
+  const start = parseInt(years[0], 10);
+  let end = parseInt(years[years.length - 1], 10);
+  if (end < 100) end = Math.floor(start / 100) * 100 + end;
+  return end - start;
+};
+
+// Shared normalizer for Firestore string comparisons (dept/programme/batch/section).
+const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
+
+const getNormalizedCourseType = (typeStr) => {
+  if (!typeStr) return 'theory';
+  const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (s.includes('lab') && s.includes('theory')) return 'integrated';
+  if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit')) return 'integrated';
+  if (s.includes('practical') || s.includes('lab')) return 'practical';
+  if (s.includes('project')) return 'project';
+  if (s.includes('activity')) return 'activity';
+  return 'theory';
+};
+
 export default function MarkEntry() {
+  const location = useLocation();
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
+  // Fuzzy batch equality: "2025-2029" matches "25 Batch (2025-29)"
+  const isBatchMatch = useCallback((a, b) => {
+    if (!a || !b) return false;
+    if (String(a).trim() === String(b).trim()) return true;
+    const ya = batchStartYear(a);
+    const yb = batchStartYear(b);
+    return ya !== null && yb !== null && ya === yb;
+  }, []);
+
+  // Canonical department matching
+  const isDeptMatch = useCallback((docDept, targetDept) => {
+    if (!targetDept || !docDept) return true;
+    const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+    const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+    
+    if (norm1 === norm2) return true;
+    if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+
+    if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
+    if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
+    if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
+    if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
+    if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
+    if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
+    if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
+
+    return false;
+  }, []);
   // Selection States
   const [programme, setProgramme] = useState("");
   const [department, setDepartment] = useState("");
@@ -67,6 +197,7 @@ export default function MarkEntry() {
   const [userProgramme, setUserProgramme] = useState("");
   const [userDepartment, setUserDepartment] = useState("");
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
+  const [facultyAssignedGroups, setFacultyAssignedGroups] = useState([]);
   const [subjectCourseType, setSubjectCourseType] = useState("");
 
   useEffect(() => {
@@ -83,15 +214,54 @@ export default function MarkEntry() {
           const assignmentsRef = collection(db, 'subject_assignments');
           unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
             const prefixes = [];
+            const groups = [];
             assignSnap.forEach(d => {
-              if (d.data()?.[auth.currentUser.uid]) {
+              const data = d.data() || {};
+              if (!data?.[auth.currentUser.uid]) return;
+              const codes = data[auth.currentUser.uid];
+              if (!Array.isArray(codes) || codes.length === 0) return;
+              const meta = data._meta || {};
+              // Structured parse: progKey is 2 segments (B_Tech / B_E / M_E...), then dept words, then batch/ay/sem
+              const idParts = d.id.split('_');
+              const batchIdx = idParts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+              let progKey = '', deptPart = '', batch = '', ay = '', sem = '', sec = '';
+              if (batchIdx > 1) {
+                // progKey heuristic: first 2 segments for B_Tech/B_E style, else first segment
+                const firstTwo = `${idParts[0]}_${idParts[1]}`;
+                if (/^(B|M)_(E|Tech|Sc|CA|BA|Com|A)$/i.test(firstTwo)) {
+                  progKey = firstTwo;
+                  deptPart = idParts.slice(2, batchIdx).join('_');
+                } else {
+                  progKey = idParts[0];
+                  deptPart = idParts.slice(1, batchIdx).join('_');
+                }
+                batch = idParts[batchIdx] || '';
+                ay = idParts[batchIdx + 1] || '';
+                sem = idParts[batchIdx + 2] || '';
+                sec = idParts.slice(batchIdx + 3).join('_') || '';
+              } else {
                 const yearMatch = d.id.match(/\d{4}-\d{4}/);
                 if (yearMatch && yearMatch.index >= 2) {
                   prefixes.push(d.id.slice(0, yearMatch.index - 1));
                 }
+                return;
               }
+              const department = (meta.department || deptPart.replace(/_/g, ' ').trim());
+              const programme = meta.programme || meta.programme_name || progKey;
+              prefixes.push(`${progKey}_${deptPart}`);
+              groups.push({
+                progKey,
+                programme,
+                department,
+                batch: meta.batch || batch,
+                academicYear: meta.academicYear || meta.academic_year || ay,
+                semester: meta.semester || sem,
+                section: meta.section || sec,
+                codes: codes.filter(Boolean),
+              });
             });
             setFacultyAssignPrefixes(prefixes);
+            setFacultyAssignedGroups(groups);
           });
         }
       }
@@ -316,30 +486,14 @@ export default function MarkEntry() {
     return () => unsub();
   }, []);
 
-  // Filter Available Batches based on generated QPs
-  useEffect(() => {
-    if (!programme || !department || allQPs.length === 0) {
-      setAvailableBatches([]);
-      return;
-    }
-    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-
-    const qpBatches = allQPs
-      .filter(qp => 
-        norm(qp.department || qp.dept || '') === needDept && 
-        (!qp.programme || norm(qp.programme) === needProg)
-      )
-      .map(qp => qp.batch)
-      .filter(Boolean);
-
-    setAvailableBatches([...new Set(qpBatches)]);
-  }, [programme, department, allQPs]);
-
   const derivedProgs = useMemo(() => {
-    if (!facultyAssignPrefixes.length) return [];
     const progs = new Set();
+    // From structured assignment groups (handles multi-department faculty correctly)
+    facultyAssignedGroups.forEach(g => {
+      const pk = formatProgrammeKey(g.progKey || g.programme || '');
+      if (pk) progs.add(pk);
+    });
+    if (!facultyAssignPrefixes.length && progs.size === 0) return [];
     Object.keys(PROGRAMME_DEPARTMENTS).forEach(prog => {
       const progKey = formatProgrammeKey(prog);
       if (facultyAssignPrefixes.some(p => p.startsWith(progKey))) {
@@ -347,94 +501,210 @@ export default function MarkEntry() {
       }
     });
     return Array.from(progs);
-  }, [facultyAssignPrefixes, PROGRAMME_DEPARTMENTS]);
+  }, [facultyAssignPrefixes, facultyAssignedGroups, PROGRAMME_DEPARTMENTS]);
 
-  const filteredProgrammes = Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-    if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
-    const progKey = formatProgrammeKey(prog);
-    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
-    return derivedProgs.includes(progKey);
-  });
+  const filteredProgrammes = useMemo(() => {
+    const qpProg = location.state?.qp?.programme || location.state?.qp?.progKey;
+    return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
+      if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
+      const progKey = formatProgrammeKey(prog);
+      // Always keep the dashboard-passed programme selectable
+      if (qpProg && formatProgrammeKey(qpProg) === progKey) return true;
+      if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
+      if (userProgramme && formatProgrammeKey(userProgramme) === progKey) return true;
+      if (derivedProgs.length === 0) return true;
+      return derivedProgs.includes(progKey);
+    });
+  }, [PROGRAMME_DEPARTMENTS, userRole, userProgramme, derivedProgs, location.state]);
 
   const derivedDepts = useMemo(() => {
-    if (!facultyAssignPrefixes.length || !programme) return [];
-    const progKey = formatProgrammeKey(programme);
     const depts = new Set();
-    facultyAssignPrefixes.forEach(prefix => {
-      if (prefix.startsWith(progKey)) {
-        depts.add(prefix.slice(progKey.length).trim());
+    facultyAssignedGroups.forEach(g => {
+      const gProg = formatProgrammeKey(g.progKey || g.programme || '');
+      if (!programme || gProg === formatProgrammeKey(programme)) {
+        if (g.department) depts.add(String(g.department).replace(/[_ ]+/g, ' ').trim());
       }
     });
-    return Array.from(depts);
-  }, [facultyAssignPrefixes, programme, PROGRAMME_DEPARTMENTS]);
+    if (facultyAssignPrefixes.length && programme) {
+      const progKey = formatProgrammeKey(programme);
+      facultyAssignPrefixes.forEach(prefix => {
+        if (prefix.startsWith(progKey)) {
+          depts.add(prefix.slice(progKey.length).replace(/^_+/, '').replace(/[_ ]+/g, ' ').trim());
+        }
+      });
+    }
+    return Array.from(depts).filter(Boolean);
+  }, [facultyAssignPrefixes, facultyAssignedGroups, programme]);
 
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
-    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
-    if (!derivedDepts.length) return [];
-    const progKey = formatProgrammeKey(programme);
-    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim());
-    return depts.filter(dept => {
-      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim();
-      return normalizedDepts.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    const qpDept = location.state?.qp?.department || location.state?.qp?.dept;
+    if (userRole !== 'Faculty' && userRole !== 'HOD') {
+      if (qpDept && !depts.includes(qpDept)) return [...depts, qpDept];
+      return depts;
+    }
+    // Collect ALL departments from assignments (multi-dept faculty) + home dept
+    const allMine = new Set(derivedDepts);
+    if (userDepartment) allMine.add(String(userDepartment).replace(/[_ ]+/g, ' ').trim());
+    facultyAssignedGroups.forEach(g => {
+      if (g.department) allMine.add(String(g.department).replace(/[_ ]+/g, ' ').trim());
     });
-  }, [programme, userRole, derivedDepts, PROGRAMME_DEPARTMENTS]);
+    if (allMine.size === 0) {
+      if (qpDept && !depts.includes(qpDept)) return [...depts, qpDept];
+      return depts;
+    }
+    const normalizedMine = Array.from(allMine).map(d => d.toLowerCase());
+    let out = depts.filter(dept => {
+      const normDept = sanitizeKey(dept).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+      return normalizedMine.some(d => d === normDept || d.includes(normDept) || normDept.includes(d));
+    });
+    if (qpDept && !out.includes(qpDept)) out = [...out, qpDept];
+    if (userDepartment && !out.includes(userDepartment)) out = [...out, userDepartment];
+    return out.length > 0 ? out : depts;
+  }, [programme, userRole, derivedDepts, userDepartment, facultyAssignedGroups, PROGRAMME_DEPARTMENTS, location.state]);
 
-  // Filter Academic Years based on batch and QPs
+  // Available Batches: scoped to user's assignments + active QPs, fuzzy batch match,
+  // programme-duration filtered (UG=4yr, PG=2yr), canonicalized, NEVER wiped to empty.
   useEffect(() => {
-    if (!batch || !programme || !department || allQPs.length === 0) {
+    if (!programme) {
+      setAvailableBatches([]);
+      return;
+    }
+    const progKey = formatProgrammeKey(programme);
+    const baseBatches = getActiveBatches(progKey) || [];
+    const isPg = progKey === 'PG' || progKey === 'M_E' || progKey === 'M_Tech';
+    const targetDuration = isPg ? 2 : 4;
+
+    const assignedBatches = facultyAssignedGroups
+      .filter(g => !programme || formatProgrammeKey(g.progKey || g.programme || '') === progKey)
+      .map(g => g.batch)
+      .filter(Boolean);
+
+    // QP batches: batch match only — do NOT require dept equality so cross-department
+    // Common QPs (e.g. CS25C09 set by CSE for AI&DS students) keep their batch alive.
+    const qpBatches = (allQPs || [])
+      .filter(qp => {
+        if (!qp.batch) return false;
+        if (qp.programme && formatProgrammeKey(qp.programme) !== progKey) return false;
+        return true;
+      })
+      .map(qp => qp.batch);
+
+    const merged = [...baseBatches, ...assignedBatches, ...qpBatches].filter(Boolean);
+    const canonMap = new Map();
+    merged.forEach(b => {
+      const c = canonicalizeBatch(b);
+      if (!canonMap.has(c)) canonMap.set(c, c);
+    });
+    let list = Array.from(canonMap.keys());
+    // Duration filter: keep batches matching programme duration; if filter empties, keep all.
+    const durFiltered = list.filter(b => {
+      const d = getBatchDurationYears(b);
+      return d === null || d === targetDuration;
+    });
+    if (durFiltered.length > 0) list = durFiltered;
+    // Preserve currently-selected batch even if scopes haven't loaded yet
+    if (batch && !list.some(b => isBatchMatch(b, batch))) {
+      list = [canonicalizeBatch(batch), ...list];
+    }
+    setAvailableBatches(list);
+  }, [programme, allQPs, facultyAssignedGroups, getActiveBatches, batch, isBatchMatch]);
+
+  // Academic Years: strictly from user's assignments + QPs for the selected batch.
+  // For new batches without QPs yet, derive the valid 4-year range from the batch.
+  useEffect(() => {
+    if (!batch || !programme) {
       setAcademicYears([]);
       return;
     }
-    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-    const needBatch = norm(batch);
+    const normAy = (s) => {
+      const m = String(s || '').match(/(19|20)\d{2}/g);
+      if (!m) return String(s || '').trim();
+      const start = parseInt(m[0], 10);
+      return `${start}-${start + 1}`;
+    };
+    const aySet = new Set();
+    facultyAssignedGroups
+      .filter(g => isBatchMatch(g.batch, batch))
+      .forEach(g => { if (g.academicYear) aySet.add(normAy(g.academicYear)); });
+    (allQPs || [])
+      .filter(qp => qp.batch && isBatchMatch(qp.batch, batch))
+      .forEach(qp => {
+        const ay = qp.academic_year || qp.academicYear;
+        if (ay) aySet.add(normAy(ay));
+      });
+    // Preserve current selection
+    if (academicYear) aySet.add(normAy(academicYear));
+    let list = Array.from(aySet).filter(Boolean).sort();
+    if (list.length === 0) {
+      const start = batchStartYear(batch);
+      if (start) {
+        const isPg = ['PG', 'M_E', 'M_Tech'].includes(formatProgrammeKey(programme));
+        const dur = isPg ? 2 : 4;
+        list = Array.from({ length: dur }, (_, i) => `${start + i}-${start + i + 1}`);
+      }
+    }
+    setAcademicYears(list);
+    // Clear stale selection only when we have a concrete list that excludes it
+    if (list.length > 0) {
+      const qpAy = location.state?.qp?.academic_year || location.state?.qp?.academicYear;
+      setAcademicYear(prev => (prev && list.includes(prev) ? prev : (prev || qpAy || "")));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batch, programme, allQPs, facultyAssignedGroups, isBatchMatch]);
 
-    const qpAys = allQPs
-      .filter(qp => 
-        norm(qp.department || qp.dept || '') === needDept && 
-        (!qp.programme || norm(qp.programme) === needProg) &&
-        norm(qp.batch || '') === needBatch
-      )
-      .map(qp => qp.academic_year || qp.academicYear)
-      .filter(Boolean);
-
-    setAcademicYears([...new Set(qpAys)]);
-    setAcademicYear("");
-  }, [batch, programme, department, allQPs]);
-
-  // Filter Semesters based on batch/AY and QPs
+  // Semesters: ONLY semesters where the user has assigned subjects or active QPs
+  // for the selected Batch + Academic Year. No unassigned fallback pairs.
   useEffect(() => {
-    if (!academicYear || !batch || !programme || !department || allQPs.length === 0) {
+    if (!academicYear || !batch || !programme) {
       setSemesters([]);
       return;
     }
-    const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-    const needBatch = norm(batch);
-    const needAy = norm(academicYear);
-
-    const qpSems = allQPs
-      .filter(qp => 
-        norm(qp.department || qp.dept || '') === needDept && 
-        (!qp.programme || norm(qp.programme) === needProg) &&
-        norm(qp.batch || '') === needBatch &&
-        norm(qp.academic_year || qp.academicYear || '') === needAy
-      )
-      .map(qp => qp.semester)
+    const normAyEq = (a, b) => {
+      if (!a || !b) return true;
+      const na = String(a).match(/(19|20)\d{2}/)?.[0] || String(a);
+      const nb = String(b).match(/(19|20)\d{2}/)?.[0] || String(b);
+      return na === nb || String(a).includes(String(b)) || String(b).includes(String(a));
+    };
+    const qpSems = (allQPs || [])
+      .filter(qp => qp.batch && isBatchMatch(qp.batch, batch) && normAyEq(qp.academic_year || qp.academicYear, academicYear))
+      .map(qp => deriveSemesterNumber(qp.semester))
       .filter(Boolean);
-
-    const uniqueSems = [...new Set(qpSems.map(s => String(s).trim()))];
-
-    const sems = uniqueSems.map(s => `${s}${s === '1' ? 'st' : s === '2' ? 'nd' : s === '3' ? 'rd' : 'th'} Semester`);
-    
+    const groupSems = facultyAssignedGroups
+      .filter(g => isBatchMatch(g.batch, batch) && normAyEq(g.academicYear, academicYear))
+      .map(g => deriveSemesterNumber(g.semester))
+      .filter(Boolean);
+    let activeSemNums = [...new Set([...qpSems, ...groupSems])].map(n => parseInt(n, 10)).filter(n => !isNaN(n));
+    const isPg = ['PG', 'M_E', 'M_Tech'].includes(formatProgrammeKey(programme));
+    const maxSem = isPg ? 4 : 8;
+    let semListToUse = [];
+    if (activeSemNums.length > 0) {
+      semListToUse = activeSemNums.filter(n => n >= 1 && n <= maxSem);
+    } else {
+      // Last-resort derivation from batch year math (new batch, no assignments recorded yet)
+      const bStart = batchStartYear(batch);
+      const ayStart = batchStartYear(academicYear);
+      if (bStart !== null && ayStart !== null) {
+        const yearDiff = ayStart - bStart;
+        if (yearDiff >= 0 && yearDiff < 4) {
+          semListToUse = [yearDiff * 2 + 1, yearDiff * 2 + 2].filter(n => n <= maxSem);
+        }
+      }
+      if (semListToUse.length === 0) semListToUse = [1];
+    }
+    const sems = semListToUse.sort((a, b) => a - b).map(n => {
+      const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+      return `${n}${suffix} Semester`;
+    });
     setSemesters(sems);
-    setSemester("");
-  }, [academicYear, batch, programme, department, allQPs]);
+    // Clear stale semester only when the fresh list excludes it
+    if (sems.length > 0) {
+      setSemester(prev => (prev && sems.includes(prev) ? prev : ""));
+    }
+  }, [academicYear, batch, programme, allQPs, facultyAssignedGroups, isBatchMatch]);
 
-  // Filter Subjects based on assignments and QPs
+  // Subjects: User-handled assigned subjects + active QPs for selected department & semester.
+  // Uses canonical department matching and global course map so subjects are never blank.
   useEffect(() => {
     const fetchSubjectNames = async () => {
       if (!batch || !academicYear || !semester || !programme || !department) {
@@ -449,79 +719,150 @@ export default function MarkEntry() {
       if (!currentUser) return;
 
       const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-      const needDept = norm(department);
-      const needProg = norm(programme);
-      const needBatch = norm(batch);
-      const needAy = norm(academicYear);
-
-      // Get subjects that have QPs
-      const qpSubjects = allQPs
-        .filter(qp => 
-          norm(qp.department || qp.dept || '') === needDept && 
-          (!qp.programme || norm(qp.programme) === needProg) &&
-          norm(qp.batch || '') === needBatch &&
-          norm(qp.academic_year || qp.academicYear || '') === needAy &&
-          String(qp.semester || '').trim() === needSem
-        )
-        .map(qp => qp.subject || qp.course)
-        .filter(Boolean);
-
-      const uniqueQpSubjects = [...new Set(qpSubjects.map(s => norm(s)))];
+      const normAyEq = (a, b) => {
+        if (!a || !b) return true;
+        return String(a).includes(String(b)) || String(b).includes(String(a)) ||
+          (String(a).match(/(19|20)\d{2}/)?.[0] === String(b).match(/(19|20)\d{2}/)?.[0]);
+      };
 
       try {
         const userRef = doc(db, 'users', currentUser.uid);
         const userSnap = await getDoc(userRef);
-        const userRole = userSnap.exists() ? userSnap.data().role : null;
+        const role = userSnap.exists() ? userSnap.data().role : null;
+        const isPrivileged = role === 'Admin' || role === 'HOD' || role === 'Principal';
 
-        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-        const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}${sectionSuffix}`;
-        const assignmentDocRef = doc(db, 'subject_assignments', assignmentCompositeKey);
-        const assignmentSnap = await getDoc(assignmentDocRef);
-        
-        let assignedCodes = [];
-        if (assignmentSnap.exists()) {
-          const assignments = assignmentSnap.data();
-          if (userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal') {
-            Object.values(assignments).forEach(userAssignments => {
-              if (Array.isArray(userAssignments)) assignedCodes.push(...userAssignments);
-            });
-          } else {
-            assignedCodes = assignments[currentUser.uid] || [];
-          }
-        }
-        
-        // Filter assigned codes by those that have QPs
-        const filteredAssignedCodes = assignedCodes.filter(code => uniqueQpSubjects.includes(norm(code)));
-        const uniqueCodes = [...new Set(filteredAssignedCodes)];
-        
-        // Fetch syllabus names
-        const regulation = getRegulationForBatch(progKey, batch); // Ensure regulation is available
-        const syllabusDocId = `${progKey}_${deptKey}_${sanitizeKey(regulation)}`;
-        const syllabusSnap = await getDoc(doc(db, 'syllabus_data', syllabusDocId)); // Firestore doc reference
-        const syllabusData = syllabusSnap.data(); // Use .data() for Firestore documents
-        const syllabusMap = {};
-        if (syllabusData && syllabusData.semesters && syllabusData.semesters[needSem]) {
-          syllabusData.semesters[needSem].forEach(s => {
-            syllabusMap[s.code] = s.name;
+        const cleanCode = (c) => parseSubjectCodeKey(c);
+        let userHandledCodes = [];
+        let deptAllCodes = [];
+
+        // 1. User-handled subjects from assigned groups using canonical department match
+        facultyAssignedGroups
+          .filter(g => isBatchMatch(g.batch, batch) && normAyEq(g.academicYear, academicYear) &&
+            String(g.semester || '').trim() === String(needSem))
+          .forEach(g => {
+            if (isDeptMatch(g.department, department)) {
+              (g.codes || []).forEach(c => {
+                const cc = cleanCode(c);
+                if (cc) {
+                  deptAllCodes.push(cc);
+                  userHandledCodes.push(cc);
+                }
+              });
+            }
           });
+
+        // Fallback 1: facultyAssignedGroups matching batch + sem (broad academicYear match)
+        if (userHandledCodes.length === 0) {
+          facultyAssignedGroups
+            .filter(g => isBatchMatch(g.batch, batch) && String(g.semester || '').trim() === String(needSem))
+            .forEach(g => {
+              if (isDeptMatch(g.department, department)) {
+                (g.codes || []).forEach(c => {
+                  const cc = cleanCode(c);
+                  if (cc) {
+                    deptAllCodes.push(cc);
+                    userHandledCodes.push(cc);
+                  }
+                });
+              }
+            });
         }
 
-        const mappedSubjects = uniqueCodes.map(code => ({
-          value: code,
-          text: syllabusMap[code] ? `${code} - ${syllabusMap[code]}` : code
-        }));
+        // Fallback 2: direct composite doc read from subject_assignments
+        if (userHandledCodes.length === 0) {
+          const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+          const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}${sectionSuffix}`;
+          try {
+            const assignmentSnap = await getDoc(doc(db, 'subject_assignments', assignmentCompositeKey));
+            if (assignmentSnap.exists()) {
+              const assignments = assignmentSnap.data();
+              if (isPrivileged) {
+                Object.values(assignments).forEach(v => { if (Array.isArray(v)) v.forEach(c => { const cc = cleanCode(c); if (cc) deptAllCodes.push(cc); }); });
+              }
+              (assignments[currentUser.uid] || []).forEach(c => { const cc = cleanCode(c); if (cc) userHandledCodes.push(cc); });
+            }
+          } catch { /* non-critical */ }
+        }
+
+        // 2. QPs created by or explicitly allocated to current user (or department QPs for privileged roles)
+        const userQpCodes = (allQPs || [])
+          .filter(qp => {
+            if (!qp.batch || !isBatchMatch(qp.batch, batch)) return false;
+            if (qp.programme && formatProgrammeKey(qp.programme) !== progKey) return false;
+            const qpAy = qp.academic_year || qp.academicYear;
+            if (!normAyEq(qpAy, academicYear)) return false;
+            if (String(qp.semester || '').trim() !== String(needSem)) return false;
+
+            const qpCode = cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+            if (!qpCode) return false;
+
+            const isMyQp = qp.created_by === currentUser.uid ||
+                           qp.faculty_id === currentUser.uid ||
+                           qp.allocated_faculty_id === currentUser.uid ||
+                           (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
+                           userHandledCodes.includes(qpCode);
+
+            if (isPrivileged) {
+              return isMyQp || isDeptMatch(qp.department || qp.dept, department);
+            }
+            return isMyQp;
+          })
+          .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
+          .filter(Boolean);
+
+        // 3. Combine unique subject codes strictly scoped by role
+        let uniqueCodes = [];
+        if (isPrivileged) {
+          uniqueCodes = [...new Set([...userHandledCodes, ...deptAllCodes, ...userQpCodes])];
+        } else {
+          // Normal Faculty see ONLY subjects allocated/assigned to them or their QPs
+          uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes])];
+        }
+
+        // Fetch course names map from courseUtils (syllabus + courses + course_bank)
+        let courseNamesMap = {};
+        try {
+          courseNamesMap = await fetchAllCourseNamesMap();
+        } catch { /* fallback below */ }
+
+        // Syllabus titles lookup for exact regulation match
+        const regulation = getRegulationForBatch(progKey, batch);
+        const syllabusMap = {};
+        try {
+          const syllabusSnap = await getDoc(doc(db, 'syllabus_data', `${progKey}_${deptKey}_${sanitizeKey(regulation)}`));
+          const syllabusData = syllabusSnap.data();
+          if (syllabusData?.semesters?.[needSem]) {
+            syllabusData.semesters[needSem].forEach(s => { if (s?.code) syllabusMap[String(s.code).toUpperCase()] = s.name; });
+          }
+        } catch { /* non-critical */ }
+
+        const mappedSubjects = uniqueCodes
+          .map(code => {
+            const clean = parseSubjectCodeKey(code);
+            if (!clean) return null;
+            const title = syllabusMap[clean] || courseNamesMap[clean] || courseNamesMap[clean.toUpperCase()] || '';
+            return {
+              value: clean,
+              text: title ? `${clean} - ${title}` : clean
+            };
+          })
+          .filter(Boolean);
 
         setSubjects(mappedSubjects);
+        // Preserve pre-selected subject if still valid; otherwise clear
+        setSubject(prev => (prev && mappedSubjects.some(s => s.value === prev) ? prev : ""));
       } catch (error) {
         console.error("Error fetching subjects:", error);
         setSubjects([]);
+        setSubject("");
       }
-      setSubject("");
     };
     fetchSubjectNames();
-  }, [batch, academicYear, semester, programme, department, section, getRegulationForBatch, allQPs]);
+  }, [batch, academicYear, semester, programme, department, section, getRegulationForBatch, allQPs, facultyAssignedGroups, isBatchMatch, isDeptMatch]);
 
-  // Filter Available Exams based on generated QPs and University Configs
+  // Filter Available Exams based on generated QPs and University Configs.
+  // Cross-department Common QPs included (no strict dept equality).
+  // "IA 1 (Set 2)" is surfaced as base exam "IA 1" so one option covers all sets.
   useEffect(() => {
     if (!batch || !academicYear || !semester || !subject || !programme || !department) {
       setAvailableExams([]);
@@ -529,68 +870,104 @@ export default function MarkEntry() {
     }
 
     const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
-    const needDept = norm(department);
-    const needProg = norm(programme);
-    const needBatch = norm(batch);
-    const needAy = norm(academicYear);
-    const needSem = deriveSemesterNumber(semester);
-    const needSub = norm(subject);
+    const normAyEq = (a, b) => {
+      if (!a || !b) return true;
+      return String(a).includes(String(b)) || String(b).includes(String(a)) ||
+        (String(a).match(/(19|20)\d{2}/)?.[0] === String(b).match(/(19|20)\d{2}/)?.[0]);
+    };
+    const targetProgKey = formatProgrammeKey(programme);
+    const targetSemNum = deriveSemesterNumber(semester);
+    const targetSubCode = parseSubjectCodeKey(subject);
+    const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+    // Strict regulation boundary: this batch belongs to exactly one regulation
+    // (e.g. 23 Batch → AU - R2021). Configs saved under any other regulation
+    // (e.g. CIA 1/2/3 created for R2025) must never leak into this dropdown.
+    const batchRegulation = getRegulationForBatch ? getRegulationForBatch(targetProgKey, batch) : "";
+    const normReg = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // 1. Get exams from generated QPs
+    // 1. Get exams strictly from generated QPs with status 'Allocated & Released' (or approved)
     const qpExams = allQPs
       .filter(qp => {
-        return norm(qp.department || qp.dept || '') === needDept && 
-          (!qp.programme || norm(qp.programme) === needProg) && 
-          norm(qp.batch || '') === needBatch &&
-          norm(qp.academic_year || qp.academicYear || '') === needAy &&
-          String(qp.semester || '').trim() === needSem &&
-          norm(qp.subject || '') === needSub;
+        if (!qp.batch || !isBatchMatch(qp.batch, batch)) return false;
+
+        const qpProgKey = formatProgrammeKey(qp.programme || qp.program || '');
+        if (qpProgKey && targetProgKey && qpProgKey !== targetProgKey) return false;
+
+        const qpAy = qp.academic_year || qp.academicYear;
+        if (qpAy && !normAyEq(qpAy, academicYear)) return false;
+
+        const qpSemNum = deriveSemesterNumber(qp.semester);
+        if (qpSemNum && targetSemNum && String(qpSemNum) !== String(targetSemNum)) return false;
+
+        const qpSubCode = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+        if (qpSubCode && targetSubCode && qpSubCode !== targetSubCode) return false;
+
+        // Strictly keep ONLY papers that are Allocated & Released (or Approved by Exam Cell)
+        const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
+        const isAllocated = statusNorm === 'allocated & released' ||
+                            statusNorm === 'allocated' ||
+                            statusNorm === 'approved' ||
+                            statusNorm === 'approved by exam cell' ||
+                            qp.allocated === true ||
+                            qp.isAllocated === true ||
+                            qp.status === 'Allocated & Released';
+
+        return isAllocated;
       })
       .map(qp => {
         const rawName = qp.qpaper_name || qp.qpaperName;
-        const matchedConfig = ciaConfigs.find(c => c.id === rawName || c.examName === rawName);
+        const baseName = stripSetSuffix(rawName) || rawName;
+        const matchedConfig = ciaConfigs.find(c => c.id === rawName || c.examName === rawName || c.examName === baseName || c.id === baseName);
         return {
-          value: rawName,
-          text: matchedConfig ? matchedConfig.examName : rawName,
+          value: baseName,
+          text: matchedConfig ? matchedConfig.examName : baseName,
           type: matchedConfig?.isUniversity ? 'University' : (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' ? qp.assessment_type : (matchedConfig?.isPractical ? 'Practical' : 'Internal')),
           hasQP: true
         };
-      })
-      .filter(e => e.type !== 'University'); // University exams must be configured in CIA to show up
-
-    // 2. Get University / Indirect Assessment Exams from ciaConfigs
-    const uniExams = ciaConfigs
-      .filter(c => 
-        (c.isUniversity || c.isIndirectAssessment) &&
-        (!c.program || formatProgDisplay(c.program) === formatProgDisplay(programme)) &&
-        (!c.department || norm(c.department) === needDept) &&
-        (!c.batch || norm(c.batch) === needBatch) &&
-        (!c.academicYear || norm(c.academicYear) === needAy) &&
-        (!c.semester || String(c.semester) === needSem) &&
-        (!subjectCourseType || (c.courseTypes && c.courseTypes.includes(subjectCourseType)))
-      )
-      .map(c => {
-        // Check if a QP exists for this university exam
-        const qpExists = allQPs.some(qp => 
-          norm(qp.department || qp.dept || '') === needDept && 
-          (!qp.programme || norm(qp.programme) === needProg) && 
-          norm(qp.batch || '') === needBatch &&
-          norm(qp.academic_year || qp.academicYear || '') === needAy &&
-          String(qp.semester || '').trim() === needSem &&
-          norm(qp.subject || '') === needSub &&
-          norm(qp.qpaper_name || qp.qpaperName || '') === norm(c.id || c.examName)
-        );
-
-        return {
-          value: c.id,
-          text: c.examName,
-          type: 'University',
-          isIndirectAssessment: !!c.isIndirectAssessment,
-          hasQP: qpExists
-        };
       });
 
-    const combined = [...uniExams, ...qpExams];
+    // 2. Get Configured Exams from ciaConfigs — ONLY "Allocated & Released" scope mates:
+    // ESE exams (isUniversity checked) + Internal Assessments (no flags checked).
+    // Activity/Assignment (isAssignment), Project (isProject), Practical (isPractical),
+    // and Survey-only Indirect Assessments are strictly excluded here.
+    const needDept = norm(department);
+    const ciaExams = ciaConfigs
+      .filter(c => {
+        const isESE = !!c.isUniversity;
+        const isInternalAssessment = !c.isUniversity && !c.isIndirectAssessment && !c.isAssignment && !c.isProject && !c.isPractical;
+        if (!isESE && !isInternalAssessment) return false;
+        // Regulation must match this batch's regulation — exams you never created
+        // (e.g. CIA 1/2/3 saved under another regulation) are blocked here.
+        if (c.regulation && batchRegulation && normReg(c.regulation) !== normReg(batchRegulation)) return false;
+        if (c.program && formatProgrammeKey(c.program) !== targetProgKey) return false;
+        if (c.department && norm(c.department) !== needDept) return false;
+        if (c.batch && !isBatchMatch(c.batch, batch)) return false;
+        if (c.academicYear && !normAyEq(c.academicYear, academicYear)) return false;
+        if (c.semester && String(deriveSemesterNumber(c.semester)) !== String(targetSemNum)) return false;
+        
+        // Match subject course category / course types if specified
+        if (c.courseTypes && Array.isArray(c.courseTypes) && c.courseTypes.length > 0) {
+          if (subjectCourseType) {
+            const targetNorm = getNormalizedCourseType(subjectCourseType);
+            const cfgNorms = c.courseTypes.map(ct => getNormalizedCourseType(ct));
+            const matchesCategory = cfgNorms.includes(targetNorm) || 
+              c.courseTypes.includes(subjectCourseType) ||
+              c.courseTypes.some(ct => norm(ct) === norm(subjectCourseType)) ||
+              (targetNorm === 'integrated' && (cfgNorms.includes('theory') || cfgNorms.includes('practical')));
+            if (!matchesCategory) return false;
+          }
+        }
+        return true;
+      })
+      .map(c => ({
+        value: c.id || c.examName,
+        text: c.examName || c.id,
+        type: c.isUniversity ? 'University' : (c.isAssignment ? 'Assignment' : (c.isProject ? 'Project' : (c.isPractical ? 'Practical' : (c.isIndirectAssessment ? 'Indirect' : 'Internal')))),
+        isIndirectAssessment: !!c.isIndirectAssessment,
+        hasQP: false
+      }));
+
+    const combined = [...qpExams, ...ciaExams];
 
     // Remove duplicates based on normalized display text, prioritizing hasQP
     const uniqueExams = [];
@@ -599,17 +976,22 @@ export default function MarkEntry() {
       const normText = e.text ? String(e.text).toLowerCase().trim() : '';
       if (normText && !seen.has(normText)) {
         seen.add(normText);
-        uniqueExams.push(e);
+        uniqueExams.push({ ...e });
       } else if (normText && seen.has(normText)) {
         const existing = uniqueExams.find(ex => String(ex.text).toLowerCase().trim() === normText);
-        if (!existing) continue;
-        if (e.hasQP) existing.hasQP = true;
+        if (existing) {
+          if (e.hasQP) existing.hasQP = true;
+          if (e.type && (existing.type === 'Internal' || !existing.type)) existing.type = e.type;
+        }
       }
     }
 
     setAvailableExams(uniqueExams);
-    setExam("");
-  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs, subjectCourseType]);
+    setExam(prev => {
+      if (prev && uniqueExams.some(e => e.value === prev || e.text === prev)) return prev;
+      return "";
+    });
+  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs, subjectCourseType, isBatchMatch, getRegulationForBatch]);
 
   // Auto-set Mark Type when Exam is selected
   useEffect(() => {
@@ -649,24 +1031,38 @@ export default function MarkEntry() {
       const progKey = formatProgrammeKey(programme);
       const deptKey = sanitizeKey(department);
       const strictDept = sanitizeKeyStrict(department);
-      const subjKey = sanitizeKey(subject);
+      const rawSubCode = parseSubjectCodeKey(subject) || sanitizeKey(subject);
+      const regVal = getRegulationForBatch ? getRegulationForBatch(progKey, batch) : "";
+      const regKey = regVal ? sanitizeKey(regVal) : "";
+
+      const candidateKeys = [
+        `${progKey}_${deptKey}_${rawSubCode}`,
+        `${progKey}_${strictDept}_${rawSubCode}`,
+        `${progKey}_Overall_${rawSubCode}`
+      ];
+      if (regKey) {
+        candidateKeys.unshift(
+          `${progKey}_${deptKey}_${regKey}_${rawSubCode}`,
+          `${progKey}_${strictDept}_${regKey}_${rawSubCode}`,
+          `${progKey}_Overall_${regKey}_${rawSubCode}`
+        );
+      }
+
       try {
-        let snap = await getDoc(doc(db, 'courses', `${progKey}_${deptKey}_${subjKey}`));
-        if (!snap.exists() && strictDept !== deptKey) {
-          snap = await getDoc(doc(db, 'courses', `${progKey}_${strictDept}_${subjKey}`));
+        let foundType = "";
+        for (const k of candidateKeys) {
+          const snap = await getDoc(doc(db, 'courses', k));
+          if (snap.exists()) {
+            const data = snap.data();
+            foundType = data.type || data.category || data.courseType || data.subjectType || "";
+            if (foundType) break;
+          }
         }
-        if (!snap.exists()) {
-          snap = await getDoc(doc(db, 'courses', `${progKey}_Overall_${subjKey}`));
-        }
-        if (snap.exists()) {
-          setSubjectCourseType(snap.data().type || "");
-        } else {
-          setSubjectCourseType("");
-        }
+        setSubjectCourseType(foundType);
       } catch (e) { console.error("Error fetching course type:", e); setSubjectCourseType(""); }
     };
     fetchCourseType();
-  }, [programme, department, batch, subject]);
+  }, [programme, department, batch, subject, getRegulationForBatch]);
 
   // Fetch Question Paper
   useEffect(() => {
@@ -679,33 +1075,48 @@ export default function MarkEntry() {
 
       setLoading(true);
       try {
-        const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-'); // Normalize string for comparison
-        const needDept = norm(department);
+        const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
         const needAy = norm(academicYear);
-        const needSub = norm(subject);
-        const targetExam = norm(exam);
+        const targetSubCode = parseSubjectCodeKey(subject);
+        const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+        const targetExam = norm(stripSetSuffix(exam));
         const targetSem = deriveSemesterNumber(semester);
+        const isExamNameMatch = (a, b) => norm(stripSetSuffix(a)) === norm(stripSetSuffix(b));
+        const isApproved = (qp) => {
+          const st = norm(qp.status || '');
+          return st === 'allocated' || st === 'allocated & released' || st === 'approved_by_coe' ||
+            st === 'approved_by_hod' || st === 'approved' || st === 'approved_by_exam_cell' || st === 'approved_by_ac';
+        };
 
-        // Find matching summary in allQPs to get composite keys
-        const match = allQPs.find(qp => {
-          const qpDept = norm(qp.department || qp.dept || '');
+        // Candidates: subject code + sem + batch + exam-base match. Dept-agnostic so
+        // Common QPs set by other departments (CS25C09 by CSE) still resolve.
+        // Allocated & Released papers get absolute priority.
+        const candidates = allQPs.filter(qp => {
+          const qpSubCode = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
           const qpAy = norm(qp.academic_year || qp.academicYear || '');
-          const qpSub = norm(qp.subject || qp.course || '');
-          const qpExam = norm(qp.qpaper_name || qp.qpaperName || '');
-          const qpSem = String(qp.semester || '').trim();
+          const qpExam = qp.qpaper_name || qp.qpaperName || '';
+          const qpSem = deriveSemesterNumber(qp.semester);
           const qpSection = norm(qp.section || '');
           const needSection = norm(section || '');
-          
-          // Only apply section filter when QP has a section field (backward compat)
           const sectionMatch = !qp.section || !needSection || qpSection === needSection;
-          
-          return qpSub === needSub && 
-                 qpAy === needAy && 
-                 qpDept === needDept && 
-                 qpExam === targetExam && 
-                 qpSem === targetSem &&
+          return qpSubCode === targetSubCode &&
+                 (!qpAy || !needAy || qpAy === needAy || qpAy.includes(needAy) || needAy.includes(qpAy)) &&
+                 (!qp.batch || isBatchMatch(qp.batch, batch)) &&
+                 isExamNameMatch(qpExam, targetExam) &&
+                 String(qpSem) === String(targetSem) &&
                  sectionMatch;
         });
+        candidates.sort((a, b) => {
+          const rank = (qp) => {
+            const st = norm(qp.status || '');
+            if (st === 'allocated' || st === 'allocated & released') return 0;
+            if (st === 'approved_by_coe' || st === 'approved_by_exam_cell') return 1;
+            if (st === 'approved_by_hod' || st === 'approved') return 2;
+            return 3;
+          };
+          return rank(a) - rank(b);
+        });
+        const match = candidates.find(qp => isApproved(qp)) || candidates[0];
 
         if (match) {
           // Full data already in match (parent doc stores full payload)
@@ -730,7 +1141,7 @@ export default function MarkEntry() {
     };
 
     fetchQP();
-  }, [department, academicYear, subject, exam, semester, markType, allQPs]);
+  }, [department, academicYear, subject, exam, semester, markType, allQPs, batch, section, isBatchMatch]);
 
   // Fetch Grade Configs when regulation changes
   useEffect(() => {
@@ -797,7 +1208,7 @@ export default function MarkEntry() {
   // Fetch Students and Saved Marks
   useEffect(() => {
     const loadData = async () => {
-      if (!programme || !department || !batch || !academicYear || !semester || !subject || !exam || !markType) {
+      if (!programme || !department || !batch || !academicYear || !semester || !subject || !exam) {
         setStudents([]);
         setMarksData({});
         return;
@@ -805,13 +1216,84 @@ export default function MarkEntry() {
 
       setLoading(true);
       try {
-        // 1. Fetch Students
+        // 1. Resilient Student Loading
         const progKey = formatProgrammeKey(programme);
         const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-        const studentDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
-        const studentRef = doc(db, 'students', studentDocId); // Firestore doc reference
-        const studentSnapshot = await getDoc(studentRef); // Use getDoc for Firestore
-        const studentData = studentSnapshot.data(); // Use .data() for Firestore documents
+        const deptKey = sanitizeKey(department);
+        const deptKeyStrict = sanitizeKeyStrict(department);
+        const batchKey = sanitizeKey(batch);
+        
+        let studentData = null;
+        let studentDocId = `${batchKey}_${progKey}_${deptKey}${sectionSuffix}`;
+
+        const candidateDocIds = [
+          studentDocId,
+          `${batchKey}_${progKey}_${deptKeyStrict}${sectionSuffix}`,
+          `${batchKey}_${progKey}_${deptKey}`,
+          `${batchKey}_${progKey}_${deptKeyStrict}`,
+          `23_batch_2023_27_${progKey}_${deptKey}${sectionSuffix}`,
+          `23_batch_2023_27_${progKey}_${deptKeyStrict}${sectionSuffix}`,
+          `2023_2027_${progKey}_${deptKey}${sectionSuffix}`,
+          `2023_2027_${progKey}_${deptKeyStrict}${sectionSuffix}`
+        ];
+
+        for (const candidateId of candidateDocIds) {
+          try {
+            const snap = await getDoc(doc(db, 'students', candidateId));
+            if (snap.exists()) {
+              const data = snap.data();
+              if (data && Object.keys(data).filter(k => !k.startsWith('_')).length > 0) {
+                studentData = data;
+                studentDocId = candidateId;
+                break;
+              }
+            }
+          } catch (e) {}
+        }
+
+        // Broad fallback scan across students collection if studentData is still empty
+        if (!studentData || Object.keys(studentData).filter(k => !k.startsWith('_')).length === 0) {
+          try {
+            const studentsSnap = await getDocs(collection(db, 'students'));
+            const isDeptMatchLocal = (d1, d2) => {
+              if (!d1 || !d2) return true;
+              const s1 = String(d1).toLowerCase().replace(/b\.?e\.?|b\.?tech\.?|department|of|engineering/gi, '').replace(/[^a-z0-9]/g, '');
+              const s2 = String(d2).toLowerCase().replace(/b\.?e\.?|b\.?tech\.?|department|of|engineering/gi, '').replace(/[^a-z0-9]/g, '');
+              if (s1 === s2 || s1.includes(s2) || s2.includes(s1)) return true;
+              const acronyms = {
+                'artificialintelligenceanddatascience': ['aids', 'aiandds', 'ai', 'intel'],
+                'computerscienceandengineering': ['cse', 'cs'],
+                'electronicsandcommunicationengineering': ['ece', 'ec'],
+                'electricalandelectronicsengineering': ['eee', 'ee'],
+                'mechanicalengineering': ['mech', 'me'],
+                'civilengineering': ['civil', 'ce'],
+                'informationtechnology': ['it'],
+                'biomedicalengineering': ['bme', 'biomedical', 'medical']
+              };
+              for (const [full, acrs] of Object.entries(acronyms)) {
+                if ((s1.includes(full) || acrs.some(a => s1 === a)) && (s2.includes(full) || acrs.some(a => s2 === a))) return true;
+              }
+              return false;
+            };
+
+            studentsSnap.forEach(d => {
+              const data = d.data();
+              const meta = data?._meta || {};
+              const docDept = meta.department || d.id;
+              const docBatch = meta.batch || d.id;
+              
+              if (isBatchMatch(docBatch, batch) && isDeptMatchLocal(docDept, department)) {
+                if (section && meta.section && norm(meta.section) !== norm(section)) return;
+                if (!studentData) studentData = {};
+                Object.entries(data).forEach(([k, v]) => {
+                  if (!k.startsWith('_')) studentData[k] = v;
+                });
+              }
+            });
+          } catch (e) {
+            console.warn("Student fallback scan error:", e);
+          }
+        }
         
         let studentList = [];
         if (studentData) {
@@ -835,15 +1317,18 @@ export default function MarkEntry() {
 
         // Check course enrolments for this subject and semester
         if (subject) {
-          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${sanitizeKey(subject)}`;
+          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${parseSubjectCodeKey(subject)}`;
           const enrollSnap = await getDoc(doc(db, 'course_enrolments', enrollDocId));
           const enrolled = {};
           if (enrollSnap.exists()) {
-            const obj = enrollSnap.data(); // Use .data() for Firestore documents
-            Object.keys(obj).forEach(k => { enrolled[k] = true; });
-            // Filter students to only enrolled ones
-            studentList = studentList.filter(s => enrolled[s.reg]);
-            setStudents(studentList);
+            const obj = enrollSnap.data() || {};
+            // Filter metadata keys starting with '_' out so empty enrolment docs don't clear student list
+            Object.keys(obj).filter(k => !k.startsWith('_')).forEach(k => { enrolled[k] = true; });
+            // Filter students to only enrolled ones IF non-meta student register numbers actually exist
+            if (Object.keys(enrolled).length > 0) {
+              studentList = studentList.filter(s => enrolled[s.reg]);
+              setStudents(studentList);
+            }
           }
           setEnrolledRegs(enrolled);
         } else {
@@ -866,35 +1351,39 @@ export default function MarkEntry() {
           // Non-critical — index may not exist yet
         }
 
-        const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
-          .map(sanitizeKey)
-          .join('_') + (section ? `_${sanitizeKey(section)}` : '');
-        
-        const marksDocRef = doc(db, 'marks', marksKey);
-        const marksSnapshot = await getDoc(marksDocRef);
-        const savedMarks = marksSnapshot.data() || {};
+        if (exam && markType) {
+          const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
+            .map(sanitizeKey)
+            .join('_') + (section ? `_${sanitizeKey(section)}` : '');
+          
+          const marksDocRef = doc(db, 'marks', marksKey);
+          const marksSnapshot = await getDoc(marksDocRef);
+          const savedMarks = marksSnapshot.data() || {};
 
-        const initialMarks = {};
-        studentList.forEach(s => {
-          const saved = savedMarks?.students?.[s.reg] || {};
-          initialMarks[s.reg] = {
-            partA: saved.partA || {},
-            partB: saved.partB || {},
-            partC: saved.partC || {},
-            assignment: saved.assignment || {},
-            overall: saved.overall || "",
-            grade: saved.grade || "",
-            gradePoint: saved.gradePoint || "",
-            absent: !!saved.absent,
-            total: saved.total || 0,
-            CO1: saved.CO1 ?? "",
-            CO2: saved.CO2 ?? "",
-            CO3: saved.CO3 ?? "",
-            CO4: saved.CO4 ?? "",
-            CO5: saved.CO5 ?? ""
-          };
-        });
-        setMarksData(initialMarks);
+          const initialMarks = {};
+          studentList.forEach(s => {
+            const saved = savedMarks?.students?.[s.reg] || {};
+            initialMarks[s.reg] = {
+              partA: saved.partA || {},
+              partB: saved.partB || {},
+              partC: saved.partC || {},
+              assignment: saved.assignment || {},
+              overall: saved.overall || "",
+              grade: saved.grade || "",
+              gradePoint: saved.gradePoint || "",
+              absent: !!saved.absent,
+              total: saved.total || 0,
+              CO1: saved.CO1 ?? "",
+              CO2: saved.CO2 ?? "",
+              CO3: saved.CO3 ?? "",
+              CO4: saved.CO4 ?? "",
+              CO5: saved.CO5 ?? ""
+            };
+          });
+          setMarksData(initialMarks);
+        } else {
+          setMarksData({});
+        }
 
       } catch (error) {
         console.error("Data Load Error:", error);
@@ -904,7 +1393,7 @@ export default function MarkEntry() {
     };
 
     loadData();
-  }, [programme, department, batch, academicYear, semester, subject, exam, markType, section]);
+  }, [programme, department, batch, academicYear, semester, subject, exam, markType, section, isBatchMatch]);
 
   const isAssignmentLike = markType === 'Assignment' || markType === 'Project' || markType === 'Practical';
   const showAbsentColumn = markType !== 'Assignment';
@@ -1551,13 +2040,120 @@ export default function MarkEntry() {
   const availableSections = useMemo(() => {
     if (!batch || !department || !programme) return [];
     const progKey = formatProgrammeKey(programme);
+    const normLower = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetDept = normLower(department);
+    const targetBatch = batchStartYear(batch);
+    // 1. Exact config doc
     const docId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}`;
-    const cfg = sectionConfigs[docId];
-    if (!cfg || !cfg.numSections) return [];
-    const count = cfg.numSections;
-    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
-  }, [batch, department, programme, sectionConfigs]);
+    let cfg = sectionConfigs[docId];
+    // 2. Fuzzy match across all section configs (dept alias + batch start-year)
+    if (!cfg || !cfg.numSections) {
+      for (const [key, val] of Object.entries(sectionConfigs || {})) {
+        if (!val?.numSections) continue;
+        if (targetBatch !== null && !String(key).includes(String(targetBatch))) continue;
+        if (targetDept && !normLower(key).includes(targetDept) && !targetDept.includes(normLower(key))) continue;
+        cfg = val;
+        break;
+      }
+    }
+    // 3. Assignment sections for this batch/sem
+    const assignSecs = new Set();
+    facultyAssignedGroups
+      .filter(g => isBatchMatch(g.batch, batch))
+      .forEach(g => { if (g.section) String(g.section).split(',').forEach(s => { const t = s.trim(); if (/^sec/i.test(t)) assignSecs.add(t); }); });
+    if (cfg?.numSections) {
+      const count = cfg.numSections;
+      const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const fromCfg = Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
+      assignSecs.forEach(s => { if (!fromCfg.includes(s)) fromCfg.push(s); });
+      return fromCfg;
+    }
+    if (assignSecs.size > 0) return Array.from(assignSecs).sort();
+    // 4. Standard fallback so mark entry is never blocked
+    return ['Sec-A', 'Sec-B'];
+  }, [batch, department, programme, sectionConfigs, facultyAssignedGroups, isBatchMatch]);
+
+  // Dashboard handoff: clicking "Mark Entry" on any QP card (My Question Papers list
+  // or Common QP cards) navigates here with { state: { qp } }. Pre-select ALL dropdowns.
+  const dashboardQp = location.state?.qp;
+  useEffect(() => {
+    if (!dashboardQp) return;
+    const qp = dashboardQp;
+    const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+    const cleanCode = (s) => parseSubjectCodeKey(s);
+    // Programme: resolve from qp, fall back to current/user value
+    const qpProg = qp.programme || qp.program || qp.progKey || '';
+    const progKey = formatProgrammeKey(qpProg);
+    let progDisplay = programme;
+    if (progKey) {
+      const matchProg = Object.keys(PROGRAMME_DEPARTMENTS).find(p => formatProgrammeKey(p) === progKey);
+      if (matchProg) progDisplay = matchProg;
+    }
+    if (progDisplay && progDisplay !== programme) setProgramme(progDisplay);
+    // Department: qp dept may be the setter's dept (e.g. CSE) for Common papers.
+    // Prefer the user's own assigned department when it handles this subject.
+    const qpDept = qp.department || qp.dept || '';
+    const qpCode = cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+    const myDeptForCode = facultyAssignedGroups.find(g =>
+      (g.codes || []).map(c => cleanCode(c)).includes(qpCode))?.department;
+    const deptNorm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const progDepts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(progDisplay || programme)] || [];
+    const resolveDept = (raw) => {
+      if (!raw) return '';
+      if (progDepts.includes(raw)) return raw;
+      const hit = progDepts.find(d => deptNorm(d) === deptNorm(raw) || deptNorm(d).includes(deptNorm(raw)) || deptNorm(raw).includes(deptNorm(d)));
+      return hit || raw;
+    };
+    const deptToUse = resolveDept(myDeptForCode || userDepartment || qpDept || department);
+    if (deptToUse && deptToUse !== department) {
+      setDepartment(deptToUse);
+    }
+    // Batch (canonical), Academic Year, Semester
+    const canonBatch = canonicalizeBatch(qp.batch || batch);
+    if (canonBatch && canonBatch !== batch) setBatch(canonBatch);
+    const qpAy = qp.academic_year || qp.academicYear || '';
+    if (qpAy && qpAy !== academicYear) setAcademicYear(qpAy);
+    const semNum = deriveSemesterNumber(qp.semester);
+    if (semNum) {
+      const n = parseInt(semNum, 10);
+      const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+      const semLabel = `${n}${suffix} Semester`;
+      if (semLabel !== semester) setSemester(semLabel);
+    }
+    // Section defaults to qp section or Sec-A
+    const qpSec = qp.section || '';
+    if (qpSec && qpSec !== section) setSection(qpSec);
+    // Subject + Exam are set after their option lists populate (separate effects below)
+    // Re-runs when assignments/user profile arrive so dept resolution improves
+    // (all setters are idempotent — identical values bail out, no loops).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboardQp, facultyAssignedGroups, userDepartment]);
+
+  // After subjects load, auto-select the dashboard QP's subject code
+  useEffect(() => {
+    if (!dashboardQp || subjects.length === 0) return;
+    const cleanCode = (s) => parseSubjectCodeKey(s);
+    const qpCode = cleanCode(dashboardQp.subject || dashboardQp.course || '');
+    if (qpCode && qpCode !== subject) {
+      const hit = subjects.find(s => cleanCode(s.value) === qpCode || cleanCode(s.text) === qpCode);
+      if (hit) setSubject(hit.value);
+      else if ([...new Set(subjects.map(s => cleanCode(s.value)))].includes(qpCode)) setSubject(qpCode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboardQp, subjects]);
+
+  // After exams load, auto-select the dashboard QP's base exam (set suffix stripped)
+  useEffect(() => {
+    if (!dashboardQp || availableExams.length === 0) return;
+    const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+    const qpExamBase = stripSetSuffix(dashboardQp.qpaper_name || dashboardQp.qpaperName || dashboardQp.exam || '');
+    if (qpExamBase && qpExamBase !== exam) {
+      const hit = availableExams.find(e => String(e.value).toLowerCase() === qpExamBase.toLowerCase() ||
+        String(e.text).toLowerCase() === qpExamBase.toLowerCase());
+      if (hit) setExam(hit.value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboardQp, availableExams]);
 
   return (
     <Layout title="Mark Entry">
@@ -1833,10 +2429,16 @@ export default function MarkEntry() {
                       Loading data...
                     </td>
                   </tr>
+                ) : !exam ? (
+                  <tr>
+                    <td colSpan={10} className="p-20 text-center text-slate-400 italic font-medium">
+                      Select an exam to view student list.
+                    </td>
+                  </tr>
                 ) : students.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-20 text-center text-slate-400 italic">
-                      Select all filters to view student list.
+                    <td colSpan={10} className="p-20 text-center text-slate-400 italic font-medium">
+                      No students found for the selected filters.
                     </td>
                   </tr>
                 ) : (

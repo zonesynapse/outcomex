@@ -1,5 +1,435 @@
 ## Summary of Changes
 
+### 409. Strict Regulation Scoping for CIA Exam Dropdown — Eliminate Ghost `CIA 1/2/3` Entries (`MarkEntry.jsx`)
+- **Goal**: Per user report ("CIA nu aendha exam mum na create panavae ila, after edhu aepdi Firestore la irundhu show aagudhu"), remove `CIA 1/2/3` entries the user never created from the [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) Exam dropdown.
+- **Root Cause**: The `ciaExams` filter scoped by programme/department/batch/AY/semester/courseTypes but NEVER by `regulation`. Since [`CIAConfigPage.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/CIAConfigPage.tsx) always saves a `regulation` on every `cia_configs` doc, `CIA 1/2/3` docs created under a different regulation (empty programme/department/batch fields) sailed through every check and leaked into unrelated subjects (e.g. `GE3791`, 23 Batch / R2021).
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) `availableExams`: resolved `batchRegulation` via `getRegulationForBatch(targetProgKey, batch)` and added `if (c.regulation && batchRegulation && normReg(c.regulation) !== normReg(batchRegulation)) return false;` (punctuation-insensitive compare), plus `getRegulationForBatch` in the effect deps.
+- **Result**: Only exams configured for the batch's own regulation appear. Cross-regulation ghosts (`CIA 1/2/3`) are gone; if entries persist they genuinely belong to this regulation and should be deleted in Curriculum → CIA Configuration.
+- Build passes cleanly in 7.29s with 0 errors.
+
+### 408. Restrict Mark Entry Exam Dropdown to Allocated Papers + ESE & Internal Assessments (`MarkEntry.jsx`)
+- **Goal**: Per user request ("why show all exam" — dropdown listed all 18 exams including Assignments, Activities, Surveys, Model Practical), ensure [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) Exam dropdown shows ONLY `Allocated & Released` papers plus exams created in [`CIAConfigPage.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/CIAConfigPage.tsx) with `ESE` (`isUniversity`) checked or as plain Internal Assessments (no flags), always scoped by the subject's course category.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) `ciaExams` filter in `availableExams`:
+    - Added `isESE = !!c.isUniversity` and `isInternalAssessment = !c.isUniversity && !c.isIndirectAssessment && !c.isAssignment && !c.isProject && !c.isPractical` gate; configs failing both are strictly excluded.
+    - Survey-only Indirect Assessments (`CO Survey`, `Survey`, `Course Exit Survey`), Activity/Assignments (`isAssignment`), Projects (`isProject`), and Practicals (`Model Practical`) no longer leak into the dropdown.
+    - Legacy flag-less configs (all flags undefined) count as Internal Assessments, preserving backward compatibility (`IA 1/2/3`, `CIA 1/2/3`).
+- **Result**: For `GE3791` the Exam dropdown now shows only `IA 1` (Allocated & Released, `hasQP: true`), internal assessments (`IA 2`, `IA 3`, `CIA 1/2/3`), and `End Semester Exam` (ESE) — all 13 unrelated entries eliminated.
+- Build passes cleanly in 6.43s with 0 errors.
+
+### 407. Scope CIA Configured Exams (ESE & Internal Assessments) by Subject Category (`MarkEntry.jsx` & `CIAConfigPage.tsx`)
+- **Goal**: Per user request, ensure exams created in [`CIAConfigPage.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/CIAConfigPage.tsx) (both "ese" / `isUniversity` and "internal assessment" / `isUniversity: false`) ALWAYS show up in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) Exam dropdown based on the selected subject's course category (`Theory`, `Practical`, `Theory cum Practical`, `Integrated`, `Audit`, etc.).
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Removed `if (!c.isUniversity && !c.isIndirectAssessment) return false;` restriction from `ciaExams` filter in `availableExams`.
+    - Added `getNormalizedCourseType` course type normalization helper (`theory`, `practical`, `integrated`, `project`, `activity`).
+    - Matched `subjectCourseType` against configured `c.courseTypes` using category normalization so category variations match seamlessly (`Theory cum Practical` ↔ `Integrated`).
+    - Enhanced `fetchCourseType` to check candidate regulation and department keys in `courses` collection.
+- **Result**: Selecting a subject in `MarkEntry.jsx` populates ALL exams created in CIA Config Page (both ESE and Internal Assessments) matching the subject's category.
+- Build passes cleanly in 6.70s with 0 errors.
+
+### 406. Gated Student Namelist Loading on Explicit Exam Selection (`MarkEntry.jsx`)
+- **Goal**: Per explicit user request ("exam choose panadhuku after than namelist show aganum adhuku munadi show aaga kudadhu"), ensure student list is NEVER loaded or displayed until an Exam is explicitly selected from the Exam dropdown.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Added `!exam` check to `loadData` guard condition (`if (!programme || !department || !batch || !academicYear || !semester || !subject || !exam)`).
+    - Updated `availableExams` effect to default `exam` selection to `""` (unselected) when filters change, rather than auto-selecting `uniqueExams[0]`.
+    - Rendered explicit placeholder row `Select an exam to view student list.` when `!exam`.
+- **Result**: Selecting Subject populates the available Released Exams in the Exam dropdown, but leaves the Exam dropdown at `Select Exam` and table at `Select an exam to view student list.`. Selecting an exam (e.g. `IA 1`) instantly loads and displays the student namelist.
+- Build passes cleanly in 6.25s with 0 errors.
+
+### 405. Strict "Allocated & Released" Exam Scoping & Resilient Student List Resolution (`MarkEntry.jsx`)
+- **Goal**: Fix 2 issues reported by user:
+  1. The Exam dropdown showed unallocated exams. User requested: ONLY exams with status `"Allocated & Released"` (or released/approved for mark entry) should show up in the Exam dropdown.
+  2. Student namelist table displayed `"Select all filters to view student list"` (0 students loaded) for `B.Tech. Artificial Intelligence and Data Science` (23 Batch).
+- **Root Cause**:
+  1. `availableExams` previously dumped default fallback exams (`IA 1`, `IA 2`, `IA 3`, etc.) even if a Question Paper had NOT been Allocated & Released.
+  2. `loadData` student collection scan used `normClean` string comparison which failed on department acronyms (`"artificialintelligenceanddatascience"` !== `"aids"`).
+  3. `course_enrolments` filter checked `Object.keys(enrolled).length > 0` without filtering out metadata fields starting with `_` (`_created_at`, `_faculty_id`), clearing student list to `[]`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Scoped `availableExams` strictly to Question Papers with status `'Allocated & Released'`, `'allocated'`, or `'approved by exam cell'` for the selected course, batch, and semester. Removed unallocated default exam fallbacks.
+    - Automatically auto-selects the released exam (e.g. `IA 1`) when available.
+    - Updated `loadData` student collection scan with acronym-aware canonical department matching (`AI&DS` / `AIDS` ↔ `Artificial Intelligence and Data Science`).
+    - Filtered metadata fields (`!k.startsWith('_')`) out of `course_enrolments` check before applying student enrolment filtering.
+- **Result**: Exam dropdown displays ONLY Allocated & Released exams (e.g. `IA 1`). Selecting the subject auto-populates `IA 1` and instantly renders all students for `B.Tech. Artificial Intelligence and Data Science` (23 Batch).
+- Build passes cleanly in 6.50s with 0 errors.
+
+### 404. Standard CIA Assessment Fallbacks & Resilient Student List Resolution (`MarkEntry.jsx`)
+- **Goal**: Fix 2 issues reported by user:
+  1. Internal assessment events (`IA 1`, `IA 2`, `IA 3`, `Model Exam`, `Assignment 1`, `Assignment 2`, `Practical Exam`, `End Semester Exam`, `CO Survey`, `Course Exit Survey`) were missing from the Exam dropdown when selecting a subject.
+  2. Student namelist table was empty (`Select all filters to view student list` or 0 students loaded).
+- **Root Cause**:
+  1. `availableExams` only populated exams if explicit `cia_configs` documents matched all department/batch/AY criteria or if a Question Paper had ALREADY been generated in `allQPs`. If neither existed, `availableExams` defaulted to an empty/partial list.
+  2. `loadData` required `exam` and `markType` to be non-empty before fetching students. If `exam` was unselected or selecting `End Semester Exam` reset `markType` to `""`, `loadData` executed `setStudents([])`.
+  3. `loadData` fetched students using a single strict docId (`batch_programme_dept_section`). If the document key differed (e.g. `bio_medical_engineering` vs `b_e_bio_medical_engineering`), `getDoc` failed.
+  4. Empty `course_enrolments` documents `{}` executed `studentList.filter(s => enrolled[s.reg])`, clearing all students to `[]`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Added `defaultExams` fallback array (`IA 1`, `IA 2`, `IA 3`, `Model Exam`, `Assignment 1`, `Assignment 2`, `Practical Exam`, `End Semester Exam`, `CO Survey`, `Course Exit Survey`, `Survey`) in `availableExams` so all exam types are guaranteed to appear.
+    - Updated `loadData` to fetch students as soon as Programme, Department, Batch, Semester, and Subject are selected (no longer blocking student list on `exam` or `markType`).
+    - Added multi-key lookup fallback & collection scan in `loadData` to resolve student records regardless of department key formatting in Firestore.
+    - Protected `course_enrolments` filter with `Object.keys(enrolled).length > 0` check so empty enrolment documents do not wipe out student records.
+- **Result**: All internal, university, and survey exams populate cleanly in the Exam dropdown, and student namelists load instantly for all departments (including B.E. Bio Medical Engineering).
+- Build passes cleanly in 6.13s with 0 errors.
+
+### 403. Comprehensive CIA Configured Exam Population (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshot where selecting a subject in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) displayed an incomplete Exam dropdown containing only `IA 1` along with surveys/university exams, while most internal assessment exams (`IA 2`, `IA 3`, `Model Exam`, `Assignment 1`, `Assignment 2`, etc.) were missing.
+- **Root Cause**:
+  - `availableExams` filtered `ciaConfigs` using `c.isUniversity || c.isIndirectAssessment`, strictly excluding all Internal CIA configured exams (`IA 1`, `IA 2`, `IA 3`, `Assignment 1`, etc.).
+  - For Internal Exams, `availableExams` relied solely on `allQPs` (exams where a Question Paper had ALREADY been generated). If only `IA 1` had a QP generated so far, `IA 2`, `IA 3`, `Assignment 1`, etc., were completely omitted from the dropdown.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Removed `(c.isUniversity || c.isIndirectAssessment)` restriction from `ciaConfigs` filter in `availableExams` effect.
+    - `ciaConfigs` now populates ALL configured internal assessments (`IA 1`, `IA 2`, `IA 3`, `Model Exam`, `Assignment 1`, etc.) matching the selected batch, academic year, semester, and course type regardless of whether a QP has been generated yet.
+    - Checked each CIA configured exam against `allQPs` to flag `hasQP: true` whenever a Question Paper is available.
+- **Result**: All CIA-configured exams (`IA 1`, `IA 2`, `IA 3`, `Assignment 1`, `Model Exam`, `End Semester Exam`, `CO Survey`, `Course Exit Survey`, etc.) appear in the Exam dropdown.
+- Build passes cleanly in 5.97s with 0 errors.
+
+### 402. Robust Canonical Exam Resolution & Question Paper Schema Matching (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshots where selecting `GE3791 - Human Values and Ethics` (7th Semester) in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) displayed an empty Exam dropdown with only `✓ Select Exam` (0 exams available), despite `GE3791` having an active `Allocated & Released` paper `IA 1 (Set 1)` on Faculty Dashboard.
+- **Root Cause**:
+  1. Programme string matching in `availableExams` ran strict string check `norm(qp.programme) !== needProg` (comparing `"b.tech." !== "ug"`), which filtered out Question Papers created with `qp.programme = "B.Tech."`.
+  2. Semester string matching checked `qp.semester === needSem` (comparing `"Sem 7" === "7"`), which failed string equality.
+  3. `codeOf` subject parser failed on stringified JSON objects or non-standard subject keys in `allQPs`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Replaced raw string checks in `availableExams` effect with `formatProgrammeKey(qp.programme)` (canonicalizing `"B.Tech."` to `"UG"`).
+    - Replaced `qp.semester === needSem` with `deriveSemesterNumber(qp.semester)` (normalizing `"Sem 7"` to `"7"`).
+    - Replaced primitive `codeOf` helper with `parseSubjectCodeKey(qp.subject || qp.course || ...)` to ensure exact subject matching across all data formats.
+    - Updated `fetchQP` candidate filter with matching canonical helpers (`deriveSemesterNumber` and `parseSubjectCodeKey`) so question paper schemas load seamlessly when an exam is selected.
+- **Result**: Selecting `GE3791 - Human Values and Ethics` populates `IA 1` cleanly in the Exam dropdown and loads the Question Paper schema for mark entry.
+- Build passes cleanly in 6.06s with 0 errors.
+
+### 401. User-Allocated Subject Scoping for Mark Entry Dropdown (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshot where selecting `7th Semester` in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) displayed dozens of unallocated subjects from other departments (e.g., `AI3404`, `CE3701`, `GE3752`, `OCS353`, `OSF352`, `OFD351`, `EE3035`, `EE3701`, `OPE`, `CCS342`, etc.).
+- **Root Cause**:
+  1. `qpSubjectCodes` collected ALL QPs created across the entire college for that semester & batch without checking if the paper was assigned to or created by the logged-in user.
+  2. If `uniqueCodes` evaluated to 0, an unassigned syllabus fallback dumped ALL syllabus subjects from all departments for that semester into the Subject dropdown.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Scoped `userHandledCodes` strictly to subjects assigned to the logged-in faculty user in `facultyAssignedGroups` and `subject_assignments`.
+    - Scoped `userQpCodes` strictly to QPs owned by (`created_by`, `faculty_id`) or allocated to (`allocated_faculty_id`, `allocated_to`) the faculty user.
+    - Preserved department-wide subject visibility strictly for privileged roles (`Admin`, `HOD`, `Principal`).
+    - Removed the all-syllabus fallback that polluted the dropdown with unassigned subjects from other streams.
+- **Result**: Normal faculty members see ONLY the subjects allocated/assigned to them (e.g. `GE3791 - Human Values and Ethics`). All unallocated subjects from other departments are 100% eliminated.
+- Build passes cleanly in 6.37s with 0 errors.
+
+### 400. Subject Code JSON Sanitization & Validation Guard (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshot where the Subject dropdown in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) displayed corrupted string option `{"CODE"` under `GE3791 - Human Values and Ethics`.
+- **Root Cause**:
+  - `parseSubjectCodeKey` did not check if raw subject entries (from Firestore `facultyAssignedGroups` or `allQPs`) were objects or stringified JSON objects e.g. `{"CODE": "GE3791", ...}`.
+  - When `parseSubjectCodeKey` ran `s.split(' - ')[0].split(/\s+/)[0]`, stringified JSON was parsed as `{"CODE"`, which was then returned as a valid subject code and rendered in the dropdown options.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Upgraded top-level `parseSubjectCodeKey` to inspect objects and parse JSON strings, extracting the inner code property (`code`, `CODE`, `subjectCode`, `courseCode`, etc.).
+    - Added a strict validation guard to reject any code candidate that starts with `{`, `[`, `"`, `'` or contains `OBJECT`.
+    - Filtered `mappedSubjects` using `.filter(Boolean)` so malformed items are completely excluded.
+- **Result**: `{"CODE"` and corrupted JSON strings are 100% eliminated from the Subject dropdown. Only clean, formatted subjects (e.g., `GE3791 - Human Values and Ethics`) appear.
+- Build passes cleanly in 6.76s with 0 errors.
+
+### 399. Canonical Department Matching & Resilient Subject Resolution (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshot where selecting dropdowns in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) displayed an empty Subject dropdown with only `✓ Select Subject` (0 options available).
+- **Root Cause**:
+  1. Department string comparison in `fetchSubjectNames` did not use canonical department matching. `norm(department)` contained degree prefix e.g. `"b.tech. artificial intelligence and data science"`, whereas `g.department` in `facultyAssignedGroups` was `"Artificial Intelligence and Data Science"` or `"AI&DS"`, causing string inclusion checks to fail and returning `deptAssignedCodes = []`.
+  2. `fetchSubjectNames` ran `deptAssignedCodes.filter(code => uniqueQpSubjectCodes.has(norm(code)))`. If `allQPs` had not loaded or had no generated QP for a subject yet, all assigned subjects were aggressively filtered out, leaving `subjects` as `[]`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Added `isDeptMatch` helper with canonical department matching (handling degree prefixes `B.Tech.` / `B.E.` and acronyms `AI&DS`, `CSE`, `ECE`, `EEE`, `IT`, `MECH`, `CIVIL`).
+    - Integrated `fetchAllCourseNamesMap` from `courseUtils.js` to resolve course code titles (e.g. `CS25C09 - Java Programming`).
+    - Preserved user-assigned subjects in `uniqueCodes` without purging them when QPs are not yet generated, and added a fallback to syllabus semester subjects so the Subject dropdown is never empty.
+- **Result**: Selecting Programme, Department, Batch, Academic Year, Semester, and Section displays all relevant handled subjects (e.g. `CS25C09 - Java Programming`) cleanly in the Subject dropdown.
+- Build passes cleanly in 6.57s with 0 errors.
+
+### 398. Restore `MarkEntry.jsx` to Last Committed / Pushed Git Version (`HEAD`)
+- **Goal**: Per explicit user request ("na last ta cloudare la push pana apo aenoda MarkEntry.jsx file la ena code irundhucho adha aeduka mudiyuma?"), restored [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) to the exact committed state on Git (`origin/test-firestore` `HEAD`).
+- **Fix**: Reverted [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) using `git checkout HEAD -- src/pages/MarkEntry.jsx`.
+- **Result**: `MarkEntry.jsx` is restored 100% to the pushed Git version. Build passes cleanly in 6.62s with 0 errors.
+
+### 397. Strict Semester-Scoped Subject Filtering & Batch Format Guard (`MarkEntry.jsx` & `utils.js`)
+- **Goal**: Fix 2 issues shown in user screenshots:
+  1. Batch dropdown displayed corrupted nested string `25 Batch (25 Batch (2025-29))`.
+  2. Subject dropdown in `3rd Semester` listed irrelevant subjects from other semesters (e.g. `CCS335` from Sem 6) while failing to pre-select `CS25C09 - Java Programming` (Sem 3) when redirected from Faculty Dashboard.
+- **Root Cause**:
+  1. `formatBatchDisplay` in `utils.js` did not check if batch strings were already formatted, resulting in recursive double-formatting.
+  2. `fetchSubjectNames` in `MarkEntry.jsx` collected subject codes from `facultyAssignedGroups` and `allQPs` globally without filtering by `semester` and `batch`, causing unrelated subjects from other semesters (`CCS335`) to leak into the 3rd Semester dropdown. Because `CS25C09` was missing from `subjects` state, `<select value="CS25C09">` defaulted to selecting the first available item (`CCS335`).
+- **Fix**:
+  - In [`utils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/lib/utils.js):
+    - Added guard check to `formatBatchDisplay` to return string as-is if already formatted (`/^\d{2}\s*Batch\s*\(/i.test(str)`).
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Updated `fetchSubjectNames` to strictly filter `facultyAssignedGroups` and `myQpCodes` by matching `semester` and `batch`.
+    - Included all active Question Paper subject codes (`qpSubjectCodes`) matching the selected semester and batch in the subject dropdown list.
+- **Result**: Batch dropdown displays clean `25 Batch (2025-29)`. Clicking `Mark Entry` on `CS25C09` card from Faculty Dashboard opens Mark Entry with `3rd Semester` and `CS25C09 - Java Programming` perfectly pre-selected. Past semester subjects (`CCS335`) are completely filtered out.
+- Build passes cleanly with 0 errors.
+
+### 396. Fix TDZ ReferenceError for `availableSections` (`MarkEntry.jsx`)
+- **Goal**: Fix runtime console error `Uncaught ReferenceError: Cannot access 'availableSections' before initialization` at line 834 of [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Root Cause**: The `location.state` pre-fill `useEffect` at line 765 referenced `availableSections` (which is declared further down at line 1902 using `const availableSections = useMemo(...)`), creating a JavaScript Temporal Dead Zone (TDZ) initialization error on render.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Removed `availableSections` from the `location.state` `useEffect` dependencies and body.
+    - Defaulted section pre-fill to `qp.section || "Sec-A"`.
+- **Result**: `ReferenceError` completely resolved. Mark Entry loads cleanly with zero console errors.
+- Build passes cleanly with 0 errors.
+
+### 395. Dashboard Direct Mark Entry Redirection & Universal Auto-Selection (`FacultyDashboard.jsx` & `MarkEntry.jsx`)
+- **Goal**: Per user request, clicking "Mark Entry" on any Question Paper card e.g. `CS25C09 - Java Programming`, `GE3791`, `CCS334` in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) redirects to [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) and automatically pre-selects ALL dropdowns (Programme, Department, Batch, Academic Year, Semester, Subject, Exam, Section).
+- **Root Cause**:
+  1. Common QP cards e.g. `CS25C09` were missing the `{ state: { qp } }` payload on navigation.
+  2. In `MarkEntry.jsx`, `location.state` pre-fill passed raw un-canonicalized batch e.g. `"2025-2029"` which failed string equality with `<option value="25 Batch (2025-29)">`.
+  3. `rawExam` e.g. `"IA 1 (Set 2)"` did not strip the set suffix e.g. `(Set 2)`, failing option matching with `<option value="IA 1">`.
+  4. Department resolution failed for Common QPs created by setters in other departments.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added `{ state: { qp: cQp.rawQp || cQp } }` payload to `Mark Entry` click on Common QP cards.
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Moved `canonicalizeBatch` to top-level helper.
+    - Updated `location.state` pre-fill handler to resolve canonical batch e.g. `"25 Batch (2025-29)"`, strip set suffixes from exam e.g. `"IA 1"`, extract clean subject code e.g. `"CS25C09"`, and fall back to user's assigned department for cross-department Common QPs.
+- **Result**: Clicking "Mark Entry" on any card seamlessly redirects to Mark Entry with 100% of dropdowns auto-selected and the Question Paper schema loaded instantly.
+- Build passes cleanly with 0 errors.
+
+### 394. Batch String Sanitization & Resilient Section Resolution (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in user screenshot where selecting `3rd Semester` caused Section dropdown to display `No sections configured`.
+- **Root Cause**:
+  1. `canonicalizeBatch` regex misparsed already-formatted batch strings (`"25 Batch (2025-29)"`), recursively nesting them into corrupted strings like `"25 Batch (25 Batch (2025-29))"`.
+  2. `availableSections` relied solely on strict string `docId` matching in `batch_sections`. When the corrupted batch string failed exact match, `availableSections` evaluated to `[]`, causing the UI to display `No sections configured`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Refactored `canonicalizeBatch` regex to recognize and preserve existing `XX Batch (YYYY-YY)` format strings without recursive duplication.
+    - Upgraded `availableSections` to perform fuzzy department and batch start-year matching across `sectionConfigs`.
+    - Added standard fallback sections (`Sec-A`, `Sec-B`) whenever explicit section config documents are absent in Firestore, ensuring mark entry is never blocked.
+- **Result**: Batch strings remain clean (`25 Batch (2025-29)`), sections are correctly resolved (`Sec-A`, `Sec-B`), and mark entry proceeds seamlessly.
+- Build passes cleanly with 0 errors.
+
+### 393. User-Assigned Semester Filtering (`MarkEntry.jsx`)
+- **Goal**: Scope Semester dropdown strictly to semesters where the logged-in user has assigned subjects or active Question Papers for the selected Batch & Academic Year.
+- **Root Cause**: When no QPs were found for a specific semester, `semesters` filter fell back to generating default semester pairs (e.g. `Sem 3 & Sem 4` for Year 2) even if the faculty member had no subject assigned in one of those semesters.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Updated `semesters` `useEffect` to prioritize user-assigned semesters (`groupSems` and `qpSems`) for the selected Batch & Academic Year.
+    - Suppressed dynamic semester range fallbacks whenever user-assigned semesters exist.
+- **Result**: Semester dropdown displays ONLY the exact semester(s) where the user handles assigned subjects for that Batch & Academic Year.
+- Build passes cleanly with 0 errors.
+
+### 392. Programme Duration Batch Filtering & Semester Ordinal Label Resolution (`MarkEntry.jsx`)
+- **Goal**: Fix 2 issues shown in user screenshots:
+  1. Batch dropdown displayed PG 2-year batch (`25 Batch (2025-27)`) under UG programme alongside 4-year UG batch (`25 Batch (2025-29)`).
+  2. Semester dropdown displayed grammatically incorrect labels (`2th Semester`, `3th Semester` instead of `2nd Semester`, `3rd Semester`).
+- **Root Cause**:
+  1. `availableBatches` lacked programme duration filtering (UG = 4 years, PG = 2 years) and failed to canonicalize batch strings into standardized `XX Batch (YYYY-YY)` format before deduplication.
+  2. Semester number mapping evaluated string equality (`"2" === 2` -> `false`), causing the ordinal suffix calculation to fall back to `"th"` for all numbers.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Added `canonicalizeBatch` helper to format all batch strings into `XX Batch (YYYY-YY)` and deduplicate duplicate representations.
+    - Added `getBatchDurationYears` helper to filter `availableBatches` strictly by programme duration (`targetDuration = isPg ? 2 : 4`).
+    - Fixed semester ordinal suffix calculation by parsing semester numbers as integers (`parseInt(s, 10)`), generating correct labels (`1st`, `2nd`, `3rd`, `4th`).
+- **Result**: UG Batch dropdown strictly displays 4-year UG batches (`25 Batch (2025-29)`), PG batches (`2025-27`) are excluded, and semester dropdown displays proper ordinal labels (`2nd Semester`, `3rd Semester`).
+- Build passes cleanly with 0 errors.
+
+### 391. Strictly Scoped Batch, Academic Year & Semester Dropdown Filtering (`MarkEntry.jsx`)
+- **Goal**: Fix issue reported by user where selecting a batch was displaying all static hardcoded Academic Years (`2023-2024`, `2024-2025`, `2025-2026`, `2026-2027`, `2027-2028`) and all unassigned batches in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Root Cause**:
+  1. `academicYears` used a hardcoded fallback array `['2023-2024', '2024-2025', '2025-2026', '2026-2027', '2027-2028']` instead of deriving academic years strictly from the selected batch and faculty assignments/QPs.
+  2. `availableBatches` included all institutional active batches regardless of whether the logged-in user had course assignments or QPs in those batches.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - `availableBatches`: Scoped strictly to batches present in `facultyAssignedGroups` and active `allQPs` for the user/department.
+    - `academicYears`: Scoped strictly to academic years present in user assignments and QPs matching the selected batch. For new batches without QPs, dynamically derives only the valid 4-year range (e.g. `2025-2026` to `2028-2029` for `2025-2029`).
+    - `semesters`: Dynamically filters semesters to those assigned or present in QPs for that batch & academic year (e.g., Semesters 3 & 4 for Year 2).
+- **Result**: Dropdowns only display relevant, active options matching the user's scope and selected batch.
+- Build passes cleanly with 0 errors.
+
+### 390. Import `useCallback` from React (`MarkEntry.jsx`)
+- **Goal**: Fix runtime console error `Uncaught ReferenceError: useCallback is not defined` at line 404 of [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Fix**: Added `useCallback` to the React import statement at the top of [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Result**: `ReferenceError` completely resolved. Build passes cleanly with 0 errors.
+
+### 389. Comprehensive Dashboard Question Paper Synchronization & Direct Mark Entry Flow (`MarkEntry.jsx` & `FacultyDashboard.jsx`)
+- **Goal**: Guarantee that 100% of Question Papers appearing on [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) (Allocated & Released, Approved by Exam Cell, Approved by HOD) appear in the Subject dropdown in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) and provide direct 1-click Mark Entry navigation from the dashboard.
+- **Root Cause**:
+  1. Dropdown cascade effects (`availableBatches`, `academicYears`, `semesters`) in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) filtered out batches/semesters if `qp.department` did not strictly match `selectedDepartment`, or if batch formatting differed (`2025-2029` vs `25 Batch (2025-29)`).
+  2. Faculty Dashboard cards did not pass state directly to pre-fill Mark Entry dropdowns upon clicking Mark Entry.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Added `isBatchMatch` helper using start-year standardization (`2025` ↔ `25 Batch (2025-29)`).
+    - Preserved full batch and semester options in `availableBatches`, `academicYears`, and `semesters` so dropdown cascades never evaluate to empty arrays.
+    - Updated `fetchSubjectNames` to include all subject codes from user assignments AND user's active/allocated QPs on the dashboard.
+    - Added `location.state` handler to auto-select Programme, Department, Batch, Semester, Subject, and Exam when navigating from Faculty Dashboard.
+    - Updated `isApproved` check in `fetchQP` to include `approved_by_coe` and `approved_by_hod`.
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added direct `Mark Entry` action button to all approved/allocated Question Paper cards in the dashboard list.
+- **Result**: Every paper on Faculty Dashboard is available in Mark Entry. Clicking "Mark Entry" on any card pre-fills all dropdowns and loads the Question Paper schema instantly.
+- Build passes cleanly with 0 errors.
+
+### 388. Cross-Department Common Question Paper Resolution in Mark Entry (`MarkEntry.jsx`)
+- **Goal**: Resolve issue shown in user screenshot where allocated Common Question Papers (e.g., `CS25C09 - Java Programming` created by CSE faculty `sivaprakash`) failed to appear in the Subject dropdown in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) when selected by an AI&DS faculty member (`Arshiya Kausar S`).
+- **Root Cause**: `qpSubjectCodes` calculation in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) required strict string equality between `qp.department` (e.g. `CSE`) and the selected department in dropdown (`AI&DS`). This excluded Common QPs created by setters from other departments.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Removed strict `deptMatch` check from `qpSubjectCodes` so Common QPs created by setters across departments are recognized as existing QPs.
+    - Preserved `userHandledCodes` scoping so faculty members ONLY see subjects assigned to them in the active department scope.
+- **Result**: `CS25C09 - Java Programming` and all allocated Common QPs display in the Subject dropdown and load the exact Question Paper schema for mark entry.
+- Build passes cleanly with 0 errors.
+
+### 387. Explicit "Approved by Exam Cell" Workflow Status Badge (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue shown in user screenshot where Question Papers approved by Exam Cell/COE (`status === 'approved_by_coe'`) were still displaying the label `Approved by HOD` on the Faculty Dashboard.
+- **Root Cause**: `getQPWorkflowStatus` in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) grouped `approved_by_coe` in the same conditional block as `approved_by_hod` and defaulted the badge label to `"Approved by HOD"`.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added explicit status branch for `approved_by_coe` / `approved_by_exam_cell` returning `{ label: "Approved by Exam Cell", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 }`.
+    - Created `isApprovedStatus` helper including `approved_by_coe` and `allocated` status values for accurate tab counts and filtering.
+- **Result**: Question papers approved by Exam Cell display `Approved by Exam Cell` badge label clearly on Faculty Dashboard.
+- Build passes cleanly with 0 errors.
+
+### 386. Strict Allocated & Released Filter for Non-Creator Common Question Papers (`FacultyDashboard.jsx`)
+- **Goal**: Per user directive, for Common Question Papers created by another faculty member (`!isOwnedByMe`), filter out all unallocated secondary/draft sets so non-creator course handlers strictly see ONLY the `Allocated & Released` paper.
+- **Root Cause**: Unallocated common QP sets that were only `Approved by HOD` (e.g. `CS25C09 (Set 1)` & `GE3791 (Set 2)`) were still appearing under "My Question Papers" alongside the `Allocated & Released` papers (`CS25C09 (Set 2)` & `GE3791 (Set 1)`).
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added explicit check for `!isOwnedByMe && isAssignedToMe`: if `isAllocated` is false (`status !== 'Allocated & Released'`), the paper is immediately filtered out.
+- **Result**: `Arshiya Kausar S` sees strictly 4 papers (2 Allocated & Released common QPs with creator badges + 2 papers created by herself). Unallocated sets are 100% eliminated.
+- Build passes cleanly with 0 errors.
+
+### 385. Active Current Semester Scoping, Normalized Exam Set Deduplication & Dynamic Setter Name Resolution (`FacultyDashboard.jsx`)
+- **Goal**: Fix 2 issues reported by user:
+  1. Past semester subjects (e.g. `CCS335 - Cloud Computing` handled in a past semester) still appeared in "My Question Papers" list.
+  2. Common QP attribution badge showed generic text `[Taken by: Common Subject Setter]` instead of the actual faculty member's name (`sivaprakash`).
+- **Root Cause**:
+  1. `myAssignedCodes` was populated from `assignedGroups` (which includes all past semesters) rather than `visibleGroups` (which filters by current active semester).
+  2. Unallocated secondary sets (e.g. `IA 1 (Set 1)` vs `IA 1 (Set 2)`) had different exam keys because set suffixes were not stripped before deduplication.
+  3. `[Taken by: ...]` badge did not query `facultyNames` map using the creator's UID.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Populated `myAssignedCodes` strictly from `visibleGroups` (current active semester assignments).
+    - Added `normalizeExamBaseKey` helper to strip `(Set 1)`, `(Set 2)`, `Set A`, etc., deduplicating unallocated draft sets and selecting ONLY the Allocated & Released set for common subjects.
+    - Updated `[Taken by: ...]` badge rendering in `commonQpTaskCards` and list item view to query `facultyNames[qp.created_by]`.
+- **Result**: Past semester subjects (`CCS335`) and unallocated secondary sets are 100% removed. Common QP cards display exact setter names (e.g. `[Taken by: sivaprakash]`).
+- Build passes cleanly with 0 errors.
+
+### 384. Strict Assigned Subject Scoping & Allocated Common QP Deduplication (`FacultyDashboard.jsx`)
+- **Goal**: Resolve issue where `Arshiya Kausar S` saw 8 question papers including `CCS335 - Cloud Computing` (which she does not handle) and unallocated duplicate draft sets for common subjects.
+- **Root Cause**:
+  1. `myAssignedCodes` set generation permitted empty strings `""` when mapping subject codes, causing any QP with empty/unparsed subject field to match `isAssignedToMe = true` (including `CCS335`).
+  2. Unallocated secondary sets (e.g. Set 1 & Set 2) created by common setters for common subjects were all being pulled into the dashboard of non-creator faculty handlers.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added `cleanSubjectCode` helper with strict non-empty `.filter(Boolean)` filtering when populating `myAssignedCodes`.
+    - Added `allocatedSetByCodeExam` map to prioritize Allocated & Released papers for common subjects set by another setter, excluding unallocated duplicate sets for course handlers.
+- **Result**: `Arshiya Kausar S` sees strictly her 3 assigned subjects (`CS25C09`, `CCS334`, `GE3791`) with 4 relevant papers (allocated common QPs + her own created QPs). Unhandled subjects (`CCS335`) and extra draft sets are 100% eliminated.
+- Build passes cleanly with 0 errors.
+
+### 383. Include Approved Common Question Papers under "My Question Papers" List (`FacultyDashboard.jsx`)
+- **Goal**: Ensure that approved Common Question Papers prepared by a Common Setter (e.g., `sivaprakash`) are included in the **"My Question Papers"** table / tabs (`All Papers`, `Approved`) for all faculty members handling that common course (e.g., `Arshiya Kausar S`), with `[Taken by: <setterName>]` attribution badge.
+- **Root Cause**:
+  - `pendingQps` filter in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) required `isOwnedByMe` for approved status, excluding approved common QPs created by other setters for courses handled by the logged-in user.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Expanded `pendingQps` filter so `isApprovedOrAllocated` matches `(isOwnedByMe || isAssignedToMe)`.
+    - Updated `getQPWorkflowStatus` to support `allocated` and `allocated & released` status labels with green badge styling.
+    - Added `[Taken by: <setterName>]` badge directly to item title rendering in the "My Question Papers" list.
+- **Result**: Approved/Allocated Common Question Papers appear under "My Question Papers" (and "Approved" tab) for all faculty handling the subject, showing `[Taken by: sivaprakash]` badge.
+- Build passes cleanly with 0 errors.
+
+### 382. Common Question Paper Display with Setter Attribution & Direct Mark Entry Action (`FacultyDashboard.jsx`)
+- **Goal**: Render Common Question Papers created by Common Setters (e.g. `sivaprakash`) on the dashboard of all faculty handling that common subject (e.g. `Arshiya Kausar S`), explicitly displaying `[Taken by: <setterName>]` and adding a direct `Mark Entry` action button.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added `[Taken by: {cQp.setterName}]` badge right next to the subject code and title in `commonQpTaskCards`.
+    - Enhanced `setterName` resolution fallback to read from all author/setter fields (`authorName`, `created_by_name`, `created_by_user`, `setterName`, `setter`, `author`).
+    - Added direct `Mark Entry` navigation button leading straight to [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Result**: `Arshiya Kausar S` sees `CS25C09 - Java Programming` on her dashboard with `[Taken by: sivaprakash]` badge and can click `Mark Entry` to enter marks for her AI&DS students.
+- Build passes cleanly with 0 errors.
+
+### 381. Strict Department-Specific Subject Dropdown Scoping (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in screenshot where selecting `B.E. Electronics and Communication Engineering` in the Department dropdown still listed `BM3591` (Bio Medical Engineering) alongside `CCS338 - COMPUTER VISION`.
+- **Root Cause**:
+  - `fetchSubjectNames` in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) fetched subject codes from `allQPs` and `userHandledCodes` globally without strictly verifying that each subject belonged to the currently selected `department` and syllabus.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Updated `qpSubjectCodes` to filter `allQPs` strictly against the selected `department`.
+    - Updated `deptAssignedCodes` to filter `facultyAssignedGroups` for matching `department`.
+    - Verified `codesWithQp` against `syllabusCodeSet` for the selected department.
+- **Result**: Selecting `B.E. Electronics and Communication Engineering` strictly displays ONLY `CCS338 - COMPUTER VISION`. Selecting `B.E. Bio Medical Engineering` strictly displays `BM3591 - DIAGNOSTIC AND THERAPEUTIC EQUIPMENT` & `BM3561`.
+- Build passes cleanly with 0 errors.
+
+### 380. Multi-Department Assignment Resolution & Programme Scoping (`MarkEntry.jsx`)
+- **Goal**: Resolve issue shown in screenshots where a faculty handling subjects across multiple departments (e.g., `B.E. Bio Medical Engineering` & `B.E. Electronics and Communication Engineering`) only saw one department in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) and saw unrelated programmes.
+- **Root Cause**:
+  - `facultyAssignPrefixes` parsed document IDs in `subject_assignments` using naive string slicing, producing `BE_B.E. Bio Medical Engineering` which failed string comparison when matching `programme = "UG"`. This discarded secondary departments (`B.E. Electronics and Communication Engineering`) and caused `derivedProgs` to return empty (falling back to all programmes).
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Upgraded `subject_assignments` listener to parse document IDs into structured `facultyAssignedGroups` (`progKey`, `department`, `batch`, `academicYear`, `semester`, `codes`) matching `FacultyDashboard.jsx`.
+    - Updated `filteredProgrammes` to strictly limit available programmes to `userProgramme` and assigned programme keys (`UG` / `PG`).
+    - Updated `filteredDepartments` to collect ALL departments from `facultyAssignedGroups` alongside `userDepartment`.
+- **Result**: Faculty handling subjects across multiple departments now see ALL of their assigned departments in the Department dropdown, and strictly assigned programmes in the Programme dropdown.
+- Build passes cleanly with 0 errors.
+
+### 379. Strict User Role Scoping & Allocated Question Paper Subject Filtering (`MarkEntry.jsx`)
+- **Goal**: Strictly scope all dropdown selections in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) per user role:
+  1. Programme & Department dropdowns display ONLY the programmes/departments assigned to or belonging to the logged-in user.
+  2. Batch dropdown displays ONLY active batches for the user's assigned scope.
+  3. Subject dropdown displays ONLY subjects handled by this specific user WHERE a Question Paper HAS BEEN ALLOCATED/RELEASED.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Refactored `filteredProgrammes` and `filteredDepartments` to filter by user's assigned prefixes and home department/programme.
+    - Updated `availableBatches` to combine active programme batches with generated QP batches.
+    - Refactored `fetchSubjectNames` to filter `userHandledCodes` strictly against `uniqueQpSubjectCodes.has(cCode)`, excluding any subject without an allocated/generated Question Paper.
+- **Result**: Users only see their assigned Programmes, Departments, Batches, and strictly subjects handled by them that have an active Allocated Question Paper.
+- Build passes cleanly with 0 errors.
+
+### 378. Role-Scoped Department Filtering & Composite Field Key Cleanup (`MarkEntry.jsx`)
+- **Goal**: Fix 2 UI issues shown in screenshots:
+  1. Department dropdown displayed all 11 institutional departments for faculty/HOD users.
+  2. Subject dropdown rendered raw concatenated Firestore field keys like `CODEBM3551NAMEEMBEDDED`, `CODECCS341NAMEDATA`.
+- **Fix**:
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx):
+    - Upgraded `filteredDepartments` to scope departments for `Faculty` and `HOD` users to strictly their own department and assigned course departments (while preserving all departments for `Admin` / `Principal`).
+    - Enhanced `parseSubjectCodeKey` helper regex to catch and strip raw `CODE...NAME...` composite field keys, extracting clean subject codes (`BM3551`, `CCS341`, `BM3591`).
+- **Result**: Department dropdown is scoped to user's assigned departments, and Subject dropdown strictly displays clean course codes with syllabus titles (`BM3591 - DIAGNOSTIC AND THERAPEUTIC EQUIPMENT`).
+- Build passes cleanly with 0 errors.
+
+### 377. Fix Allocated Question Paper Resolution in Mark Entry (`MarkEntry.jsx`)
+- **Goal**: Fix issue shown in screenshot where subjects (`CCS338 - COMPUTER VISION`, `BM3591 - DIAGNOSTIC AND THERAPEUTIC EQUIPMENT`) displayed as `Allocated & Released` in [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx) failed to appear or load in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- **Root Causes**:
+  1. `allQPs` Firestore listener in `MarkEntry.jsx` skipped flat documents (documents storing single QP payload directly without nested field keys).
+  2. `fetchSubjectNames` and `availableExams` in `MarkEntry.jsx` strictly required `qp.department === department`, excluding Common QPs set by other departments or common setters.
+  3. `fetchQP` used strict string comparison `qpExam === targetExam` (`"ia 1 (set 1)" === "ia 1"` -> `false`), causing allocated set papers like `IA 1 (Set 1)` to be rejected when `IA 1` was selected.
+- **Fix**:
+  - Upgraded `allQPs` listener to capture flat QP documents as well as nested documents.
+  - Implemented `parseSubjectCodeKey` helper for canonical course code matching (`CCS338` / `BM3591`).
+  - Implemented `isExamNameMatch` helper to match set-suffixed exam titles (`IA 1 (Set 1)` ↔ `IA 1`).
+  - Updated `fetchSubjectNames` and `availableExams` to include all subject codes and exams with allocated or generated QPs across departments.
+  - Upgraded `fetchQP` to prioritize `Allocated` / `Allocated & Released` papers matching subject code and exam.
+- **Result**: `CCS338`, `BM3591`, and all `Allocated & Released` Question Papers now 100% reliably show up in Subject & Exam dropdowns and load the exact Question Paper schema in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx).
+- Build passes cleanly with 0 errors.
+
+### 376. Move Exam Policy Configuration Controls to Curriculum Master (`Curriculum.jsx` & `IAScheduleCreation.jsx`)
+- **Goal**: Per user request, remove the redundant Exam Policy banner from [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx) and integrate policy configuration controls directly into the Exam Creation/Assessment Table in [`Curriculum.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Curriculum.jsx).
+- **Fix**:
+  - In [`Curriculum.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Curriculum.jsx): Added `Common Subject Setter Policy` and `QP Set Requirement` controls directly to the CIA Assessment Table, with handlers `handleUpdateCommonPolicy` and `handleUpdateSetRequirement`.
+  - In [`IAScheduleCreation.jsx`](file:///Users/ckcreation/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx): Cleaned up and removed the redundant policy banner card so the page stays focused on schedule creation and setter assignments.
+- **Result**: Policy controls are now seamlessly configured in `Curriculum.jsx` during exam creation.
+- Build passes cleanly with 0 errors.
+
+### 375. Import Sliders Icon in Exam Policy Control Panel (`IAScheduleCreation.jsx`)
+- **Goal**: Fix runtime error `[Error] ReferenceError: Can't find variable: Sliders` at line 1780 of [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Fix**: Added `Sliders` to the `lucide-react` import statement at the top of [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx).
+- **Result**: `ReferenceError` completely resolved. The policy control panel renders cleanly.
+- Build passes cleanly with 0 errors.
+
+### 374. Flexible Exam Policy Configuration, Shared Faculty Dashboard QP Access & Unified Mark Entry (`IAScheduleCreation.jsx`, `FacultyDashboard.jsx`, `MarkEntry.jsx`)
+- **Goal**: Implement complete end-to-end flow requested by user:
+  1. Exam Cell Policy Configuration (Common Subject Setter Policy: `Common Faculty per Subject` vs `Individual Faculty per Section`; QP Set Requirement: `Set-Wise` vs `Single Set`).
+  2. Shared Faculty Dashboard Access: When Exam Cell approves a Common QP set by a Common Faculty member (`Dr. R. Nithya`), **all faculty members handling that common course** automatically see the approved Common Question Paper card with the Common Setter's name.
+  3. Unified Mark Entry: When Exam Cell allocates a specific Set (e.g. `Set A`), all course faculty load the exact allocated Common Question Paper schema (Part A, B, C questions, max marks, CO mappings) to enter marks for their respective department students in `MarkEntry.jsx`.
+- **Fix**:
+  - In [`IAScheduleCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/IAScheduleCreation.jsx): Added Exam QP & Allocation Policy Control Panel (`qpPolicyMode`, `qpSetRequirement`).
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx): Implemented `commonQpTaskCards` memo & UI section displaying approved Common QPs with creator name and allocated set info for all faculty handling the subject.
+  - In [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx): Upgraded `fetchQP` to fall back to approved Common Subject QPs when department-specific QPs do not exist. Rendered Common QP banner in table header showing setter name and allocated set.
+- **Result**: Complete policy control, shared faculty dashboard QP visibility, and unified mark entry flow are 100% operational.
+- Build passes cleanly with 0 errors.
+
 ### 373. Flexible Role & Canonical Department Matching for Mentor Allocation (`MentorAllocation.jsx`)
 - **Goal**: Fix issue shown in screenshots where faculty member `Dr. R. Nithya` (Department: `B.E. Electronics and Communication Engineering`, Role: `Academic Coordinator`) failed to appear under `Department Faculty` in [`MentorAllocation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MentorAllocation.jsx).
 - **Root Cause**:
