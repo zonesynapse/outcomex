@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { db, auth } from "../firebase";
-import { doc, collection, setDoc, getDoc, onSnapshot, getDocs } from "firebase/firestore";
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where } from "firebase/firestore";
 import { 
   ChevronDown, 
   Save, 
@@ -796,28 +796,17 @@ export default function MarkEntry() {
             const qpCode = cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode);
             if (!qpCode) return false;
 
-            const isMyQp = qp.created_by === currentUser.uid ||
-                           qp.faculty_id === currentUser.uid ||
-                           qp.allocated_faculty_id === currentUser.uid ||
-                           (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
-                           userHandledCodes.includes(qpCode);
+            const isMyQp = (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
+                            userHandledCodes.includes(qpCode);
 
-            if (isPrivileged) {
-              return isMyQp || isDeptMatch(qp.department || qp.dept, department);
-            }
+            // Strict: no matter role, only handled/allocated QPs count (no dept-wide leak)
             return isMyQp;
           })
           .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
           .filter(Boolean);
 
-        // 3. Combine unique subject codes strictly scoped by role
-        let uniqueCodes = [];
-        if (isPrivileged) {
-          uniqueCodes = [...new Set([...userHandledCodes, ...deptAllCodes, ...userQpCodes])];
-        } else {
-          // Normal Faculty see ONLY subjects allocated/assigned to them or their QPs
-          uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes])];
-        }
+        // 3. Combine unique subject codes strictly to handled only — any role (per user request)
+        const uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes])];
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
         let courseNamesMap = {};
@@ -934,11 +923,15 @@ export default function MarkEntry() {
     const ciaExams = ciaConfigs
       .filter(c => {
         const isESE = !!c.isUniversity;
+        const isIndirect = !!c.isIndirectAssessment;
         const isInternalAssessment = !c.isUniversity && !c.isIndirectAssessment && !c.isAssignment && !c.isProject && !c.isPractical;
-        if (!isESE && !isInternalAssessment) return false;
-        // Regulation must match this batch's regulation — exams you never created
-        // (e.g. CIA 1/2/3 saved under another regulation) are blocked here.
-        if (c.regulation && batchRegulation && normReg(c.regulation) !== normReg(batchRegulation)) return false;
+        if (!isESE && !isIndirect && !isInternalAssessment) return false;
+        // When the batch's regulation is known, configs must declare the SAME
+        // regulation. Configs missing a regulation field (foreign/legacy data
+        // created outside CIAConfigPage) are rejected so they never leak
+        // across batches. When the batch's regulation is unknown, all config
+        // types (ESE, Indirect, Internal) are shown so nothing is blocked.
+        if (batchRegulation && (!c.regulation || normReg(c.regulation) !== normReg(batchRegulation))) return false;
         if (c.program && formatProgrammeKey(c.program) !== targetProgKey) return false;
         if (c.department && norm(c.department) !== needDept) return false;
         if (c.batch && !isBatchMatch(c.batch, batch)) return false;
@@ -1050,13 +1043,90 @@ export default function MarkEntry() {
 
       try {
         let foundType = "";
+        const tryGet = async (key) => {
+          try {
+            const snap = await getDoc(doc(db, 'courses', key));
+            if (snap.exists()) return snap.data().type || snap.data().category || snap.data().courseType || snap.data().subjectType || "";
+          } catch {}
+          return "";
+        };
+        // also try lower-case variant (courses keys are case-sensitive sanitized)
+        const lc = (s) => String(s || '').toLowerCase();
         for (const k of candidateKeys) {
-          const snap = await getDoc(doc(db, 'courses', k));
-          if (snap.exists()) {
-            const data = snap.data();
-            foundType = data.type || data.category || data.courseType || data.subjectType || "";
+          foundType = await tryGet(k);
+          if (foundType) break;
+          const low = lc(k);
+          if (low !== k) {
+            foundType = await tryGet(low);
             if (foundType) break;
           }
+        }
+        // Fallback 1: field query on code (covers any doc key format)
+        if (!foundType) {
+          try {
+            const qSnap = await getDocs(query(collection(db, 'courses'), where('code', '==', rawSubCode)));
+            let best = ""; let bestScore = -1;
+            const normProg = (v) => String(v ?? '').replace(/[.#$[\]/ ]/g, '_').toLowerCase();
+            const progNorm = normProg(progKey);
+            const deptNorm = normProg(deptKey);
+            const deptStrictNorm = normProg(strictDept);
+            const regNorm = regKey ? normProg(regKey) : "";
+            qSnap.forEach(d => {
+              const data = d.data();
+              const pNorm = normProg(data.programme || data.progKey || "");
+              const depNorm = normProg(data.department || data.deptKey || "");
+              const rNorm = normProg(data.regulation || "");
+              let score = 0;
+              // programme match relax: UG <-> B_Tech/B_E considered generic match
+              if (pNorm === progNorm) score += 10;
+              else if ((progNorm === 'ug' && (pNorm === 'b_tech' || pNorm === 'b_e')) || (progNorm === 'pg' && (pNorm === 'm_tech' || pNorm === 'm_e'))) score += 5;
+              if (depNorm === deptNorm || depNorm === deptStrictNorm) score += 8;
+              else if (depNorm === 'overall') score += 4;
+              if (regNorm && rNorm === regNorm) score += 6;
+              const type = data.type || data.category || data.courseType || data.subjectType || "";
+              if (type && score > bestScore) { bestScore = score; best = type; }
+              // if no high score but type exists, keep first as last resort
+              if (type && bestScore === -1 && best === "") best = type;
+            });
+            if (best) foundType = best;
+          } catch {}
+        }
+        // Fallback 2: syllabus_data (most reliable — same as image's source)
+        if (!foundType && regVal) {
+          try {
+            const sSnap = await getDoc(doc(db, 'syllabus_data', `${progKey}_${deptKey}_${sanitizeKey(regVal)}`));
+            const sData = sSnap.exists() ? sSnap.data() : null;
+            if (sData?.semesters) {
+              for (const semList of Object.values(sData.semesters)) {
+                if (Array.isArray(semList)) {
+                  const hit = semList.find(s => String(s.code || '').toUpperCase() === rawSubCode.toUpperCase());
+                  if (hit) { foundType = hit.category || hit.courseType || hit.type || hit.subjectType || ""; if (foundType) break; }
+                }
+              }
+            }
+          } catch {}
+        }
+        // Fallback 3: scan all syllabus_data for this dept (regulation-agnostic)
+        if (!foundType) {
+          try {
+            const sSnapAll = await getDocs(collection(db, 'syllabus_data'));
+            sSnapAll.forEach(d => {
+              if (foundType) return;
+              const data = d.data();
+              if (!data?.semesters) return;
+              // only consider docs matching progKey+deptKey loosely
+              const idLower = String(d.id || '').toLowerCase();
+              if (!idLower.includes(deptKey.toLowerCase().replace(/[_ ]+/g,'').slice(0,4)) && !idLower.includes('overall')) {
+                // skip unrelated depts if map is large — but still scan if dept matches loosely
+              }
+              for (const semList of Object.values(data.semesters)) {
+                if (Array.isArray(semList)) {
+                  const hit = semList.find(s => String(s.code || '').toUpperCase() === rawSubCode.toUpperCase());
+                  if (hit && (hit.category || hit.courseType || hit.type)) { foundType = hit.category || hit.courseType || hit.type || ""; break; }
+                }
+              }
+            });
+          } catch {}
         }
         setSubjectCourseType(foundType);
       } catch (e) { console.error("Error fetching course type:", e); setSubjectCourseType(""); }
@@ -2216,7 +2286,7 @@ export default function MarkEntry() {
                 >
                   <option value="">Select Batch</option>
                   {availableBatches.map(b => (
-                    <option key={b} value={b}>{formatBatchDisplay(b)}</option>
+                    <option key={b} value={b}>{b}</option>
                   ))}
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
@@ -2277,7 +2347,14 @@ export default function MarkEntry() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Subject</label>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+                Subject
+                {subjectCourseType && (
+                  <span className="px-2 py-0.5 bg-blue-50 text-[#120c7a] text-[9px] font-black rounded-full border border-blue-100 tracking-widest">
+                    {String(subjectCourseType).toUpperCase()}
+                  </span>
+                )}
+              </label>
               <div className="relative">
                 <select 
                   value={subject}
@@ -2296,7 +2373,14 @@ export default function MarkEntry() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Exam</label>
+              <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
+                Exam
+                {subject && availableExams.length > 0 && (
+                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-black rounded-full border border-emerald-100 tracking-widest">
+                    {availableExams.length} AVAILABLE
+                  </span>
+                )}
+              </label>
               <div className="relative">
                 <select 
                   disabled={!subject}

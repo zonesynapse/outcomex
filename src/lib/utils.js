@@ -65,7 +65,9 @@ export function getOrdinal(n) {
 
 export function formatBatchDisplay(batch) {
   if (!batch) return "";
-  const parts = batch.split("-");
+  // already canonical like "25 Batch (2025-29)" — return as-is to avoid double wrap
+  if (/^\d{2}\s*Batch\s*\(/i.test(String(batch).trim())) return String(batch).trim();
+  const parts = String(batch).split("-");
   const startYear = parseInt(parts[0]);
   if (isNaN(startYear)) return batch;
   const lastTwo = startYear % 100;
