@@ -1946,7 +1946,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-3">
                 <h3 className="font-bold text-zinc-800">Syllabus Details</h3>
                 <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                  {semester} • {getRegulationForBatch(formatProgrammeKey(programme), batch)} • {department}
+                   {semester} • {getRegulationForBatch(formatProgrammeKey(programme), batch) || getRegulationForBatch('', batch)} • {department}
                 </span>
               </div>
               {syllabusData?.file_url && (

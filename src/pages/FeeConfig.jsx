@@ -43,13 +43,13 @@ export default function FeeConfig() {
     return getActiveBatches(formatProgrammeKey(programme));
   }, [programme, getActiveBatches]);
 
-  // Auto-set Regulation
-  useEffect(() => {
-    if (batch && programme) {
-      const reg = getRegulationForBatch(formatProgrammeKey(programme), batch);
-      setRegulation(reg || "");
-    }
-  }, [batch, programme, getRegulationForBatch]);
+   // Auto-set Regulation
+   useEffect(() => {
+     if (batch) {
+       const reg = getRegulationForBatch(formatProgrammeKey(programme), batch) || getRegulationForBatch('', batch);
+       setRegulation(reg || "");
+     }
+   }, [batch, programme, getRegulationForBatch]);
 
   // Fetch Departments for matrix
   const departments = useMemo(() => {

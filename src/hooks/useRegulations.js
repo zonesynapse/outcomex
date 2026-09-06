@@ -51,9 +51,9 @@ export function useRegulations() {
   }, []);
 
   const getRegulationForBatch = useCallback((programme, batch) => {
-    if (!programme || !batch) return "";
-    // 1. Check explicit batch_regulations mapping
-    if (batchRegulations[programme] && batchRegulations[programme][batch]) {
+    if (!batch) return "";
+    // 1. Check explicit batch_regulations mapping (only if programme provided)
+    if (programme && batchRegulations[programme] && batchRegulations[programme][batch]) {
       return batchRegulations[programme][batch];
     }
     // 2. Derive regulation from batch start year (e.g. "25 Batch (2025-29)" → 2025 → "AU - R2025")

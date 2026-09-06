@@ -1212,7 +1212,7 @@ export default function QuestionPaperGenerator() {
       return n && n === cleanId;
     });
     if (candidates.length === 0) return null;
-    const normReg = String(getRegulationForBatch(formatProgrammeKey(program), batch) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+     const normReg = String(getRegulationForBatch(formatProgrammeKey(program), batch) || getRegulationForBatch('', batch) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     return candidates.find(c => {
       const cr = String(c.regulation || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       return cr && normReg && (cr === normReg || cr.includes(normReg) || normReg.includes(cr));
@@ -1222,9 +1222,9 @@ export default function QuestionPaperGenerator() {
   const getConfiguredExamTotalMarks = useCallback((selectedConfig) => {
     const examId = exam !== 'custom' ? exam : (selectedConfig?.id || null);
 
-    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
+     const regulation = getRegulationForBatch(formatProgrammeKey(program), batch) || getRegulationForBatch('', batch);
 
-    const regKey = sanitizeKey(regulation);
+     const regKey = sanitizeKey(regulation);
     const ayKey = sanitizeKey(academicYear);
     const fullRegKey = ayKey ? `${regKey}_${ayKey}` : regKey;
     const regCleanNorm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1569,12 +1569,14 @@ export default function QuestionPaperGenerator() {
         setSubjectCourseDetails(null);
         return;
       }
-      const progKey = formatProgrammeKey(program);
-      const regulation = getRegulationForBatch(progKey, batch);
-      if (!regulation) {
-        setSubjectCourseDetails(null);
-        return;
-      }
+       const progKey = formatProgrammeKey(program);
+       let regulation = getRegulationForBatch(progKey, batch);
+       // Fallback: derive regulation from batch year when programme is empty
+       if (!regulation) regulation = getRegulationForBatch('', batch);
+       if (!regulation) {
+         setSubjectCourseDetails(null);
+         return;
+       }
 
       const deptKey = sanitizeKey(department);
       const deptKeyStrict = sanitizeKeyStrict(department);
@@ -1703,9 +1705,9 @@ export default function QuestionPaperGenerator() {
     return catKey ? reg[catKey] : null;
   }, []);
 
-  const availableCategories = useMemo(() => {
-    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
-    const regSanitized = sanitizeKey(regulation);
+   const availableCategories = useMemo(() => {
+     const regulation = getRegulationForBatch(formatProgrammeKey(program), batch) || getRegulationForBatch('', batch);
+     const regSanitized = sanitizeKey(regulation);
     const aySanitized = sanitizeKey(academicYear);
     const regAyKey = `${regSanitized}_${aySanitized}`;
     const regCleanNorm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1745,24 +1747,25 @@ export default function QuestionPaperGenerator() {
     // regulation + course type + academic year, even if the weightage doc's
     // _category_config only contains a subset (e.g. only "Written Test").
     const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
-    if (ciaConfigs && ciaConfigs.length > 0) {
-      const getCategoryForCfg = (cfg) => {
-        if (cfg.isAssignment || cfg.isActivity) return "Activity";
-        if (cfg.isProject) return "Project";
-        if (cfg.isPractical) return "Practical";
-        if (cfg.isUniversity) return "ESE";
-        if (cfg.isIndirectAssessment) return "Indirect Assessment";
-        const nameClean = regCleanNorm(cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || '');
-        if (nameClean.includes('practical') || nameClean.includes('lab') || nameClean.includes('observation')) return "Practical";
-        if (nameClean.includes('project')) return "Project";
-        if (nameClean.includes('activity') || nameClean.includes('assignment')) return "Activity";
-        if (nameClean.includes('indirect') || nameClean.includes('survey') || nameClean.includes('exit')) return "Indirect Assessment";
-        return "Written Test";
-      };
-      ciaConfigs.forEach(cfg => {
-        if (!cfg || !cfg.regulation) return;
-        const cfgRegClean = regCleanNorm(cfg.regulation);
-        if (cfgRegClean !== regNorm && !cfgRegClean.includes(regNorm) && !regNorm.includes(cfgRegClean)) return;
+     if (ciaConfigs && ciaConfigs.length > 0) {
+       const getCategoryForCfg = (cfg) => {
+         if (cfg.isAssignment || cfg.isActivity) return "Activity";
+         if (cfg.isProject) return "Project";
+         if (cfg.isPractical) return "Practical";
+         if (cfg.isUniversity) return "ESE";
+         if (cfg.isIndirectAssessment) return "Indirect Assessment";
+         const nameClean = regCleanNorm(cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || '');
+         if (nameClean.includes('practical') || nameClean.includes('lab') || nameClean.includes('observation')) return "Practical";
+         if (nameClean.includes('project')) return "Project";
+         if (nameClean.includes('activity') || nameClean.includes('assignment')) return "Activity";
+         if (nameClean.includes('indirect') || nameClean.includes('survey') || nameClean.includes('exit')) return "Indirect Assessment";
+         return "Written Test";
+       };
+       ciaConfigs.forEach(cfg => {
+         if (!cfg || !cfg.regulation) return;
+         const cfgRegClean = regCleanNorm(cfg.regulation);
+         // When regulation is unknown (empty programme), skip reg check
+         if (regulation && cfgRegClean !== regNorm && !cfgRegClean.includes(regNorm) && !regNorm.includes(cfgRegClean)) return;
         const cfgAyNorm = regCleanNorm(cfg.academicYear);
         if (cfgAyNorm && cfgAyNorm !== regCleanNorm(academicYear)) return;
         if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
@@ -1884,62 +1887,66 @@ export default function QuestionPaperGenerator() {
     }
   };
 
-  const filteredExams = useMemo(() => {
-    if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
+   const filteredExams = useMemo(() => {
+     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject) return [];
 
-    const semNum = deriveSemesterNumber(selectedSemester);
-    const regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
-    const norm = (v) => String(v || '').trim().toLowerCase();
-    const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+     const semNum = deriveSemesterNumber(selectedSemester);
+     let regulation = getRegulationForBatch(formatProgrammeKey(program), batch);
+     // Fallback: derive regulation from batch year even when programme is empty
+     if (!regulation) {
+       regulation = getRegulationForBatch('', batch);
+     }
+     const norm = (v) => String(v || '').trim().toLowerCase();
+     const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    const selectedProg = norm(formatProgrammeKey(program));
-    const selectedDept = norm(department);
-    const selectedBatch = norm(batch);
-    const selectedAy = norm(academicYear);
+     const selectedProg = norm(formatProgrammeKey(program));
+     const selectedDept = norm(department);
+     const selectedBatch = norm(batch);
+     const selectedAy = norm(academicYear);
 
-    const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
+     const targetCourseTypeNorm = getNormalizedCourseType(subjectCourseType);
 
-    const examList = [];
-    const seenNames = new Set();
+     const examList = [];
+     const seenNames = new Set();
 
-    const isRawFirebaseId = (str) => {
-      if (!str) return true;
-      const s = String(str).trim();
-      if (s.startsWith('-') && s.length > 10) return true;
-      if (/^[A-Za-z0-9_-]{18,}$/.test(s) && !s.includes(' ')) return true;
-      return false;
-    };
+     const isRawFirebaseId = (str) => {
+       if (!str) return true;
+       const s = String(str).trim();
+       if (s.startsWith('-') && s.length > 10) return true;
+       if (/^[A-Za-z0-9_-]{18,}$/.test(s) && !s.includes(' ')) return true;
+       return false;
+     };
 
-    const isActivityExamName = (configObj, nameClean) =>
-      (configObj && (configObj.isActivity || configObj.isGroupActivity)) ||
-      nameClean.includes('activity') ||
-      nameClean.includes('seminar') ||
-      nameClean.includes('group discussion') ||
-      nameClean.includes('value added');
+     const isActivityExamName = (configObj, nameClean) =>
+       (configObj && (configObj.isActivity || configObj.isGroupActivity)) ||
+       nameClean.includes('activity') ||
+       nameClean.includes('seminar') ||
+       nameClean.includes('group discussion') ||
+       nameClean.includes('value added');
 
-    const doesExamMatchCategory = (cfg, categoryName) => {
-      if (!categoryName) return true;
+     const doesExamMatchCategory = (cfg, categoryName) => {
+       if (!categoryName) return true;
 
-      const cn = normClean(categoryName);
-      const examNameClean = normClean(cfg?.examName || cfg?.exam_name || cfg?.title || cfg?.name || cfg?.exam || cfg?.label || cfg?.eventTitle || cfg?.eventName || '');
+       const cn = normClean(categoryName);
+       const examNameClean = normClean(cfg?.examName || cfg?.exam_name || cfg?.title || cfg?.name || cfg?.exam || cfg?.label || cfg?.eventTitle || cfg?.eventName || '');
 
-      const isAssignmentOrActivity = Boolean(cfg?.isAssignment || cfg?.isActivity || examNameClean.includes('assignment') || examNameClean.includes('activity'));
-      const isPractical = Boolean(cfg?.isPractical || examNameClean.includes('practical') || examNameClean.includes('lab') || examNameClean.includes('observation'));
-      const isProject = Boolean(cfg?.isProject || examNameClean.includes('project'));
-      const isIndirect = Boolean(cfg?.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey') || examNameClean.includes('exit'));
-      const isEse = Boolean(cfg?.isUniversity || examNameClean.includes('ese') || examNameClean.includes('endsemester') || examNameClean.includes('university') || examNameClean.includes('endsem') || examNameClean.includes('external'));
+       const isAssignmentOrActivity = Boolean(cfg?.isAssignment || cfg?.isActivity || examNameClean.includes('assignment') || examNameClean.includes('activity'));
+       const isPractical = Boolean(cfg?.isPractical || examNameClean.includes('practical') || examNameClean.includes('lab') || examNameClean.includes('observation'));
+       const isProject = Boolean(cfg?.isProject || examNameClean.includes('project'));
+       const isIndirect = Boolean(cfg?.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey') || examNameClean.includes('exit'));
+       const isEse = Boolean(cfg?.isUniversity || examNameClean.includes('ese') || examNameClean.includes('endsemester') || examNameClean.includes('university') || examNameClean.includes('endsem') || examNameClean.includes('external'));
 
-      if (cn.includes('activity') || cn.includes('assignment')) return isAssignmentOrActivity && !isProject && !isIndirect && !isEse;
-      if (cn.includes('practical') || cn.includes('lab') || cn.includes('observation')) return isPractical && !isEse;
-      if (cn.includes('project')) return isProject && !isEse;
-      if (cn.includes('indirect') || cn.includes('survey') || cn.includes('exit')) return isIndirect;
-      if (cn.includes('ese') || cn.includes('endsemester') || cn.includes('university') || cn.includes('endsem')) return isEse;
+       if (cn.includes('activity') || cn.includes('assignment')) return isAssignmentOrActivity && !isProject && !isIndirect && !isEse;
+       if (cn.includes('practical') || cn.includes('lab') || cn.includes('observation')) return isPractical && !isEse;
+       if (cn.includes('project')) return isProject && !isEse;
+       if (cn.includes('indirect') || cn.includes('survey') || cn.includes('exit')) return isIndirect;
+       if (cn.includes('ese') || cn.includes('endsemester') || cn.includes('university') || cn.includes('endsem')) return isEse;
 
-      // Default: Written / CIA Test (IA 1, IA 2, IA 3, Model Exam)
-      return !isAssignmentOrActivity && !isPractical && !isProject && !isIndirect && !isEse;
-    };
+       // Default: Written / CIA Test (IA 1, IA 2, IA 3, Model Exam)
+       return !isAssignmentOrActivity && !isPractical && !isProject && !isIndirect && !isEse;
+     };
 
-    const addExam = (id, rawName, type) => {
+     const addExam = (id, rawName, type) => {
       let name = '';
       if (typeof rawName === 'object' && rawName !== null) {
         name = rawName.examName || rawName.exam_name || rawName.title || rawName.name || rawName.exam || rawName.label || '';
@@ -2092,24 +2099,24 @@ export default function QuestionPaperGenerator() {
             });
           }
 
-          // 2. ALSO include matching ciaConfigs for this regulation, course type, and category so no standard exams are missed
-          ciaConfigs.forEach(cfg => {
-            if (!cfg || !cfg.regulation) return;
-            const cfgRegClean = normClean(cfg.regulation);
-            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
+           // 2. ALSO include matching ciaConfigs for this regulation, course type, and category so no standard exams are missed
+           ciaConfigs.forEach(cfg => {
+             if (!cfg || !cfg.regulation) return;
+             // When regulation is unknown (empty programme), skip reg check — batch-year heuristic will handle it
+             if (regulation && normClean(cfg.regulation) !== normClean(regulation) && !normClean(cfg.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(cfg.regulation))) return;
 
-            if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
-              const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
-              if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
-            }
+             if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+               const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
+               if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
+             }
 
-            // Match exam using direct CIA Config flags against selected category
-            const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
+             // Match exam using direct CIA Config flags against selected category
+             const matchesCategory = doesExamMatchCategory(cfg, activeCategoryTarget);
 
-            if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
-              candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
-            }
-          });
+             if (matchesCategory && !candidateExamsMap.has(cfg.id)) {
+               candidateExamsMap.set(cfg.id, { id: cfg.id, config: cfg, rawName: null });
+             }
+           });
 
           candidateExamsMap.forEach(({ id, config: resolvedCfg, rawName }) => {
             const rn = resolvedCfg
@@ -2136,10 +2143,9 @@ export default function QuestionPaperGenerator() {
         if (!categoryInWeightage) {
           ciaConfigs.forEach(cfg => {
             const resolvedName = cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || cfg.eventTitle || cfg.eventName;
-            if (!resolvedName || isRawFirebaseId(resolvedName)) return;
-            if (!cfg || !cfg.regulation) return;
-            const cfgRegClean = normClean(cfg.regulation);
-            if (cfgRegClean !== normClean(regulation) && !cfgRegClean.includes(normClean(regulation)) && !normClean(regulation).includes(cfgRegClean)) return;
+           if (!resolvedName || isRawFirebaseId(resolvedName)) return;
+             if (!cfg || !cfg.regulation) return;
+             if (regulation && normClean(cfg.regulation) !== normClean(regulation) && !normClean(cfg.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(cfg.regulation))) return;
             if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
               const cfgCourseTypesNorm = cfg.courseTypes.map(ct => getNormalizedCourseType(ct));
               if (!cfgCourseTypesNorm.includes(targetCourseTypeNorm) && !(targetCourseTypeNorm === 'integrated' && (cfgCourseTypesNorm.includes('theory') || cfgCourseTypesNorm.includes('practical')))) return;
@@ -2163,7 +2169,7 @@ export default function QuestionPaperGenerator() {
         if (norm(config.department) && norm(config.department) !== selectedDept) return;
         if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
         if (config.semester && String(config.semester) !== semNum) return;
-        if (norm(config.regulation) && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
+         if (norm(config.regulation) && regulation && normClean(config.regulation) !== normClean(regulation) && !normClean(config.regulation).includes(normClean(regulation)) && !normClean(regulation).includes(normClean(config.regulation))) return;
 
         if (!doesExamMatchCategory(config, activeCategoryTarget)) return;
 
@@ -2667,38 +2673,42 @@ export default function QuestionPaperGenerator() {
     const progKeyNorm = norm(progKey);
     const deptNorm = norm(department);
 
-    if (isAssignmentOrProject || assessmentType === 'Indirect') {
-      const checkField = assessmentType === 'Indirect' ? 'isIndirectAssessment' : (assessmentType === 'Project' ? 'isProject' : assessmentType === 'Practical' ? 'isPractical' : 'isAssignment');
-      return batches.filter(b => {
-        const reg = getRegulationForBatch(progKey, b);
-        if (!reg) return false;
-        return ciaConfigs.some(config =>
-          config[checkField] === true &&
-          (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
-          (!norm(config.department) || norm(config.department) === deptNorm) &&
-          (!norm(config.regulation) || norm(config.regulation) === norm(reg))
-        );
-      });
-    }
+     if (isAssignmentOrProject || assessmentType === 'Indirect') {
+       const checkField = assessmentType === 'Indirect' ? 'isIndirectAssessment' : (assessmentType === 'Project' ? 'isProject' : assessmentType === 'Practical' ? 'isPractical' : 'isAssignment');
+       return batches.filter(b => {
+         let reg = getRegulationForBatch(progKey, b);
+         // Fallback: batch-year heuristic when programme is empty
+         if (!reg) reg = getRegulationForBatch('', b);
+         if (!reg) return false;
+         return ciaConfigs.some(config =>
+           config[checkField] === true &&
+           (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
+           (!norm(config.department) || norm(config.department) === deptNorm) &&
+           (!norm(config.regulation) || norm(config.regulation) === norm(reg))
+         );
+       });
+     }
 
-    // For Exam mode: if Indirect Assessment configs exist for this prog/dept, filter by regulation
-    const indirectRegs = new Set();
-    ciaConfigs.forEach(config => {
-      if (config.isIndirectAssessment === true &&
-        (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
-        (!norm(config.department) || norm(config.department) === deptNorm) &&
-        config.regulation
-      ) {
-        indirectRegs.add(norm(config.regulation));
-      }
-    });
+     // For Exam mode: if Indirect Assessment configs exist for this prog/dept, filter by regulation
+     const indirectRegs = new Set();
+     ciaConfigs.forEach(config => {
+       if (config.isIndirectAssessment === true &&
+         (!norm(config.program) || norm(formatProgrammeKey(config.program)) === progKeyNorm) &&
+         (!norm(config.department) || norm(config.department) === deptNorm) &&
+         config.regulation
+       ) {
+         indirectRegs.add(norm(config.regulation));
+       }
+     });
 
-    if (indirectRegs.size === 0) return batches;
+     if (indirectRegs.size === 0) return batches;
 
-    return batches.filter(b => {
-      const reg = getRegulationForBatch(progKey, b);
-      return reg && indirectRegs.has(norm(reg));
-    });
+     return batches.filter(b => {
+       let reg = getRegulationForBatch(progKey, b);
+       // Fallback: batch-year heuristic when programme is empty
+       if (!reg) reg = getRegulationForBatch('', b);
+       return reg && indirectRegs.has(norm(reg));
+     });
   }, [batches, assessmentType, ciaConfigs, program, department, getRegulationForBatch]);
 
   const filteredDepartments = useMemo(() => {
@@ -3911,12 +3921,14 @@ export default function QuestionPaperGenerator() {
     }
   }, [batch, academicYear, globalSemesterType, selectedSemester]);
 
-  // Fetch Subjects from Syllabus & Auto-select Subject
-  useEffect(() => {
-    const fetchSubjects = async () => {
-      const progKey = formatProgrammeKey(program);
-      const regulation = getRegulationForBatch(progKey, batch);
-      if (!program || !department || !regulation || !selectedSemester || !academicYear) {
+   // Fetch Subjects from Syllabus & Auto-select Subject
+   useEffect(() => {
+     const fetchSubjects = async () => {
+       const progKey = formatProgrammeKey(program);
+       let regulation = getRegulationForBatch(progKey, batch);
+       // Fallback: derive regulation from batch year when programme is empty
+       if (!regulation) regulation = getRegulationForBatch('', batch);
+       if (!program || !department || !regulation || !selectedSemester || !academicYear) {
         setSubjects([]);
         return;
       }
