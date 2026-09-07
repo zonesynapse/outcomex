@@ -137,13 +137,13 @@ const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-
 
 const getNormalizedCourseType = (typeStr) => {
   if (!typeStr) return 'theory';
-  const s = String(typeStr).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const s = String(typeStr).trim().toLowerCase().replace(/[–—]/g, '-');
   if (s.includes('lab') && s.includes('theory')) return 'integrated';
-  if (s.includes('cum') || s.includes('integrated') || s.includes('withlab') || s.includes('lit')) return 'integrated';
-  if (s.includes('practical') || s.includes('lab')) return 'practical';
+  if (s.includes('cum') || s.includes('integrated') || s.includes('with lab') || s.includes('withlab') || s === 'lit') return 'integrated';
+  if (s.includes('practical') || s.includes('lab') || s.includes('laboratory')) return 'practical';
   if (s.includes('project')) return 'project';
   if (s.includes('activity')) return 'activity';
-  return 'theory';
+  return s;
 };
 
 export default function MarkEntry() {
@@ -805,8 +805,8 @@ export default function MarkEntry() {
           .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
           .filter(Boolean);
 
-        // 3. Combine unique subject codes strictly to handled only — any role (per user request)
-        const uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes])];
+        const dashboardCode = dashboardQp ? cleanCode(dashboardQp.subject || dashboardQp.course || dashboardQp.subject_code || dashboardQp.courseCode) : '';
+        const uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes, ...(dashboardCode ? [dashboardCode] : [])])];
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
         let courseNamesMap = {};
@@ -868,11 +868,49 @@ export default function MarkEntry() {
     const targetSemNum = deriveSemesterNumber(semester);
     const targetSubCode = parseSubjectCodeKey(subject);
     const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
-    // Strict regulation boundary: this batch belongs to exactly one regulation
+    // Strict regulation boundary: this batch belongs to a specific regulation
     // (e.g. 23 Batch → AU - R2021). Configs saved under any other regulation
     // (e.g. CIA 1/2/3 created for R2025) must never leak into this dropdown.
     const batchRegulation = getRegulationForBatch ? getRegulationForBatch(targetProgKey, batch) : "";
     const normReg = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isRegMatch = (a, b) => {
+      if (!a || !b) return true;
+      const na = normReg(a);
+      const nb = normReg(b);
+      if (na === nb) return true;
+      const ya = na.match(/\d{4}/)?.[0] || na.match(/\d{2}/)?.[0];
+      const yb = nb.match(/\d{4}/)?.[0] || nb.match(/\d{2}/)?.[0];
+      if (ya && yb && ya === yb) return true;
+      return na.includes(nb) || nb.includes(na);
+    };
+
+    // Determine current effective course type (either explicitly loaded or inferred from subject string)
+    const effectiveCourseType = subjectCourseType || (() => {
+      const lowerSub = String(subject || '').toLowerCase();
+      if (lowerSub.includes('lab') || lowerSub.includes('practical') || lowerSub.includes('practicum') || lowerSub.includes('studio') || lowerSub.includes('drawing')) return 'Practical';
+      if (lowerSub.includes('project') || lowerSub.includes('dissertation') || lowerSub.includes('thesis')) return 'Project';
+      return 'Theory';
+    })();
+    const targetNormCourseType = getNormalizedCourseType(effectiveCourseType);
+
+    // Helper to test if a CIA config or QP exam matches the target course type
+    const isExamMatchingCourseType = (cfg) => {
+      if (!cfg) return false;
+
+      const activeSubCourseType = subjectCourseType || effectiveCourseType;
+
+      // Pure courseTypes array matching (from CIA Config Page tags):
+      if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
+        if (activeSubCourseType) {
+          const sTypeNorm = norm(activeSubCourseType);
+          const cfgNorms = cfg.courseTypes.map(ct => norm(ct));
+          const hasMatch = cfgNorms.includes(sTypeNorm) || cfgNorms.some(ct => ct === sTypeNorm || ct.includes(sTypeNorm) || sTypeNorm.includes(ct));
+          if (!hasMatch) return false;
+        }
+      }
+
+      return true;
+    };
 
     // 1. Get exams strictly from generated QPs with status 'Allocated & Released' (or approved)
     const qpExams = allQPs
@@ -881,6 +919,9 @@ export default function MarkEntry() {
 
         const qpProgKey = formatProgrammeKey(qp.programme || qp.program || '');
         if (qpProgKey && targetProgKey && qpProgKey !== targetProgKey) return false;
+
+        const qpReg = qp.regulation || qp.batchRegulation;
+        if (batchRegulation && qpReg && !isRegMatch(qpReg, batchRegulation)) return false;
 
         const qpAy = qp.academic_year || qp.academicYear;
         if (qpAy && !normAyEq(qpAy, academicYear)) return false;
@@ -891,76 +932,113 @@ export default function MarkEntry() {
         const qpSubCode = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
         if (qpSubCode && targetSubCode && qpSubCode !== targetSubCode) return false;
 
-        // Strictly keep ONLY papers that are Allocated & Released (or Approved by Exam Cell)
+        const rawName = qp.qpaper_name || qp.qpaperName;
+        const baseName = stripSetSuffix(rawName) || rawName;
+        const matchedConfig = ciaConfigs.find(c => c.id === rawName || c.examName === rawName || c.examName === baseName || c.id === baseName);
+
+        // Filter QPs by course type & category
+        const evalConfig = matchedConfig || {
+          examName: baseName,
+          isPractical: qp.isPractical || qp.assessment_type === 'Practical',
+          isAssignment: qp.assessment_type === 'Assignment',
+          isProject: qp.assessment_type === 'Project',
+          isActivity: qp.assessment_type === 'Activity',
+          isIndirectAssessment: qp.isIndirectAssessment
+        };
+        if (!isExamMatchingCourseType(evalConfig)) return false;
+
+        // Strictly keep ONLY papers that are Allocated & Released (or Approved by Exam Cell / HOD)
         const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
         const isAllocated = statusNorm === 'allocated & released' ||
                             statusNorm === 'allocated' ||
                             statusNorm === 'approved' ||
                             statusNorm === 'approved by exam cell' ||
+                            statusNorm === 'approved_by_coe' ||
+                            statusNorm === 'approved_by_hod' ||
                             qp.allocated === true ||
                             qp.isAllocated === true ||
+                            Boolean(qp.allocatedTo) ||
                             qp.status === 'Allocated & Released';
 
         return isAllocated;
       })
       .map(qp => {
+        const isFirestoreKey = (str) => {
+          if (!str) return false;
+          const s = String(str).trim();
+          return s.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(s) && !s.includes(' ') && !s.includes('IA') && !s.includes('CIA') && !s.includes('Exam') && !s.includes('Assignment'));
+        };
+
         const rawName = qp.qpaper_name || qp.qpaperName;
-        const baseName = stripSetSuffix(rawName) || rawName;
-        const matchedConfig = ciaConfigs.find(c => c.id === rawName || c.examName === rawName || c.examName === baseName || c.id === baseName);
+        const qpId = qp.id;
+        const explicitExamName = qp.exam_name || qp.examName || qp.exam;
+
+        const matchedConfig = ciaConfigs.find(c =>
+          (rawName && (c.id === rawName || c.examName === rawName)) ||
+          (qpId && (c.id === qpId || c.examName === qpId)) ||
+          (explicitExamName && (c.examName === explicitExamName || c.id === explicitExamName))
+        );
+
+        let cleanExamName = '';
+        if (explicitExamName && !isFirestoreKey(explicitExamName)) {
+          cleanExamName = explicitExamName;
+        } else if (matchedConfig?.examName && !isFirestoreKey(matchedConfig.examName)) {
+          cleanExamName = matchedConfig.examName;
+        } else if (rawName && !isFirestoreKey(rawName)) {
+          cleanExamName = rawName;
+        } else {
+          cleanExamName = qp.assessment_type || 'Internal Exam';
+        }
+
+        const setVal = (qp.set || qp.setName || qp.set_name || '').toString().trim();
+        const setSuffix = setVal && !/set\s*[-_:.]?\s*/i.test(setVal) ? `Set ${setVal}` : setVal;
+        const hasSetInName = /\(set\s*[-_:.]?\s*([0-9]+|[a-z])\)/i.test(cleanExamName);
+        const displayName = (setSuffix && !hasSetInName) ? `${cleanExamName} (${setSuffix})` : cleanExamName;
+        const baseName = stripSetSuffix(cleanExamName) || cleanExamName;
+
         return {
-          value: baseName,
-          text: matchedConfig ? matchedConfig.examName : baseName,
+          value: displayName,
+          text: displayName,
+          baseName: baseName,
+          qpId: qp.id,
           type: matchedConfig?.isUniversity ? 'University' : (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' ? qp.assessment_type : (matchedConfig?.isPractical ? 'Practical' : 'Internal')),
           hasQP: true
         };
       });
 
-    // 2. Get Configured Exams from ciaConfigs — ONLY "Allocated & Released" scope mates:
-    // ESE exams (isUniversity checked) + Internal Assessments (no flags checked).
-    // Activity/Assignment (isAssignment), Project (isProject), Practical (isPractical),
-    // and Survey-only Indirect Assessments are strictly excluded here.
+    // 2. Get Configured Exams from ciaConfigs — strictly filtered by Regulation and Subject Course Type
     const needDept = norm(department);
     const ciaExams = ciaConfigs
       .filter(c => {
-        const isESE = !!c.isUniversity;
-        const isIndirect = !!c.isIndirectAssessment;
-        const isInternalAssessment = !c.isUniversity && !c.isIndirectAssessment && !c.isAssignment && !c.isProject && !c.isPractical;
-        if (!isESE && !isIndirect && !isInternalAssessment) return false;
-        // When the batch's regulation is known, configs must declare the SAME
-        // regulation. Configs missing a regulation field (foreign/legacy data
-        // created outside CIAConfigPage) are rejected so they never leak
-        // across batches. When the batch's regulation is unknown, all config
-        // types (ESE, Indirect, Internal) are shown so nothing is blocked.
-        if (batchRegulation && (!c.regulation || normReg(c.regulation) !== normReg(batchRegulation))) return false;
+        // Regulation check: must match batch's regulation
+        if (batchRegulation && c.regulation && !isRegMatch(c.regulation, batchRegulation)) return false;
         if (c.program && formatProgrammeKey(c.program) !== targetProgKey) return false;
         if (c.department && norm(c.department) !== needDept) return false;
         if (c.batch && !isBatchMatch(c.batch, batch)) return false;
         if (c.academicYear && !normAyEq(c.academicYear, academicYear)) return false;
         if (c.semester && String(deriveSemesterNumber(c.semester)) !== String(targetSemNum)) return false;
         
-        // Match subject course category / course types if specified
-        if (c.courseTypes && Array.isArray(c.courseTypes) && c.courseTypes.length > 0) {
-          if (subjectCourseType) {
-            const targetNorm = getNormalizedCourseType(subjectCourseType);
-            const cfgNorms = c.courseTypes.map(ct => getNormalizedCourseType(ct));
-            const matchesCategory = cfgNorms.includes(targetNorm) || 
-              c.courseTypes.includes(subjectCourseType) ||
-              c.courseTypes.some(ct => norm(ct) === norm(subjectCourseType)) ||
-              (targetNorm === 'integrated' && (cfgNorms.includes('theory') || cfgNorms.includes('practical')));
-            if (!matchesCategory) return false;
-          }
-        }
-        return true;
+        // Match course type & category
+        return isExamMatchingCourseType(c, targetNormCourseType);
       })
-      .map(c => ({
-        value: c.id || c.examName,
-        text: c.examName || c.id,
-        type: c.isUniversity ? 'University' : (c.isAssignment ? 'Assignment' : (c.isProject ? 'Project' : (c.isPractical ? 'Practical' : (c.isIndirectAssessment ? 'Indirect' : 'Internal')))),
-        isIndirectAssessment: !!c.isIndirectAssessment,
-        hasQP: false
-      }));
+      .map(c => {
+        const cleanName = c.examName || c.id;
+        return {
+          value: cleanName,
+          text: cleanName,
+          type: c.isUniversity ? 'University' : (c.isAssignment ? 'Assignment' : (c.isProject ? 'Project' : (c.isPractical ? 'Practical' : (c.isIndirectAssessment ? 'Indirect' : 'Internal')))),
+          isIndirectAssessment: !!c.isIndirectAssessment,
+          hasQP: false
+        };
+      });
 
-    const combined = [...qpExams, ...ciaExams];
+    const isFirestoreKey = (str) => {
+      if (!str) return false;
+      const s = String(str).trim();
+      return s.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(s) && !s.includes(' ') && !s.includes('IA') && !s.includes('CIA') && !s.includes('Exam') && !s.includes('Assignment'));
+    };
+
+    const combined = [...qpExams, ...ciaExams].filter(e => e && e.text && !isFirestoreKey(e.text));
 
     // Remove duplicates based on normalized display text, prioritizing hasQP
     const uniqueExams = [];
@@ -1158,31 +1236,52 @@ export default function MarkEntry() {
             st === 'approved_by_hod' || st === 'approved' || st === 'approved_by_exam_cell' || st === 'approved_by_ac';
         };
 
-        // Candidates: subject code + sem + batch + exam-base match. Dept-agnostic so
-        // Common QPs set by other departments (CS25C09 by CSE) still resolve.
-        // Allocated & Released papers get absolute priority.
+        const isFirestoreKey = (str) => {
+          if (!str) return false;
+          const s = String(str).trim();
+          return s.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(s) && !s.includes(' ') && !s.includes('IA') && !s.includes('CIA') && !s.includes('Exam') && !s.includes('Assignment'));
+        };
+
         const candidates = allQPs.filter(qp => {
           const qpSubCode = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
           const qpAy = norm(qp.academic_year || qp.academicYear || '');
-          const qpExam = qp.qpaper_name || qp.qpaperName || '';
           const qpSem = deriveSemesterNumber(qp.semester);
           const qpSection = norm(qp.section || '');
           const needSection = norm(section || '');
           const sectionMatch = !qp.section || !needSection || qpSection === needSection;
+
+          const rawQpName = qp.qpaper_name || qp.qpaperName || qp.id;
+          const matchedCfg = ciaConfigs.find(c => c.id === rawQpName || c.id === qp.id || c.examName === rawQpName || c.examName === qp.exam_name);
+          const cleanQpName = qp.exam_name || qp.examName || matchedCfg?.examName || (!isFirestoreKey(rawQpName) ? rawQpName : '');
+          const qpExam = cleanQpName || qp.qpaper_name || '';
+
           return qpSubCode === targetSubCode &&
                  (!qpAy || !needAy || qpAy === needAy || qpAy.includes(needAy) || needAy.includes(qpAy)) &&
                  (!qp.batch || isBatchMatch(qp.batch, batch)) &&
-                 isExamNameMatch(qpExam, targetExam) &&
+                 (isExamNameMatch(qpExam, targetExam) || qp.id === exam || qp.qpaper_name === exam || isExamNameMatch(rawQpName, targetExam)) &&
                  String(qpSem) === String(targetSem) &&
                  sectionMatch;
         });
+        const targetRawExam = norm(exam);
+        const targetQpId = dashboardQp?.id || dashboardQp?.qpId || '';
+        const targetDashName = norm(dashboardQp?.qpaper_name || dashboardQp?.qpaperName || dashboardQp?.exam_name || '');
+
         candidates.sort((a, b) => {
           const rank = (qp) => {
+            const qpId = String(qp.id || '');
+            if (targetQpId && qpId === targetQpId) return 0;
+
+            const matchedCfg = ciaConfigs.find(c => c.id === qp.qpaper_name || c.id === qp.id);
+            const cleanQpName = norm(qp.exam_name || qp.examName || matchedCfg?.examName || qp.qpaper_name || '');
+            if (targetRawExam && cleanQpName === targetRawExam) return 1;
+
+            if (targetDashName && cleanQpName === targetDashName) return 2;
+
             const st = norm(qp.status || '');
-            if (st === 'allocated' || st === 'allocated & released') return 0;
-            if (st === 'approved_by_coe' || st === 'approved_by_exam_cell') return 1;
-            if (st === 'approved_by_hod' || st === 'approved') return 2;
-            return 3;
+            if (st === 'allocated' || st === 'allocated & released') return 3;
+            if (st === 'approved_by_coe' || st === 'approved_by_exam_cell') return 4;
+            if (st === 'approved_by_hod' || st === 'approved') return 5;
+            return 6;
           };
           return rank(a) - rank(b);
         });
@@ -1433,6 +1532,7 @@ export default function MarkEntry() {
           const initialMarks = {};
           studentList.forEach(s => {
             const saved = savedMarks?.students?.[s.reg] || {};
+            const coSumLoaded = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((sum, k) => sum + Number(saved[k] || 0), 0);
             initialMarks[s.reg] = {
               partA: saved.partA || {},
               partB: saved.partB || {},
@@ -1442,7 +1542,7 @@ export default function MarkEntry() {
               grade: saved.grade || "",
               gradePoint: saved.gradePoint || "",
               absent: !!saved.absent,
-              total: saved.total || 0,
+              total: saved.total || coSumLoaded || 0,
               CO1: saved.CO1 ?? "",
               CO2: saved.CO2 ?? "",
               CO3: saved.CO3 ?? "",
@@ -2212,15 +2312,32 @@ export default function MarkEntry() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardQp, subjects]);
 
-  // After exams load, auto-select the dashboard QP's base exam (set suffix stripped)
+  // After exams load, auto-select the dashboard QP's exam (exact full name first, e.g. "IA 1 (Set 2)", then base name)
   useEffect(() => {
     if (!dashboardQp || availableExams.length === 0) return;
+    const rawExamName = String(dashboardQp.qpaper_name || dashboardQp.qpaperName || dashboardQp.exam || '').trim();
     const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
-    const qpExamBase = stripSetSuffix(dashboardQp.qpaper_name || dashboardQp.qpaperName || dashboardQp.exam || '');
-    if (qpExamBase && qpExamBase !== exam) {
-      const hit = availableExams.find(e => String(e.value).toLowerCase() === qpExamBase.toLowerCase() ||
-        String(e.text).toLowerCase() === qpExamBase.toLowerCase());
-      if (hit) setExam(hit.value);
+    const baseExamName = stripSetSuffix(rawExamName);
+
+    if (rawExamName) {
+      const exactHit = availableExams.find(e =>
+        String(e.value).toLowerCase().trim() === rawExamName.toLowerCase() ||
+        String(e.text).toLowerCase().trim() === rawExamName.toLowerCase()
+      );
+      if (exactHit) {
+        if (exam !== exactHit.value) setExam(exactHit.value);
+        return;
+      }
+    }
+
+    if (baseExamName) {
+      const baseHit = availableExams.find(e =>
+        String(e.value).toLowerCase().trim() === baseExamName.toLowerCase() ||
+        String(e.text).toLowerCase().trim() === baseExamName.toLowerCase()
+      );
+      if (baseHit && exam !== baseHit.value) {
+        setExam(baseHit.value);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardQp, availableExams]);
@@ -2421,11 +2538,6 @@ export default function MarkEntry() {
 
         {/* Table Section */}
         <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100">
-          {(isUniversityExam || isIndirectAssessment) && (
-            <div className="bg-blue-50 px-6 py-2 border-b border-blue-100 text-blue-700 text-xs font-bold">
-              Note: values of each co&apos;s taken by 3 scale
-            </div>
-          )}
           <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
             <h4 className="text-white font-bold text-sm">Mark Entry Table</h4>
             <div className="flex gap-2">
@@ -2489,6 +2601,7 @@ export default function MarkEntry() {
                       {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
                         <th key={co} className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">{co}</th>
                       ))}
+                      <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Total</th>
                     </>
                         ) : isAssignmentLike ? (
                     <>
@@ -2604,18 +2717,36 @@ export default function MarkEntry() {
                                     if (val !== '' && isNaN(val)) return;
                                     let parsed = val === '' ? '' : Number(val);
                                     if (parsed !== '' && parsed < 0) parsed = 0;
-                                    setMarksData(prev => ({
-                                      ...prev,
-                                      [s.reg]: {
-                                        ...prev[s.reg],
+                                    setMarksData(prev => {
+                                      const studentObj = prev[s.reg] || {};
+                                      const updatedStudent = {
+                                        ...studentObj,
                                         [co]: parsed
-                                      }
-                                    }));
+                                      };
+                                      const totalSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((acc, cKey) => {
+                                        const cVal = Number(updatedStudent[cKey]);
+                                        return acc + (isNaN(cVal) ? 0 : cVal);
+                                      }, 0);
+                                      updatedStudent.total = totalSum;
+                                      return {
+                                        ...prev,
+                                        [s.reg]: updatedStudent
+                                      };
+                                    });
                                   }}
                                   className="w-16 h-8 border border-slate-200 rounded-md text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-slate-50 mx-auto block"
                                 />
                               </td>
                             ))}
+                            <td className={`total-marks px-6 py-3 text-center font-black tabular-nums text-xl ${isAbsent ? 'text-red-600' : 'text-blue-600'}`}>
+                              {isAbsent ? 'AB' : (() => {
+                                const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((sum, key) => {
+                                  const val = Number(data[key]);
+                                  return sum + (isNaN(val) ? 0 : val);
+                                }, 0);
+                                return coSum;
+                              })()}
+                            </td>
                           </>
                   ) : isAssignmentLike ? (
                           <>

@@ -273,7 +273,9 @@ export async function scanCourseCodeUsage(oldCode) {
           entries.forEach(e => {
             if (typeof e === 'string') {
               const codePart = e.split('|')[0].trim();
-              if (norm(codePart) === oldNorm) hit = true;
+              const normCodePart = norm(codePart);
+              const normFirstWord = norm(codePart.split(/[\s\-()]+/)[0]);
+              if (normCodePart === oldNorm || normFirstWord === oldNorm || normCodePart.includes(oldNorm)) hit = true;
             }
           });
         });
@@ -515,6 +517,7 @@ export async function replaceCourseCode(oldCode, newCode, opts = {}) {
     const snap = await getDocs(collection(db, 'timetable_allocations'));
     const batchOps = writeBatch(db);
     let ops = 0;
+    const oldNorm = norm(oldCode);
     snap.forEach(d => {
       const data = d.data() || {};
       const alloc = data.subjectAllocation || {};
@@ -528,9 +531,15 @@ export async function replaceCourseCode(oldCode, newCode, opts = {}) {
             if (typeof e !== 'string') return e;
             const pipeIdx = e.indexOf('|');
             const codePart = pipeIdx >= 0 ? e.substring(0, pipeIdx) : e;
-            if (norm(codePart) === norm(oldCode)) {
+            const suffix = pipeIdx >= 0 ? e.substring(pipeIdx) : '';
+
+            const cleanCodePartNorm = norm(codePart);
+            const firstWordNorm = norm(codePart.split(/[\s\-()]+/)[0]);
+
+            if (cleanCodePartNorm === oldNorm || firstWordNorm === oldNorm || cleanCodePartNorm.includes(oldNorm)) {
               periodChanged = true;
-              return pipeIdx >= 0 ? `${newCode}${e.substring(pipeIdx)}` : newCode;
+              const updatedCodePart = codePart.replace(new RegExp(oldCode, 'gi'), newCode);
+              return `${updatedCodePart}${suffix}`;
             }
             return e;
           });
@@ -540,41 +549,62 @@ export async function replaceCourseCode(oldCode, newCode, opts = {}) {
           }
         });
       });
+
+      if (replaceInObjectFields(data, oldCode, newCode)) {
+        docChanged = true;
+      }
+
       if (docChanged) {
-        batchOps.update(d.ref, { subjectAllocation: alloc });
+        batchOps.update(d.ref, { subjectAllocation: alloc, ...data });
         ops += 1;
       }
     });
     if (ops > 0) await batchOps.commit();
   }
 
-  // 9. attendance (doc IDs contain the subject code as suffix) ----------------
+  // 9. attendance (doc IDs contain the subject code) ----------------
   bump('Migrating attendance records to new course code...');
   {
     const snap = await getDocs(collection(db, 'attendance'));
     const targets = [];
+    const oldNorm = norm(oldCode);
     snap.forEach(d => {
       const parts = d.id.split('_');
-      const last = parts[parts.length - 1];
-      const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
-      if (norm(last) === norm(oldCode) || norm(secondLast) === norm(oldCode)) {
+      const hasOldCode = parts.some(p => norm(p) === oldNorm) || norm(d.id).includes(oldNorm);
+      if (hasOldCode) {
         targets.push({ id: d.id, data: d.data() });
       }
     });
     for (const t of targets) {
-      let newId = t.id;
       const parts = t.id.split('_');
-      const last = parts[parts.length - 1];
-      if (norm(last) === norm(oldCode)) {
-        newId = [...parts.slice(0, -1), sanitizeKey(newCode)].join('_');
-      } else {
-        const secondLast = parts[parts.length - 2];
-        if (norm(secondLast) === norm(oldCode)) {
-          newId = [...parts.slice(0, -2), sanitizeKey(newCode), ...parts.slice(-1)].join('_');
+      const newParts = parts.map(p => norm(p) === oldNorm ? sanitizeKey(newCode) : p);
+      let newId = newParts.join('_');
+      if (newId === t.id && norm(t.id).includes(oldNorm)) {
+        newId = t.id.replace(new RegExp(oldCode, 'gi'), newCode);
+      }
+
+      const newData = { ...t.data };
+      if (newData._meta && typeof newData._meta === 'object') {
+        newData._meta = { ...newData._meta };
+        if (norm(newData._meta.subjectCode) === oldNorm) newData._meta.subjectCode = newCode;
+        if (norm(newData._meta.code) === oldNorm) newData._meta.code = newCode;
+        if (typeof newData._meta.subject === 'string' && newData._meta.subject.includes(oldCode)) {
+          newData._meta.subject = newData._meta.subject.replace(new RegExp(oldCode, 'gi'), newCode);
         }
       }
+      if (norm(newData.subjectCode) === oldNorm) newData.subjectCode = newCode;
+      if (norm(newData.subject_code) === oldNorm) newData.subject_code = newCode;
+      if (norm(newData.code) === oldNorm) newData.code = newCode;
+      if (typeof newData.subject === 'string' && newData.subject.includes(oldCode)) {
+        newData.subject = newData.subject.replace(new RegExp(oldCode, 'gi'), newCode);
+      }
+
+      const legacy = Array.isArray(newData.legacy_codes) ? newData.legacy_codes : [];
+      if (!legacy.includes(oldCode)) legacy.push(oldCode);
+      newData.legacy_codes = legacy;
+
+      await setDoc(doc(db, 'attendance', newId), newData);
       if (newId !== t.id) {
-        await setDoc(doc(db, 'attendance', newId), t.data);
         try { await deleteDoc(doc(db, 'attendance', t.id)); } catch (e) { /* best effort */ }
       }
     }

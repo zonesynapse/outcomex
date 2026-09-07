@@ -786,6 +786,25 @@ export default function Attendance() {
           const baseSnap = await getDoc(doc(db, "attendance", baseAttendanceDocId));
           if (baseSnap.exists()) attendanceSnap = baseSnap;
         }
+
+        // Fallback: try legacy course codes if present on subject object
+        const legacyCodes = Array.isArray(selectedSubjectObj?.legacy_codes) ? selectedSubjectObj.legacy_codes : [];
+        if (!attendanceSnap.exists() && legacyCodes.length > 0) {
+          for (const legacyCode of legacyCodes) {
+            const legacyDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}${sectionSuffix}`;
+            const legacySnap = await getDoc(doc(db, "attendance", legacyDocId));
+            if (legacySnap.exists()) {
+              attendanceSnap = legacySnap;
+              break;
+            }
+            const legacyBaseDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}`;
+            const legacyBaseSnap = await getDoc(doc(db, "attendance", legacyBaseDocId));
+            if (legacyBaseSnap.exists()) {
+              attendanceSnap = legacyBaseSnap;
+              break;
+            }
+          }
+        }
         let studentSnap = await getDoc(doc(db, "students", compositeKey));
         if (!studentSnap.exists() && sectionSuffix) {
           const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
@@ -849,6 +868,22 @@ export default function Attendance() {
           if (!enrolSnap.exists() && sectionSuffix) {
             const baseEnrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
             enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolDocId));
+          }
+          if (!enrolSnap.exists() && legacyCodes.length > 0) {
+            for (const legacyCode of legacyCodes) {
+              const legEnrolId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}${sectionSuffix}`;
+              const legEnrolSnap = await getDoc(doc(db, 'course_enrolments', legEnrolId));
+              if (legEnrolSnap.exists()) {
+                enrolSnap = legEnrolSnap;
+                break;
+              }
+              const legBaseEnrolId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}`;
+              const legBaseEnrolSnap = await getDoc(doc(db, 'course_enrolments', legBaseEnrolId));
+              if (legBaseEnrolSnap.exists()) {
+                enrolSnap = legBaseEnrolSnap;
+                break;
+              }
+            }
           }
           if (enrolSnap.exists()) {
             const enrolledData = enrolSnap.data();

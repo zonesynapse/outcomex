@@ -224,6 +224,21 @@ export default function Curriculum() {
     setUpdatingSet(null);
   };
 
+  const handleUpdateQpPolicyMode = async (configId, mode) => {
+    setUpdatingSet(configId);
+    try {
+      if (selectedConfigAY) {
+        await updateDoc(doc(db, 'cia_configs', configId), { [`qpPolicyModeByAy.${sanitizeKey(selectedConfigAY)}`]: mode });
+      } else {
+        await updateDoc(doc(db, 'cia_configs', configId), { qpPolicyMode: mode });
+      }
+      setSuccessMessage("Exam QP policy updated successfully!");
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) { console.error(err); }
+    setUpdatingSet(null);
+  };
+
   const handleWeightageChange = (regKey, type, examId, value) => {
     setWeightageConfigs(prev => ({
       ...prev,
@@ -1320,8 +1335,9 @@ export default function Curriculum() {
                               <table className="w-full text-sm text-left">
                                 <thead className="bg-slate-50">
                                   <tr className="text-slate-500 border-b border-slate-200">
-                                    <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px]">Assessment Name</th>
-                                    <th className="px-8 py-4 font-black uppercase tracking-widest text-[10px] text-center">Number of Sets Required</th>
+                                    <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px]">Assessment Name</th>
+                                    <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px] text-center">Common Subject QP Policy</th>
+                                    <th className="px-6 py-4 font-black uppercase tracking-widest text-[10px] text-center">Number of Sets Required</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
@@ -1336,9 +1352,12 @@ export default function Curriculum() {
                                     })
                                     .map(([id, config]) => {
                                       const aySetVal = selectedConfigAY ? (config.numSetsByAy?.[sanitizeKey(selectedConfigAY)] ?? config.numSets ?? 1) : (config.numSets || 1);
+                                      const ayPolicyVal = selectedConfigAY
+                                        ? (config.qpPolicyModeByAy?.[sanitizeKey(selectedConfigAY)] ?? config.qpPolicyMode ?? "COMMON_SETTER")
+                                        : (config.qpPolicyMode || "COMMON_SETTER");
                                       return (
                                     <tr key={id} className="hover:bg-blue-50/30 transition-colors">
-                                      <td className="px-8 py-4 font-bold text-slate-700">
+                                      <td className="px-6 py-4 font-bold text-slate-700">
                                         <div className="flex items-center gap-2">
                                           <span>{config.examName}</span>
                                           {config.academicYear && (
@@ -1349,7 +1368,18 @@ export default function Curriculum() {
                                           )}
                                         </div>
                                       </td>
-                                      <td className="px-8 py-4 text-center">
+                                      <td className="px-6 py-4 text-center">
+                                        <select
+                                          value={ayPolicyVal}
+                                          onChange={(e) => handleUpdateQpPolicyMode(id, e.target.value)}
+                                          disabled={updatingSet === id}
+                                          className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer"
+                                        >
+                                          <option value="COMMON_SETTER">Single Faculty (Common Setter)</option>
+                                          <option value="INDIVIDUAL_FACULTY">All Faculty (Per Section / Individual)</option>
+                                        </select>
+                                      </td>
+                                      <td className="px-6 py-4 text-center">
                                         <div className="flex items-center justify-center gap-3">
                                           <input type="number" min="1" className="w-20 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center font-black text-[#120c7a] outline-none focus:ring-2 focus:ring-blue-500" value={aySetVal} onChange={(e) => handleUpdateNumSets(id, e.target.value)} disabled={updatingSet === id} />
                                           {updatingSet === id && <div className="w-4 h-4 border-2 border-[#120c7a] border-t-transparent rounded-full animate-spin" />}
@@ -1368,7 +1398,7 @@ export default function Curriculum() {
                                       return configAY === '' || configAY === selectedConfigAY;
                                     }).length === 0 && (
                                     <tr>
-                                      <td colSpan={2} className="px-8 py-10 text-center text-slate-400 italic">No internal exams configured for this regulation and academic year.</td>
+                                      <td colSpan={3} className="px-8 py-10 text-center text-slate-400 italic">No internal exams configured for this regulation and academic year.</td>
                                     </tr>
                                   )}
                                 </tbody>

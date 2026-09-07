@@ -120,9 +120,39 @@ const EVENT_STYLES = {
 };
 const getEventStyle = (type) => EVENT_STYLES[type]?.bg || 'bg-zinc-100 text-zinc-700 border-zinc-300';
 
+const isApprovedOrAllocatedStatus = (st) => {
+  const norm = String(st || '').toLowerCase().trim();
+  return (
+    norm === 'approved_by_hod' ||
+    norm === 'approved_by_coe' ||
+    norm === 'approved by exam cell' ||
+    norm === 'approved' ||
+    norm === 'allocated' ||
+    norm === 'allocated & released' ||
+    norm === 'released'
+  );
+};
+
+const isAllocatedAndReleasedStatus = (qp) => {
+  if (!qp) return false;
+  const norm = String(qp.status || '').toLowerCase().trim();
+  if (
+    norm === 'allocated & released' ||
+    norm === 'allocated' ||
+    norm === 'released' ||
+    norm === 'approved by exam cell'
+  ) {
+    return true;
+  }
+  if (qp.allocated === true || Boolean(qp.allocatedTo)) {
+    return true;
+  }
+  return false;
+};
+
 const getQPWorkflowStatus = (qp) => {
   if (!qp) return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
-  const st = qp.status;
+  const st = String(qp.status || 'draft').toLowerCase().trim();
 
   if (st === 'draft') {
     return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
@@ -130,7 +160,10 @@ const getQPWorkflowStatus = (qp) => {
   if (st === 'recorrected') {
     return { label: "Returned for Recorrection", bg: "bg-amber-100", text: "text-amber-700", icon: AlertCircle };
   }
-  if (st === 'approved_by_hod' || st === 'approved_by_coe' || st === 'approved') {
+  if (st === 'allocated & released' || st === 'allocated' || st === 'approved_by_coe' || st === 'approved by exam cell') {
+    return { label: "Allocated & Released", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 };
+  }
+  if (st === 'approved_by_hod' || st === 'approved') {
     return { label: "Approved by HOD", bg: "bg-emerald-100", text: "text-emerald-700", icon: CheckCircle2 };
   }
   if (st === 'forwarded') {
@@ -845,12 +878,16 @@ export default function FacultyDashboard() {
           }
         });
 
-        const myAssignedCodes = new Set((visibleGroups || []).flatMap(g => (g.codes || []).map(c => String(c).trim().toLowerCase())));
+        const myAssignedCodes = new Set(
+          (visibleGroups || [])
+            .flatMap(g => (g.codes || []).map(c => String(c).trim().toLowerCase()))
+            .filter(Boolean)
+        );
 
         const pending = all
           .filter((qp) => {
             if (!qp || typeof qp !== 'object') return false;
-            const status = String(qp.status || "draft").toLowerCase();
+            const status = String(qp.status || "draft").toLowerCase().trim();
             const createdBy = qp.created_by;
             const forwardedBy = qp.forwarded_by;
             const forwardedTo = qp.forwarded_to;
@@ -858,24 +895,25 @@ export default function FacultyDashboard() {
             const isOwnedByMe = createdBy === currentUid;
             const parsedQpSubj = parseSubjectField(qp.subject);
             const qpSubject = String(parsedQpSubj.code || qp.subject_code || '').trim().toLowerCase();
-            const isAssignedToMe = myAssignedCodes.size > 0 && qpSubject && myAssignedCodes.has(qpSubject);
+            const isAssignedToMe = myAssignedCodes.size > 0 && Boolean(qpSubject) && myAssignedCodes.has(qpSubject);
 
-            // Drafts: owned by me OR (no created_by AND subject is assigned to me)
+            // 1. My Drafts: owned by me OR (no created_by AND subject is assigned to me)
             const isMyDraft = status === "draft" && (isOwnedByMe || (!createdBy && isAssignedToMe));
 
-            // Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me)
+            // 2. Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me)
             const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy));
 
-            // Sent back for recorrection: status recorrected AND (forwarded to me OR created by me OR forwarded by me)
+            // 3. Sent back for recorrection: status recorrected AND (forwarded to me OR created by me OR forwarded by me)
             const isSentBackForRecorrection = status === "recorrected" && (forwardedTo === currentUid || isOwnedByMe || forwardedBy === currentUid);
 
-            // Approved by HOD: status approved_by_hod AND owned by me
-            const isApprovedByHOD = status === "approved_by_hod" && isOwnedByMe;
+            // 4. Approved or Allocated papers
+            // Owned by me or forwarded by me: show any approved/allocated status
+            // NOT owned by me (common setter paper): ONLY show if strictly "Allocated & Released"
+            const isApprovedOrAllocated = (isOwnedByMe || forwardedBy === currentUid)
+              ? isApprovedOrAllocatedStatus(status)
+              : (isAssignedToMe && isAllocatedAndReleasedStatus(qp));
 
-            // Published by COE: status approved_by_coe AND (owned by me OR forwarded by me)
-            const isPublishedByCOE = status === "approved_by_coe" && (isOwnedByMe || forwardedBy === currentUid);
-
-            return isMyDraft || isAwaitingHODReview || isSentBackForRecorrection || isApprovedByHOD || isPublishedByCOE;
+            return isMyDraft || isAwaitingHODReview || isSentBackForRecorrection || isApprovedOrAllocated;
           })
           .sort((a, b) => {
             const at = new Date(a.updated_at || a.forwarded_at || a.saved_at || 0).getTime();
@@ -934,12 +972,16 @@ export default function FacultyDashboard() {
 
   const draftCount = useMemo(() => baseQps.filter(q => q.status === 'draft').length, [baseQps]);
   const forwardedCount = useMemo(() => baseQps.filter(q => q.status === 'forwarded').length, [baseQps]);
-  const approvedCount = useMemo(() => baseQps.filter(q => q.status === 'approved_by_hod').length, [baseQps]);
+  const approvedCount = useMemo(() => baseQps.filter(q => isApprovedOrAllocatedStatus(q.status)).length, [baseQps]);
   const recorrectCount = useMemo(() => baseQps.filter(q => q.status === 'recorrected').length, [baseQps]);
 
   const filteredQps = useMemo(() => {
     let result = baseQps;
-    if (statusTab !== 'all') result = result.filter(q => q.status === statusTab);
+    if (statusTab === 'approved_by_hod' || statusTab === 'approved') {
+      result = result.filter(q => isApprovedOrAllocatedStatus(q.status));
+    } else if (statusTab !== 'all') {
+      result = result.filter(q => q.status === statusTab);
+    }
     if (searchTerm.trim()) {
       const q = searchTerm.trim().toLowerCase();
       result = result.filter(t => {
@@ -956,7 +998,7 @@ export default function FacultyDashboard() {
 
   const totalDraftCount = useMemo(() => pendingQps.filter(q => q.status === 'draft').length, [pendingQps]);
   const totalForwardedCount = useMemo(() => pendingQps.filter(q => q.status === 'forwarded').length, [pendingQps]);
-  const totalApprovedCount = useMemo(() => pendingQps.filter(q => q.status === 'approved_by_hod').length, [pendingQps]);
+  const totalApprovedCount = useMemo(() => pendingQps.filter(q => isApprovedOrAllocatedStatus(q.status)).length, [pendingQps]);
 
   const [deletingQp, setDeletingQp] = useState("");
 
@@ -2928,6 +2970,11 @@ export default function FacultyDashboard() {
                           <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
                             <FileText size={10} /> {qp.exam_name || qp.qpaper_name} ({formatQPSetDisplay(qp)})
                           </span>
+                          {qp.created_by && qp.created_by !== currentUid && (
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 text-indigo-700 px-2 py-0.5 text-[10px] font-bold border border-indigo-100">
+                              <Users size={10} /> Setter: {facultyNames[qp.created_by] || qp.created_by_name || "Common Setter"}
+                            </span>
+                          )}
                           <span className="inline-flex items-center gap-1 rounded-lg bg-zinc-50 text-zinc-600 px-2 py-0.5 text-[10px] font-bold border border-zinc-200">
                             <GraduationCap size={10} /> {qp.batch || "-"}
                           </span>
@@ -2982,6 +3029,16 @@ export default function FacultyDashboard() {
                         )}
                       </div>
                       <div className="shrink-0 flex items-center gap-1.5">
+                        {isApprovedOrAllocatedStatus(qp.status) && (
+                          <button
+                            onClick={() => navigate('/mark-entry', { state: { qp: qp.rawQp || qp } })}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm active:scale-95"
+                            title="Enter Marks"
+                          >
+                            <PenLine size={14} />
+                            Mark Entry
+                          </button>
+                        )}
                         <button
                           onClick={() => { setSelectedQP(qp); setShowQPModal(true); }}
                           className="p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 transition-all shadow-sm active:scale-95"
@@ -3042,6 +3099,14 @@ export default function FacultyDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {isApprovedOrAllocatedStatus(selectedQP.status) && (
+                  <button
+                    onClick={() => { setShowQPModal(false); navigate('/mark-entry', { state: { qp: selectedQP.rawQp || selectedQP } }); }}
+                    className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
+                  >
+                    <PenLine size={16} /> Mark Entry
+                  </button>
+                )}
                 {canEditQp(selectedQP) && (
                   <button
                     onClick={() => { setShowQPModal(false); navigate(`/question-paper-generator?id=${selectedQP.id}&compositeKey=${selectedQP.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(selectedQP))}`); }}
