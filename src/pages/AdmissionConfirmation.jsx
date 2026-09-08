@@ -269,11 +269,15 @@ export default function AdmissionConfirmation() {
       }
       order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
       const joiningAY = existingData._joiningAY || {};
+      const joiningDate = existingData._joiningDate || {};
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const joinDateStr = data.admissionDate || data.enquiryDate || todayStr;
       await setDoc(studentRef, {
         ...existingData,
         [regNo]: name,
         _order: order,
-        _joiningAY: { ...joiningAY, [regNo]: data.academicYear || "" }
+        _joiningAY: { ...joiningAY, [regNo]: data.academicYear || "" },
+        _joiningDate: { ...joiningDate, [regNo]: joinDateStr }
       });
     } catch (err) {
       console.error("Failed to add student to namelist:", err);

@@ -2745,7 +2745,7 @@ export default function AcademicCoordinatorDashboard() {
                 {/* Additional fields based on activity type */}
                 <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
                   {Object.entries(reviewActivity).filter(([k, v]) => 
-                    v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole", "isStep"].includes(k)
+                    v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "studentId", "userId", "uid", "student_id", "user_id", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole", "isStep"].includes(k)
                   ).map(([key, value]) => {
                     if (key === "formData") {
                       if (Array.isArray(value) && value.length > 0) {
@@ -3768,11 +3768,15 @@ export default function AcademicCoordinatorDashboard() {
                                     if (!secData[s.reg]) secOrder.push(s.reg);
                                     const joiningAY = currentData._joiningAY || {};
                                     const secJoiningAY = secData._joiningAY || {};
+                                    const joiningDate = currentData._joiningDate || {};
+                                    const secJoiningDate = secData._joiningDate || {};
+                                    const todayStr = new Date().toISOString().slice(0, 10);
                                     await setDoc(doc(db, 'students', secDocId), {
                                       ...secData,
                                       [s.reg]: studentVal,
                                       _order: secOrder,
-                                      _joiningAY: { ...secJoiningAY, [s.reg]: joiningAY[s.reg] || "" }
+                                      _joiningAY: { ...secJoiningAY, [s.reg]: joiningAY[s.reg] || "" },
+                                      _joiningDate: { ...secJoiningDate, [s.reg]: joiningDate[s.reg] || todayStr }
                                     });
 
                                     // Write to student_index for dual-ID lookup

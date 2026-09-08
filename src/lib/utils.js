@@ -157,27 +157,135 @@ export function parseStudentDocId(id, availableProgrammes = []) {
 }
 
 export function getAttendanceRecords(attData) {
-  if (!attData) return {};
+  if (!attData || typeof attData !== 'object') return {};
+
+  const mergedRecords = {};
+
+  const processRecordObject = (recObj) => {
+    if (!recObj || typeof recObj !== 'object') return;
+
+    if (Array.isArray(recObj)) {
+      recObj.forEach((item, idx) => {
+        if (!item || typeof item !== 'object') return;
+        const d = item.date || item._date || item.attendanceDate;
+        const p = item.period || item._period || (idx + 1);
+        if (d) {
+          const key = String(d).includes('_P') ? String(d) : `${d}_P${p}`;
+          if (!mergedRecords[key]) mergedRecords[key] = item;
+        }
+      });
+      return;
+    }
+
+    Object.entries(recObj).forEach(([rk, rVal]) => {
+      if (!rVal || typeof rVal !== 'object') return;
+      if (rk.startsWith('_') || rk === 'records_json' || rk === 'records') return;
+
+      let normKey = rk;
+      const dateMatch = rk.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4}|\d{2}\/\d{2}\/\d{4})/);
+      if (dateMatch) {
+        let datePart = dateMatch[1];
+        if (datePart.includes('/')) {
+          const parts = datePart.split('/');
+          if (parts[0].length === 4) datePart = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          else datePart = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+        } else if (datePart.match(/^\d{2}-\d{2}-\d{4}$/)) {
+          const [d, m, y] = datePart.split('-');
+          datePart = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+        let periodPart = "1";
+        const pMatch = rk.match(/_P(\d+)|_period_?(\d+)|_(\d+)$/i);
+        if (pMatch) {
+          periodPart = pMatch[1] || pMatch[2] || pMatch[3] || "1";
+        } else if (rVal.period) {
+          periodPart = String(rVal.period);
+        }
+        normKey = `${datePart}_P${periodPart}`;
+      }
+
+      if (!mergedRecords[normKey]) {
+        mergedRecords[normKey] = rVal;
+      } else {
+        const existingStu = typeof mergedRecords[normKey].students === 'object' ? mergedRecords[normKey].students : {};
+        const newStu = typeof rVal.students === 'object' ? rVal.students : {};
+        mergedRecords[normKey] = {
+          ...rVal,
+          ...mergedRecords[normKey],
+          students: { ...newStu, ...existingStu }
+        };
+      }
+    });
+  };
+
   if (attData.records_json !== undefined && attData.records_json !== null) {
-    if (typeof attData.records_json === 'object') return attData.records_json;
-    if (typeof attData.records_json === 'string' && attData.records_json.trim() !== '') {
+    if (typeof attData.records_json === 'object') {
+      processRecordObject(attData.records_json);
+    } else if (typeof attData.records_json === 'string' && attData.records_json.trim() !== '') {
       try {
         const parsed = JSON.parse(attData.records_json);
-        if (parsed && typeof parsed === 'object') return parsed;
+        processRecordObject(parsed);
       } catch (e) {
         console.warn("Failed to parse records_json:", e);
       }
     }
   }
-  if (attData.records && typeof attData.records === 'object' && Object.keys(attData.records).length > 0) {
-    return attData.records;
+
+  if (attData.records) {
+    processRecordObject(attData.records);
   }
-  // Backward compatibility: top-level students object (oldest single-record format)
+
+  ['dailyRecords', 'attendanceRecords', 'sessions', 'history', 'dates', 'recordsMap'].forEach(field => {
+    if (attData[field]) {
+      processRecordObject(attData[field]);
+    }
+  });
+
+  Object.entries(attData).forEach(([key, val]) => {
+    if (key.startsWith('_') || key === 'records_json' || key === 'records' || key === 'students') return;
+    if (val && typeof val === 'object' && (val.students || val.period || key.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})/))) {
+      let datePart = '';
+      const dMatch = key.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4}|\d{2}\/\d{2}\/\d{4})/);
+      if (dMatch) datePart = dMatch[1];
+      else if (val.date) datePart = String(val.date);
+      else if (val.attendanceDate) datePart = String(val.attendanceDate);
+
+      if (datePart) {
+        if (datePart.includes('/')) {
+          const parts = datePart.split('/');
+          if (parts[0].length === 4) datePart = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          else datePart = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+        } else if (datePart.match(/^\d{2}-\d{2}-\d{4}$/)) {
+          const [d, m, y] = datePart.split('-');
+          datePart = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+        let periodPart = "1";
+        const pMatch = key.match(/_P(\d+)|_period_?(\d+)|_(\d+)$/i);
+        if (pMatch) {
+          periodPart = pMatch[1] || pMatch[2] || pMatch[3] || "1";
+        } else if (val.period) {
+          periodPart = String(val.period);
+        }
+        const normKey = `${datePart}_P${periodPart}`;
+        if (!mergedRecords[normKey]) {
+          mergedRecords[normKey] = val;
+        } else {
+          const existingStu = typeof mergedRecords[normKey].students === 'object' ? mergedRecords[normKey].students : {};
+          const newStu = typeof val.students === 'object' ? val.students : {};
+          mergedRecords[normKey] = {
+            ...val,
+            ...mergedRecords[normKey],
+            students: { ...newStu, ...existingStu }
+          };
+        }
+      }
+    }
+  });
+
   if (attData.students && typeof attData.students === 'object' && Object.keys(attData.students).length > 0) {
     const legacyDate = attData._meta?.date || attData.date || '2026-07-10';
     const legacyKey = legacyDate.includes('_P') ? legacyDate : `${legacyDate}_P1`;
-    return {
-      [legacyKey]: {
+    if (!mergedRecords[legacyKey]) {
+      mergedRecords[legacyKey] = {
         period: "1",
         totalHours: attData._meta?.totalHours || 1,
         students: attData.students,
@@ -185,47 +293,68 @@ export function getAttendanceRecords(attData) {
         teachingAid: attData.teachingAid || attData._meta?.teachingAid || "",
         teachingMethodology: attData.teachingMethodology || attData._meta?.teachingMethodology || "",
         markedBy: attData.markedBy || attData._meta?.markedBy || ""
-      }
-    };
+      };
+    } else {
+      const existingStu = typeof mergedRecords[legacyKey].students === 'object' ? mergedRecords[legacyKey].students : {};
+      const newStu = typeof attData.students === 'object' ? attData.students : {};
+      mergedRecords[legacyKey].students = { ...newStu, ...existingStu };
+    }
   }
-  return {};
+
+  return mergedRecords;
 }
 
 export function parseStudentAttendanceVal(val) {
   if (val === undefined || val === null) return null;
 
-  // 1. String format: "P", "A", "OD", "1", "0", "-1"
   if (typeof val === 'string') {
     const s = val.trim().toUpperCase();
-    if (s === 'P' || s === 'PRESENT' || s === '1') return { status: 'P', hours: 1 };
-    if (s === 'A' || s === 'ABSENT' || s === '0') return { status: 'A', hours: 0 };
-    if (s === 'OD' || s === 'ON DUTY' || s === '-1') return { status: 'OD', hours: -1 };
+    if (s === 'P' || s === 'PRESENT' || s === '1' || s === 'TRUE') return { status: 'P', hours: 1 };
+    if (s === 'A' || s === 'ABSENT' || s === '0' || s === 'FALSE') return { status: 'A', hours: 0 };
+    if (s === 'OD' || s === 'ON DUTY' || s === 'ONDUTY' || s === '-1') return { status: 'OD', hours: -1 };
     return { status: s || 'P', hours: 1 };
   }
 
-  // 2. Number format: 1 (Present), 0 (Absent), -1 (OD)
   if (typeof val === 'number') {
     if (val > 0) return { status: 'P', hours: val };
     if (val === -1) return { status: 'OD', hours: -1 };
     return { status: 'A', hours: 0 };
   }
 
-  // 3. Boolean format: true (Present), false (Absent)
   if (typeof val === 'boolean') {
     return val ? { status: 'P', hours: 1 } : { status: 'A', hours: 0 };
   }
 
-  // 4. Object format: { status, hours, ... }
   if (typeof val === 'object') {
-    let status = String(val.status || '').trim().toUpperCase();
+    let status = String(val.status || val.attendance || val.mark || val.val || val.value || '').trim().toUpperCase();
     let hours = typeof val.hours === 'number' ? val.hours : (typeof val.hours === 'string' ? parseInt(val.hours, 10) : undefined);
+
+    if (val.isPresent !== undefined && !status) {
+      status = val.isPresent ? 'P' : 'A';
+    }
+    if (val.present !== undefined && !status) {
+      status = val.present ? 'P' : 'A';
+    }
+    if (val.absent !== undefined && !status) {
+      status = val.absent ? 'A' : 'P';
+    }
+    if (val.od !== undefined && val.od && !status) {
+      status = 'OD';
+    }
+    if (val.onDuty !== undefined && val.onDuty && !status) {
+      status = 'OD';
+    }
+
+    if (status === 'PRESENT' || status === '1' || status === 'TRUE') status = 'P';
+    if (status === 'ABSENT' || status === '0' || status === 'FALSE') status = 'A';
+    if (status === 'ON DUTY' || status === 'ONDUTY' || status === '-1') status = 'OD';
 
     if (!status && hours !== undefined) {
       if (hours > 0) status = 'P';
       else if (hours === -1) status = 'OD';
       else status = 'A';
     }
-    if (hours === undefined) {
+    if (hours === undefined || isNaN(hours)) {
       if (status === 'P') hours = 1;
       else if (status === 'OD') hours = -1;
       else hours = 0;
@@ -234,13 +363,95 @@ export function parseStudentAttendanceVal(val) {
     return {
       status,
       hours,
-      topicTaught: val.topicTaught || '',
-      teachingAid: val.teachingAid || '',
-      teachingMethodology: val.teachingMethodology || ''
+      topicTaught: val.topicTaught || val.topic || '',
+      teachingAid: val.teachingAid || val.aid || '',
+      teachingMethodology: val.teachingMethodology || val.methodology || ''
     };
   }
 
   return null;
+}
+
+export function getAllCandidateAttendanceDocIds({ programme, department, batch, academicYear, semester, subjectCode, legacyCodes = [], section = '' }) {
+  if (!programme || !department || !batch || !subjectCode) return [];
+
+  const norm = str => String(str || '').trim();
+  const cleanKey = str => String(str || '').replace(/[.#$[\]]/g, '_');
+
+  const semNum = String(semester || '').match(/\d+/)?.[0] || '1';
+
+  const progKey = formatProgrammeKey(programme);
+  const progCandidates = Array.from(new Set([
+    progKey,
+    cleanKey(programme),
+    norm(programme),
+    'UG', 'PG', 'B.Tech.', 'B.E.', 'BE', 'BTech', 'M.E.', 'M.Tech.', 'MBA', 'MCA'
+  ].filter(Boolean)));
+
+  const deptClean = cleanKey(department);
+  const deptNoDegree = cleanKey(department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, ''));
+  let deptAcronym = '';
+  const matchAcronym = department.match(/\(([^)]+)\)/);
+  if (matchAcronym) {
+    deptAcronym = cleanKey(matchAcronym[1]);
+  } else {
+    const words = department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, '').split(/[\s&/_-]+/);
+    if (words.length > 1) {
+      deptAcronym = cleanKey(words.map(w => w[0]).join(''));
+    }
+  }
+  const deptCandidates = Array.from(new Set([
+    deptClean,
+    deptNoDegree,
+    deptAcronym,
+    deptAcronym.replace(/_/g, ''),
+    deptAcronym.replace(/_/g, '&')
+  ].filter(Boolean)));
+
+  const batchClean = cleanKey(batch);
+  const yearsMatch = String(batch).match(/\d{4}\s*[-_]\s*\d{2,4}/);
+  const startYearMatch = String(batch).match(/\b\d{2,4}\b/);
+  const batchYearStr = yearsMatch ? cleanKey(yearsMatch[0]) : (startYearMatch ? cleanKey(startYearMatch[0]) : '');
+  const batchCandidates = Array.from(new Set([
+    batchClean,
+    batchYearStr,
+    batchClean.replace(/_Batch_\([^)]+\)/i, '_Batch'),
+    batchClean.replace(/_Batch/i, '')
+  ].filter(Boolean)));
+
+  const ayClean = cleanKey(academicYear);
+  const ayAlt = cleanKey(academicYear).replace(/-/g, '_');
+  const ayCandidates = Array.from(new Set([ayClean, ayAlt].filter(Boolean)));
+
+  const semCandidates = Array.from(new Set([semNum, `Sem_${semNum}`, `Semester_${semNum}`]));
+
+  const subCodes = Array.from(new Set([cleanKey(subjectCode), ...legacyCodes.map(cleanKey)].filter(Boolean)));
+
+  const secSuffixes = Array.from(new Set([
+    section ? `_${cleanKey(section)}` : '',
+    ''
+  ]));
+
+  const candidateIds = new Set();
+
+  progCandidates.forEach(p => {
+    deptCandidates.forEach(d => {
+      batchCandidates.forEach(b => {
+        ayCandidates.forEach(ay => {
+          semCandidates.forEach(s => {
+            subCodes.forEach(sub => {
+              secSuffixes.forEach(sec => {
+                const id = `${p}_${d}_${b}_${ay}_${s}_${sub}${sec}`;
+                candidateIds.add(id);
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+
+  return Array.from(candidateIds);
 }
 
 /**

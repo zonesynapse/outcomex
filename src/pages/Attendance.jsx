@@ -24,7 +24,7 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, getAllCandidateAttendanceDocIds } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 // Local sanitizeKey — does NOT replace spaces/slashes (matches doc IDs created by HODRoleConfig, MarkEntry, etc.)
@@ -174,30 +174,56 @@ export default function Attendance() {
 
   const getStudentData = useCallback((studentsMap, id) => {
     if (!studentsMap || !id) return undefined;
-    const targetId = String(id).trim().toLowerCase();
-    const altId = idMap[id] ? String(idMap[id]).trim().toLowerCase() : '';
 
-    // 1. If studentsMap is an Array: [ { reg, status }, ... ] or [ { regNo, status }, ... ]
-    if (Array.isArray(studentsMap)) {
-      const match = studentsMap.find(item => {
+    let mapObj = studentsMap;
+    if (typeof mapObj === 'string') {
+      try { mapObj = JSON.parse(mapObj); } catch { return undefined; }
+    }
+    if (!mapObj || typeof mapObj !== 'object') return undefined;
+
+    if (mapObj.students && typeof mapObj.students === 'object') {
+      mapObj = mapObj.students;
+    }
+
+    const normClean = str => String(str || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    const targetId = String(id).trim().toLowerCase();
+    const targetClean = normClean(id);
+    const altId = idMap[id] ? String(idMap[id]).trim().toLowerCase() : '';
+    const altClean = idMap[id] ? normClean(idMap[id]) : '';
+
+    // 1. If studentsMap is an Array: [ { reg, status }, ... ]
+    if (Array.isArray(mapObj)) {
+      const match = mapObj.find(item => {
         if (!item) return false;
-        const itemReg = String(item.reg || item.regNo || item.admNo || item.admissionNo || item.id || '').trim().toLowerCase();
-        return itemReg === targetId || (altId && itemReg === altId);
+        const itemReg = String(
+          item.reg || item.regNo || item.registerNo || item.register_number ||
+          item.reg_no || item.admNo || item.admissionNo || item.adm_no ||
+          item.admission_no || item.studentId || item.student_id ||
+          item.rollNo || item.roll_no || item.id || ''
+        ).trim().toLowerCase();
+        const itemClean = normClean(itemReg);
+        return itemReg === targetId || (altId && itemReg === altId) ||
+               (targetClean && itemClean === targetClean) ||
+               (altClean && itemClean === altClean);
       });
       return match || undefined;
     }
 
     // 2. If studentsMap is an Object: { "420725104001": ... }
-    if (typeof studentsMap === 'object') {
-      if (studentsMap[id] !== undefined) return studentsMap[id];
-      if (idMap[id] && studentsMap[idMap[id]] !== undefined) return studentsMap[idMap[id]];
+    if (typeof mapObj === 'object') {
+      if (mapObj[id] !== undefined) return mapObj[id];
+      if (idMap[id] && mapObj[idMap[id]] !== undefined) return mapObj[idMap[id]];
 
-      const keys = Object.keys(studentsMap);
+      const keys = Object.keys(mapObj);
       const matchedKey = keys.find(k => {
         const normK = String(k).trim().toLowerCase();
-        return normK === targetId || (altId && normK === altId);
+        const cleanK = normClean(k);
+        return normK === targetId || (altId && normK === altId) ||
+               (targetClean && cleanK === targetClean) ||
+               (altClean && cleanK === altClean);
       });
-      if (matchedKey) return studentsMap[matchedKey];
+      if (matchedKey) return mapObj[matchedKey];
     }
 
     return undefined;
@@ -751,8 +777,42 @@ export default function Attendance() {
       }
     };
     fetchTimetableConfig();
-  }, [programme, department, batch, academicYear, semester, computePeriodStart]);
+  }, [department, batch, academicYear, semester]);
 
+  // Populate available periods with timing
+  useEffect(() => {
+    if (!subject || !timetableConfig) {
+      setAvailablePeriodsWithTiming([]);
+      return;
+    }
+    const selectedSubjectObj = JSON.parse(subject);
+
+    const activePeriods = [];
+    const periodsList = timetableConfig.periods || [];
+
+    let current = parseTimeToDate(timetableConfig.startTime || "09:00 AM");
+
+    periodsList.forEach((pObj, idx) => {
+      const duration = pObj.duration || 45;
+      const pStart = current ? new Date(current) : null;
+      const pEnd = pStart ? new Date(pStart.getTime() + duration * 60000) : null;
+      if (current) current = pEnd;
+
+      if (!pObj.isBreak) {
+        const pNum = String(pObj.periodNumber || (idx + 1));
+        const timingStr = (pStart && pEnd) ? ` (${formatTime(pStart)} - ${formatTime(pEnd)})` : '';
+        activePeriods.push({
+          periodNumber: pNum,
+          label: `Period ${pNum}${timingStr}`,
+          timing: timingStr
+        });
+      }
+    });
+
+    setAvailablePeriodsWithTiming(activePeriods);
+  }, [subject, timetableConfig]);
+
+  // Fetch Attendance Data and Student List for selected filters
   useEffect(() => {
     if (!programme || !department || !batch || !academicYear || !semester || !subject) {
       setAttendanceData(null);
@@ -760,12 +820,6 @@ export default function Attendance() {
       setMasterList({});
       setRecordDates([]);
       setCurrentRecordData(null);
-      setReportData(null);
-      setShowReport(false);
-      setShowReportDataModal(false);
-      setTopicTaught("");
-      setTeachingAid("");
-      setTeachingMethodology("");
       return;
     }
 
@@ -774,71 +828,94 @@ export default function Attendance() {
     const semNum = String(semester).match(/\d+/)?.[0];
     const selectedSubjectObj = JSON.parse(subject);
     const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const attendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
 
     const fetchData = async () => {
       try {
-        const baseAttendanceDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
-        let attendanceSnap = await getDoc(doc(db, "attendance", attendanceDocId));
-        // Fallback: try sectionless base docId
-        if (!attendanceSnap.exists() && sectionSuffix) {
-          const baseSnap = await getDoc(doc(db, "attendance", baseAttendanceDocId));
-          if (baseSnap.exists()) attendanceSnap = baseSnap;
+        const legacyCodes = Array.isArray(selectedSubjectObj?.legacy_codes) ? selectedSubjectObj.legacy_codes : [];
+        const candidateDocIds = getAllCandidateAttendanceDocIds({
+          programme,
+          department,
+          batch,
+          academicYear,
+          semester,
+          subjectCode: selectedSubjectObj.code,
+          legacyCodes,
+          section
+        });
+
+        const snaps = await Promise.allSettled(candidateDocIds.map(id => getDoc(doc(db, "attendance", id))));
+
+        let mergedMeta = {};
+        let mergedRecords = {};
+
+        const processDocData = (data) => {
+          if (!data) return;
+          if (data._meta) {
+            mergedMeta = { ...data._meta, ...mergedMeta };
+          }
+          const docRecords = getAttendanceRecords(data);
+          Object.entries(docRecords).forEach(([rk, rVal]) => {
+            if (!mergedRecords[rk]) {
+              mergedRecords[rk] = rVal;
+            } else {
+              mergedRecords[rk] = {
+                ...rVal,
+                ...mergedRecords[rk],
+                students: {
+                  ...(typeof rVal.students === 'object' ? rVal.students : {}),
+                  ...(typeof mergedRecords[rk].students === 'object' ? mergedRecords[rk].students : {})
+                }
+              };
+            }
+          });
+        };
+
+        snaps.forEach(result => {
+          if (result.status === 'fulfilled' && result.value && result.value.exists()) {
+            processDocData(result.value.data());
+          }
+        });
+
+        // Additional fallback: query attendance collection for matching subject code & batch
+        try {
+          const allAttSnaps = await getDocs(collection(db, "attendance"));
+          const cleanSubCode = selectedSubjectObj.code.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const cleanBatch = String(batch).toLowerCase().replace(/[^a-z0-9]/g, '');
+          const batchYear = String(batch).match(/\d{2,4}/)?.[0] || '';
+
+          allAttSnaps.forEach(dSnap => {
+            if (!dSnap.exists()) return;
+            const docId = dSnap.id;
+            const normDocId = docId.toLowerCase();
+            const dData = dSnap.data();
+
+            const hasSubMatch = normDocId.includes(cleanSubCode) ||
+              (legacyCodes && legacyCodes.some(lc => normDocId.includes(String(lc).toLowerCase().replace(/[^a-z0-9]/g, '')))) ||
+              dData._meta?.subjectCode === selectedSubjectObj.code ||
+              dData.subjectCode === selectedSubjectObj.code;
+
+            const hasBatchMatch = normDocId.includes(cleanBatch) ||
+              (batchYear && normDocId.includes(batchYear)) ||
+              dData._meta?.batch === batch ||
+              dData.batch === batch;
+
+            if (hasSubMatch && hasBatchMatch) {
+              processDocData(dData);
+            }
+          });
+        } catch (e) {
+          console.warn('[Attendance] Fallback scan error:', e);
         }
 
-        // Fallback: try legacy course codes if present on subject object
-        const legacyCodes = Array.isArray(selectedSubjectObj?.legacy_codes) ? selectedSubjectObj.legacy_codes : [];
-        if (!attendanceSnap.exists() && legacyCodes.length > 0) {
-          for (const legacyCode of legacyCodes) {
-            const legacyDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}${sectionSuffix}`;
-            const legacySnap = await getDoc(doc(db, "attendance", legacyDocId));
-            if (legacySnap.exists()) {
-              attendanceSnap = legacySnap;
-              break;
-            }
-            const legacyBaseDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}`;
-            const legacyBaseSnap = await getDoc(doc(db, "attendance", legacyBaseDocId));
-            if (legacyBaseSnap.exists()) {
-              attendanceSnap = legacyBaseSnap;
-              break;
-            }
-          }
-        }
         let studentSnap = await getDoc(doc(db, "students", compositeKey));
         if (!studentSnap.exists() && sectionSuffix) {
           const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
           studentSnap = await getDoc(doc(db, "students", baseKey));
         }
 
-        const data = attendanceSnap.data() || {};
-        let mergedMeta = data._meta || {};
-        let mergedRecords = { ...getAttendanceRecords(data) };
-
-        // If section is selected, ALSO merge records from base doc ID (unsectioned/legacy attendance records)
-        if (sectionSuffix) {
-          try {
-            const baseSnap = await getDoc(doc(db, "attendance", baseAttendanceDocId));
-            if (baseSnap.exists()) {
-              const baseData = baseSnap.data();
-              const baseRecords = getAttendanceRecords(baseData);
-              Object.entries(baseRecords).forEach(([rk, rVal]) => {
-                if (!mergedRecords[rk]) {
-                  mergedRecords[rk] = rVal;
-                }
-              });
-              if (!mergedMeta.totalHours && baseData._meta?.totalHours) {
-                mergedMeta.totalHours = baseData._meta.totalHours;
-              }
-            }
-          } catch (e) {
-            console.warn('[Attendance] Base attendance doc merge warning:', e);
-          }
-        }
-
         const attData = {
           _meta: mergedMeta,
-          records_json: JSON.stringify(mergedRecords),
           records: mergedRecords
         };
 
@@ -861,26 +938,20 @@ export default function Attendance() {
         }
         setSectionIndex(secIdxData);
 
-        // Filter to only enrolled students from course_enrolments
+        // Filter master list by section enrolment if course_enrolments exists for this course
         try {
-          let enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}${sectionSuffix}`;
+          const enrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}${sectionSuffix}`;
           let enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolDocId));
           if (!enrolSnap.exists() && sectionSuffix) {
-            const baseEnrolDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(selectedSubjectObj.code)}`;
-            enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolDocId));
+            const baseEnrolId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${selectedSubjectObj.code}`;
+            enrolSnap = await getDoc(doc(db, 'course_enrolments', baseEnrolId));
           }
           if (!enrolSnap.exists() && legacyCodes.length > 0) {
             for (const legacyCode of legacyCodes) {
               const legEnrolId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}${sectionSuffix}`;
-              const legEnrolSnap = await getDoc(doc(db, 'course_enrolments', legEnrolId));
-              if (legEnrolSnap.exists()) {
-                enrolSnap = legEnrolSnap;
-                break;
-              }
-              const legBaseEnrolId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semNum}_${sanitizeKey(legacyCode)}`;
-              const legBaseEnrolSnap = await getDoc(doc(db, 'course_enrolments', legBaseEnrolId));
-              if (legBaseEnrolSnap.exists()) {
-                enrolSnap = legBaseEnrolSnap;
+              const legSnap = await getDoc(doc(db, 'course_enrolments', legEnrolId));
+              if (legSnap.exists()) {
+                enrolSnap = legSnap;
                 break;
               }
             }
@@ -888,71 +959,39 @@ export default function Attendance() {
           if (enrolSnap.exists()) {
             const enrolledData = enrolSnap.data();
             const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k] && !k.startsWith('_')));
-            // If enrolment doc exists but has zero enrolled keys, treat as "no enrolment filter" — show all students
             if (enrolledKeys.size > 0) {
-              const hasAnyMatch = Object.keys(rawMaster).some(k => !k.startsWith('_') && enrolledKeys.has(k));
-              // Only apply filter if at least one student matches; otherwise show all (prevents empty namelist)
-              if (hasAnyMatch) {
-                const filtered = { _meta: rawMaster._meta };
-                if (rawMaster._order) filtered._order = rawMaster._order;
-                if (rawMaster._joiningAY) filtered._joiningAY = rawMaster._joiningAY;
-                Object.keys(rawMaster).forEach(k => {
-                  if (k !== '_meta' && k !== '_order' && k !== '_joiningAY' && enrolledKeys.has(k)) {
-                    filtered[k] = rawMaster[k];
-                  }
-                });
-                // If filtered results in zero students but rawMaster had students, keep rawMaster (backward compatible)
-                const filteredCount = Object.keys(filtered).filter(k => !k.startsWith('_')).length;
-                if (filteredCount > 0) rawMaster = filtered;
-              }
+              const filtered = { _meta: rawMaster._meta };
+              Object.keys(rawMaster).forEach(k => {
+                if (k !== '_meta' && enrolledKeys.has(k)) filtered[k] = rawMaster[k];
+              });
+              rawMaster = filtered;
             }
           }
-        } catch (e) {
-          console.warn('Enrollment filter failed, showing all students:', e);
-        }
+        } catch (e) { console.warn('Enrollment filter failed:', e); }
+
         setMasterList(rawMaster);
 
-        // Build default student list with cumulative attendance
+        // Build default student list
         const joiningAY = rawMaster._joiningAY || {};
-        const masterListObj = {};
-        Object.entries(rawMaster)
+        const studentArray = Object.entries(rawMaster)
           .filter(([key]) => !key.startsWith('_'))
           .filter(([reg]) => {
             if (!academicYear) return true;
             const jAY = joiningAY[reg];
-            if (!jAY) return true;
-            return jAY <= academicYear;
+            return !jAY || jAY <= academicYear;
           })
-          .forEach(([reg, nameVal]) => {
-            masterListObj[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
-          });
-
-        const order = rawMaster._order;
-        const studentArray = Object.entries(masterListObj).map(([reg, name]) => ({
-          reg,
-          name,
-          hours: 0,
-          status: '',
-          percentage: "0.00",
-          topicTaught: '',
-          teachingAid: '',
-          teachingMethodology: '',
-          _conflict: false
-        }));
+          .map(([reg, nameVal]) => ({
+            reg,
+            name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal,
+            hours: 0,
+            status: '',
+            percentage: "0.00"
+          }));
 
         studentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
-
         setStudents(studentArray);
 
-        // Support both old format ({ _meta, students }), map format ({ _meta, records }), and json format ({ _meta, records_json })
-        let recordKeys = [];
-        const recordsObj = getAttendanceRecords(attData);
-        if (Object.keys(recordsObj).length > 0) {
-          recordKeys = Object.keys(recordsObj).sort();
-        } else if (attData?._meta?.date) {
-          // Migrate old format: wrap into records
-          recordKeys = [attData._meta.date];
-        }
+        const recordKeys = Object.keys(mergedRecords).sort();
         setRecordDates(recordKeys);
         setCurrentRecordData(null);
         setTotalConducted("1");
@@ -963,9 +1002,6 @@ export default function Attendance() {
   }, [programme, department, batch, academicYear, semester, subject, section]);
 
   const handleStatusChange = (reg, status) => {
-    // Don't allow changing read-only entries
-    if (readOnlyRegs.has(reg)) return;
-
     const total = parseInt(totalConducted, 10) || 0;
     let val = 0;
     if (status === 'P') {
@@ -1038,11 +1074,7 @@ export default function Attendance() {
       let stuMethod = parsedVal ? parsedVal.teachingMethodology : '';
       let storedStatus = parsedVal ? parsedVal.status : '';
 
-      // If dateRecord exists (period was already marked), but student entry was missing/empty in Firestore, default to 'P' (Present)
-      let status = studentExists ? storedStatus : (dateRecord ? 'P' : '');
-      if (dateRecord && !studentExists) {
-        hours = totalH;
-      }
+      let status = studentExists ? storedStatus : '';
 
       let isConflict = false;
       const rawConflictVal = getStudentData(periodConflict?.record, reg);
@@ -1170,11 +1202,15 @@ export default function Attendance() {
         studentMap[reg] = typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal;
       });
 
+    const joiningDateMap = masterList?._joiningDate || {};
     const studentStats = Object.keys(studentMap).map(reg => {
       let attended = 0, markedClasses = 0, odCount = 0;
       const dailyRecords = {};
+      const jd = joiningDateMap[reg];
       allKeys.forEach(key => {
         const rec = allRecords[key];
+        const recordDate = extractPureDate(key);
+        if (jd && recordDate && recordDate < jd) return; // before joining — skip
         const rawVal = getStudentData(rec?.students, reg);
         const parsedVal = parseStudentAttendanceVal(rawVal);
 
@@ -1197,9 +1233,8 @@ export default function Attendance() {
             statusStr = 'A';
           }
         } else {
-          // Marked period where student was missing from studentsObj — count as Present ('P')
-          attended++;
-          statusStr = 'P';
+          // Student not recorded for this date — skip entirely
+          return;
         }
         markedClasses++;
         dailyRecords[key] = statusStr;
@@ -1536,41 +1571,46 @@ export default function Attendance() {
     }));
   };
 
-  // ─── cumulative attendance from all records ───
+  // ─── cumulative attendance from all records (date-scoped by _joiningDate) ───
   const cumulativeAttended = useMemo(() => {
     const recordsMap = getAttendanceRecords(attendanceData);
     if (!Object.keys(recordsMap).length) return {};
     const counts = {};
-    Object.values(recordsMap).forEach(record => {
+    const joiningDateMap = masterList?._joiningDate || {};
+    Object.entries(recordsMap).forEach(([recordKey, record]) => {
       if (record.isEvent) return;
+      const recordDate = extractPureDate(recordKey);
       const studentsObj = record.students || {};
       Object.keys(masterList || {}).forEach(reg => {
         if (reg.startsWith('_')) return;
+        const jd = joiningDateMap[reg];
+        if (jd && recordDate && recordDate < jd) return; // before joining — skip
         const rawVal = getStudentData(studentsObj, reg);
         const parsedVal = parseStudentAttendanceVal(rawVal);
         if (parsedVal) {
           if (parsedVal.status !== 'OD' && parsedVal.status !== 'A') {
             counts[reg] = (counts[reg] || 0) + 1;
           }
-        } else {
-          // Marked period where student entry was missing in studentsObj — default to attended
-          counts[reg] = (counts[reg] || 0) + 1;
         }
       });
     });
     return counts;
   }, [attendanceData, masterList, getStudentData]);
 
-  // ─── cumulative OD count ───
+  // ─── cumulative OD count (date-scoped) ───
   const cumulativeOD = useMemo(() => {
     const recordsMap = getAttendanceRecords(attendanceData);
     if (!Object.keys(recordsMap).length) return {};
     const counts = {};
-    Object.values(recordsMap).forEach(record => {
+    const joiningDateMap = masterList?._joiningDate || {};
+    Object.entries(recordsMap).forEach(([recordKey, record]) => {
       if (record.isEvent) return;
+      const recordDate = extractPureDate(recordKey);
       const studentsObj = record.students || {};
       Object.keys(masterList || {}).forEach(reg => {
         if (reg.startsWith('_')) return;
+        const jd = joiningDateMap[reg];
+        if (jd && recordDate && recordDate < jd) return;
         const rawVal = getStudentData(studentsObj, reg);
         const parsedVal = parseStudentAttendanceVal(rawVal);
         if (parsedVal && (parsedVal.status === 'OD' || parsedVal.hours === -1)) {
@@ -1581,12 +1621,33 @@ export default function Attendance() {
     return counts;
   }, [attendanceData, masterList, getStudentData]);
 
-  // ─── non-event record count (excludes event attendance from total classes) ───
+  // ─── non-event record count (global + per-student date-scoped) ───
   const nonEventRecordCount = useMemo(() => {
     const recordsMap = getAttendanceRecords(attendanceData);
     if (!Object.keys(recordsMap).length) return 0;
     return Object.values(recordsMap).filter(r => !r.isEvent).length;
   }, [attendanceData]);
+
+  const effectiveTotalPerStudent = useMemo(() => {
+    const recordsMap = getAttendanceRecords(attendanceData);
+    if (!Object.keys(recordsMap).length) return {};
+    const joiningDateMap = masterList?._joiningDate || {};
+    const nonEventKeys = Object.entries(recordsMap).filter(([, r]) => !r.isEvent).map(([k]) => k);
+    const map = {};
+    Object.keys(masterList || {}).forEach(reg => {
+      if (reg.startsWith('_')) return;
+      const jd = joiningDateMap[reg];
+      if (!jd) {
+        map[reg] = nonEventKeys.length;
+      } else {
+        map[reg] = nonEventKeys.filter(k => {
+          const rd = extractPureDate(k);
+          return !rd || rd >= jd;
+        }).length;
+      }
+    });
+    return map;
+  }, [attendanceData, masterList]);
 
   // ─── derived stats ───
   const activeStudents = students.filter(s => !s._conflict);
@@ -2015,14 +2076,19 @@ export default function Attendance() {
                       </td>
                       <td className="px-5 py-3.5">
                         <div className="flex items-center justify-center gap-2.5">
-                          <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                            <div className={`h-full rounded-full transition-all duration-700 ${((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100 < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                              }`} style={{ width: `${Math.min(((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100, 100)}%` }} />
-                          </div>
-                          <span className={`text-xs font-black min-w-[46px] text-right ${((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1)) * 100 < 75 ? 'text-rose-600' : 'text-emerald-600'
-                            }`}>
-                            {((cumulativeAttended[s.reg] || 0) / (nonEventRecordCount || 1) * 100).toFixed(1)}%
-                          </span>
+                          {(() => {
+                            const pct = ((cumulativeAttended[s.reg] || 0) / ((effectiveTotalPerStudent[s.reg] ?? nonEventRecordCount) || 1)) * 100;
+                            return (<>
+                              <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                <div className={`h-full rounded-full transition-all duration-700 ${pct < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                                  }`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                              </div>
+                              <span className={`text-xs font-black min-w-[46px] text-right ${pct < 75 ? 'text-rose-600' : 'text-emerald-600'
+                                }`}>
+                                {pct.toFixed(1)}%
+                              </span>
+                            </>);
+                          })()}
                         </div>
                       </td>
                     </tr>

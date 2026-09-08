@@ -382,6 +382,17 @@ export default function PrincipalDashboard() {
   const partB_Audits = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B7")), [reportActivities]);
   const partB_Newsletters = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B8")), [reportActivities]);
 
+  const [customActivitiesMap, setCustomActivitiesMap] = useState({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "custom_activities"), (snap) => {
+      const map = {};
+      snap.forEach(d => { map[d.id] = { code: d.id, ...d.data() }; });
+      setCustomActivitiesMap(map);
+    });
+    return () => unsub();
+  }, []);
+
   const partC_Phd = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C1")), [reportActivities]);
   const partC_Publications = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C2")), [reportActivities]);
   const partC_Attended = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C3")), [reportActivities]);
@@ -391,6 +402,94 @@ export default function PrincipalDashboard() {
   const partC_Patents = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C7")), [reportActivities]);
   const partC_Contributions = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C8")), [reportActivities]);
   const partC_Achievements = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C9")), [reportActivities]);
+  const partB_Budget = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "B6")), [reportActivities]);
+  const partC_Mentoring = useMemo(() => expandActivityRows(reportActivities.filter(a => a.activityCode === "C10")), [reportActivities]);
+
+  const getEffectiveCategory = (a) => {
+    const code = a.activityCode || "";
+    if (customActivitiesMap[code]?.category) return (customActivitiesMap[code].category || "").toLowerCase();
+    return (a.category || "").toLowerCase();
+  };
+  const getEffectivePart = (a) => {
+    const code = a.activityCode || "";
+    if (customActivitiesMap[code]?.part) return (customActivitiesMap[code].part || "").toUpperCase();
+    return (a.part || "").toUpperCase();
+  };
+
+  const KNOWN_DEPT_CODES = new Set(["B1","B2","B3","B4","B5","B6","B7","B8"]);
+  const KNOWN_FACULTY_CODES = new Set(["C1","C2","C3","C4","C5","C6","C7","C8","C9","C10"]);
+
+  const customDeptGroups = useMemo(() => {
+    const groups = {};
+    reportActivities.forEach(a => {
+      if (a.isStep) return;
+      const code = a.activityCode || "";
+      if (KNOWN_DEPT_CODES.has(code)) return;
+      const cat = getEffectiveCategory(a);
+      const part = getEffectivePart(a);
+      const isDept = cat === "department" || part === "B";
+      if (!isDept) return;
+      if (!groups[code]) groups[code] = { code, name: a.activityName || customActivitiesMap[code]?.name || code, items: [] };
+      groups[code].items.push(a);
+    });
+    const result = {};
+    Object.keys(groups).forEach(code => { result[code] = { ...groups[code], items: expandActivityRows(groups[code].items) }; });
+    return result;
+  }, [reportActivities, customActivitiesMap]);
+
+  const customFacultyGroups = useMemo(() => {
+    const groups = {};
+    reportActivities.forEach(a => {
+      if (a.isStep) return;
+      const code = a.activityCode || "";
+      if (KNOWN_FACULTY_CODES.has(code)) return;
+      const cat = getEffectiveCategory(a);
+      const part = getEffectivePart(a);
+      const isFaculty = cat === "faculty" || part === "C";
+      if (!isFaculty) return;
+      if (!groups[code]) groups[code] = { code, name: a.activityName || customActivitiesMap[code]?.name || code, items: [] };
+      groups[code].items.push(a);
+    });
+    const result = {};
+    Object.keys(groups).forEach(code => { result[code] = { ...groups[code], items: expandActivityRows(groups[code].items) }; });
+    return result;
+  }, [reportActivities, customActivitiesMap]);
+
+  const customStudentGroups = useMemo(() => {
+    const groups = {};
+    reportActivities.forEach(a => {
+      if (a.isStep) return;
+      const code = a.activityCode || "";
+      if (code.startsWith("B") || code.startsWith("C")) return;
+      const cat = getEffectiveCategory(a);
+      const part = getEffectivePart(a);
+      const isStudent = cat === "student" || part === "A";
+      if (!isStudent) return;
+      if (!groups[code]) groups[code] = { code, name: a.activityName || customActivitiesMap[code]?.name || code, items: [] };
+      groups[code].items.push(a);
+    });
+    const result = {};
+    Object.keys(groups).forEach(code => { result[code] = { ...groups[code], items: expandActivityRows(groups[code].items) }; });
+    return result;
+  }, [reportActivities, customActivitiesMap]);
+
+  const customGenericGroups = useMemo(() => {
+    const groups = {};
+    reportActivities.forEach(a => {
+      if (a.isStep) return;
+      const code = a.activityCode || "";
+      if (KNOWN_DEPT_CODES.has(code) || KNOWN_FACULTY_CODES.has(code)) return;
+      const cat = getEffectiveCategory(a);
+      const part = getEffectivePart(a);
+      if (["student","department","faculty"].includes(cat)) return;
+      if (["A","B","C"].includes(part)) return;
+      if (!groups[code]) groups[code] = { code, name: a.activityName || customActivitiesMap[code]?.name || code, category: a.category || customActivitiesMap[code]?.category || "custom", items: [] };
+      groups[code].items.push(a);
+    });
+    const result = {};
+    Object.keys(groups).forEach(code => { result[code] = { ...groups[code], items: expandActivityRows(groups[code].items) }; });
+    return result;
+  }, [reportActivities, customActivitiesMap]);
 
   const allReportImages = useMemo(() => {
     const imagesList = [];
@@ -682,12 +781,16 @@ export default function PrincipalDashboard() {
       }
       order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
       const joiningAY = existingData._joiningAY || {};
+      const joiningDate = existingData._joiningDate || {};
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const joinDateStr = app.admissionDate || app.enquiryDate || todayStr;
       await setDoc(studentRef, {
         ...existingData,
         [regNo]: name,
         _order: order,
         _meta: { ...(existingData._meta || {}), department: app.department },
-        _joiningAY: { ...joiningAY, [regNo]: app.academicYear || "" }
+        _joiningAY: { ...joiningAY, [regNo]: app.academicYear || "" },
+        _joiningDate: { ...joiningDate, [regNo]: joinDateStr }
       });
     } catch (err) {
       console.error("Failed to add student to namelist:", err);
@@ -2498,6 +2601,53 @@ export default function PrincipalDashboard() {
                       )}
                     </div>
 
+                    {/* Dynamic Custom Student Activities - always show heading even when Nil */}
+                    {(() => {
+                      const sDefs = Object.values(customActivitiesMap).filter(d => (d.category||"").toLowerCase()==="student");
+                      const allCodes = new Set([...sDefs.map(d=>d.code), ...Object.keys(customStudentGroups)]);
+                      return Array.from(allCodes).map(code => {
+                        const def = customActivitiesMap[code];
+                        const group = customStudentGroups[code] || { code, name: def?.name || code, items: [] };
+                        const displayName = def?.name || group.name;
+                        return (
+                      <div key={code}>
+                        <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                          {code}: {displayName} ({group.items.length || 0}) {group.items.length===0?": NIL":""}
+                        </h4>
+                        {group.items.length === 0 ? (
+                          <p className="text-[10px] italic text-zinc-500 pl-4">Nil</p>
+                        ) : (
+                        <>
+                        <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                          <thead>
+                            <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                              <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Title / Details</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Submitted By</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Info</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((act, idx) => (
+                              <tr key={act.id} className="text-center">
+                                <td className="border border-zinc-900 p-2">{idx + 1}</td>
+                                <td className="border border-zinc-900 p-2">{act.date || act.fromDate || act.startDate || "-"}</td>
+                                <td className="border border-zinc-900 p-2 font-bold text-left">{act.title || act.activityName || act.courseName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left">{act.submittedBy || act.studentName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left text-[9px]">{act.description || act.details || act.remarks || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {renderSectionGallery(group.items, `Gallery for ${displayName}`)}
+                        </>
+                        )}
+                      </div>
+                        );
+                      });
+                    })()}
+
                   </div>
 
                   {/* PART B */}
@@ -2737,6 +2887,88 @@ export default function PrincipalDashboard() {
                         </div>
                       )}
                     </div>
+
+                    {/* B.8 Department Budget Utilization (B6) */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        8. Department Budget Utilization: {partB_Budget.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partB_Budget.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Budget Head</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Allocated (₹)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Utilized (₹)</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Month / Year</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Remarks</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partB_Budget.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.budgetHead || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-right">₹{parseFloat(act.allocated || 0).toLocaleString("en-IN")}</td>
+                                  <td className="border border-zinc-900 p-2 text-right font-bold text-emerald-700">₹{parseFloat(act.utilized || 0).toLocaleString("en-IN")}</td>
+                                  <td className="border border-zinc-900 p-2">{act.month || "-"} {act.year || ""}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.remarks || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partB_Budget, "Gallery for Department Budget Utilization")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dynamic Custom Department Activities - serial 9,10… to continue Part B numbering */}
+                    {(() => {
+                      const deptDefs = Object.values(customActivitiesMap).filter(d => (d.category||"").toLowerCase()==="department");
+                      const allCodes = new Set([...deptDefs.map(d=>d.code), ...Object.keys(customDeptGroups)]);
+                      return Array.from(allCodes).map((code, cIdx) => {
+                        const serial = 9 + cIdx;
+                        const def = customActivitiesMap[code];
+                        const group = customDeptGroups[code] || { code, name: def?.name || code, items: [] };
+                        const displayName = (def?.name || group.name || "").toUpperCase();
+                        return (
+                      <div key={code}>
+                        <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                          {serial}. {displayName}: {group.items.length === 0 ? "NIL" : ""}
+                        </h4>
+                        {group.items.length === 0 ? (
+                          <p className="text-[10px] italic text-zinc-500 pl-4">Nil</p>
+                        ) : (
+                        <>
+                        <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                          <thead>
+                            <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                              <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Title / Details</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Submitted By</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Info</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((act, idx) => (
+                              <tr key={act.id} className="text-center">
+                                <td className="border border-zinc-900 p-2">{idx + 1}</td>
+                                <td className="border border-zinc-900 p-2">{act.date || act.fromDate || act.startDate || "-"}</td>
+                                <td className="border border-zinc-900 p-2 font-bold text-left">{act.title || act.activityName || act.programmeTitle || act.equipmentName || act.organisationName || act.projectTitle || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left">{act.submittedBy || act.facultyName || act.studentName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left text-[9px]">{act.description || act.agenda || act.decisions || act.details || act.remarks || act.purpose || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {renderSectionGallery(group.items, `Gallery for ${displayName}`)}
+                        </>
+                        )}
+                      </div>
+                        );
+                      });
+                    })()}
 
                   </div>
 
@@ -3063,6 +3295,140 @@ export default function PrincipalDashboard() {
                         </div>
                       )}
                     </div>
+
+                    {/* C.10 Faculty Mentoring / Student Projects Guided */}
+                    <div>
+                      <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                        10. Faculty Mentoring / Student Projects Guided: {partC_Mentoring.length === 0 ? "Nil" : ""}
+                      </h4>
+                      {partC_Mentoring.length > 0 && (
+                        <div className="space-y-2">
+                          <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                            <thead>
+                              <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                                <th className="border border-zinc-900 p-2 uppercase">Faculty Name</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Type</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Students Guided</th>
+                                <th className="border border-zinc-900 p-2 uppercase">Details</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {partC_Mentoring.map((act) => (
+                                <tr key={act.id} className="text-center">
+                                  <td className="border border-zinc-900 p-2 font-bold text-left">{act.facultyName || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 font-bold uppercase">{act.mentoringType || "-"}</td>
+                                  <td className="border border-zinc-900 p-2">{act.students || "-"}</td>
+                                  <td className="border border-zinc-900 p-2 text-left">{act.details || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {renderSectionGallery(partC_Mentoring, "Gallery for Faculty Mentoring")}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dynamic Custom Faculty Activities - serial 10,11… to continue Part C numbering */}
+                    {(() => {
+                      const fDefs = Object.values(customActivitiesMap).filter(d => (d.category||"").toLowerCase()==="faculty");
+                      const allCodes = new Set([...fDefs.map(d=>d.code), ...Object.keys(customFacultyGroups)]);
+                      return Array.from(allCodes).map((code, cIdx) => {
+                        const serial = 10 + cIdx;
+                        const def = customActivitiesMap[code];
+                        const group = customFacultyGroups[code] || { code, name: def?.name || code, items: [] };
+                        const displayName = (def?.name || group.name || "").toUpperCase();
+                        return (
+                      <div key={code}>
+                        <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                          {serial}. {displayName}: {group.items.length === 0 ? "NIL" : ""}
+                        </h4>
+                        {group.items.length === 0 ? (
+                          <p className="text-[10px] italic text-zinc-500 pl-4">Nil</p>
+                        ) : (
+                        <>
+                        <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                          <thead>
+                            <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                              <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Title / Details</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Submitted By</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Info</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((act, idx) => (
+                              <tr key={act.id} className="text-center">
+                                <td className="border border-zinc-900 p-2">{idx + 1}</td>
+                                <td className="border border-zinc-900 p-2">{act.date || act.fromDate || act.startDate || "-"}</td>
+                                <td className="border border-zinc-900 p-2 font-bold text-left">{act.title || act.activityName || act.programmeTitle || act.courseName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left">{act.submittedBy || act.facultyName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left text-[9px]">{act.description || act.details || act.remarks || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {renderSectionGallery(group.items, `Gallery for ${displayName}`)}
+                        </>
+                        )}
+                      </div>
+                        );
+                      });
+                    })()}
+
+                    {/* Dynamic Custom Generic Activities (custom categories) */}
+                    {(() => {
+                      const allCodes = new Set(Object.keys(customGenericGroups));
+                      Object.values(customActivitiesMap).forEach(def => {
+                        const cat = (def.category||"").toLowerCase();
+                        const part = (def.part||"").toUpperCase();
+                        if (["student","department","faculty"].includes(cat)) return;
+                        if (["A","B","C"].includes(part)) return;
+                        allCodes.add(def.code);
+                      });
+                      return Array.from(allCodes).map(code => {
+                        const def = customActivitiesMap[code];
+                        const group = customGenericGroups[code] || { code, name: def?.name || code, category: def?.category || "custom", items: [] };
+                        const displayName = def?.name || group.name;
+                        const catLabel = def?.category || group.category;
+                        return (
+                      <div key={code}>
+                        <h4 className="text-[11px] font-bold mb-2 uppercase font-serif">
+                          {code}: {displayName} <span className="text-zinc-500 normal-case">({catLabel})</span> {group.items.length===0?": NIL":`(${group.items.length})`}
+                        </h4>
+                        {group.items.length === 0 ? (
+                          <p className="text-[10px] italic text-zinc-500 pl-4">Nil</p>
+                        ) : (
+                        <>
+                        <table className="w-full text-left text-[9px] border-collapse border border-zinc-900 font-serif">
+                          <thead>
+                            <tr className="bg-zinc-50 border border-zinc-900 text-center font-bold">
+                              <th className="border border-zinc-900 p-2 uppercase">S.No</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Date</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Title / Details</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Submitted By</th>
+                              <th className="border border-zinc-900 p-2 uppercase">Info</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.items.map((act, idx) => (
+                              <tr key={act.id} className="text-center">
+                                <td className="border border-zinc-900 p-2">{idx + 1}</td>
+                                <td className="border border-zinc-900 p-2">{act.date || act.fromDate || act.startDate || "-"}</td>
+                                <td className="border border-zinc-900 p-2 font-bold text-left">{act.title || act.activityName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left">{act.submittedBy || act.facultyName || act.studentName || "-"}</td>
+                                <td className="border border-zinc-900 p-2 text-left text-[9px]">{act.description || act.details || act.remarks || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {renderSectionGallery(group.items, `Gallery for ${displayName}`)}
+                        </>
+                        )}
+                      </div>
+                        );
+                      });
+                    })()}
 
                   </div>
 
