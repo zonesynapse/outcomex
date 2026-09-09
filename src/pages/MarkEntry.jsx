@@ -213,7 +213,7 @@ export default function MarkEntry() {
         {
           const assignmentsRef = collection(db, 'subject_assignments');
           const myRole = userData.role;
-          const isPrivilegedListener = myRole === 'Admin' || myRole === 'HOD' || myRole === 'Principal' || myRole === 'AcademicCoordinator';
+          const isPrivilegedListener = myRole === 'Admin' || myRole === 'HOD' || myRole === 'Principal';
           // Robust flat doc-ID parser: {progKey}_{dept...}_{batch...}_{ay}_{sem}[_{section}]
           // Tolerates canonical batch tokens ("24 Batch (2024-28)", "25_Batch") that break naive split.
           const parseAssignmentDocId = (id) => {
@@ -543,9 +543,6 @@ export default function MarkEntry() {
   const filteredProgrammes = useMemo(() => {
     const qpProg = location.state?.qp?.programme || location.state?.qp?.progKey;
     return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-      if (userRole === 'AcademicCoordinator') {
-        return userProgramme ? formatProgrammeKey(prog) === formatProgrammeKey(userProgramme) : true;
-      }
       if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
       const progKey = formatProgrammeKey(prog);
       // Always keep the dashboard-passed programme selectable
@@ -579,17 +576,6 @@ export default function MarkEntry() {
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
     const qpDept = location.state?.qp?.department || location.state?.qp?.dept;
-    if (userRole === 'AcademicCoordinator') {
-      if (userDepartment) {
-        const coordDeptNorm = sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-        const coordDepts = depts.filter(d => {
-          const norm = sanitizeKey(d).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-          return norm === coordDeptNorm;
-        });
-        return coordDepts.length > 0 ? coordDepts : depts;
-      }
-      return depts;
-    }
     if (userRole !== 'Faculty' && userRole !== 'HOD') {
       if (qpDept && !depts.includes(qpDept)) return [...depts, qpDept];
       return depts;
@@ -781,10 +767,6 @@ export default function MarkEntry() {
         const userSnap = await getDoc(userRef);
         const role = userSnap.exists() ? userSnap.data().role : null;
         const isPrivileged = role === 'Admin' || role === 'HOD' || role === 'Principal';
-        const isAC = role === 'AcademicCoordinator';
-        const coordinatorDeptNorm = isAC && userDepartment
-          ? sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim().toLowerCase()
-          : '';
 
         const cleanCode = (c) => parseSubjectCodeKey(c);
         let userHandledCodes = [];
@@ -794,15 +776,7 @@ export default function MarkEntry() {
         // NOTE: g.semester may be stored as "5", "Sem 5" or "5th Semester" — always compare via deriveSemesterNumber.
         const semEq = (a, b) => String(deriveSemesterNumber(a) || '').trim() === String(b || '').trim();
         facultyAssignedGroups
-          .filter(g => {
-            if (!isBatchMatch(g.batch, batch) || !normAyEq(g.academicYear, academicYear) || !semEq(g.semester, needSem)) return false;
-            // AC: only their own department's groups
-            if (isAC) {
-              const gDeptNorm = sanitizeKey(g.department || '').replace(/[_ ]+/g, ' ').trim().toLowerCase();
-              return gDeptNorm === coordinatorDeptNorm;
-            }
-            return true;
-          })
+          .filter(g => isBatchMatch(g.batch, batch) && normAyEq(g.academicYear, academicYear) && semEq(g.semester, needSem))
           .forEach(g => {
             if (isDeptMatch(g.department, department)) {
               (g.codes || []).forEach(c => {
@@ -897,24 +871,14 @@ export default function MarkEntry() {
                 deptOk = !!(parsedDept && isDeptMatch(parsedDept, department));
               }
               if (!deptOk) return;
-              // AC: strict department scoping — skip docs not from coordinator's own department
-              if (isAC && coordinatorDeptNorm) {
-                const docDeptStr = metaDept || (deptTokens ? deptTokens.replace(/_/g, ' ').trim() : '');
-                const docDeptNorm = sanitizeKey(docDeptStr).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-                if (docDeptNorm !== coordinatorDeptNorm) return;
-              }
               Object.entries(data).forEach(([k, v]) => {
                 if (k.startsWith('_') || !Array.isArray(v)) return;
-                if (!isPrivileged && !isAC && k !== currentUser.uid) return;
+                if (!isPrivileged && k !== currentUser.uid) return;
                 v.forEach(c => {
                   const cc = cleanCode(c);
                   if (cc) {
                     deptAllCodes.push(cc);
-                    if (isAC) {
-                      if (k === currentUser.uid) userHandledCodes.push(cc);
-                    } else {
-                      userHandledCodes.push(cc);
-                    }
+                    if (isPrivileged || k === currentUser.uid) userHandledCodes.push(cc);
                   }
                 });
               });
@@ -949,11 +913,6 @@ export default function MarkEntry() {
               qpDeptCodes.push(qpCode);
               return true;
             }
-            // AC: match QPs from own department
-            if (isAC && qpDeptRaw && isDeptMatch(qpDeptRaw, userDepartment)) {
-              qpDeptCodes.push(qpCode);
-              return true;
-            }
             return false;
           })
           .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
@@ -962,10 +921,6 @@ export default function MarkEntry() {
         const dashboardCode = dashboardQp ? cleanCode(dashboardQp.subject || dashboardQp.course || dashboardQp.subject_code || dashboardQp.courseCode) : '';
         let uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes, ...(dashboardCode ? [dashboardCode] : [])])];
         if (isPrivileged) {
-          uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
-        }
-        // AC: include department-wide codes (already filtered) and QP dept codes
-        if (isAC) {
           uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
         }
 
