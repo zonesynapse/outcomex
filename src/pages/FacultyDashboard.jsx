@@ -966,6 +966,41 @@ export default function FacultyDashboard() {
     return s === 'draft' || s === 'recorrected' || s === 'revoked' || s === 'rejected';
   };
 
+  const buildMarkEntryPayload = useCallback((qpInput) => {
+    const src = qpInput?.rawQp || qpInput || {};
+    const parsed = parseSubjectField(src.subject || src.course || src.subject_code || src.courseCode || '');
+    const code = parsed.code || src.subject_code || src.courseCode || '';
+    const name = parsed.name || src.subject_name || src.course_name || '';
+    const subjectDisplay = src.subject || src.course || (code ? `${code}${name ? ` - ${name}` : ''}` : '');
+    // Prefer the clean CIA exam name (exam_name) — qpaper_name may hold a raw
+    // Firestore push key, which must never surface as the selected exam.
+    const isQpKey = (s) => {
+      const t = String(s || '').trim();
+      return !!t && (t.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(t) && !t.includes(' ') && !t.includes('IA') && !t.includes('CIA') && !t.includes('Exam') && !t.includes('Assignment')));
+    };
+    const examDisplay = [src.exam_name, src.examName, src.exam, src.qpaper_name, src.qpaperName]
+      .map(s => String(s || '').trim())
+      .find(s => s && !isQpKey(s)) || '';
+
+    return {
+      ...src,
+      programme: src.programme || src.program || src.progKey || '',
+      department: src.department || src.dept || '',
+      batch: src.batch || '',
+      academic_year: src.academic_year || src.academicYear || '',
+      academicYear: src.academicYear || src.academic_year || '',
+      semester: src.semester || '',
+      section: src.section || '',
+      subject: subjectDisplay,
+      course: subjectDisplay,
+      subject_code: code,
+      subject_name: name,
+      qpaper_name: examDisplay,
+      qpaperName: examDisplay,
+      exam: examDisplay,
+    };
+  }, []);
+
   const baseQps = useMemo(() => {
     return semesterTab === "current" ? currentSemesterQps : pendingQps;
   }, [pendingQps, currentSemesterQps, semesterTab]);
@@ -3031,7 +3066,7 @@ export default function FacultyDashboard() {
                       <div className="shrink-0 flex items-center gap-1.5">
                         {isApprovedOrAllocatedStatus(qp.status) && (
                           <button
-                            onClick={() => navigate('/mark-entry', { state: { qp: qp.rawQp || qp } })}
+                            onClick={() => navigate('/markk', { state: { qp: buildMarkEntryPayload(qp) } })}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm active:scale-95"
                             title="Enter Marks"
                           >
@@ -3101,7 +3136,7 @@ export default function FacultyDashboard() {
               <div className="flex items-center gap-2">
                 {isApprovedOrAllocatedStatus(selectedQP.status) && (
                   <button
-                    onClick={() => { setShowQPModal(false); navigate('/mark-entry', { state: { qp: selectedQP.rawQp || selectedQP } }); }}
+                    onClick={() => { setShowQPModal(false); navigate('/markk', { state: { qp: buildMarkEntryPayload(selectedQP) } }); }}
                     className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
                   >
                     <PenLine size={16} /> Mark Entry

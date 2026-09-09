@@ -594,6 +594,7 @@ export default function QuestionPaperGenerator() {
   const [userProgramme, setUserProgramme] = useState("");
   const [userDepartment, setUserDepartment] = useState("");
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
+  const [facultyAssignedGroups, setFacultyAssignedGroups] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [exam, setExam] = useState('');
   const [customExam, setCustomExam] = useState('');
@@ -1123,19 +1124,96 @@ export default function QuestionPaperGenerator() {
         setUserRole(userData.role);
         setUserProgramme(userData.programme || "");
         setUserDepartment(userData.department || "");
-        if (userData.role === 'Faculty' || userData.role === 'HOD') {
+        {
           const assignmentsRef = collection(db, 'subject_assignments');
+          const myRole = userData.role;
+          const isPrivilegedListener = myRole === 'Admin' || myRole === 'HOD' || myRole === 'Principal';
+          const parseAssignmentDocId = (id) => {
+            const parts = String(id || '').split('_');
+            let sec = '';
+            let end = parts.length;
+            const lastPart = parts[end - 1] || '';
+            if (end > 1 && !/^\d+$/.test(lastPart)) {
+              sec = lastPart;
+              end -= 1;
+            }
+            const sem = String(parts[end - 1] || '').replace(/[^0-9]/g, '');
+            let ay = '';
+            let idx = end - 2;
+            if (idx >= 0 && /^\d{4}-\d{2,4}$/.test(parts[idx])) {
+              ay = parts[idx];
+              idx -= 1;
+            }
+            const batchTokens = [];
+            while (idx >= 0 && (/\d/.test(parts[idx]) || /batch/i.test(parts[idx]))) {
+              batchTokens.unshift(parts[idx]);
+              idx -= 1;
+            }
+            let progKey = parts[0] || '';
+            let deptStartIdx = 1;
+            if (parts.length > 1 && ['B', 'M'].includes(parts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(parts[1])) {
+              progKey = `${parts[0]}_${parts[1]}`;
+              deptStartIdx = 2;
+            }
+            const dept = parts.slice(deptStartIdx, Math.max(deptStartIdx, idx + 1)).join('_');
+            return { progKey, dept, batch: batchTokens.join('_'), ay, sem, section: sec };
+          };
+
           unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
             const prefixes = [];
+            const groups = [];
             assignSnap.forEach(d => {
-              if (d.data()?.[currentUserId]) {
+              const data = d.data() || {};
+              const meta = data._meta || {};
+              let codes = [];
+
+              if (isPrivilegedListener) {
+                Object.entries(data).forEach(([k, v]) => {
+                  if (k.startsWith('_')) return;
+                  if (Array.isArray(v)) codes.push(...v);
+                });
+                codes = [...new Set(codes.filter(Boolean))];
+                if (codes.length === 0) return;
+              } else {
+                if (!data?.[currentUserId]) return;
+                codes = data[currentUserId];
+                if (!Array.isArray(codes) || codes.length === 0) return;
+                codes = codes.filter(Boolean);
+              }
+
+              const parsed = parseAssignmentDocId(d.id);
+              const progKey = meta.programmeKey || meta.progKey || parsed.progKey;
+              const deptPart = parsed.dept;
+              const grpDept = (meta.department || deptPart.replace(/_/g, ' ').trim());
+              const grpProgramme = meta.programme || meta.programme_name || progKey;
+              const grpBatch = meta.batch || parsed.batch || (d.id.match(/\d{4}\s*[-–—]\s*\d{2,4}/) || [])[0] || '';
+              const grpAy = meta.academicYear || meta.academic_year || parsed.ay;
+              const grpSem = meta.semester || parsed.sem;
+              const grpSec = meta.section || parsed.section;
+
+              if (!grpBatch && !grpAy && !grpSem) {
                 const yearMatch = d.id.match(/\d{4}-\d{4}/);
                 if (yearMatch && yearMatch.index >= 2) {
                   prefixes.push(d.id.slice(0, yearMatch.index - 1));
                 }
+                if (!meta.batch) return;
               }
+
+              prefixes.push(`${progKey}_${deptPart}`);
+              groups.push({
+                progKey,
+                programme: grpProgramme,
+                department: grpDept,
+                batch: grpBatch,
+                academicYear: grpAy,
+                semester: grpSem,
+                section: grpSec,
+                codes,
+              });
             });
+
             setFacultyAssignPrefixes(prefixes);
+            setFacultyAssignedGroups(groups);
           }, (error) => {
             console.error('[QPG] subject_assignments listener error:', error);
           });
@@ -2825,8 +2903,12 @@ export default function QuestionPaperGenerator() {
 
   // Derive assigned programmes/departments from raw doc prefixes
   const derivedProgs = useMemo(() => {
-    if (!facultyAssignPrefixes.length) return [];
     const progs = new Set();
+    facultyAssignedGroups.forEach(g => {
+      const pk = formatProgrammeKey(g.progKey || g.programme || '');
+      if (pk) progs.add(pk);
+    });
+    if (!facultyAssignPrefixes.length && progs.size === 0) return [];
     Object.keys(programToDepartments).forEach(prog => {
       const progKey = formatProgrammeKey(prog);
       if (facultyAssignPrefixes.some(p => p.startsWith(progKey))) {
@@ -2834,31 +2916,38 @@ export default function QuestionPaperGenerator() {
       }
     });
     return Array.from(progs);
-  }, [facultyAssignPrefixes, programToDepartments]);
+  }, [facultyAssignPrefixes, facultyAssignedGroups, programToDepartments]);
 
   const derivedDepts = useMemo(() => {
-    if (!facultyAssignPrefixes.length || !program) return [];
-    const progKey = formatProgrammeKey(program);
     const depts = new Set();
-    facultyAssignPrefixes.forEach(prefix => {
-      if (prefix.startsWith(progKey)) {
-        depts.add(prefix.slice(progKey.length).trim());
+    facultyAssignedGroups.forEach(g => {
+      const gProg = formatProgrammeKey(g.progKey || g.programme || '');
+      if (!program || gProg === formatProgrammeKey(program)) {
+        if (g.department) depts.add(String(g.department).replace(/[_ ]+/g, ' ').trim());
       }
     });
-    return Array.from(depts);
-  }, [facultyAssignPrefixes, program, programToDepartments]);
+    if (facultyAssignPrefixes.length && program) {
+      const progKey = formatProgrammeKey(program);
+      facultyAssignPrefixes.forEach(prefix => {
+        if (prefix.startsWith(progKey)) {
+          depts.add(prefix.slice(progKey.length).replace(/[_ ]+/g, ' ').trim());
+        }
+      });
+    }
+    return Array.from(depts).filter(Boolean);
+  }, [facultyAssignPrefixes, facultyAssignedGroups, program]);
 
   const urlProgParam = searchParams.get('prog') || searchParams.get('program') || '';
   const urlDeptParam = searchParams.get('dept') || searchParams.get('department') || '';
 
   const filteredProgrammes = Object.keys(programToDepartments).filter(prog => {
-    if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
     const progKey = formatProgrammeKey(prog);
-    if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
-    // Allow URL-specified programme (e.g. navigation from QP Setter task cards) even when
-    // the user has no direct subject-handling assignment there — they may still be the setter.
+    const homeProg = formatProgrammeKey(userProgramme);
+    if (homeProg && homeProg === progKey) return true;
     if (urlProgParam && formatProgrammeKey(urlProgParam) === progKey) return true;
-    return derivedProgs.includes(progKey);
+    if (derivedProgs.includes(progKey)) return true;
+    if (!homeProg && derivedProgs.length === 0) return true;
+    return false;
   });
 
   const displayedBatches = useMemo(() => {
@@ -2909,32 +2998,36 @@ export default function QuestionPaperGenerator() {
 
   const filteredDepartments = useMemo(() => {
     const depts = programToDepartments[formatProgrammeKey(program)] || [];
-    if (userRole !== 'Faculty' && userRole !== 'HOD') return depts;
-    if (!depts.length) return [];
     const normSpace = (v) => sanitizeKey(v).replace(/[_ ]+/g, ' ').trim().toLowerCase();
-
-    // Include a URL-specified department (e.g. QP Setter task card navigation) even when the
-    // user has no direct subject-handling assignment there — they may still be the setter.
     const cleanUrlDept = urlDeptParam ? sanitizeKey(urlDeptParam).replace(/[_ ]+/g, ' ').trim().toLowerCase() : '';
-    const urlDeptIsValid = cleanUrlDept && depts.some(d => {
-      const nd = normSpace(d);
-      return nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd);
+    const allMine = new Set(derivedDepts);
+    if (userDepartment) allMine.add(String(userDepartment).replace(/[_ ]+/g, ' ').trim());
+    facultyAssignedGroups.forEach(g => {
+      if (g.department) allMine.add(String(g.department).replace(/[_ ]+/g, ' ').trim());
     });
 
-    if (!derivedDepts.length) {
-      if (urlDeptIsValid) return depts.filter(d => {
+    if (allMine.size === 0) {
+      if (cleanUrlDept && !depts.some(d => normSpace(d) === cleanUrlDept)) {
+        return depts;
+      }
+      return depts;
+    }
+
+    const normalizedMine = Array.from(allMine).map(d => d.toLowerCase());
+    let out = depts.filter(dept => {
+      const nd = normSpace(dept);
+      return normalizedMine.some(d => d === nd || d.includes(nd) || nd.includes(d));
+    });
+    if (cleanUrlDept && !out.some(d => normSpace(d) === cleanUrlDept)) {
+      const urlMatch = depts.find(d => {
         const nd = normSpace(d);
         return nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd);
       });
-      return depts;
+      if (urlMatch) out = [...out, urlMatch];
     }
-    const normalizedDepts = derivedDepts.map(d => d.replace(/[_ ]+/g, ' ').trim().toLowerCase());
-    return depts.filter(dept => {
-      const nd = normSpace(dept);
-      return normalizedDepts.some(dd => dd === nd || dd.includes(nd) || nd.includes(dd)) ||
-        (urlDeptIsValid && (nd === cleanUrlDept || nd.includes(cleanUrlDept) || cleanUrlDept.includes(nd)));
-    });
-  }, [program, userRole, derivedDepts, programToDepartments, urlDeptParam]);
+    if (userDepartment && !out.includes(userDepartment)) out = [...out, userDepartment];
+    return out.length > 0 ? out : depts;
+  }, [program, derivedDepts, userDepartment, facultyAssignedGroups, programToDepartments, urlDeptParam]);
 
   const availableSections = useMemo(() => {
     if (!batch || !department || !program) return [];
@@ -6657,7 +6750,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
                   value={batch}
                   onChange={e => { setBatch(e.target.value); setSection(''); }}
-                  disabled={!displayedBatches.length}
+                  disabled={!department || !displayedBatches.length}
                 >
                   <option value="">Select Batch</option>
                   {displayedBatches.map(b => <option key={b} value={b}>{formatBatchDisplay(b)}</option>)}

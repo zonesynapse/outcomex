@@ -160,12 +160,13 @@ export default function MarkEntry() {
     return ya !== null && yb !== null && ya === yb;
   }, []);
 
-  // Canonical department matching
+  // Canonical department matching - STRICT: both must be present and match
   const isDeptMatch = useCallback((docDept, targetDept) => {
-    if (!targetDept || !docDept) return true;
+    if (!targetDept || !docDept) return false;
     const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
     const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
     
+    if (!norm1 || !norm2) return false;
     if (norm1 === norm2) return true;
     if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
 
@@ -504,6 +505,18 @@ export default function MarkEntry() {
       const list = [];
       snapshot.forEach(doc => {
         const docData = doc.data();
+        if (!docData || typeof docData !== 'object') return;
+        // Flat documents store a single QP payload directly (same check as FacultyDashboard)
+        const isFlatDoc = docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name;
+        if (isFlatDoc) {
+          list.push({
+            ...docData,
+            id: docData.id || docData.qpId || doc.id,
+            _id: doc.id, // field key fallback = parent doc ID for flat docs
+            _compositeKey: doc.id // The parent doc ID used for subcollection path
+          });
+          return;
+        }
         // Flatten summaries stored as fields in the document
         Object.entries(docData).forEach(([fieldKey, summary]) => {
           if (summary && typeof summary === 'object' && (summary.subject || summary.batch)) {
@@ -542,17 +555,20 @@ export default function MarkEntry() {
 
   const filteredProgrammes = useMemo(() => {
     const qpProg = location.state?.qp?.programme || location.state?.qp?.progKey;
+    const homeProg = formatProgrammeKey(userProgramme);
     return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
-      if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
       const progKey = formatProgrammeKey(prog);
       // Always keep the dashboard-passed programme selectable
       if (qpProg && formatProgrammeKey(qpProg) === progKey) return true;
-      if (userRole === 'HOD' && formatProgrammeKey(userProgramme) === progKey) return true;
-      if (userProgramme && formatProgrammeKey(userProgramme) === progKey) return true;
-      if (derivedProgs.length === 0) return true;
-      return derivedProgs.includes(progKey);
+      // Strict home-programme scoping for ALL roles
+      if (homeProg && homeProg === progKey) return true;
+      // Assigned/derived programme scoping (from subject_assignments)
+      if (derivedProgs.includes(progKey)) return true;
+      // Safety fallback: no scoping signals at all -> keep the full list
+      if (!homeProg && derivedProgs.length === 0) return true;
+      return false;
     });
-  }, [PROGRAMME_DEPARTMENTS, userRole, userProgramme, derivedProgs, location.state]);
+  }, [PROGRAMME_DEPARTMENTS, userProgramme, derivedProgs, location.state]);
 
   const derivedDepts = useMemo(() => {
     const depts = new Set();
@@ -576,10 +592,6 @@ export default function MarkEntry() {
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
     const qpDept = location.state?.qp?.department || location.state?.qp?.dept;
-    if (userRole !== 'Faculty' && userRole !== 'HOD') {
-      if (qpDept && !depts.includes(qpDept)) return [...depts, qpDept];
-      return depts;
-    }
     // Collect ALL departments from assignments (multi-dept faculty) + home dept
     const allMine = new Set(derivedDepts);
     if (userDepartment) allMine.add(String(userDepartment).replace(/[_ ]+/g, ' ').trim());
@@ -598,7 +610,7 @@ export default function MarkEntry() {
     if (qpDept && !out.includes(qpDept)) out = [...out, qpDept];
     if (userDepartment && !out.includes(userDepartment)) out = [...out, userDepartment];
     return out.length > 0 ? out : depts;
-  }, [programme, userRole, derivedDepts, userDepartment, facultyAssignedGroups, PROGRAMME_DEPARTMENTS, location.state]);
+  }, [programme, derivedDepts, userDepartment, facultyAssignedGroups, PROGRAMME_DEPARTMENTS, location.state]);
 
   // Available Batches: scoped to user's assignments + active QPs, fuzzy batch match,
   // programme-duration filtered (UG=4yr, PG=2yr), canonicalized, NEVER wiped to empty.
@@ -900,19 +912,35 @@ export default function MarkEntry() {
             const qpCode = cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode);
             if (!qpCode) return false;
 
+            const qpDeptRaw = qp.department || qp.dept || '';
+            const qpHasDept = !!(qpDeptRaw && String(qpDeptRaw).trim());
+            const qpDeptMatch = qpHasDept && isDeptMatch(qpDeptRaw, department);
+
+            if (isPrivileged) {
+              // Privileged dept-wide visibility: STRICT department gating. A QP counts
+              // only when it explicitly carries this department, OR its subject code is
+              // part of this department's own assigned set (deptAllCodes). Never trust
+              // userHandledCodes here — for privileged users it is the union across ALL
+              // departments, which previously leaked e.g. BME subjects into an ECE
+              // selection. QPs with missing/empty department must NOT leak either.
+              if (qpDeptMatch || deptAllCodes.includes(qpCode)) {
+                qpDeptCodes.push(qpCode);
+                return true;
+              }
+              return false;
+            }
+
+            // Faculty (non-privileged): STRICT department gating.
+            // An owned/allocated QP only counts when it explicitly carries the selected department.
+            // Raw ownership (created_by / allocated_to) alone is NOT sufficient — a setter who
+            // authored QPs in another department must not leak those subjects into this dropdown.
+            // Cross-department Common QPs allocated to this user are covered by qpDeptMatch
+            // because the QP document should carry the target department.
             const isMyQp = (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
                             (qp.allocated_faculty_id && qp.allocated_faculty_id === currentUser.uid) ||
-                            (qp.created_by && qp.created_by === currentUser.uid) ||
-                            userHandledCodes.includes(qpCode);
-            if (isMyQp) return true;
-            // Privileged roles: QP counts dept-wide ONLY when it carries a non-empty
-            // department that strictly matches the selected department. QPs with
-            // missing/empty department must NOT leak across departments.
-            const qpDeptRaw = qp.department || qp.dept || '';
-            if (isPrivileged && qpDeptRaw && String(qpDeptRaw).trim() && isDeptMatch(qpDeptRaw, department)) {
-              qpDeptCodes.push(qpCode);
-              return true;
-            }
+                            (qp.created_by && qp.created_by === currentUser.uid);
+            if (isMyQp && qpDeptMatch) return true;
+
             return false;
           })
           .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
@@ -923,6 +951,47 @@ export default function MarkEntry() {
         if (isPrivileged) {
           uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
         }
+
+        // Filter to only subjects that have at least one "Allocated & Released" QP
+        // in allQPs for the current batch/academicYear/semester/department
+        const activeQpSubjectCodes = new Set(
+          (allQPs || [])
+            .filter(qp => {
+              if (!qp.batch || !isBatchMatch(qp.batch, batch)) return false;
+              if (qp.programme && formatProgrammeKey(qp.programme) !== progKey) return false;
+              const qpAy = qp.academic_year || qp.academicYear;
+              if (!normAyEq(qpAy, academicYear)) return false;
+              if (String(deriveSemesterNumber(qp.semester) || '').trim() !== String(needSem)) return false;
+
+              const qpDeptRaw = qp.department || qp.dept || '';
+              const qpHasDept = !!(qpDeptRaw && String(qpDeptRaw).trim());
+              const qpDeptMatch = qpHasDept && isDeptMatch(qpDeptRaw, department);
+              if (!qpDeptMatch) return false;
+
+              const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
+              const isAllocated = statusNorm === 'allocated & released' ||
+                                  statusNorm === 'allocated' ||
+                                  statusNorm === 'approved' ||
+                                  statusNorm === 'approved by exam cell' ||
+                                  statusNorm === 'approved_by_coe' ||
+                                  statusNorm === 'approved_by_hod' ||
+                                  qp.allocated === true ||
+                                  qp.isAllocated === true ||
+                                  Boolean(qp.allocatedTo) ||
+                                  qp.status === 'Allocated & Released';
+              return isAllocated;
+            })
+            .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
+            .filter(Boolean)
+        );
+
+        // Only keep subjects that have an active allocated QP
+        // Exception: preserve dashboardCode (from dashboard navigation) and userHandledCodes that have active QPs
+        const hasDashboardCode = Boolean(dashboardCode);
+        uniqueCodes = uniqueCodes.filter(code => {
+          if (hasDashboardCode && code === dashboardCode) return true;
+          return activeQpSubjectCodes.has(code);
+        });
 
         // Fallback 3 (privileged or empty): syllabus subjects for this regulation+sem so dropdown is never blank
         if (uniqueCodes.length === 0) {
@@ -1143,6 +1212,8 @@ export default function MarkEntry() {
           text: displayName,
           baseName: baseName,
           qpId: qp.id,
+          _id: qp._id,
+          _compositeKey: qp._compositeKey,
           type: matchedConfig?.isUniversity ? 'University' : (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical' ? qp.assessment_type : (matchedConfig?.isPractical ? 'Practical' : 'Internal')),
           hasQP: true
         };
@@ -1199,12 +1270,59 @@ export default function MarkEntry() {
       }
     }
 
+    // Dashboard handoff guarantee: the clicked QP row's exam must always be
+    // selectable, even when the strict qpExams filter above excluded its document
+    // over metadata shape differences (programme/department/regulation formats).
+    // Only applies when the dashboard QP's subject matches the selected subject,
+    // so manual (non-handoff) flows are completely untouched.
+    const dashQp = location.state?.qp;
+    if (dashQp) {
+      // Resolve the CIA exam name the paper was created for — exam_name first.
+      // qpaper_name may hold a raw Firestore push key; keys must never surface.
+      const dashRawName = [dashQp.exam_name, dashQp.examName, dashQp.exam, dashQp.qpaper_name, dashQp.qpaperName]
+        .map(s => String(s || '').trim())
+        .find(s => s && !isFirestoreKey(s)) || '';
+      const dashCode = parseSubjectCodeKey(dashQp.subject || dashQp.course || dashQp.subject_code || dashQp.courseCode);
+      if (dashRawName && dashCode && targetSubCode && dashCode === targetSubCode) {
+        const dashSetVal = (dashQp.set || dashQp.setName || dashQp.set_name || '').toString().trim();
+        const dashSetSuffix = dashSetVal && !/set\s*[-_:.]?\s*/i.test(dashSetVal) ? `Set ${dashSetVal}` : dashSetVal;
+        const dashHasSetInName = /\(set\s*[-_:.]?\s*([0-9]+|[a-z])\)/i.test(dashRawName);
+        const dashDisplay = (dashSetSuffix && !dashHasSetInName) ? `${dashRawName} (${dashSetSuffix})` : dashRawName;
+        const dashBase = stripSetSuffix(dashDisplay) || dashDisplay;
+        const dashAt = dashQp.assessment_type || '';
+        const dashEntry = {
+          value: dashDisplay,
+          text: dashDisplay,
+          baseName: dashBase,
+          qpId: dashQp.id || dashQp.qpId || '',
+          _id: dashQp._id || dashQp._compositeKey || dashQp.compositeKey || dashQp.id || '',
+          _compositeKey: dashQp._compositeKey || dashQp.compositeKey || '',
+          type: dashQp.isUniversity ? 'University' : ((dashAt === 'Assignment' || dashAt === 'Project' || dashAt === 'Practical') ? dashAt : (dashQp.isPractical ? 'Practical' : 'Internal')),
+          isIndirectAssessment: !!dashQp.isIndirectAssessment,
+          hasQP: true,
+        };
+        const dashNorm = dashDisplay.toLowerCase().trim();
+        const existsIdx = uniqueExams.findIndex(ex => String(ex.text).toLowerCase().trim() === dashNorm);
+        if (existsIdx === -1) {
+          uniqueExams.push(dashEntry);
+        } else {
+          // Same display text already present: enrich with the clicked row's ids
+          // so id-match + fetchQP ranking hit the exact Set row clicked.
+          const ex = uniqueExams[existsIdx];
+          if (!ex.qpId && dashEntry.qpId) ex.qpId = dashEntry.qpId;
+          if (!ex._id && dashEntry._id) ex._id = dashEntry._id;
+          if (!ex._compositeKey && dashEntry._compositeKey) ex._compositeKey = dashEntry._compositeKey;
+          ex.hasQP = true;
+        }
+      }
+    }
+
     setAvailableExams(uniqueExams);
     setExam(prev => {
       if (prev && uniqueExams.some(e => e.value === prev || e.text === prev)) return prev;
       return "";
     });
-  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs, subjectCourseType, isBatchMatch, getRegulationForBatch]);
+  }, [batch, academicYear, semester, subject, programme, department, allQPs, ciaConfigs, subjectCourseType, isBatchMatch, getRegulationForBatch, location.state]);
 
   // Auto-set Mark Type when Exam is selected
   useEffect(() => {
@@ -1406,12 +1524,18 @@ export default function MarkEntry() {
         });
         const targetRawExam = norm(exam);
         const targetQpId = dashboardQp?.id || dashboardQp?.qpId || '';
+        const targetDashComposite = dashboardQp?._compositeKey || dashboardQp?.compositeKey || '';
         const targetDashName = norm(dashboardQp?.qpaper_name || dashboardQp?.qpaperName || dashboardQp?.exam_name || '');
 
         candidates.sort((a, b) => {
           const rank = (qp) => {
             const qpId = String(qp.id || '');
-            if (targetQpId && qpId === targetQpId) return 0;
+            // Dashboard handoff: the clicked row's field key lives in qp._id
+            // (MarkEntry's allQPs flattening stores it there, not in qp.id).
+            const qpKey = String(qp._id || '');
+            const qpComposite = String(qp._compositeKey || qp.compositeKey || '');
+            if (targetQpId && (qpId === targetQpId || qpKey === targetQpId) &&
+                (!targetDashComposite || !qpComposite || qpComposite === targetDashComposite)) return 0;
 
             const matchedCfg = ciaConfigs.find(c => c.id === qp.qpaper_name || c.id === qp.id);
             const cleanQpName = norm(qp.exam_name || qp.examName || matchedCfg?.examName || qp.qpaper_name || '');
@@ -2454,17 +2578,42 @@ export default function MarkEntry() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardQp, subjects]);
 
-  // After exams load, auto-select the dashboard QP's exam (exact full name first, e.g. "IA 1 (Set 2)", then base name)
+  // After exams load, auto-select the dashboard QP's exam.
+  // Priority: (1) QP document/field id match — distinguishes "IA 1 (Set 1)"
+  // vs "IA 1 (Set 2)" rows for the same subject; (2) exact full name;
+  // (3) base name with the (Set N) suffix stripped on BOTH sides (the QP doc
+  // may store "IA 1" while the dropdown holds "IA 1 (Set 1)", or vice versa).
   useEffect(() => {
     if (!dashboardQp || availableExams.length === 0) return;
-    const rawExamName = String(dashboardQp.qpaper_name || dashboardQp.qpaperName || dashboardQp.exam || '').trim();
+    const lower = (s) => String(s || '').toLowerCase().trim();
     const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+    const isDashKey = (s) => {
+      const t = String(s || '').trim();
+      return !!t && (t.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(t) && !t.includes(' ') && !t.includes('IA') && !t.includes('CIA') && !t.includes('Exam') && !t.includes('Assignment')));
+    };
+    // The CIA exam the paper was created for (exam_name first) — never a raw key.
+    const rawExamName = [dashboardQp.exam_name, dashboardQp.examName, dashboardQp.exam, dashboardQp.qpaper_name, dashboardQp.qpaperName]
+      .map(s => String(s || '').trim())
+      .find(s => s && !isDashKey(s)) || '';
     const baseExamName = stripSetSuffix(rawExamName);
+
+    // (1) QP id match — most reliable, selects the exact Set row clicked
+    const dashId = String(dashboardQp.id || dashboardQp.qpId || dashboardQp._id || '').trim();
+    if (dashId) {
+      const idHit = availableExams.find(e =>
+        (e.qpId && String(e.qpId).trim() === dashId) ||
+        (e._id && String(e._id).trim() === dashId)
+      );
+      if (idHit) {
+        if (exam !== idHit.value) setExam(idHit.value);
+        return;
+      }
+    }
 
     if (rawExamName) {
       const exactHit = availableExams.find(e =>
-        String(e.value).toLowerCase().trim() === rawExamName.toLowerCase() ||
-        String(e.text).toLowerCase().trim() === rawExamName.toLowerCase()
+        lower(e.value) === rawExamName.toLowerCase() ||
+        lower(e.text) === rawExamName.toLowerCase()
       );
       if (exactHit) {
         if (exam !== exactHit.value) setExam(exactHit.value);
@@ -2473,9 +2622,10 @@ export default function MarkEntry() {
     }
 
     if (baseExamName) {
+      const baseLower = baseExamName.toLowerCase();
       const baseHit = availableExams.find(e =>
-        String(e.value).toLowerCase().trim() === baseExamName.toLowerCase() ||
-        String(e.text).toLowerCase().trim() === baseExamName.toLowerCase()
+        lower(stripSetSuffix(e.value)) === baseLower ||
+        lower(stripSetSuffix(e.text)) === baseLower
       );
       if (baseHit && exam !== baseHit.value) {
         setExam(baseHit.value);
