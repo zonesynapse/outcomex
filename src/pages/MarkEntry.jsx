@@ -210,54 +210,91 @@ export default function MarkEntry() {
         setUserRole(userData.role);
         setUserProgramme(userData.programme || "");
         setUserDepartment(userData.department || "");
-        if (userData.role === 'Faculty' || userData.role === 'HOD') {
+        {
           const assignmentsRef = collection(db, 'subject_assignments');
+          const myRole = userData.role;
+          const isPrivilegedListener = myRole === 'Admin' || myRole === 'HOD' || myRole === 'Principal' || myRole === 'AcademicCoordinator';
+          // Robust flat doc-ID parser: {progKey}_{dept...}_{batch...}_{ay}_{sem}[_{section}]
+          // Tolerates canonical batch tokens ("24 Batch (2024-28)", "25_Batch") that break naive split.
+          const parseAssignmentDocId = (id) => {
+            const parts = String(id || '').split('_');
+            let section = "";
+            let end = parts.length;
+            const lastPart = parts[end - 1] || "";
+            if (end > 1 && !/^\d+$/.test(lastPart)) {
+              section = lastPart;
+              end -= 1;
+            }
+            const sem = String(parts[end - 1] || "").replace(/[^0-9]/g, "");
+            let ay = "";
+            let idx = end - 2;
+            if (idx >= 0 && /^\d{4}-\d{2,4}$/.test(parts[idx])) {
+              ay = parts[idx];
+              idx -= 1;
+            }
+            const batchTokens = [];
+            while (idx >= 0 && (/\d/.test(parts[idx]) || /batch/i.test(parts[idx]))) {
+              batchTokens.unshift(parts[idx]);
+              idx -= 1;
+            }
+            // Fallback: if no batch tokens found, scan for any YYYY token
+            let progKey = parts[0] || "";
+            let deptStartIdx = 1;
+            if (parts.length > 1 && ['B', 'M'].includes(parts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(parts[1])) {
+              progKey = `${parts[0]}_${parts[1]}`;
+              deptStartIdx = 2;
+            }
+            const dept = parts.slice(deptStartIdx, Math.max(deptStartIdx, idx + 1)).join('_');
+            return { progKey, dept, batch: batchTokens.join('_'), ay, sem, section };
+          };
           unsubscribeAssignments = onSnapshot(assignmentsRef, (assignSnap) => {
             const prefixes = [];
             const groups = [];
             assignSnap.forEach(d => {
               const data = d.data() || {};
-              if (!data?.[auth.currentUser.uid]) return;
-              const codes = data[auth.currentUser.uid];
-              if (!Array.isArray(codes) || codes.length === 0) return;
               const meta = data._meta || {};
-              // Structured parse: progKey is 2 segments (B_Tech / B_E / M_E...), then dept words, then batch/ay/sem
-              const idParts = d.id.split('_');
-              const batchIdx = idParts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-              let progKey = '', deptPart = '', batch = '', ay = '', sem = '', sec = '';
-              if (batchIdx > 1) {
-                // progKey heuristic: first 2 segments for B_Tech/B_E style, else first segment
-                const firstTwo = `${idParts[0]}_${idParts[1]}`;
-                if (/^(B|M)_(E|Tech|Sc|CA|BA|Com|A)$/i.test(firstTwo)) {
-                  progKey = firstTwo;
-                  deptPart = idParts.slice(2, batchIdx).join('_');
-                } else {
-                  progKey = idParts[0];
-                  deptPart = idParts.slice(1, batchIdx).join('_');
-                }
-                batch = idParts[batchIdx] || '';
-                ay = idParts[batchIdx + 1] || '';
-                sem = idParts[batchIdx + 2] || '';
-                sec = idParts.slice(batchIdx + 3).join('_') || '';
+              // Faculty: only own UID. Privileged (Admin/HOD/Principal): union of ALL uids so dept subjects show.
+              let codes = [];
+              if (isPrivilegedListener) {
+                Object.entries(data).forEach(([k, v]) => {
+                  if (k.startsWith('_')) return;
+                  if (Array.isArray(v)) codes.push(...v);
+                });
+                codes = [...new Set(codes.filter(Boolean))];
+                if (codes.length === 0) return;
               } else {
+                if (!data?.[auth.currentUser.uid]) return;
+                codes = data[auth.currentUser.uid];
+                if (!Array.isArray(codes) || codes.length === 0) return;
+                codes = codes.filter(Boolean);
+              }
+              const parsed = parseAssignmentDocId(d.id);
+              const progKey = meta.programmeKey || meta.progKey || parsed.progKey;
+              const deptPart = parsed.dept;
+              const department = (meta.department || deptPart.replace(/_/g, ' ').trim());
+              const programme = meta.programme || meta.programme_name || progKey;
+              const batch = meta.batch || parsed.batch || (d.id.match(/\d{4}\s*[-–—]\s*\d{2,4}/) || [])[0] || '';
+              const ay = meta.academicYear || meta.academic_year || parsed.ay;
+              const sem = meta.semester || parsed.sem;
+              const sec = meta.section || parsed.section;
+              if (!batch && !ay && !sem) {
                 const yearMatch = d.id.match(/\d{4}-\d{4}/);
                 if (yearMatch && yearMatch.index >= 2) {
                   prefixes.push(d.id.slice(0, yearMatch.index - 1));
                 }
-                return;
+                // Still keep group when meta carries batch info
+                if (!meta.batch) return;
               }
-              const department = (meta.department || deptPart.replace(/_/g, ' ').trim());
-              const programme = meta.programme || meta.programme_name || progKey;
               prefixes.push(`${progKey}_${deptPart}`);
               groups.push({
                 progKey,
                 programme,
                 department,
-                batch: meta.batch || batch,
-                academicYear: meta.academicYear || meta.academic_year || ay,
-                semester: meta.semester || sem,
-                section: meta.section || sec,
-                codes: codes.filter(Boolean),
+                batch,
+                academicYear: ay,
+                semester: sem,
+                section: sec,
+                codes,
               });
             });
             setFacultyAssignPrefixes(prefixes);
@@ -506,6 +543,9 @@ export default function MarkEntry() {
   const filteredProgrammes = useMemo(() => {
     const qpProg = location.state?.qp?.programme || location.state?.qp?.progKey;
     return Object.keys(PROGRAMME_DEPARTMENTS).filter(prog => {
+      if (userRole === 'AcademicCoordinator') {
+        return userProgramme ? formatProgrammeKey(prog) === formatProgrammeKey(userProgramme) : true;
+      }
       if (userRole !== 'Faculty' && userRole !== 'HOD') return true;
       const progKey = formatProgrammeKey(prog);
       // Always keep the dashboard-passed programme selectable
@@ -539,6 +579,17 @@ export default function MarkEntry() {
   const filteredDepartments = useMemo(() => {
     const depts = PROGRAMME_DEPARTMENTS[formatProgrammeKey(programme)] || [];
     const qpDept = location.state?.qp?.department || location.state?.qp?.dept;
+    if (userRole === 'AcademicCoordinator') {
+      if (userDepartment) {
+        const coordDeptNorm = sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+        const coordDepts = depts.filter(d => {
+          const norm = sanitizeKey(d).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+          return norm === coordDeptNorm;
+        });
+        return coordDepts.length > 0 ? coordDepts : depts;
+      }
+      return depts;
+    }
     if (userRole !== 'Faculty' && userRole !== 'HOD') {
       if (qpDept && !depts.includes(qpDept)) return [...depts, qpDept];
       return depts;
@@ -730,15 +781,28 @@ export default function MarkEntry() {
         const userSnap = await getDoc(userRef);
         const role = userSnap.exists() ? userSnap.data().role : null;
         const isPrivileged = role === 'Admin' || role === 'HOD' || role === 'Principal';
+        const isAC = role === 'AcademicCoordinator';
+        const coordinatorDeptNorm = isAC && userDepartment
+          ? sanitizeKey(userDepartment).replace(/[_ ]+/g, ' ').trim().toLowerCase()
+          : '';
 
         const cleanCode = (c) => parseSubjectCodeKey(c);
         let userHandledCodes = [];
         let deptAllCodes = [];
 
-        // 1. User-handled subjects from assigned groups using canonical department match
+        // 1. User-handled subjects from assigned groups using canonical department match.
+        // NOTE: g.semester may be stored as "5", "Sem 5" or "5th Semester" — always compare via deriveSemesterNumber.
+        const semEq = (a, b) => String(deriveSemesterNumber(a) || '').trim() === String(b || '').trim();
         facultyAssignedGroups
-          .filter(g => isBatchMatch(g.batch, batch) && normAyEq(g.academicYear, academicYear) &&
-            String(g.semester || '').trim() === String(needSem))
+          .filter(g => {
+            if (!isBatchMatch(g.batch, batch) || !normAyEq(g.academicYear, academicYear) || !semEq(g.semester, needSem)) return false;
+            // AC: only their own department's groups
+            if (isAC) {
+              const gDeptNorm = sanitizeKey(g.department || '').replace(/[_ ]+/g, ' ').trim().toLowerCase();
+              return gDeptNorm === coordinatorDeptNorm;
+            }
+            return true;
+          })
           .forEach(g => {
             if (isDeptMatch(g.department, department)) {
               (g.codes || []).forEach(c => {
@@ -754,7 +818,7 @@ export default function MarkEntry() {
         // Fallback 1: facultyAssignedGroups matching batch + sem (broad academicYear match)
         if (userHandledCodes.length === 0) {
           facultyAssignedGroups
-            .filter(g => isBatchMatch(g.batch, batch) && String(g.semester || '').trim() === String(needSem))
+            .filter(g => isBatchMatch(g.batch, batch) && semEq(g.semester, needSem))
             .forEach(g => {
               if (isDeptMatch(g.department, department)) {
                 (g.codes || []).forEach(c => {
@@ -768,45 +832,168 @@ export default function MarkEntry() {
             });
         }
 
-        // Fallback 2: direct composite doc read from subject_assignments
+        // Fallback 2: direct composite doc reads from subject_assignments (try section + base keys)
         if (userHandledCodes.length === 0) {
           const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-          const assignmentCompositeKey = `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}${sectionSuffix}`;
-          try {
-            const assignmentSnap = await getDoc(doc(db, 'subject_assignments', assignmentCompositeKey));
-            if (assignmentSnap.exists()) {
-              const assignments = assignmentSnap.data();
-              if (isPrivileged) {
-                Object.values(assignments).forEach(v => { if (Array.isArray(v)) v.forEach(c => { const cc = cleanCode(c); if (cc) deptAllCodes.push(cc); }); });
+          const candidateKeys = [
+            `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}${sectionSuffix}`,
+            `${progKey}_${deptKey}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${needSem}`,
+          ];
+          for (const assignmentCompositeKey of candidateKeys) {
+            try {
+              const assignmentSnap = await getDoc(doc(db, 'subject_assignments', assignmentCompositeKey));
+              if (assignmentSnap.exists()) {
+                const assignments = assignmentSnap.data();
+                if (isPrivileged) {
+                  Object.values(assignments).forEach(v => { if (Array.isArray(v)) v.forEach(c => { const cc = cleanCode(c); if (cc) deptAllCodes.push(cc); }); });
+                }
+                (assignments[currentUser.uid] || []).forEach(c => { const cc = cleanCode(c); if (cc) userHandledCodes.push(cc); });
+                if (userHandledCodes.length > 0 || deptAllCodes.length > 0) break;
               }
-              (assignments[currentUser.uid] || []).forEach(c => { const cc = cleanCode(c); if (cc) userHandledCodes.push(cc); });
-            }
+            } catch { /* non-critical */ }
+          }
+        }
+
+        // Fallback 2b: collection scan for any subject_assignments doc matching batch+sem+dept
+        // (covers canonical-batch IDs like "24 Batch (2024-28)" that exact-key reads miss).
+        if (userHandledCodes.length === 0 && deptAllCodes.length === 0) {
+          try {
+            const allAssignSnap = await getDocs(collection(db, 'subject_assignments'));
+            allAssignSnap.forEach(d => {
+              const data = d.data() || {};
+              const meta = data._meta || {};
+              const idLow = String(d.id || '').toLowerCase();
+              // Batch gate: meta batch or start-year match on doc ID
+              const metaBatch = meta.batch || '';
+              const batchOk = (metaBatch && isBatchMatch(metaBatch, batch)) || isBatchMatch(d.id, batch);
+              if (!batchOk) return;
+              // Semester gate: meta semester (derived) or trailing _<sem>[_Sec] on doc ID
+              const metaSemNum = deriveSemesterNumber(meta.semester || '');
+              const idSemTail = String(d.id || '').match(/_(\d+)(?:_sec[^_]*)?$/i);
+              const idSemNum = idSemTail ? deriveSemesterNumber(idSemTail[1]) : '';
+              const semOk = (metaSemNum && String(metaSemNum) === String(needSem)) ||
+                            (!metaSemNum && idSemNum && String(idSemNum) === String(needSem));
+              if (!semOk) return;
+              // Department gate (STRICT): meta department first; else parse dept tokens
+              // from doc ID between progKey and batch tokens. Never substring-match —
+              // "B_E_" prefix would pass every B.E. department.
+              const metaDept = meta.department || '';
+              let deptOk = !!(metaDept && isDeptMatch(metaDept, department));
+              if (!deptOk && !metaDept) {
+                const idParts = String(d.id || '').split('_');
+                let pIdx = 0;
+                if (idParts.length > 1 && ['B', 'M'].includes(idParts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(idParts[1])) pIdx = 2;
+                else pIdx = 1;
+                let bIdx = idParts.findIndex((p, i) => i >= pIdx && /^\d{4}-\d{2,4}$/.test(p));
+                if (bIdx === -1) {
+                  bIdx = idParts.findIndex((p, i) => i >= pIdx && (/\d{4}/.test(p) || /batch/i.test(p)));
+                  if (bIdx !== -1) {
+                    while (bIdx + 1 < idParts.length && (/\d/.test(idParts[bIdx + 1]) || /batch/i.test(idParts[bIdx + 1])) && !/^\d{4}-\d{2,4}$/.test(idParts[bIdx + 1])) bIdx += 1;
+                  }
+                }
+                const deptTokens = bIdx !== -1 ? idParts.slice(pIdx, bIdx + (/batch/i.test(idParts[bIdx] || '') ? 0 : 0)).join('_') : '';
+                // When batch token itself holds the year ("24 Batch (2024-28)"), dept is everything before it
+                const parsedDept = (deptTokens || '').replace(/_/g, ' ').trim();
+                deptOk = !!(parsedDept && isDeptMatch(parsedDept, department));
+              }
+              if (!deptOk) return;
+              // AC: strict department scoping — skip docs not from coordinator's own department
+              if (isAC && coordinatorDeptNorm) {
+                const docDeptStr = metaDept || (deptTokens ? deptTokens.replace(/_/g, ' ').trim() : '');
+                const docDeptNorm = sanitizeKey(docDeptStr).replace(/[_ ]+/g, ' ').trim().toLowerCase();
+                if (docDeptNorm !== coordinatorDeptNorm) return;
+              }
+              Object.entries(data).forEach(([k, v]) => {
+                if (k.startsWith('_') || !Array.isArray(v)) return;
+                if (!isPrivileged && !isAC && k !== currentUser.uid) return;
+                v.forEach(c => {
+                  const cc = cleanCode(c);
+                  if (cc) {
+                    deptAllCodes.push(cc);
+                    if (isAC) {
+                      if (k === currentUser.uid) userHandledCodes.push(cc);
+                    } else {
+                      userHandledCodes.push(cc);
+                    }
+                  }
+                });
+              });
+            });
           } catch { /* non-critical */ }
         }
 
-        // 2. QPs created by or explicitly allocated to current user (or department QPs for privileged roles)
+        // 2. QPs: handled/allocated for Faculty; dept-wide for privileged roles.
+        // NOTE: qp.semester may be "Sem 5" / "5th Semester" — compare via deriveSemesterNumber.
+        const qpDeptCodes = [];
         const userQpCodes = (allQPs || [])
           .filter(qp => {
             if (!qp.batch || !isBatchMatch(qp.batch, batch)) return false;
             if (qp.programme && formatProgrammeKey(qp.programme) !== progKey) return false;
             const qpAy = qp.academic_year || qp.academicYear;
             if (!normAyEq(qpAy, academicYear)) return false;
-            if (String(qp.semester || '').trim() !== String(needSem)) return false;
+            if (String(deriveSemesterNumber(qp.semester) || '').trim() !== String(needSem)) return false;
 
             const qpCode = cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode);
             if (!qpCode) return false;
 
             const isMyQp = (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
+                            (qp.allocated_faculty_id && qp.allocated_faculty_id === currentUser.uid) ||
+                            (qp.created_by && qp.created_by === currentUser.uid) ||
                             userHandledCodes.includes(qpCode);
-
-            // Strict: no matter role, only handled/allocated QPs count (no dept-wide leak)
-            return isMyQp;
+            if (isMyQp) return true;
+            // Privileged roles: QP counts dept-wide ONLY when it carries a non-empty
+            // department that strictly matches the selected department. QPs with
+            // missing/empty department must NOT leak across departments.
+            const qpDeptRaw = qp.department || qp.dept || '';
+            if (isPrivileged && qpDeptRaw && String(qpDeptRaw).trim() && isDeptMatch(qpDeptRaw, department)) {
+              qpDeptCodes.push(qpCode);
+              return true;
+            }
+            // AC: match QPs from own department
+            if (isAC && qpDeptRaw && isDeptMatch(qpDeptRaw, userDepartment)) {
+              qpDeptCodes.push(qpCode);
+              return true;
+            }
+            return false;
           })
           .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
           .filter(Boolean);
 
         const dashboardCode = dashboardQp ? cleanCode(dashboardQp.subject || dashboardQp.course || dashboardQp.subject_code || dashboardQp.courseCode) : '';
-        const uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes, ...(dashboardCode ? [dashboardCode] : [])])];
+        let uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes, ...(dashboardCode ? [dashboardCode] : [])])];
+        if (isPrivileged) {
+          uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
+        }
+        // AC: include department-wide codes (already filtered) and QP dept codes
+        if (isAC) {
+          uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
+        }
+
+        // Fallback 3 (privileged or empty): syllabus subjects for this regulation+sem so dropdown is never blank
+        if (uniqueCodes.length === 0) {
+          try {
+            const regulation = getRegulationForBatch(progKey, batch);
+            const semKeysToTry = [needSem, `Sem ${needSem}`, `${needSem}th Semester`];
+            const syllabusSnap = await getDoc(doc(db, 'syllabus_data', `${progKey}_${deptKey}_${sanitizeKey(regulation)}`));
+            if (syllabusSnap.exists()) {
+              const syllabusData = syllabusSnap.data() || {};
+              const semestersObj = syllabusData.semesters || syllabusData || {};
+              for (const sk of semKeysToTry) {
+                const list = semestersObj[sk];
+                if (Array.isArray(list) && list.length > 0) {
+                  list.forEach(s => {
+                    const cc = cleanCode(s?.code);
+                    if (cc) uniqueCodes.push(cc);
+                  });
+                  if (uniqueCodes.length > 0) break;
+                }
+              }
+            }
+            // NOTE: no cross-semester / cross-department last resort here — other
+            // departments' subjects (e.g. CCS338, BM3591) must never leak into this
+            // department's dropdown.
+          } catch { /* non-critical */ }
+        }
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
         let courseNamesMap = {};
