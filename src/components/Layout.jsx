@@ -616,6 +616,8 @@ export default function Layout({ children, title }) {
           }
           return;
         }
+        // Ella matha role kum (Principal, COE, Student, etc.) always visible
+        menuItems.push(item);
         return;
       }
 

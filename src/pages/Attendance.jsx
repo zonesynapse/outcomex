@@ -149,6 +149,8 @@ export default function Attendance() {
   const [students, setStudents] = useState([]);
   const [masterList, setMasterList] = useState({});
   const [sectionIndex, setSectionIndex] = useState({});
+  const [idMapExtra, setIdMapExtra] = useState({});
+  const apprIndexCache = useRef(null);
   const [facultyNames, setFacultyNames] = useState({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -169,8 +171,12 @@ export default function Attendance() {
         }
       }
     });
+    // Extra pairs (master-list objects, approved_admissions) fill gaps only
+    Object.entries(idMapExtra).forEach(([k, v]) => {
+      if (v && !map[k]) map[k] = v;
+    });
     return map;
-  }, [sectionIndex]);
+  }, [sectionIndex, idMapExtra]);
 
   const getStudentData = useCallback((studentsMap, id) => {
     if (!studentsMap || !id) return undefined;
@@ -868,6 +874,21 @@ export default function Attendance() {
         let mergedRecords = {};
         let hasSecData = false;
 
+        // Normalized class key: same class saved under different key casings
+        // (2026-07-10_P3 vs 2026-07-10_p3) or legacy date-only keys collapses to
+        // one entry, so base + Sec-A docs merge without double-counting.
+        const seenNormKeys = new Set();
+        const legacyByDate = new Map();
+        const compoundDates = new Set();
+        const normRecKey = (rk) => {
+          const s = String(rk || '');
+          const m = s.match(/^(.*?)_+[pP](\d+)\s*$/);
+          if (m) {
+            return { nk: `${m[1].trim().toLowerCase()}__p${parseInt(m[2], 10)}`, isCompound: true, date: m[1].trim().toLowerCase() };
+          }
+          return { nk: `legacy__${s.trim().toLowerCase()}`, isCompound: false, date: s.trim().toLowerCase() };
+        };
+
         const processDocData = (data) => {
           if (!data) return;
           if (data._meta) {
@@ -875,6 +896,22 @@ export default function Attendance() {
           }
           const docRecords = getAttendanceRecords(data);
           Object.entries(docRecords).forEach(([rk, rVal]) => {
+            const { nk, isCompound, date } = normRecKey(rk);
+            if (seenNormKeys.has(nk)) return; // same class already merged (Sec-A wins)
+            if (isCompound) {
+              // A period-specific record supersedes any legacy date-only entry for the same date
+              if (legacyByDate.has(date)) {
+                const oldRk = legacyByDate.get(date);
+                delete mergedRecords[oldRk];
+                seenNormKeys.delete(`legacy__${date}`);
+                legacyByDate.delete(date);
+              }
+              compoundDates.add(date);
+            } else {
+              if (compoundDates.has(date)) return; // legacy duplicate of an existing period record
+              legacyByDate.set(date, rk);
+            }
+            seenNormKeys.add(nk);
             if (!mergedRecords[rk]) {
               mergedRecords[rk] = rVal;
             } else {
@@ -899,15 +936,15 @@ export default function Attendance() {
               processDocData(result.value.data());
             }
           });
-          // Only merge base docs if Sec-A had no data at all
-          if (!hasSecData) {
-            const snapsBase = await Promise.allSettled(withoutSecIds.map(id => getDoc(doc(db, "attendance", id))));
-            snapsBase.forEach(result => {
-              if (result.status === 'fulfilled' && result.value && result.value.exists()) {
-                processDocData(result.value.data());
-              }
-            });
-          }
+          // Always merge base (no-section) docs too — records marked before
+          // sections were used live here. Same-class duplicates are dropped
+          // inside processDocData via normalized date+period matching (Sec-A wins).
+          const snapsBase = await Promise.allSettled(withoutSecIds.map(id => getDoc(doc(db, "attendance", id))));
+          snapsBase.forEach(result => {
+            if (result.status === 'fulfilled' && result.value && result.value.exists()) {
+              processDocData(result.value.data());
+            }
+          });
         } else {
           const snaps = await Promise.allSettled(candidateDocIds.map(id => getDoc(doc(db, "attendance", id))));
           snaps.forEach(result => {
@@ -946,8 +983,12 @@ export default function Attendance() {
               dData.subjectCode === selectedSubjectObj.code;
             if (!hasSubMatch) return;
             const isCandidate = candidateCleanSet.has(docClean);
-            // If Sec-A already has data, ignore base (no-section) fallback docs — prevents double-count 45
-            if (hasSecData && secClean && !docClean.includes(secClean)) return;
+            // Base (no-section) fallback docs are allowed — same-class duplicates are
+            // dropped inside processDocData. Only other-section docs are rejected.
+            if (secClean) {
+              const hasAnySec = /sec/i.test(docId);
+              if (hasAnySec && !docClean.includes(secClean) && dData._meta?.section !== section && dData.section !== section) return;
+            }
             // Candidate docs are authoritative — merge if not already merged
             if (isCandidate) {
               const alreadyHasAllKeys = Object.keys(getAttendanceRecords(dData) || {}).every(k => mergedRecords[k]);
@@ -1044,6 +1085,41 @@ export default function Attendance() {
             }
           }
         } catch (e) { console.warn('Enrollment filter failed:', e); }
+
+        // Build regNo↔admissionNo pairs from every available source so old
+        // register-number-keyed records resolve to current master-list keys
+        // even when student_section_index docs are missing/incomplete.
+        const extraPairs = {};
+        const pairUp = (a, b) => {
+          const x = String(a || '').trim(), y = String(b || '').trim();
+          if (!x || !y || x === y) return;
+          if (!extraPairs[x]) extraPairs[x] = y;
+          if (!extraPairs[y]) extraPairs[y] = x;
+        };
+        Object.entries(rawMaster).forEach(([key, val]) => {
+          if (key.startsWith('_') || !val || typeof val !== 'object') return;
+          const candReg = val.regNo || val.reg || val.registerNo || val.register_number || val.reg_no;
+          const candAdm = val.admissionNo || val.admNo || val.adm_no || val.admission_no || val.examNo || val.exam_no || val.applicationNo;
+          if (candReg && candAdm) pairUp(candAdm, candReg);
+          else if (candReg) pairUp(key, candReg);
+          else if (candAdm) pairUp(key, candAdm);
+        });
+        try {
+          if (!apprIndexCache.current) {
+            const apprSnap = await getDocs(collection(db, 'approved_admissions'));
+            const pairs = {};
+            apprSnap.forEach(d => {
+              const a = d.data() || {};
+              const r = a.regNo || a.reg || a.registerNo || a.register_number;
+              const ad = a.admissionNo || a.admNo || a.adm_no || a.admission_no || a.examNo || a.applicationNo;
+              const rx = String(r || '').trim(), ax = String(ad || '').trim();
+              if (rx && ax && rx !== ax) { if (!pairs[ax]) pairs[ax] = rx; if (!pairs[rx]) pairs[rx] = ax; }
+            });
+            apprIndexCache.current = pairs;
+          }
+          Object.entries(apprIndexCache.current || {}).forEach(([k, v]) => { if (!extraPairs[k]) extraPairs[k] = v; });
+        } catch (e) { console.warn('[Attendance] approved_admissions index build failed:', e); }
+        setIdMapExtra(extraPairs);
 
         setMasterList(rawMaster);
 
@@ -1174,7 +1250,7 @@ export default function Attendance() {
     studentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
     setStudents(studentArray);
-  }, [attendanceDate, periods, attendanceData, masterList, periodConflict]);
+  }, [attendanceDate, periods, attendanceData, masterList, periodConflict, getStudentData]);
 
   // Check if period is already marked by another subject in the same batch for overlapping students
   useEffect(() => {

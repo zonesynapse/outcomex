@@ -964,10 +964,10 @@ export default function MarkEntry() {
               if (!normAyEq(qpAy, academicYear)) return false;
               if (String(deriveSemesterNumber(qp.semester) || '').trim() !== String(needSem)) return false;
 
-              const qpDeptRaw = qp.department || qp.dept || '';
-              const qpHasDept = !!(qpDeptRaw && String(qpDeptRaw).trim());
-              const qpDeptMatch = qpHasDept && isDeptMatch(qpDeptRaw, department);
-              if (!qpDeptMatch) return false;
+              // NOTE: no department gate here — QP department metadata is often
+              // missing or differently formatted. Department scoping already comes
+              // from the assignment side (userHandledCodes/deptAllCodes); this set
+              // only answers "does a QP exist for this subject in batch/AY/sem?".
 
               const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
               const isAllocated = statusNorm === 'allocated & released' ||
@@ -994,8 +994,10 @@ export default function MarkEntry() {
           return activeQpSubjectCodes.has(code);
         });
 
-        // Fallback 3 (privileged or empty): syllabus subjects for this regulation+sem so dropdown is never blank
-        if (uniqueCodes.length === 0) {
+        // Fallback 3: syllabus subjects ONLY when no assigned subjects exist at all.
+        // Otherwise an empty list is the correct answer — only assigned subjects
+        // that have a question paper may appear; never dump the full syllabus.
+        if (uniqueCodes.length === 0 && userHandledCodes.length === 0 && deptAllCodes.length === 0) {
           try {
             const regulation = getRegulationForBatch(progKey, batch);
             const semKeysToTry = [needSem, `Sem ${needSem}`, `${needSem}th Semester`];
@@ -1018,6 +1020,15 @@ export default function MarkEntry() {
             // departments' subjects (e.g. CCS338, BM3591) must never leak into this
             // department's dropdown.
           } catch { /* non-critical */ }
+        }
+
+        // Final gate: no subject without an allocated QP may ever reach the
+        // dropdown. Fallback 3 above appends raw syllabus codes, so the QP
+        // intersection is re-applied here on the final list. The dashboard-
+        // navigated subject is always preserved.
+        {
+          const keepDash = dashboardCode || '';
+          uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && code === keepDash) || activeQpSubjectCodes.has(code));
         }
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
