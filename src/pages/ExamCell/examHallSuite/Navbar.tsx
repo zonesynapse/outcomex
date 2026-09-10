@@ -3,9 +3,9 @@ import {
   Building2, 
   Grid3X3, 
   UserCheck, 
+  UserX,
   RefreshCw, 
   Printer, 
-  Activity, 
   Search, 
   Bell, 
   ShieldCheck,
@@ -15,8 +15,8 @@ import {
 import { ExamSchedule, NotificationLog } from '../../../types';
 
 interface NavbarProps {
-  activeTab: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'live';
-  setActiveTab: (tab: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'live') => void;
+  activeTab: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'absent';
+  setActiveTab: (tab: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'absent') => void;
   exams: ExamSchedule[];
   selectedExamId: string;
   setSelectedExamId: (id: string) => void;
@@ -41,7 +41,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const unreadNotifs = notifications.filter((n) => !n.read).length;
 
   interface NavItem {
-    id: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'live';
+    id: 'rooms' | 'seating' | 'duty' | 'alteration' | 'reports' | 'absent';
     label: string;
     icon: React.ComponentType<{ className?: string }>;
     badge?: number;
@@ -58,7 +58,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       badge: pendingAlterationsCount > 0 ? pendingAlterationsCount : undefined 
     },
     { id: 'reports', label: 'Printable Reports', icon: Printer },
-    { id: 'live', label: 'Exam Control Desk', icon: Activity },
+    { id: 'absent', label: 'Absent Mark', icon: UserX },
   ];
 
   return (
@@ -84,29 +84,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Center Exam Selector */}
+        {/* Right Tools Bar */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center space-x-2 bg-zinc-50 px-3 py-1.5 rounded-xl border border-zinc-200">
-            <Calendar className="w-4 h-4 text-[#120c7a]" />
-            <select
-              id="exam-selector-select"
-              value={selectedExamId}
-              onChange={(e) => setSelectedExamId(e.target.value)}
-              aria-label="Select examination session"
-              className="bg-transparent text-xs font-bold text-zinc-800 focus:outline-none cursor-pointer pr-2"
-            >
-              {exams.map((exam) => (
-                <option key={exam.id} value={exam.id} className="bg-white text-zinc-800">
-                  {exam.name} ({exam.date} - {exam.session})
-                </option>
-              ))}
-            </select>
-            <div className="h-4 w-px bg-zinc-200" />
-            <div className="flex items-center space-x-1 text-xs text-[#120c7a] font-bold">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{selectedExam?.timeSlot}</span>
-            </div>
-          </div>
 
           {/* Tools */}
           <div className="flex items-center space-x-2">

@@ -12,6 +12,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { STEP_CATEGORIES } from "./student/StepPoints";
+import { formatDepartmentDisplay } from "../lib/utils";
 
 const COLORS = ["#120c7a", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#f43f5e"];
 
@@ -330,7 +331,7 @@ export default function StepAnalytics() {
               >
                 <option value="">All Departments</option>
                 {deptOptions.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>{formatDepartmentDisplay(d)}</option>
                 ))}
               </select>
             </div>

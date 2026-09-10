@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   CheckCircle2, Clock, FileText, Loader2, ShieldCheck, Calendar,
-  FileDown, Printer, X, Download, Eye, Sparkles, Users
+  FileDown, Printer, X, Download, Eye, Sparkles, Users, Search
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { db, auth } from "../firebase";
-import { collection, onSnapshot, doc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, setDoc } from "firebase/firestore";
 import { formatDepartmentDisplay, formatBatchDisplay } from "../lib/utils";
 
 const parseSyllabusDocId = (id) => {
@@ -397,7 +397,8 @@ export default function PrincipalIAScheduleView({
   onTotalCandidatesChange = null,
   onExamDateFilterChange = null,
   onPendingCountChange = null,
-  onRegisterNumbersChange = null
+  onRegisterNumbersChange = null,
+  enableAttendanceModal = false
 }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
@@ -414,6 +415,32 @@ export default function PrincipalIAScheduleView({
   const [batchStudentsCountMap, setBatchStudentsCountMap] = useState({});
   const [courseEnrolmentsRawMap, setCourseEnrolmentsRawMap] = useState({});
   const [studentsMasterRegsMap, setStudentsMasterRegsMap] = useState({});
+  const [namelistModalItem, setNamelistModalItem] = useState(null);
+  const [namelistSearch, setNamelistSearch] = useState("");
+  const [studentsMasterDetailsMap, setStudentsMasterDetailsMap] = useState({});
+  const [studentAttendanceMap, setStudentAttendanceMap] = useState({});
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
+
+  // Restore saved attendance from Firestore when modal opens
+  useEffect(() => {
+    if (!namelistModalItem) return;
+    const r = namelistModalItem;
+    const cCode = r.code || r.rawCode || "COURSE";
+    const examName = r.exam || r.examName || "IA1";
+    const deptStr = r.deptLabel || r.department || "DEPT";
+    const docId = `${cCode}_${examName}_${deptStr}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+
+    const unsub = onSnapshot(doc(db, "exam_attendance", docId), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data && data.attendanceMap) {
+          setStudentAttendanceMap(data.attendanceMap);
+        }
+      }
+    });
+
+    return () => unsub();
+  }, [namelistModalItem]);
 
   // Listen to course_enrolments & students collections for exact student strength counts & register number lists
   useEffect(() => {
@@ -447,12 +474,14 @@ export default function PrincipalIAScheduleView({
       (snap) => {
         const counts = {};
         const regsMap = {};
+        const detailsMap = {};
         snap.forEach((doc) => {
           const data = doc.data() || {};
           const meta = data._meta || {};
           let dept = meta.department || data.department || "";
           const batch = meta.batch || data.batch || "";
           const sem = meta.semester || data.semester || "";
+          const sec = meta.section || data.section || "";
 
           if (!dept && doc.id) {
             const cleanId = doc.id.replace(/^UG_|^PG_|^B_E__|^B_Tech__|^M_E__/gi, '');
@@ -471,6 +500,21 @@ export default function PrincipalIAScheduleView({
             if (!k.startsWith('_')) {
               studentCount++;
               regList.push(k);
+              const val = data[k];
+              if (typeof val === 'object' && val !== null) {
+                detailsMap[k] = {
+                  reg: k,
+                  name: val.name || val.studentName || val.student_name || val.displayName || k,
+                  section: val.section || sec || "",
+                  department: val.department || dept || "",
+                  batch: val.batch || batch || "",
+                  ...val
+                };
+              } else if (typeof val === 'string') {
+                detailsMap[k] = { reg: k, name: val, section: sec, department: dept, batch: batch };
+              } else {
+                detailsMap[k] = { reg: k, name: k, section: sec, department: dept, batch: batch };
+              }
             }
           });
 
@@ -491,6 +535,7 @@ export default function PrincipalIAScheduleView({
         });
         setBatchStudentsCountMap(counts);
         setStudentsMasterRegsMap(regsMap);
+        setStudentsMasterDetailsMap(detailsMap);
       },
       (err) => console.warn("Error loading students collection:", err)
     );
@@ -1429,6 +1474,10 @@ export default function PrincipalIAScheduleView({
 
   const [selectedExamDateFilter, setSelectedExamDateFilter] = useState("ALL");
 
+  useEffect(() => {
+    setSelectedExamDateFilter("ALL");
+  }, [filterDate, filterSession]);
+
   const availableExamDates = useMemo(() => {
     const datesMap = new Map();
     flatScheduledItems.forEach((r) => {
@@ -1785,10 +1834,25 @@ export default function PrincipalIAScheduleView({
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
-                          <Users size={13} className="text-emerald-600 shrink-0" />
-                          {strength} Candidates
-                        </span>
+                        {enableAttendanceModal ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNamelistSearch("");
+                              setNamelistModalItem(r);
+                            }}
+                            className="inline-flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs hover:bg-emerald-100 hover:border-emerald-300 hover:shadow transition-all duration-150 cursor-pointer active:scale-95"
+                            title="Click to view full class student namelist & mark attendance"
+                          >
+                            <Users size={13} className="text-emerald-600 shrink-0" />
+                            {strength} Candidates
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
+                            <Users size={13} className="text-emerald-600 shrink-0" />
+                            {strength} Candidates
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -2224,6 +2288,283 @@ export default function PrincipalIAScheduleView({
                   >
                     {isGeneratingPdf ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                     <span>{isGeneratingPdf ? "Generating..." : "Download PDF"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Student Namelist Modal */}
+      {namelistModalItem && (() => {
+        const r = namelistModalItem;
+        const allModalRegs = getSubjectRegList(r.code, r.rawCode, r.deptLabel, r.semester, r.batch, r.academicYear);
+        const filteredStudents = allModalRegs.filter((reg) => {
+          const detail = studentsMasterDetailsMap[reg] || {};
+          const name = String(detail.name || "").toLowerCase();
+          const q = namelistSearch.toLowerCase().trim();
+          return !q || reg.toLowerCase().includes(q) || name.includes(q);
+        });
+
+        const cCode = r.code || r.rawCode || "COURSE";
+        const cName = r.courseName || r.subject || r.title || "Course Name";
+        const deptName = formatDepartmentDisplay(r.deptLabel || r.department || "");
+        const semStr = r.semester ? (String(r.semester).toLowerCase().startsWith("sem") ? r.semester : `Semester ${r.semester}`) : "";
+        const examName = r.exam || r.examName || "IA Exam";
+
+        const pCount = allModalRegs.filter((reg) => (studentAttendanceMap[reg] || "PRESENT") === "PRESENT").length;
+        const aCount = allModalRegs.filter((reg) => studentAttendanceMap[reg] === "ABSENT").length;
+        const odCount = allModalRegs.filter((reg) => studentAttendanceMap[reg] === "OD").length;
+
+        const handleSaveAttendance = async () => {
+          setIsSavingAttendance(true);
+          try {
+            const docId = `${cCode}_${examName}_${deptName}`.toLowerCase().replace(/[^a-z0-9_]/g, "_");
+            const docRef = doc(db, "exam_attendance", docId);
+
+            const record = {
+              courseCode: cCode,
+              courseName: cName,
+              department: deptName,
+              semester: semStr,
+              examName: examName,
+              attendanceMap: studentAttendanceMap,
+              updatedAt: new Date().toISOString(),
+              updatedBy: auth.currentUser?.email || "Faculty/Admin",
+              presentCount: pCount,
+              absentCount: aCount,
+              odCount: odCount,
+              totalCandidates: allModalRegs.length
+            };
+
+            await setDoc(docRef, record, { merge: true });
+            setToast({
+              show: true,
+              message: `✓ Attendance saved successfully! (Present: ${pCount}, Absent: ${aCount}, OD: ${odCount})`,
+              type: "success"
+            });
+            setTimeout(() => setToast({ show: false, message: "", type: "success" }), 4000);
+          } catch (err) {
+            console.error("Error saving attendance:", err);
+            setToast({
+              show: true,
+              message: "Failed to save attendance. Please try again.",
+              type: "error"
+            });
+          } finally {
+            setIsSavingAttendance(false);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/75 backdrop-blur-md animate-fadeIn">
+            <div className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-[#120c7a] via-indigo-900 to-slate-900 px-6 py-5 text-white flex items-center justify-between shadow-md relative">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-black px-2.5 py-0.5 rounded bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 tracking-wider font-mono">
+                      {cCode}
+                    </span>
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                      {deptName}
+                    </span>
+                    {semStr && (
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                        {semStr}
+                      </span>
+                    )}
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                      {examName}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-black tracking-tight text-white flex items-center gap-2">
+                    {cName}
+                  </h3>
+                  <p className="text-xs text-slate-300 font-medium">
+                    Enrolled Student Namelist &amp; Attendance Roster
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNamelistModalItem(null)}
+                  className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Toolbar / Search bar & Attendance Metrics */}
+              <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative flex-1 min-w-[240px]">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by Register Number or Student Name..."
+                    value={namelistSearch}
+                    onChange={(e) => setNamelistSearch(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-transparent font-medium shadow-2xs"
+                  />
+                  {namelistSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setNamelistSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Attendance Summary Badges & Save Action */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                    Present: {pCount}
+                  </span>
+                  <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 flex items-center gap-1">
+                    Absent: {aCount}
+                  </span>
+                  <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                    OD: {odCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-extrabold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 shadow-2xs transition cursor-pointer ml-1"
+                  >
+                    <Printer size={14} className="text-slate-600" />
+                    <span>Print List</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAttendance}
+                    disabled={isSavingAttendance}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 rounded-lg shadow-xs transition cursor-pointer disabled:opacity-50 ml-1"
+                  >
+                    {isSavingAttendance ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <CheckCircle2 size={14} />
+                    )}
+                    <span>{isSavingAttendance ? "Saving..." : "Save Attendance"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Table Content */}
+              <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100/90 text-slate-600 font-black uppercase text-[10px] tracking-wider border-b border-slate-200">
+                        <th className="px-4 py-3 text-center w-14">S.No</th>
+                        <th className="px-4 py-3">Register Number</th>
+                        <th className="px-4 py-3">Student Name</th>
+                        <th className="px-4 py-3">Department &amp; Section</th>
+                        <th className="px-4 py-3 text-center w-60">ATTENDANCE STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredStudents.length > 0 ? (
+                        filteredStudents.map((reg, idx) => {
+                          const detail = studentsMasterDetailsMap[reg] || {};
+                          const sName = detail.name || detail.studentName || detail.student_name || "STUDENT";
+                          const sSec = detail.section || r.section || "Sec-A";
+                          const sDept = detail.department ? formatDepartmentDisplay(detail.department) : deptName;
+                          const currentStatus = studentAttendanceMap[reg] || "PRESENT";
+
+                          return (
+                            <tr key={reg} className="hover:bg-indigo-50/40 transition-colors">
+                              <td className="px-4 py-2.5 text-center font-bold text-slate-400">{idx + 1}</td>
+                              <td className="px-4 py-2.5 font-mono font-bold text-indigo-700">{reg}</td>
+                              <td className="px-4 py-2.5 font-bold text-slate-800 uppercase tracking-tight">{sName}</td>
+                              <td className="px-4 py-2.5 font-medium text-slate-600">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold">
+                                  {sDept} {sSec ? `- ${sSec}` : ''}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-center">
+                                <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-100 border border-slate-200 gap-1 shadow-2xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => setStudentAttendanceMap((prev) => ({ ...prev, [reg]: "PRESENT" }))}
+                                    className={`px-3 py-1 text-[11px] font-black rounded-md transition-all cursor-pointer ${
+                                      currentStatus === "PRESENT"
+                                        ? "bg-emerald-600 text-white shadow-xs scale-105"
+                                        : "text-slate-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                    }`}
+                                  >
+                                    Present
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStudentAttendanceMap((prev) => ({ ...prev, [reg]: "ABSENT" }))}
+                                    className={`px-3 py-1 text-[11px] font-black rounded-md transition-all cursor-pointer ${
+                                      currentStatus === "ABSENT"
+                                        ? "bg-rose-600 text-white shadow-xs scale-105"
+                                        : "text-slate-600 hover:text-rose-700 hover:bg-rose-50"
+                                    }`}
+                                  >
+                                    Absent
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStudentAttendanceMap((prev) => ({ ...prev, [reg]: "OD" }))}
+                                    className={`px-3 py-1 text-[11px] font-black rounded-md transition-all cursor-pointer ${
+                                      currentStatus === "OD"
+                                        ? "bg-amber-500 text-white shadow-xs scale-105"
+                                        : "text-slate-600 hover:text-amber-700 hover:bg-amber-50"
+                                    }`}
+                                  >
+                                    OD
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
+                            <Users size={32} className="mx-auto mb-2 opacity-40 text-slate-400" />
+                            <p className="font-semibold text-sm">
+                              {namelistSearch ? `No students found matching "${namelistSearch}".` : "No student records found for this class."}
+                            </p>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-6 py-3 bg-white border-t border-slate-200">
+                <span className="text-xs font-semibold text-slate-500">
+                  {cCode} &bull; {cName} &bull; Total: {allModalRegs.length} Candidates (P: {pCount} | A: {aCount} | OD: {odCount})
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNamelistModalItem(null)}
+                    className="px-4 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAttendance}
+                    disabled={isSavingAttendance}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black text-white bg-indigo-700 hover:bg-indigo-600 active:scale-95 shadow-md transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingAttendance ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <CheckCircle2 size={14} />
+                    )}
+                    <span>{isSavingAttendance ? "Saving..." : "Save Attendance"}</span>
                   </button>
                 </div>
               </div>

@@ -2,14 +2,15 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where } from "firebase/firestore";
-import { 
-  ChevronDown, 
-  Save, 
+import {
+  ChevronDown,
+  Save,
   CheckCircle2,
   AlertCircle,
   Keyboard,
   Upload,
-  Download
+  Download,
+  Lock
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
@@ -165,7 +166,7 @@ export default function MarkEntry() {
     if (!targetDept || !docDept) return false;
     const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
     const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-    
+
     if (!norm1 || !norm2) return false;
     if (norm1 === norm2) return true;
     if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
@@ -417,7 +418,7 @@ export default function MarkEntry() {
       skipEmptyLines: true,
       complete: (results) => {
         const { data, meta } = results;
-        
+
         // Validation: Must have register number (or similar)
         const regCol = meta.fields.find(f => /reg/i.test(f) || /roll/i.test(f));
         if (!regCol) {
@@ -858,7 +859,7 @@ export default function MarkEntry() {
               const idSemTail = String(d.id || '').match(/_(\d+)(?:_sec[^_]*)?$/i);
               const idSemNum = idSemTail ? deriveSemesterNumber(idSemTail[1]) : '';
               const semOk = (metaSemNum && String(metaSemNum) === String(needSem)) ||
-                            (!metaSemNum && idSemNum && String(idSemNum) === String(needSem));
+                (!metaSemNum && idSemNum && String(idSemNum) === String(needSem));
               if (!semOk) return;
               // Department gate (STRICT): meta department first; else parse dept tokens
               // from doc ID between progKey and batch tokens. Never substring-match —
@@ -937,8 +938,8 @@ export default function MarkEntry() {
             // Cross-department Common QPs allocated to this user are covered by qpDeptMatch
             // because the QP document should carry the target department.
             const isMyQp = (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
-                            (qp.allocated_faculty_id && qp.allocated_faculty_id === currentUser.uid) ||
-                            (qp.created_by && qp.created_by === currentUser.uid);
+              (qp.allocated_faculty_id && qp.allocated_faculty_id === currentUser.uid) ||
+              (qp.created_by && qp.created_by === currentUser.uid);
             if (isMyQp && qpDeptMatch) return true;
 
             return false;
@@ -970,15 +971,15 @@ export default function MarkEntry() {
 
               const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
               const isAllocated = statusNorm === 'allocated & released' ||
-                                  statusNorm === 'allocated' ||
-                                  statusNorm === 'approved' ||
-                                  statusNorm === 'approved by exam cell' ||
-                                  statusNorm === 'approved_by_coe' ||
-                                  statusNorm === 'approved_by_hod' ||
-                                  qp.allocated === true ||
-                                  qp.isAllocated === true ||
-                                  Boolean(qp.allocatedTo) ||
-                                  qp.status === 'Allocated & Released';
+                statusNorm === 'allocated' ||
+                statusNorm === 'approved' ||
+                statusNorm === 'approved by exam cell' ||
+                statusNorm === 'approved_by_coe' ||
+                statusNorm === 'approved_by_hod' ||
+                qp.allocated === true ||
+                qp.isAllocated === true ||
+                Boolean(qp.allocatedTo) ||
+                qp.status === 'Allocated & Released';
               return isAllocated;
             })
             .map(qp => cleanCode(qp.subject || qp.course || qp.subject_code || qp.courseCode))
@@ -1161,15 +1162,15 @@ export default function MarkEntry() {
         // Strictly keep ONLY papers that are Allocated & Released (or Approved by Exam Cell / HOD)
         const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
         const isAllocated = statusNorm === 'allocated & released' ||
-                            statusNorm === 'allocated' ||
-                            statusNorm === 'approved' ||
-                            statusNorm === 'approved by exam cell' ||
-                            statusNorm === 'approved_by_coe' ||
-                            statusNorm === 'approved_by_hod' ||
-                            qp.allocated === true ||
-                            qp.isAllocated === true ||
-                            Boolean(qp.allocatedTo) ||
-                            qp.status === 'Allocated & Released';
+          statusNorm === 'allocated' ||
+          statusNorm === 'approved' ||
+          statusNorm === 'approved by exam cell' ||
+          statusNorm === 'approved_by_coe' ||
+          statusNorm === 'approved_by_hod' ||
+          qp.allocated === true ||
+          qp.isAllocated === true ||
+          Boolean(qp.allocatedTo) ||
+          qp.status === 'Allocated & Released';
 
         return isAllocated;
       })
@@ -1230,7 +1231,7 @@ export default function MarkEntry() {
         if (c.batch && !isBatchMatch(c.batch, batch)) return false;
         if (c.academicYear && !normAyEq(c.academicYear, academicYear)) return false;
         if (c.semester && String(deriveSemesterNumber(c.semester)) !== String(targetSemNum)) return false;
-        
+
         // Match course type & category
         return isExamMatchingCourseType(c, targetNormCourseType);
       })
@@ -1385,7 +1386,7 @@ export default function MarkEntry() {
           try {
             const snap = await getDoc(doc(db, 'courses', key));
             if (snap.exists()) return snap.data().type || snap.data().category || snap.data().courseType || snap.data().subjectType || "";
-          } catch {}
+          } catch { }
           return "";
         };
         // also try lower-case variant (courses keys are case-sensitive sanitized)
@@ -1427,7 +1428,7 @@ export default function MarkEntry() {
               if (type && bestScore === -1 && best === "") best = type;
             });
             if (best) foundType = best;
-          } catch {}
+          } catch { }
         }
         // Fallback 2: syllabus_data (most reliable — same as image's source)
         if (!foundType && regVal) {
@@ -1442,7 +1443,7 @@ export default function MarkEntry() {
                 }
               }
             }
-          } catch {}
+          } catch { }
         }
         // Fallback 3: scan all syllabus_data for this dept (regulation-agnostic)
         if (!foundType) {
@@ -1454,7 +1455,7 @@ export default function MarkEntry() {
               if (!data?.semesters) return;
               // only consider docs matching progKey+deptKey loosely
               const idLower = String(d.id || '').toLowerCase();
-              if (!idLower.includes(deptKey.toLowerCase().replace(/[_ ]+/g,'').slice(0,4)) && !idLower.includes('overall')) {
+              if (!idLower.includes(deptKey.toLowerCase().replace(/[_ ]+/g, '').slice(0, 4)) && !idLower.includes('overall')) {
                 // skip unrelated depts if map is large — but still scan if dept matches loosely
               }
               for (const semList of Object.values(data.semesters)) {
@@ -1464,7 +1465,7 @@ export default function MarkEntry() {
                 }
               }
             });
-          } catch {}
+          } catch { }
         }
         setSubjectCourseType(foundType);
       } catch (e) { console.error("Error fetching course type:", e); setSubjectCourseType(""); }
@@ -1516,11 +1517,11 @@ export default function MarkEntry() {
           const qpExam = cleanQpName || qp.qpaper_name || '';
 
           return qpSubCode === targetSubCode &&
-                 (!qpAy || !needAy || qpAy === needAy || qpAy.includes(needAy) || needAy.includes(qpAy)) &&
-                 (!qp.batch || isBatchMatch(qp.batch, batch)) &&
-                 (isExamNameMatch(qpExam, targetExam) || qp.id === exam || qp.qpaper_name === exam || isExamNameMatch(rawQpName, targetExam)) &&
-                 String(qpSem) === String(targetSem) &&
-                 sectionMatch;
+            (!qpAy || !needAy || qpAy === needAy || qpAy.includes(needAy) || needAy.includes(qpAy)) &&
+            (!qp.batch || isBatchMatch(qp.batch, batch)) &&
+            (isExamNameMatch(qpExam, targetExam) || qp.id === exam || qp.qpaper_name === exam || isExamNameMatch(rawQpName, targetExam)) &&
+            String(qpSem) === String(targetSem) &&
+            sectionMatch;
         });
         const targetRawExam = norm(exam);
         const targetQpId = dashboardQp?.id || dashboardQp?.qpId || '';
@@ -1535,7 +1536,7 @@ export default function MarkEntry() {
             const qpKey = String(qp._id || '');
             const qpComposite = String(qp._compositeKey || qp.compositeKey || '');
             if (targetQpId && (qpId === targetQpId || qpKey === targetQpId) &&
-                (!targetDashComposite || !qpComposite || qpComposite === targetDashComposite)) return 0;
+              (!targetDashComposite || !qpComposite || qpComposite === targetDashComposite)) return 0;
 
             const matchedCfg = ciaConfigs.find(c => c.id === qp.qpaper_name || c.id === qp.id);
             const cleanQpName = norm(qp.exam_name || qp.examName || matchedCfg?.examName || qp.qpaper_name || '');
@@ -1557,8 +1558,8 @@ export default function MarkEntry() {
           // Full data already in match (parent doc stores full payload)
           setQpParts(Array.isArray(match.parts) ? match.parts : []);
           setAssignmentConfig(Array.isArray(match.assignment_config) ? match.assignment_config : []);
-          
-          setQpMeta({ 
+
+          setQpMeta({
             qpaper_name: match.qpaper_name,
             semester: match.semester,
             co_weightage: match.co_weightage || {}
@@ -1657,7 +1658,7 @@ export default function MarkEntry() {
         const deptKey = sanitizeKey(department);
         const deptKeyStrict = sanitizeKeyStrict(department);
         const batchKey = sanitizeKey(batch);
-        
+
         let studentData = null;
         let studentDocId = `${batchKey}_${progKey}_${deptKey}${sectionSuffix}`;
 
@@ -1683,7 +1684,7 @@ export default function MarkEntry() {
                 break;
               }
             }
-          } catch (e) {}
+          } catch (e) { }
         }
 
         // Broad fallback scan across students collection if studentData is still empty
@@ -1716,7 +1717,7 @@ export default function MarkEntry() {
               const meta = data?._meta || {};
               const docDept = meta.department || d.id;
               const docBatch = meta.batch || d.id;
-              
+
               if (isBatchMatch(docBatch, batch) && isDeptMatchLocal(docDept, department)) {
                 if (section && meta.section && norm(meta.section) !== norm(section)) return;
                 if (!studentData) studentData = {};
@@ -1729,13 +1730,13 @@ export default function MarkEntry() {
             console.warn("Student fallback scan error:", e);
           }
         }
-        
+
         let studentList = [];
         if (studentData) {
           studentList = Object.entries(studentData)
             .filter(([key]) => !key.startsWith('_'))
             .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
-            
+
           studentList.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
 
           // Filter by joining academic year — lateral entry students only show from their joining AY
@@ -1790,15 +1791,62 @@ export default function MarkEntry() {
           const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
             .map(sanitizeKey)
             .join('_') + (section ? `_${sanitizeKey(section)}` : '');
-          
+
           const marksDocRef = doc(db, 'marks', marksKey);
           const marksSnapshot = await getDoc(marksDocRef);
           const savedMarks = marksSnapshot.data() || {};
+
+          // Query exam_attendance for absentees marked in exam cell roster
+          const absentRegsSet = new Set();
+          try {
+            const attSnap = await getDocs(collection(db, "exam_attendance"));
+            const sCodeClean = parseSubjectCodeKey(subject)?.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const examClean = exam ? exam.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+
+            attSnap.forEach((attDoc) => {
+              const attData = attDoc.data() || {};
+              const docCCode = String(attData.courseCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+              const docExam = String(attData.examName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+              const isCodeMatch = sCodeClean && docCCode && (docCCode.includes(sCodeClean) || sCodeClean.includes(docCCode));
+              const isExamMatch = !examClean || docExam.includes(examClean) || examClean.includes(docExam);
+
+              if (isCodeMatch && isExamMatch) {
+                const attMap = attData.attendanceMap || {};
+                Object.entries(attMap).forEach(([rNo, status]) => {
+                  if (status === "ABSENT" || status === "Absent") {
+                    const normReg = rNo.trim().toUpperCase();
+                    absentRegsSet.add(normReg);
+                    absentRegsSet.add(rNo.trim());
+                    absentRegsSet.add(rNo.trim().toLowerCase());
+                    absentRegsSet.add(rNo.replace(/[^0-9]/g, ""));
+                  }
+                });
+              }
+            });
+          } catch (attErr) {
+            console.warn("Attendance fetch error:", attErr);
+          }
 
           const initialMarks = {};
           studentList.forEach(s => {
             const saved = savedMarks?.students?.[s.reg] || {};
             const coSumLoaded = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((sum, k) => sum + Number(saved[k] || 0), 0);
+
+            const rawReg = s.reg || "";
+            const altRegNo = s.regNo || "";
+            const cleanDigits = rawReg.replace(/[^0-9]/g, "");
+
+            const isAttendanceAbsent = 
+              absentRegsSet.has(rawReg) ||
+              absentRegsSet.has(rawReg.toUpperCase()) ||
+              absentRegsSet.has(rawReg.toLowerCase()) ||
+              absentRegsSet.has(altRegNo) ||
+              absentRegsSet.has(altRegNo.toUpperCase()) ||
+              (cleanDigits && absentRegsSet.has(cleanDigits));
+
+            const isAbsentFinal = isAttendanceAbsent || !!saved.absent;
+
             initialMarks[s.reg] = {
               partA: saved.partA || {},
               partB: saved.partB || {},
@@ -1807,8 +1855,9 @@ export default function MarkEntry() {
               overall: saved.overall || "",
               grade: saved.grade || "",
               gradePoint: saved.gradePoint || "",
-              absent: !!saved.absent,
-              total: saved.total || coSumLoaded || 0,
+              absent: isAbsentFinal,
+              absentLocked: isAttendanceAbsent,
+              total: isAbsentFinal ? "AB" : (saved.total || coSumLoaded || 0),
               CO1: saved.CO1 ?? "",
               CO2: saved.CO2 ?? "",
               CO3: saved.CO3 ?? "",
@@ -1846,16 +1895,16 @@ export default function MarkEntry() {
       const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
       return coSum;
     }
-    
+
     if (isAssignmentLike) {
-       const assignmentTotal = Object.values(s.assignment || {}).reduce((a, b) => a + Number(b || 0), 0);
-       return assignmentTotal;
+      const assignmentTotal = Object.values(s.assignment || {}).reduce((a, b) => a + Number(b || 0), 0);
+      return assignmentTotal;
     }
 
     const partA = Object.values(s.partA || {}).reduce((a, b) => a + Number(b || 0), 0);
     const partB = Object.values(s.partB || {}).reduce((a, o) => a + (o?.mark ? Number(o.mark) : 0), 0);
     const partC = Object.values(s.partC || {}).reduce((a, o) => a + (o?.mark ? Number(o.mark) : 0), 0);
-    
+
     const total = partA + partB + partC;
     return total > 100 ? 100 : total;
   };
@@ -1879,6 +1928,9 @@ export default function MarkEntry() {
 
   const handleAbsentChange = (regno, checked) => {
     setMarksData(prev => {
+      if (prev[regno]?.absentLocked && !checked) {
+        return prev;
+      }
       const newData = {
         ...prev,
         [regno]: { ...prev[regno], absent: checked }
@@ -1956,7 +2008,7 @@ export default function MarkEntry() {
     const gradeDef = gradeConfigs.find(g => g.grade.toUpperCase() === gradeVal.toUpperCase());
     const markVal = gradeDef ? gradeDef.mark : "";
     const gpVal = gradeDef ? gradeDef.gradePoint : "";
-    
+
     setMarksData(prev => {
       const newData = {
         ...prev,
@@ -1986,7 +2038,7 @@ export default function MarkEntry() {
     }
 
     const id = `input-${part}-${qNo}-${regno}`;
-    
+
     // Use timeout to allow React to re-render the dynamic input before focusing
     setTimeout(() => {
       const el = document.getElementById(id);
@@ -2000,7 +2052,7 @@ export default function MarkEntry() {
   const getCOForQuestion = (partLetter, qNo, radio) => {
     const part = qpParts.find(p => p.part === partLetter);
     if (!part || !part.questions) return null;
-    
+
     let targetQno = String(qNo);
     if (radio) {
       const isEitherOr = part.questions.some(q => String(q.qno) === `${qNo}(a)`);
@@ -2008,7 +2060,7 @@ export default function MarkEntry() {
         targetQno = `${qNo}(${radio.toLowerCase()})`;
       }
     }
-    
+
     const q = part.questions.find(q => String(q.qno) === targetQno);
     return q ? q.co : null;
   };
@@ -2020,7 +2072,7 @@ export default function MarkEntry() {
       .filter(Boolean)
       .map(sanitizeKey)
       .join('_') + (section ? `_${sanitizeKey(section)}` : '');
-    
+
     const matchedAvail = availableExams.find(e => e.value === exam);
     const meta = {
       programme,
@@ -2039,11 +2091,11 @@ export default function MarkEntry() {
     };
 
     const enrichedMarksData = {};
-    
+
     Object.keys(marksData).forEach(regno => {
       const sData = marksData[regno];
       const coTotals = {};
-      
+
       if (!sData.absent) {
         if (markType === 'CO Wise') {
           ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
@@ -2081,7 +2133,7 @@ export default function MarkEntry() {
               });
             }
           });
-          
+
           // Part B
           Object.entries(sData.partB || {}).forEach(([qKey, data]) => {
             const qNo = qKey.replace('Q', '');
@@ -2093,7 +2145,7 @@ export default function MarkEntry() {
               });
             }
           });
-          
+
           // Part C
           Object.entries(sData.partC || {}).forEach(([qKey, data]) => {
             const qNo = qKey.replace('Q', '');
@@ -2107,7 +2159,7 @@ export default function MarkEntry() {
           });
         }
       }
-      
+
       enrichedMarksData[regno] = {
         ...sData,
         ...coTotals
@@ -2120,9 +2172,9 @@ export default function MarkEntry() {
       saved_at: new Date().toISOString()
     };
 
-    const hasValidEntries = Object.values(marksData).some(s => 
-      s.absent || 
-      (s.total > 0) || 
+    const hasValidEntries = Object.values(marksData).some(s =>
+      s.absent ||
+      (s.total > 0) ||
       (s.overall && s.overall !== "") ||
       Object.keys(s).some(k => /^CO\d+/i.test(k) && s[k] > 0) ||
       (s.assignment && Object.values(s.assignment).some(m => m !== ""))
@@ -2135,7 +2187,7 @@ export default function MarkEntry() {
 
     try {
       await setDoc(doc(db, 'marks', marksDocId), payload); // Use setDoc for Firestore
-      
+
       // Calculate and update CO attainment for this specific exam only
       const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
       const examDocId = sanitizeKey(exam || (meta.qpaper_meta?.qpaper_name || 'exam'));
@@ -2281,7 +2333,7 @@ export default function MarkEntry() {
       const data = marksData[s.reg] || {};
       const isAbsent = data.absent;
       const row = [s.regNo || s.reg, s.name, isAbsent ? "AB" : ""];
-      
+
       if (isOverall) {
         row.push(isAbsent ? "AB" : (data.grade || ""));
         row.push(isAbsent ? "AB" : (data.gradePoint || ""));
@@ -2331,7 +2383,7 @@ export default function MarkEntry() {
     const ws = XLSX.utils.aoa_to_sheet(ws_data);
     XLSX.utils.book_append_sheet(wb, ws, "Mark Entry");
     XLSX.writeFile(wb, `Mark_Entry_${subject}_${exam}.xlsx`);
-    
+
     showToastMsg("Downloaded successfully!");
   };
 
@@ -2399,20 +2451,20 @@ export default function MarkEntry() {
       if (nextTarget) {
         moveFocus(nextTarget.regno, nextTarget.part, nextTarget.qNo);
       } else if (nextStudent) {
-        const firstPart = markType === 'CO Wise' ? 'CO' : 
-                         isAssignmentLike ? 'Assignment' :
-                         qnosA.length > 0 ? 'A' :
-                         qnosB.length > 0 ? 'B' :
-                         qnosC.length > 0 ? 'C' : null;
-        
+        const firstPart = markType === 'CO Wise' ? 'CO' :
+          isAssignmentLike ? 'Assignment' :
+            qnosA.length > 0 ? 'A' :
+              qnosB.length > 0 ? 'B' :
+                qnosC.length > 0 ? 'C' : null;
+
         const firstQ = firstPart === 'CO' ? 'CO1' :
-                      firstPart === 'Assignment' ? 1 :
-                      firstPart === 'A' ? qnosA[0] :
-                      firstPart === 'B' ? qnosB[0] :
-                      firstPart === 'C' ? qnosC[0] : null;
+          firstPart === 'Assignment' ? 1 :
+            firstPart === 'A' ? qnosA[0] :
+              firstPart === 'B' ? qnosB[0] :
+                firstPart === 'C' ? qnosC[0] : null;
 
         if (firstPart && firstQ) moveFocus(nextStudent.reg, firstPart, firstQ);
-        else moveFocus(nextStudent.reg, part, qNo); 
+        else moveFocus(nextStudent.reg, part, qNo);
       } else {
         showToastMsg("Last student reached.", "info");
       }
@@ -2652,7 +2704,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Programme Name</label>
               <div className="relative">
-                <select 
+                <select
                   value={programme}
                   onChange={(e) => { setProgramme(e.target.value); setDepartment(""); setSection(""); }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
@@ -2669,7 +2721,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Department</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!programme}
                   value={department}
                   onChange={(e) => { setDepartment(e.target.value); setSection(""); }}
@@ -2687,7 +2739,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Batch</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!department}
                   value={batch}
                   onChange={(e) => { setBatch(e.target.value); setSection(""); }}
@@ -2705,7 +2757,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Academic Year</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!batch}
                   value={academicYear}
                   onChange={(e) => setAcademicYear(e.target.value)}
@@ -2724,7 +2776,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Semester Type</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!academicYear}
                   value={semester}
                   onChange={(e) => setSemester(e.target.value)}
@@ -2742,7 +2794,7 @@ export default function MarkEntry() {
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Section</label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!department || !batch || availableSections.length === 0}
                   value={section}
                   onChange={(e) => setSection(e.target.value)}
@@ -2765,7 +2817,7 @@ export default function MarkEntry() {
                 )}
               </label>
               <div className="relative">
-                <select 
+                <select
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
@@ -2791,7 +2843,7 @@ export default function MarkEntry() {
                 )}
               </label>
               <div className="relative">
-                <select 
+                <select
                   disabled={!subject}
                   value={exam}
                   onChange={(e) => setExam(e.target.value)}
@@ -2810,7 +2862,7 @@ export default function MarkEntry() {
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest ml-1">Mark Type</label>
                 <div className="relative">
-                  <select 
+                  <select
                     value={markType}
                     onChange={(e) => setMarkType(e.target.value)}
                     className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
@@ -2839,20 +2891,20 @@ export default function MarkEntry() {
                     <span className="font-bold opacity-60 text-[8px] uppercase tracking-widest">CSV Format:</span>
                     <span className="italic font-medium">Reg No, Name, CO1, CO2, CO3...</span>
                   </div>
-                  <button 
+                  <button
                     onClick={handleDownloadTemplate}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-900/20"
                   >
                     <Download size={14} /> Download Template
                   </button>
-                  <input 
-                    type="file" 
+                  <input
+                    type="file"
                     ref={fileInputRef}
                     onChange={handleFileUpload}
                     accept=".csv"
                     className="hidden"
                   />
-                  <button 
+                  <button
                     onClick={() => fileInputRef.current?.click()}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-blue-900/20"
                   >
@@ -2860,13 +2912,13 @@ export default function MarkEntry() {
                   </button>
                 </div>
               )}
-              <button 
+              <button
                 onClick={handleDownloadExcel}
                 className="bg-white hover:bg-zinc-100 text-[#120c7a] px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
               >
                 <Download size={14} /> Download as Excel
               </button>
-              <button 
+              <button
                 onClick={handleSave}
                 className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
               >
@@ -2881,7 +2933,7 @@ export default function MarkEntry() {
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left w-48">Register Number</th>
                   <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-left">Student Name</th>
                   {showAbsentColumn && <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Absent</th>}
-                  
+
                   {markType === 'Overall' ? (
                     <>
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-32">Grade</th>
@@ -2895,7 +2947,7 @@ export default function MarkEntry() {
                       ))}
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Total</th>
                     </>
-                        ) : isAssignmentLike ? (
+                  ) : isAssignmentLike ? (
                     <>
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-40">Assignment</th>
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Total</th>
@@ -2934,7 +2986,7 @@ export default function MarkEntry() {
                   students.map((s) => {
                     const data = marksData[s.reg] || { partA: {}, partB: {}, partC: {}, absent: false, total: 0 };
                     const isAbsent = data.absent;
-                    
+
                     return (
                       <tr key={s.reg} className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${isAbsent ? 'bg-slate-50/50' : ''}`}>
                         <td className={`px-6 py-3 text-sm font-mono text-slate-600 tabular-nums border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
@@ -2944,12 +2996,21 @@ export default function MarkEntry() {
                         <td className={`px-6 py-3 text-sm font-medium text-slate-800 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>{s.name}</td>
                         {showAbsentColumn && (
                           <td className="px-6 py-3 text-center border-r border-slate-50">
-                            <input 
-                              type="checkbox" 
-                              checked={isAbsent}
-                              onChange={(e) => handleAbsentChange(s.reg, e.target.checked)}
-                              className="absent-checkbox w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mx-auto block cursor-pointer"
-                            />
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <input
+                                type="checkbox"
+                                checked={isAbsent}
+                                disabled={data.absentLocked}
+                                onChange={(e) => handleAbsentChange(s.reg, e.target.checked)}
+                                className="absent-checkbox w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mx-auto block cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                              />
+                              {data.absentLocked && (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-black text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded shadow-2xs uppercase tracking-tighter">
+                                  <Lock size={10} className="shrink-0" />
+                                  Absent in Exam
+                                </span>
+                              )}
+                            </div>
                           </td>
                         )}
 
@@ -2957,7 +3018,7 @@ export default function MarkEntry() {
                           <>
                             <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                               <div className="flex justify-center">
-                                <select 
+                                <select
                                   disabled={isAbsent}
                                   value={data.grade ?? ""}
                                   onChange={(e) => handleGradeEntry(s.reg, e.target.value)}
@@ -2972,7 +3033,7 @@ export default function MarkEntry() {
                             </td>
                             <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                               <div className="flex justify-center">
-                                <input 
+                                <input
                                   type="text"
                                   readOnly
                                   value={data.gradePoint ?? ""}
@@ -2983,7 +3044,7 @@ export default function MarkEntry() {
                             </td>
                             <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                               <div className="flex justify-center">
-                                <input 
+                                <input
                                   type="text"
                                   readOnly
                                   value={data.overall ?? ""}
@@ -2997,7 +3058,7 @@ export default function MarkEntry() {
                           <>
                             {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
                               <td key={co} className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
-                                <input 
+                                <input
                                   id={`input-CO-${co}-${s.reg}`}
                                   type="text"
                                   inputMode="decimal"
@@ -3040,7 +3101,7 @@ export default function MarkEntry() {
                               })()}
                             </td>
                           </>
-                  ) : isAssignmentLike ? (
+                        ) : isAssignmentLike ? (
                           <>
                             <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                               <div className="flex items-center justify-center gap-3">
@@ -3094,13 +3155,13 @@ export default function MarkEntry() {
                             {partA && (
                               <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                                 <div className="part-a-container flex items-center justify-center gap-3">
-                                    {(() => {
+                                  {(() => {
                                     const cursor = activeCursor[s.reg];
                                     const q = cursor?.A || qnosA[0] || 1;
                                     return (
                                       <>
                                         <span className="question-number-a w-6 text-right font-bold text-slate-500 text-sm">{q}</span>
-                                        <input 
+                                        <input
                                           id={`input-A-${q}-${s.reg}`}
                                           type="text"
                                           inputMode="decimal"
@@ -3138,7 +3199,7 @@ export default function MarkEntry() {
                             {partB && (
                               <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                                 <div className="part-b-container flex items-center justify-center gap-3">
-                                    {(() => {
+                                  {(() => {
                                     const cursor = activeCursor[s.reg];
                                     const q = cursor?.B || qnosB[0] || 11;
                                     const radio = data.partB[`Q${q}`]?.radio || '';
@@ -3146,8 +3207,8 @@ export default function MarkEntry() {
                                       <>
                                         <span className="question-number-b w-6 text-right font-bold text-slate-500 text-sm">{q}</span>
                                         <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
-                                          <input 
-                                            type="radio" 
+                                          <input
+                                            type="radio"
                                             disabled={isAbsent}
                                             name={`radio-b-${s.reg}`}
                                             checked={radio === 'A'}
@@ -3155,8 +3216,8 @@ export default function MarkEntry() {
                                             className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                                           />
                                           <label className="text-[10px] font-bold text-slate-600">A</label>
-                                          <input 
-                                            type="radio" 
+                                          <input
+                                            type="radio"
                                             disabled={isAbsent}
                                             name={`radio-b-${s.reg}`}
                                             checked={radio === 'B'}
@@ -3165,7 +3226,7 @@ export default function MarkEntry() {
                                           />
                                           <label className="text-[10px] font-bold text-slate-600">B</label>
                                         </div>
-                                        <input 
+                                        <input
                                           id={`input-B-${q}-${s.reg}`}
                                           type="text"
                                           inputMode="decimal"
@@ -3203,7 +3264,7 @@ export default function MarkEntry() {
                             {partC && (
                               <td className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
                                 <div className="part-c-container flex items-center justify-center gap-3">
-                                    {(() => {
+                                  {(() => {
                                     const cursor = activeCursor[s.reg];
                                     const q = cursor?.C || qnosC[0] || 16;
                                     const radio = data.partC[`Q${q}`]?.radio || '';
@@ -3211,8 +3272,8 @@ export default function MarkEntry() {
                                       <>
                                         <span className="question-number-c w-6 text-right font-bold text-slate-500 text-sm">{q}</span>
                                         <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
-                                          <input 
-                                            type="radio" 
+                                          <input
+                                            type="radio"
                                             disabled={isAbsent}
                                             name={`radio-c-${s.reg}`}
                                             checked={radio === 'A'}
@@ -3220,8 +3281,8 @@ export default function MarkEntry() {
                                             className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                                           />
                                           <label className="text-[10px] font-bold text-slate-600">A</label>
-                                          <input 
-                                            type="radio" 
+                                          <input
+                                            type="radio"
                                             disabled={isAbsent}
                                             name={`radio-c-${s.reg}`}
                                             checked={radio === 'B'}
@@ -3230,7 +3291,7 @@ export default function MarkEntry() {
                                           />
                                           <label className="text-[10px] font-bold text-slate-600">B</label>
                                         </div>
-                                        <input 
+                                        <input
                                           id={`input-C-${q}-${s.reg}`}
                                           type="text"
                                           inputMode="decimal"
@@ -3283,10 +3344,10 @@ export default function MarkEntry() {
           <div className="flex items-center gap-3 text-zinc-500">
             <Keyboard size={18} className="text-[#120c7a]" />
             <p className="text-sm">
-              <strong className="text-zinc-700">Keyboard Shortcuts:</strong> 
-              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">Enter</span> Next Question | 
-              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">E</span> Previous Question | 
-              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">A / B</span> Select Option (Part B/C) | 
+              <strong className="text-zinc-700">Keyboard Shortcuts:</strong>
+              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">Enter</span> Next Question |
+              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">E</span> Previous Question |
+              <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">A / B</span> Select Option (Part B/C) |
               <span className="mx-2 px-2 py-0.5 bg-zinc-100 rounded text-xs font-bold uppercase">Arrow Keys</span> Navigate
             </p>
           </div>

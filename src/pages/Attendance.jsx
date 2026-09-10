@@ -779,37 +779,51 @@ export default function Attendance() {
     fetchTimetableConfig();
   }, [department, batch, academicYear, semester]);
 
-  // Populate available periods with timing
+  // Populate available periods with timing — merged with fallback so dropdown is never empty
   useEffect(() => {
-    if (!subject || !timetableConfig) {
+    if (!subject) {
       setAvailablePeriodsWithTiming([]);
       return;
     }
-    const selectedSubjectObj = JSON.parse(subject);
-
-    const activePeriods = [];
+    // No timetable config yet → default 1-8 (was wrongly cleared to [] before)
+    if (!timetableConfig) {
+      setAvailablePeriodsWithTiming(
+        Array.from({ length: 8 }, (_, i) => ({
+          value: String(i + 1),
+          label: `Period ${i + 1}`,
+        }))
+      );
+      return;
+    }
     const periodsList = timetableConfig.periods || [];
+    // Legacy schema (periodsPerDay) — fetch effect already set it, but after dept switch prev may be [] 
+    if (!periodsList.length) {
+      setAvailablePeriodsWithTiming(prev => {
+        if (prev.length) return prev;
+        const n = parseInt(timetableConfig.periodsPerDay, 10) || 8;
+        return Array.from({ length: n }, (_, i) => ({ value: String(i + 1), label: `Period ${i + 1}` }));
+      });
+      return;
+    }
 
     let current = parseTimeToDate(timetableConfig.startTime || "09:00 AM");
-
+    const activePeriods = [];
     periodsList.forEach((pObj, idx) => {
       const duration = pObj.duration || 45;
       const pStart = current ? new Date(current) : null;
       const pEnd = pStart ? new Date(pStart.getTime() + duration * 60000) : null;
       if (current) current = pEnd;
-
       if (!pObj.isBreak) {
         const pNum = String(pObj.periodNumber || (idx + 1));
-        const timingStr = (pStart && pEnd) ? ` (${formatTime(pStart)} - ${formatTime(pEnd)})` : '';
+        const timingStr = pStart && pEnd ? ` (${formatTime(pStart)} - ${formatTime(pEnd)})` : '';
         activePeriods.push({
-          periodNumber: pNum,
+          value: pNum,
           label: `Period ${pNum}${timingStr}`,
-          timing: timingStr
+          timing: timingStr,
         });
       }
     });
-
-    setAvailablePeriodsWithTiming(activePeriods);
+    if (activePeriods.length) setAvailablePeriodsWithTiming(activePeriods);
   }, [subject, timetableConfig]);
 
   // Fetch Attendance Data and Student List for selected filters
@@ -844,10 +858,15 @@ export default function Attendance() {
           section
         });
 
-        const snaps = await Promise.allSettled(candidateDocIds.map(id => getDoc(doc(db, "attendance", id))));
+        // Section-priority fetch: when Sec-A selected, prefer Sec-A doc; base doc (no section) only if Sec-A has no data — prevents 45 vs 30 double-count
+        const secCleanKey = section ? sanitizeKey(section) : '';
+        const isSecCandidate = id => secCleanKey && String(id).endsWith(`_${secCleanKey}`);
+        const withSecIds = secCleanKey ? candidateDocIds.filter(isSecCandidate) : [];
+        const withoutSecIds = secCleanKey ? candidateDocIds.filter(id => !isSecCandidate(id)) : candidateDocIds;
 
         let mergedMeta = {};
         let mergedRecords = {};
+        let hasSecData = false;
 
         const processDocData = (data) => {
           if (!data) return;
@@ -871,38 +890,92 @@ export default function Attendance() {
           });
         };
 
-        snaps.forEach(result => {
-          if (result.status === 'fulfilled' && result.value && result.value.exists()) {
-            processDocData(result.value.data());
+        if (secCleanKey) {
+          const snapsSec = await Promise.allSettled(withSecIds.map(id => getDoc(doc(db, "attendance", id))));
+          snapsSec.forEach(result => {
+            if (result.status === 'fulfilled' && result.value && result.value.exists()) {
+              const rec = getAttendanceRecords(result.value.data());
+              if (Object.keys(rec).length) hasSecData = true;
+              processDocData(result.value.data());
+            }
+          });
+          // Only merge base docs if Sec-A had no data at all
+          if (!hasSecData) {
+            const snapsBase = await Promise.allSettled(withoutSecIds.map(id => getDoc(doc(db, "attendance", id))));
+            snapsBase.forEach(result => {
+              if (result.status === 'fulfilled' && result.value && result.value.exists()) {
+                processDocData(result.value.data());
+              }
+            });
           }
-        });
+        } else {
+          const snaps = await Promise.allSettled(candidateDocIds.map(id => getDoc(doc(db, "attendance", id))));
+          snaps.forEach(result => {
+            if (result.status === 'fulfilled' && result.value && result.value.exists()) {
+              processDocData(result.value.data());
+            }
+          });
+        }
 
-        // Additional fallback: query attendance collection for matching subject code & batch
+        // Additional fallback: recover legacy docs not in candidate permutation set
+        // Previous loose check (sub+batchYear "25") merged other sections/depts → inflated 94
+        // New: candidate set is authoritative; extra scan uses startYear-level matching and allows base docs (no section)
         try {
+          const normClean = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const cleanSubCode = normClean(selectedSubjectObj.code);
+          const semNum = String(semester).match(/\d+/)?.[0] || '';
+          const secClean = normClean(section);
+          const getStartYear = s => {
+            const m = String(s || '').match(/\b(20\d{2})\b/);
+            if (m) return m[1];
+            const m2 = String(s || '').match(/\b\d{4}/);
+            return m2 ? m2[0].slice(0,4) : '';
+          };
+          const batchStartYear = getStartYear(batch);
+          const ayStartYear = getStartYear(academicYear);
+          const candidateCleanSet = new Set(candidateDocIds.map(id => normClean(id)));
           const allAttSnaps = await getDocs(collection(db, "attendance"));
-          const cleanSubCode = selectedSubjectObj.code.toLowerCase().replace(/[^a-z0-9]/g, '');
-          const cleanBatch = String(batch).toLowerCase().replace(/[^a-z0-9]/g, '');
-          const batchYear = String(batch).match(/\d{2,4}/)?.[0] || '';
-
           allAttSnaps.forEach(dSnap => {
             if (!dSnap.exists()) return;
             const docId = dSnap.id;
-            const normDocId = docId.toLowerCase();
+            const docClean = normClean(docId);
             const dData = dSnap.data();
-
-            const hasSubMatch = normDocId.includes(cleanSubCode) ||
-              (legacyCodes && legacyCodes.some(lc => normDocId.includes(String(lc).toLowerCase().replace(/[^a-z0-9]/g, '')))) ||
+            const hasSubMatch = docClean.includes(cleanSubCode) ||
+              (legacyCodes && legacyCodes.some(lc => docClean.includes(normClean(lc)))) ||
               dData._meta?.subjectCode === selectedSubjectObj.code ||
               dData.subjectCode === selectedSubjectObj.code;
-
-            const hasBatchMatch = normDocId.includes(cleanBatch) ||
-              (batchYear && normDocId.includes(batchYear)) ||
-              dData._meta?.batch === batch ||
-              dData.batch === batch;
-
-            if (hasSubMatch && hasBatchMatch) {
+            if (!hasSubMatch) return;
+            const isCandidate = candidateCleanSet.has(docClean);
+            // If Sec-A already has data, ignore base (no-section) fallback docs — prevents double-count 45
+            if (hasSecData && secClean && !docClean.includes(secClean)) return;
+            // Candidate docs are authoritative — merge if not already merged
+            if (isCandidate) {
+              const alreadyHasAllKeys = Object.keys(getAttendanceRecords(dData) || {}).every(k => mergedRecords[k]);
+              if (alreadyHasAllKeys) return;
               processDocData(dData);
+              return;
             }
+            // Non-candidate: lenient extra check — must match batch/AY startYear + sem, and not be other dept/section
+            const docBatchYear = getStartYear(docId) || getStartYear(dData._meta?.batch || dData.batch);
+            const docAyYear = getStartYear(dData._meta?.academicYear || dData.academicYear) || getStartYear(docId.split('_').slice(-3).join('_'));
+            if (batchStartYear && docBatchYear && batchStartYear !== docBatchYear) return;
+            if (ayStartYear && docAyYear && ayStartYear !== docAyYear) {
+              // allow missing AY in doc (legacy) — don't reject if docAyYear empty
+              if (docAyYear) return;
+            }
+            if (semNum) {
+              const docSem = String(dData._meta?.semester || dData.semester || '').match(/\d+/)?.[0] || '';
+              const semInId = docId.includes(`_${semNum}_`) || docId.endsWith(`_${semNum}`) || docId.endsWith(`_${semNum}_${section}`) || docClean.includes(`sem${semNum}`);
+              if (!semInId && docSem !== semNum) return;
+            }
+            // Section: reject Sec-B when Sec-A selected, but allow base docs (no Sec- in id)
+            if (secClean) {
+              const hasAnySec = /sec/i.test(docId);
+              if (hasAnySec && !docClean.includes(secClean) && dData._meta?.section !== section && dData.section !== section) return;
+            }
+            // Dept: if docClean clearly contains other dept token, reject — but don't reject base candidates that already passed isCandidate
+            // For non-candidate, require at least batch+sem to match (checked above); dept check is soft
+            processDocData(dData);
           });
         } catch (e) {
           console.warn('[Attendance] Fallback scan error:', e);
@@ -922,16 +995,19 @@ export default function Attendance() {
         let rawMaster = studentSnap.data() || {};
         setAttendanceData(attData);
 
-        // Fetch student_section_index for dual-ID lookup (admissionNo ↔ regNo)
+        // Fetch student_section_index for dual-ID lookup (admissionNo ↔ regNo) — merge Sec-A + base so base attendance records (14) resolve regNo correctly
         let secIdxData = {};
         try {
           const secIdxSnap = await getDoc(doc(db, 'student_section_index', compositeKey));
           if (secIdxSnap.exists()) {
-            secIdxData = secIdxSnap.data();
-          } else if (sectionSuffix) {
+            secIdxData = { ...secIdxSnap.data() };
+          }
+          if (sectionSuffix) {
             const baseSecKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
             const baseSecSnap = await getDoc(doc(db, 'student_section_index', baseSecKey));
-            if (baseSecSnap.exists()) secIdxData = baseSecSnap.data();
+            if (baseSecSnap.exists()) {
+              secIdxData = { ...baseSecSnap.data(), ...secIdxData };
+            }
           }
         } catch (e) {
           console.warn('[Attendance] student_section_index load error:', e);
@@ -1720,8 +1796,8 @@ export default function Attendance() {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
             {[
-              { label: 'Programme', value: programme, set: v => { setProgramme(v); setDepartment(''); setSubject(''); setSection(''); }, opts: filteredProgrammes, display: formatProgDisplay, disabled: false },
-              { label: 'Department', value: department, set: v => { setDepartment(v); setSubject(''); setSection(''); }, opts: programme ? filteredDepartments : [], display: d => d, disabled: !programme },
+              { label: 'Programme', value: programme, set: v => { setProgramme(v); setDepartment(''); handleSubjectChange(''); setSection(''); setPeriod(''); setPeriods([]); setTimetableConfig(null); setAvailablePeriodsWithTiming([]); }, opts: filteredProgrammes, display: formatProgDisplay, disabled: false },
+              { label: 'Department', value: department, set: v => { setDepartment(v); handleSubjectChange(''); setSection(''); setPeriod(''); setPeriods([]); setTimetableConfig(null); setAvailablePeriodsWithTiming([]); }, opts: programme ? filteredDepartments : [], display: d => d, disabled: !programme },
               { label: 'Subject', value: subject, set: v => handleSubjectChange(v), opts: subjects, display: s => s.text, disabled: !department, valKey: 'value', special: true },
               { label: 'Batch', value: batch, set: setBatch, opts: batches, display: formatBatchDisplay, disabled: true },
               { label: 'Academic Year', value: academicYear, set: setAcademicYear, opts: aYears, display: y => y, disabled: true },
@@ -1793,9 +1869,14 @@ export default function Attendance() {
                       className="w-full appearance-none bg-gradient-to-r from-blue-50 to-indigo-50/50 border border-blue-200 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
                     >
                       <option value="">Select Period</option>
-                      {availablePeriodsWithTiming.filter(p => !lockedPeriods.has(p.value) || periods.includes(p.value)).map(p => (
-                        <option key={p.value} value={p.value}>{p.label}</option>
-                      ))}
+                      {availablePeriodsWithTiming.map(p => {
+                        const isLocked = lockedPeriods.has(p.value) && !periods.includes(p.value);
+                        return (
+                          <option key={p.value} value={p.value} disabled={isLocked}>
+                            {p.label}{isLocked ? ' — Not started' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                     <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
                   </div>

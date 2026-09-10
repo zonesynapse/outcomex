@@ -8,7 +8,7 @@ import { SeatAllocationView } from './examHallSuite/SeatAllocationView';
 import { FacultyDutyView } from './examHallSuite/FacultyDutyView';
 import { DutyAlterationModule } from './examHallSuite/DutyAlterationModule';
 import { PrintReportsView } from './examHallSuite/PrintReportsView';
-import { LiveExamDashboard } from './examHallSuite/LiveExamDashboard';
+import { AbsentMarkView } from './examHallSuite/AbsentMarkView';
 import { StudentLookupModal } from './examHallSuite/StudentLookupModal';
 import { NotificationsModal } from './examHallSuite/NotificationsModal';
 import { 
@@ -221,17 +221,13 @@ export default function ExamHallSuitePage() {
             />
           )}
 
-          {activeTab === 'live' && (
-            <LiveExamDashboard
+          {activeTab === 'absent' && (
+            <AbsentMarkView
               rooms={rooms}
               students={students}
               allocatedSeats={allocatedSeats}
               onUpdateAllocatedSeats={setAllocatedSeats}
-              dutyAllocations={dutyAllocations}
               selectedExam={currentSelectedExam}
-              notifications={notifications}
-              onNavigateToSeating={() => setActiveTab('seating')}
-              onNavigateToAlteration={() => setActiveTab('alteration')}
             />
           )}
         </main>

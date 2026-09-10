@@ -1625,7 +1625,7 @@ export default function QuestionPaperGenerator() {
       if (sets > maxCfgSets) maxCfgSets = sets;
     });
 
-    const isNonWrittenOrPractical = 
+    const isNonWrittenOrPractical =
       cleanExamName.includes('activity') ||
       cleanExamName.includes('assignment') ||
       cleanExamName.includes('survey') ||

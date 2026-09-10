@@ -359,12 +359,6 @@ const CIAConfigPage: React.FC<CIAConfigPageProps> = ({ program, department, regu
               </div>
             </div>
 
-            {(formData.isUniversity || formData.isIndirectAssessment) ? (
-              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-blue-700 text-xs font-medium mb-4">
-                Note: values of each co&apos;s taken by 3 scale
-              </div>
-            ) : null}
-
             {!formData.isUniversity && !formData.isIndirectAssessment && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Total Marks</label>

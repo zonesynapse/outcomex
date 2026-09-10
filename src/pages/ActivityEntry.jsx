@@ -46,6 +46,31 @@ export default function ActivityEntry() {
   const [sectionConfigs, setSectionConfigs] = useState({});
   const fileRef = useRef({});
 
+  // Category Basic Information Configuration State
+  const [basicInfoConfig, setBasicInfoConfig] = useState(null);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "activity_categories", "basic_info_settings"), (snap) => {
+      if (snap.exists()) {
+        setBasicInfoConfig(snap.data() || {});
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const currentCat = getCategoryFromCode(code);
+  const enabledBasicFields = useMemo(() => {
+    if (!basicInfoConfig || !basicInfoConfig[currentCat]) {
+      return null;
+    }
+    return basicInfoConfig[currentCat];
+  }, [basicInfoConfig, currentCat]);
+
+  const isBasicFieldEnabled = (fieldKey) => {
+    if (!enabledBasicFields) return true;
+    return enabledBasicFields.includes(fieldKey);
+  };
+
   // Warn on accidental reload/close while editing form
   const isFormDirty = useMemo(() => {
     return Object.keys(formData).some(k => !BASIC_INFO_KEYS.has(k) && !!formData[k]) || uploadedFiles.length > 0;
@@ -391,7 +416,8 @@ export default function ActivityEntry() {
         month,
         activityCode: code,
         activityName: activityConfig.name,
-        category: getCategoryFromCode(code),
+        category: activityConfig?.category || getCategoryFromCode(code),
+        part: activityConfig?.part || (getCategoryFromCode(code) === "department" ? "B" : getCategoryFromCode(code) === "faculty" ? "C" : "A"),
         status: "Draft",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -463,7 +489,8 @@ export default function ActivityEntry() {
         month,
         activityCode: code,
         activityName: activityConfig.name,
-        category: getCategoryFromCode(code),
+        category: activityConfig?.category || getCategoryFromCode(code),
+        part: activityConfig?.part || (getCategoryFromCode(code) === "department" ? "B" : getCategoryFromCode(code) === "faculty" ? "C" : "A"),
         status: initialStatus,
         mentorUid,
         mentorName,
@@ -609,38 +636,42 @@ export default function ActivityEntry() {
               <h3 className="text-xs font-black text-zinc-400 uppercase tracking-wider">Basic Information</h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Programme <span className="text-red-500">*</span></label>
-                <select
-                  value={formData.programme}
-                  onChange={e => handleInputChange('programme', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  required
-                >
-                  <option value="">Select Programme</option>
-                  {Object.keys(PROGRAMME_DEPARTMENTS).sort().map(p => (
-                    <option key={p} value={p}>{formatProgDisplay(p)}</option>
-                  ))}
-                </select>
-                {errors.programme && <p className="text-[10px] text-red-500 mt-1">{errors.programme}</p>}
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department <span className="text-red-500">*</span></label>
-                <select
-                  value={formData.department}
-                  onChange={e => handleInputChange('department', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  disabled={!formData.programme}
-                  required
-                >
-                  <option value="">{formData.programme ? "Select Department" : "Select Programme first"}</option>
-                  {departmentOptions.map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-                {errors.department && <p className="text-[10px] text-red-500 mt-1">{errors.department}</p>}
-              </div>
-              {!isFacultyActivity && (
+              {isBasicFieldEnabled('programme') && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Programme <span className="text-red-500">*</span></label>
+                  <select
+                    value={formData.programme}
+                    onChange={e => handleInputChange('programme', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    required
+                  >
+                    <option value="">Select Programme</option>
+                    {Object.keys(PROGRAMME_DEPARTMENTS).sort().map(p => (
+                      <option key={p} value={p}>{formatProgDisplay(p)}</option>
+                    ))}
+                  </select>
+                  {errors.programme && <p className="text-[10px] text-red-500 mt-1">{errors.programme}</p>}
+                </div>
+              )}
+              {isBasicFieldEnabled('department') && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department <span className="text-red-500">*</span></label>
+                  <select
+                    value={formData.department}
+                    onChange={e => handleInputChange('department', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    disabled={!formData.programme}
+                    required
+                  >
+                    <option value="">{formData.programme ? "Select Department" : "Select Programme first"}</option>
+                    {departmentOptions.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  {errors.department && <p className="text-[10px] text-red-500 mt-1">{errors.department}</p>}
+                </div>
+              )}
+              {!isFacultyActivity && isBasicFieldEnabled('batch') && (
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Batch <span className="text-red-500">*</span></label>
                   <select
@@ -656,33 +687,35 @@ export default function ActivityEntry() {
                   {errors.batch && <p className="text-[10px] text-red-500 mt-1">{errors.batch}</p>}
                 </div>
               )}
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Academic Year <span className="text-red-500">*</span></label>
-                {isFacultyActivity ? (
-                  <input
-                    type="text"
-                    value={formData.academicYear || ""}
-                    onChange={e => handleInputChange('academicYear', e.target.value)}
-                    placeholder="e.g. 2024-2025"
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                    required
-                  />
-                ) : (
-                  <select
-                    value={formData.academicYear}
-                    onChange={e => handleInputChange('academicYear', e.target.value)}
-                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                    disabled={!formData.batch}
-                    required
-                  >
-                    <option value="">{formData.batch ? "Select Academic Year" : "Select Batch first"}</option>
-                    {formData.batch && getAcademicYears(formData.batch).map(ay => (
-                      <option key={ay} value={ay}>{ay}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              {!isFacultyActivity && (
+              {isBasicFieldEnabled('academicYear') && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Academic Year <span className="text-red-500">*</span></label>
+                  {isFacultyActivity ? (
+                    <input
+                      type="text"
+                      value={formData.academicYear || ""}
+                      onChange={e => handleInputChange('academicYear', e.target.value)}
+                      placeholder="e.g. 2024-2025"
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                      required
+                    />
+                  ) : (
+                    <select
+                      value={formData.academicYear}
+                      onChange={e => handleInputChange('academicYear', e.target.value)}
+                      className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                      disabled={!formData.batch}
+                      required
+                    >
+                      <option value="">{formData.batch ? "Select Academic Year" : "Select Batch first"}</option>
+                      {formData.batch && getAcademicYears(formData.batch).map(ay => (
+                        <option key={ay} value={ay}>{ay}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+              {!isFacultyActivity && isBasicFieldEnabled('semester') && (
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Semester <span className="text-red-500">*</span></label>
                   <select
@@ -697,7 +730,7 @@ export default function ActivityEntry() {
                   </select>
                 </div>
               )}
-              {!isFacultyActivity && (
+              {!isFacultyActivity && isBasicFieldEnabled('section') && (
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Section</label>
                   <select
@@ -711,16 +744,18 @@ export default function ActivityEntry() {
                   </select>
                 </div>
               )}
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Date <span className="text-red-500">*</span></label>
-                <input
-                  type="date"
-                  value={formData.date || formData.fromDate || ""}
-                  onChange={e => handleInputChange(activityConfig.isMultiRow ? 'fromDate' : 'date', e.target.value)}
-                  className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
-                  required
-                />
-              </div>
+              {isBasicFieldEnabled('date') && (
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Date <span className="text-red-500">*</span></label>
+                  <input
+                    type="date"
+                    value={formData.date || formData.fromDate || ""}
+                    onChange={e => handleInputChange(activityConfig.isMultiRow ? 'fromDate' : 'date', e.target.value)}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white"
+                    required
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Submitted By</label>
                 <input

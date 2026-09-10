@@ -602,7 +602,7 @@ export default function StepPoints() {
               >
                 <option value="">All Departments</option>
                 {deptOptions.map(d => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>{formatDepartmentDisplay(d)}</option>
                 ))}
               </select>
             </div>

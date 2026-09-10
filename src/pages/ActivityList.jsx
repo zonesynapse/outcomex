@@ -797,7 +797,7 @@ export default function ActivityList() {
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department</label>
                   <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
                     <option value="">All Departments</option>
-                    {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                    {deptOptions.map(d => <option key={d} value={d}>{formatDepartmentDisplay(d)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -983,7 +983,7 @@ export default function ActivityList() {
                   <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">Department</label>
                   <select value={selectedDept} onChange={e => setSelectedDept(e.target.value)} className="w-full rounded-xl border border-zinc-200 bg-zinc-50 p-2.5 text-xs font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:bg-white">
                     <option value="">All Departments</option>
-                    {deptOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                    {deptOptions.map(d => <option key={d} value={d}>{formatDepartmentDisplay(d)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1319,6 +1319,13 @@ export default function ActivityList() {
             <div className="p-6 space-y-6">
               {/* Event details */}
               <div className="grid grid-cols-2 gap-4">
+                <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Student / Faculty Details</span>
+                  <span className="text-sm font-extrabold text-zinc-900">{reviewActivity.studentName || reviewActivity.facultyName || reviewActivity.submittedBy || "N/A"}</span>
+                  {(reviewActivity.regNo || reviewActivity.facultyId) && (
+                    <span className="text-xs font-bold text-zinc-500 block mt-0.5">Register No / ID: {reviewActivity.regNo || reviewActivity.facultyId}</span>
+                  )}
+                </div>
                 <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Activity Code</span>
                   <span className="text-sm font-extrabold text-zinc-800">{reviewActivity.activityCode}</span>
@@ -1351,7 +1358,7 @@ export default function ActivityList() {
               {/* Additional fields based on activity type */}
               <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
                 {Object.entries(reviewActivity).filter(([k, v]) => 
-                  v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole"].includes(k)
+                  v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "studentId", "userId", "uid", "student_id", "user_id", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole"].includes(k)
                 ).map(([key, value]) => {
                   // 1. If key is 'formData'
                   if (key === "formData") {
