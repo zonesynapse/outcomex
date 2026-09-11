@@ -4,15 +4,88 @@ import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { FileText, AlertCircle, Loader2, Award } from "lucide-react";
 
-const sanitizeKey = (key) => {
-  if (!key) return '';
-  return String(key).replace(/[.#$[\]/ ]/g, '_');
+const extractMarksDocMeta = (d) => {
+  if (!d) return {};
+  const data = typeof d.data === 'function' ? d.data() : (d || {});
+  const m = data._meta || {};
+  const qm = data.qpaper_meta || {};
+
+  return {
+    programme: data.programme || m.programme || qm.programme || '',
+    department: data.department || m.department || qm.department || '',
+    batch: data.batch || m.batch || qm.batch || '',
+    academicYear: data.academic_year || m.academic_year || qm.academic_year || data.academicYear || '',
+    semesterLabel: data.semester_label || qm.semester_label || m.semester_label || data.semester || m.semester || qm.semester || '',
+    section: data.section || qm.section || m.section || '',
+    subject: data.subject || qm.subject || m.subject || '',
+    exam: data.exam || m.exam || qm.exam || qm.qpaper_name || '',
+    examName: data.exam_name || m.exam_name || qm.exam_name || '',
+    markType: data.mark_type || m.mark_type || m.entry_mode || data.entry_mode || '',
+    isUniversity: Boolean(data.is_university || m.is_university),
+    students: data.students || m.students || {}
+  };
 };
 
-const formatExamName = (exam, markType) => {
-  if (!exam) return markType || "Exam";
-  const name = exam.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  return markType ? `${name} (${markType})` : name;
+const extractStudentMarkTotal = (s) => {
+  if (s == null) return { total: 0, absent: false };
+  if (typeof s === 'number') return { total: s, absent: false };
+  if (typeof s === 'string') {
+    const trimmed = s.trim();
+    if (trimmed.toUpperCase() === 'A' || trimmed.toLowerCase() === 'absent') return { total: 0, absent: true };
+    const num = Number(trimmed);
+    return { total: isNaN(num) ? 0 : num, absent: false };
+  }
+  const isAbsent = Boolean(
+    s.absent === true ||
+    s.absent === 'true' ||
+    s.isAbsent === true ||
+    s.status === 'absent' ||
+    String(s.total || '').toUpperCase() === 'A' ||
+    String(s.total || '').toLowerCase() === 'absent'
+  );
+
+  let total = 0;
+  if (s.total !== undefined && s.total !== null && s.total !== '' && String(s.total).toUpperCase() !== 'A') {
+    total = Number(s.total) || 0;
+  } else if (s.overall !== undefined && s.overall !== null && s.overall !== '') {
+    total = Number(s.overall) || 0;
+  } else if (s.mark !== undefined && s.mark !== null && s.mark !== '') {
+    total = Number(s.mark) || 0;
+  } else if (s.marks !== undefined && s.marks !== null && s.marks !== '') {
+    total = Number(s.marks) || 0;
+  } else if (s.score !== undefined && s.score !== null && s.score !== '') {
+    total = Number(s.score) || 0;
+  }
+
+  if (total <= 0 && !isAbsent) {
+    const coKeys = Object.keys(s).filter(k => /^CO\d+/i.test(k));
+    if (coKeys.length > 0) {
+      total = coKeys.reduce((acc, k) => acc + (Number(s[k]) || 0), 0);
+    }
+  }
+
+  if (total <= 0 && !isAbsent) {
+    ['partA', 'partB', 'partC'].forEach(partKey => {
+      if (s[partKey] && typeof s[partKey] === 'object') {
+        Object.values(s[partKey]).forEach(item => {
+          if (typeof item === 'number') total += item;
+          else if (item && typeof item === 'object') {
+            if (typeof item.mark === 'number') total += item.mark;
+            else if (typeof item.mark === 'string' && !isNaN(Number(item.mark))) total += Number(item.mark);
+          }
+        });
+      }
+    });
+  }
+
+  if (total <= 0 && !isAbsent && s.assignment && typeof s.assignment === 'object') {
+    Object.values(s.assignment).forEach(mark => {
+      const num = Number(mark);
+      if (!isNaN(num)) total += num;
+    });
+  }
+
+  return { total, absent: isAbsent };
 };
 
 export default function Marks() {
@@ -35,67 +108,83 @@ export default function Marks() {
   useEffect(() => {
     if (!studentData) return;
     const { regNo, programme, department, batch } = studentData;
-    if (!regNo || !programme || !department || !batch) {
+    if (!regNo && !studentData.reg && !studentData.admNo && !studentData.admissionNo) {
       setTimeout(() => setLoading(false), 0);
       return;
     }
 
     const fetchMarks = async () => {
       try {
-        const progKey = sanitizeKey(programme);
-        const deptKey = sanitizeKey(department);
-        const batchKey = sanitizeKey(batch);
-        const prefix = `${batchKey}_${progKey}_${deptKey}`;
-        const normPrefix = prefix.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
-
         let canonicalId = null;
-        try {
-          const idxRef = doc(db, 'student_index', sanitizeKey(regNo));
-          const idxSnap = await getDoc(idxRef);
-          if (idxSnap.exists()) {
-            canonicalId = idxSnap.data().canonicalId || idxSnap.data().admissionNo || null;
-          }
-        } catch (_) {}
-        const lookupKeys = [regNo, canonicalId].filter(Boolean);
+        if (regNo || studentData.reg) {
+          try {
+            const idxRef = doc(db, 'student_index', sanitizeKey(regNo || studentData.reg));
+            const idxSnap = await getDoc(idxRef);
+            if (idxSnap.exists()) {
+              canonicalId = idxSnap.data().canonicalId || idxSnap.data().admissionNo || null;
+            }
+          } catch (_) {}
+        }
+
+        const candidateKeys = new Set([
+          regNo,
+          studentData.reg,
+          studentData.admNo,
+          studentData.admissionNo,
+          studentData.rollNo,
+          studentData.uid,
+          canonicalId
+        ].filter(Boolean).map(k => String(k).trim().toUpperCase()));
+
+        const normPunct = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+        const targetProgNorm = normPunct(programme);
+        const targetDeptNorm = normPunct(department);
+        const targetBatchNorm = normPunct(batch);
 
         const snapshot = await getDocs(collection(db, "marks"));
         const results = [];
 
         for (const docSnap of snapshot.docs) {
           const id = docSnap.id;
-          const normId = id.replace(/\s+/g, '_').replace(/_{2,}/g, '_');
-          if (!normId.startsWith(normPrefix)) continue;
+          const data = docSnap.data() || {};
+          const meta = extractMarksDocMeta(docSnap);
 
-          const data = docSnap.data();
-          const meta = data._meta || {};
+          const studentsMap = data.students || meta.students || {};
           let studentMarks = null;
-          for (const key of lookupKeys) {
-            if (data.students?.[key]) {
-              studentMarks = data.students[key];
+
+          for (const k of Object.keys(studentsMap)) {
+            const cleanK = String(k).trim().toUpperCase();
+            if (candidateKeys.has(cleanK)) {
+              studentMarks = studentsMap[k];
               break;
             }
           }
+
           if (!studentMarks) continue;
 
-          const totalScored = studentMarks.total || 0;
-          const isAbsent = !!studentMarks.absent;
+          // Scope check against programme/department/batch if meta is populated
+          if (meta.programme && targetProgNorm && normPunct(meta.programme) !== targetProgNorm) continue;
+          if (meta.department && targetDeptNorm && normPunct(meta.department) !== targetDeptNorm) continue;
+          if (meta.batch && targetBatchNorm && normPunct(meta.batch) !== targetBatchNorm) continue;
+
+          const { total, absent } = extractStudentMarkTotal(studentMarks);
 
           results.push({
             docId: id,
-            subject: meta.subject || id.split('_').slice(3, 5).join('_'),
-            exam: meta.exam_name || meta.exam || '',
-            markType: meta.mark_type || meta.entry_mode || '',
-            academicYear: meta.academic_year || '',
-            semester: meta.semester_label || '',
-            isUniversity: !!meta.is_university,
+            subject: meta.subject || id.split('_').slice(3, 5).join('_') || 'Subject',
+            exam: meta.examName || meta.exam || 'Internal Exam',
+            markType: meta.markType || 'Internal',
+            academicYear: meta.academicYear || '',
+            semester: meta.semesterLabel || '',
+            isUniversity: !!meta.isUniversity,
             marks: studentMarks,
-            totalScored,
-            isAbsent,
+            totalScored: total,
+            isAbsent: absent,
           });
         }
 
         setMarksList(results);
-      } catch (err) { console.error(err); }
+      } catch (err) { console.error("Fetch student marks error:", err); }
       setLoading(false);
     };
 
@@ -116,62 +205,64 @@ export default function Marks() {
   }, [marksList]);
 
   const getExamDetail = (exam) => {
-    const { marks, markType, isAbsent } = exam;
+    const { marks, isAbsent, totalScored } = exam;
     if (isAbsent) return "Absent";
 
-    if (markType === "CO Wise" || markType === "CO wise") {
-      const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].filter(co => marks[co] !== undefined && marks[co] !== "");
-      const total = cos.reduce((s, co) => s + (Number(marks[co]) || 0), 0);
-      return total;
+    const extracted = extractStudentMarkTotal(marks);
+    if (extracted.absent) return "Absent";
+
+    if (extracted.total > 0) return extracted.total;
+    if (totalScored > 0) return totalScored;
+
+    const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6'].filter(co => marks[co] !== undefined && marks[co] !== "");
+    if (cos.length > 0) {
+      return cos.reduce((s, co) => s + (Number(marks[co]) || 0), 0);
     }
 
-    if (markType === "Overall") {
-      return marks.overall || marks.total || 0;
-    }
-
-    if (markType === "Assignment") {
-      const qMarks = Object.values(marks.assignment || {}).filter(m => m !== "").map(Number);
-      return qMarks.reduce((s, m) => s + (isNaN(m) ? 0 : m), 0);
-    }
+    if (marks.overall !== undefined) return marks.overall;
+    if (marks.total !== undefined) return marks.total;
 
     const partATotal = Object.values(marks.partA || {}).reduce((s, m) => s + (Number(m) || 0), 0);
     const partBTotal = Object.values(marks.partB || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
     const partCTotal = Object.values(marks.partC || {}).reduce((s, m) => s + (Number(m.mark) || 0), 0);
-    return Math.min(partATotal + partBTotal + partCTotal, 100);
+    const partsSum = partATotal + partBTotal + partCTotal;
+    if (partsSum > 0) return Math.min(partsSum, 100);
+
+    return 0;
   };
 
   const getDetailBreakdown = (exam) => {
     const { marks, markType, isAbsent } = exam;
     if (isAbsent) return null;
 
-    if (markType === "CO Wise" || markType === "CO wise") {
-      return ['CO1', 'CO2', 'CO3', 'CO4', 'CO5']
-        .filter(co => marks[co] !== undefined && marks[co] !== "")
-        .map(co => ({ label: co, value: Number(marks[co]) || 0 }));
+    const coBreakdown = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6']
+      .filter(co => marks[co] !== undefined && marks[co] !== "" && marks[co] !== null)
+      .map(co => ({ label: co, value: Number(marks[co]) || 0 }));
+    if (coBreakdown.length > 0) return coBreakdown;
+
+    if (marks.assignment && typeof marks.assignment === 'object') {
+      const assBreakdown = Object.entries(marks.assignment)
+        .filter(([, m]) => m !== "" && m !== null && m !== undefined)
+        .map(([qKey, mark]) => ({ label: qKey, value: mark }));
+      if (assBreakdown.length > 0) return assBreakdown;
     }
 
-    if (markType === "Overall") {
+    if (markType === "Overall" || marks.overall !== undefined) {
       const rows = [];
       if (marks.overall !== undefined) rows.push({ label: "Overall", value: marks.overall });
       if (marks.grade) rows.push({ label: "Grade", value: marks.grade });
       if (marks.gradePoint) rows.push({ label: "GP", value: marks.gradePoint });
-      return rows.length > 0 ? rows : null;
-    }
-
-    if (markType === "Assignment") {
-      return Object.entries(marks.assignment || {})
-        .filter(([, m]) => m !== "")
-        .map(([qKey, mark]) => ({ label: qKey, value: mark }));
+      if (rows.length > 0) return rows;
     }
 
     const rows = [];
-    if (Object.keys(marks.partA || {}).length > 0) {
+    if (marks.partA && Object.keys(marks.partA).length > 0) {
       rows.push({ label: "Part A", value: Object.values(marks.partA).reduce((s, m) => s + (Number(m) || 0), 0) });
     }
-    if (Object.keys(marks.partB || {}).length > 0) {
+    if (marks.partB && Object.keys(marks.partB).length > 0) {
       rows.push({ label: "Part B", value: Object.values(marks.partB).reduce((s, m) => s + (Number(m.mark) || 0), 0) });
     }
-    if (Object.keys(marks.partC || {}).length > 0) {
+    if (marks.partC && Object.keys(marks.partC).length > 0) {
       rows.push({ label: "Part C", value: Object.values(marks.partC).reduce((s, m) => s + (Number(m.mark) || 0), 0) });
     }
     return rows.length > 0 ? rows : null;

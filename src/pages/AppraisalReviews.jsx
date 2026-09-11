@@ -20,6 +20,13 @@ export default function AppraisalReviews() {
   const [actioning, setActioning] = useState(false);
   const [customFieldsConfig, setCustomFieldsConfig] = useState([]);
 
+  // Search, Filter & View Details States
+  const [searchTerm, setSearchTerm] = useState("");
+  const [deptFilter, setDeptFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [selectedAppraisal, setSelectedAppraisal] = useState(null);
+  const [activeDetailsTab, setActiveDetailsTab] = useState(1);
+
   const isSectionVisible = (id) => {
     const field = customFieldsConfig.find(f => f.id === id);
     return field ? field.visible !== false : true;
@@ -65,6 +72,17 @@ export default function AppraisalReviews() {
     );
   };
 
+  const isCustomDisclosureField = (f, customData) => {
+    if (!f || f.visible === false || f.id.startsWith("sec_")) return false;
+    // Built-in section sub-fields have parentId starting with sec_
+    if (f.parentId && f.parentId.startsWith("sec_")) return false;
+    // Include custom dynamic fields, fields requiring evidence, or fields with saved data/files
+    if (f.id.startsWith("field_") || f.evidenceRequired) return true;
+    const saved = customData?.[f.id];
+    if (saved && (saved.value || saved.fileUrl)) return true;
+    return false;
+  };
+
   const appraisalTabs = useMemo(() => {
     const baseTabs = [
       { id: 1, name: "Profile & Workload" },
@@ -77,17 +95,17 @@ export default function AppraisalReviews() {
     ];
     return baseTabs.filter(tab => {
       if (tab.id === 7) {
-        return customFieldsConfig.some(f => f.tabId === 7 && !f.id.startsWith("sec_") && f.visible !== false);
+        return customFieldsConfig.some(f => f.tabId === 7 && isCustomDisclosureField(f, selectedAppraisal?.formData?.customFields));
       }
       const hasVisibleBuiltIn = customFieldsConfig.some(f => f.tabId === tab.id && f.id.startsWith("sec_") && f.visible !== false);
-      const hasVisibleCustom = customFieldsConfig.some(f => f.tabId === tab.id && !f.id.startsWith("sec_") && f.visible !== false);
+      const hasVisibleCustom = customFieldsConfig.some(f => f.tabId === tab.id && isCustomDisclosureField(f, selectedAppraisal?.formData?.customFields));
       if (customFieldsConfig.length === 0) return true;
       return hasVisibleBuiltIn || hasVisibleCustom;
     });
-  }, [customFieldsConfig]);
+  }, [customFieldsConfig, selectedAppraisal]);
 
   const renderReviewCustomFields = (tId, customFieldsData) => {
-    const tabFields = customFieldsConfig.filter(f => f.tabId === tId && !f.id.startsWith("sec_") && f.visible !== false);
+    const tabFields = customFieldsConfig.filter(f => f.tabId === tId && isCustomDisclosureField(f, customFieldsData));
     if (tabFields.length === 0) return null;
 
     return (
@@ -127,15 +145,6 @@ export default function AppraisalReviews() {
       </div>
     );
   };
-
-  // Search & Filter
-  const [searchTerm, setSearchTerm] = useState("");
-  const [deptFilter, setDeptFilter] = useState("All");
-  const [statusFilter, setStatusFilter] = useState("All");
-
-  // Selected Appraisal for Details View
-  const [selectedAppraisal, setSelectedAppraisal] = useState(null);
-  const [activeDetailsTab, setActiveDetailsTab] = useState(1);
 
   // Correction Modal
   const [correctionModalOpen, setCorrectionModalOpen] = useState(false);
@@ -1363,7 +1372,7 @@ export default function AppraisalReviews() {
                     </div>
 
                     <div className="grid grid-cols-1 gap-6">
-                      {customFieldsConfig.filter(f => f.tabId === 7 && !f.id.startsWith("sec_") && f.visible !== false).map((field) => {
+                      {customFieldsConfig.filter(f => f.tabId === 7 && isCustomDisclosureField(f, selectedAppraisal.formData?.customFields)).map((field) => {
                         const entry = selectedAppraisal.formData?.customFields?.[field.id] || { value: "", fileUrl: "", fileName: "" };
                         return (
                           <div key={field.id} className="bg-slate-50 border border-slate-200/50 p-4 rounded-xl space-y-2">

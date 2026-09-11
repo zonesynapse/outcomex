@@ -36,7 +36,7 @@ export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
 
-if (typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+if (typeof window !== "undefined" && import.meta.env.VITE_USE_FUNCTIONS_EMULATOR === "true") {
   connectFunctionsEmulator(functions, "127.0.0.1", 5001);
 }
 

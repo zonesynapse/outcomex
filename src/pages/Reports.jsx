@@ -81,6 +81,161 @@ const getQpSubjectDisplay = (qp) => {
   return code || name || '';
 };
 
+const parseSubjectCodeKey = (val) => {
+  if (!val) return '';
+  if (typeof val === 'object') {
+    val = val.code || val.CODE || val.subjectCode || val.courseCode || '';
+  }
+  let str = String(val).trim();
+  if (!str || str.startsWith('{') || str.startsWith('[') || str.includes('OBJECT')) return '';
+  if (str.includes(' - ')) {
+    str = str.split(' - ')[0].trim();
+  }
+  return str.split(/\s+/)[0].trim().toUpperCase();
+};
+
+const extractMarksDocMeta = (d) => {
+  if (!d) return {};
+  const data = typeof d.data === 'function' ? d.data() : (d || {});
+  const m = data._meta || {};
+  const qm = data.qpaper_meta || {};
+
+  return {
+    programme: data.programme || m.programme || qm.programme || '',
+    department: data.department || m.department || qm.department || '',
+    batch: data.batch || m.batch || qm.batch || '',
+    academicYear: data.academic_year || m.academic_year || qm.academic_year || data.academicYear || '',
+    semesterLabel: data.semester_label || qm.semester_label || m.semester_label || data.semester || m.semester || qm.semester || '',
+    section: data.section || qm.section || m.section || '',
+    subject: data.subject || qm.subject || m.subject || '',
+    exam: data.exam || m.exam || qm.exam || qm.qpaper_name || '',
+    examName: data.exam_name || m.exam_name || qm.exam_name || '',
+    students: data.students || {}
+  };
+};
+
+const yearStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || '';
+
+const matchesMarksSelection = (docMeta, { programme, department, batch, academicYear, semester, subject, section }) => {
+  const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (programme && docMeta.programme && norm(docMeta.programme) !== norm(programme)) return false;
+  if (department && docMeta.department && norm(docMeta.department) !== norm(department)) return false;
+  // Batch / AY: compare admission start-year semantically so era formats
+  // ("2025-2029" vs "25 Batch (2025-29)", "2026-27" vs "2026-2027") still match.
+  if (batch && docMeta.batch) {
+    const y1 = yearStartOf(docMeta.batch), y2 = yearStartOf(batch);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.batch) !== norm(batch)) return false;
+  }
+  if (academicYear && docMeta.academicYear) {
+    const y1 = yearStartOf(docMeta.academicYear), y2 = yearStartOf(academicYear);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.academicYear) !== norm(academicYear)) return false;
+  }
+  // Semester: compare numbers ("3" vs "3rd Semester") instead of raw strings.
+  if (semester && docMeta.semesterLabel) {
+    const n1 = deriveSemesterNumber(docMeta.semesterLabel), n2 = deriveSemesterNumber(semester);
+    if (n1 && n2) { if (Number(n1) !== Number(n2)) return false; }
+    else if (norm(docMeta.semesterLabel) !== norm(semester)) return false;
+  }
+  if (section && docMeta.section && docMeta.section !== 'all' && norm(docMeta.section) !== norm(section)) return false;
+
+  if (subject && docMeta.subject) {
+    const selectedSubCode = parseSubjectCodeKey(subject);
+    const docSubCode = parseSubjectCodeKey(docMeta.subject);
+    if (selectedSubCode && docSubCode && selectedSubCode !== docSubCode) return false;
+  }
+
+  return true;
+};
+
+const extractStudentMarkTotal = (s) => {
+  if (s == null) return { total: 0, absent: false };
+  if (typeof s === 'number') return { total: s, absent: false };
+  if (typeof s === 'string') {
+    const trimmed = s.trim();
+    if (trimmed.toUpperCase() === 'A' || trimmed.toLowerCase() === 'absent') return { total: 0, absent: true };
+    const num = Number(trimmed);
+    return { total: isNaN(num) ? 0 : num, absent: false };
+  }
+  const isAbsent = Boolean(
+    s.absent === true ||
+    s.absent === 'true' ||
+    s.isAbsent === true ||
+    s.status === 'absent' ||
+    String(s.total || '').toUpperCase() === 'A' ||
+    String(s.total || '').toLowerCase() === 'absent'
+  );
+  
+  let total = 0;
+  if (s.total !== undefined && s.total !== null && s.total !== '' && String(s.total).toUpperCase() !== 'A') {
+    total = Number(s.total) || 0;
+  } else if (s.overall !== undefined && s.overall !== null && s.overall !== '') {
+    total = Number(s.overall) || 0;
+  } else if (s.mark !== undefined && s.mark !== null && s.mark !== '') {
+    total = Number(s.mark) || 0;
+  } else if (s.marks !== undefined && s.marks !== null && s.marks !== '') {
+    total = Number(s.marks) || 0;
+  } else if (s.score !== undefined && s.score !== null && s.score !== '') {
+    total = Number(s.score) || 0;
+  }
+
+  if (total <= 0 && !isAbsent) {
+    const coKeys = Object.keys(s).filter(k => /^CO\d+/i.test(k));
+    if (coKeys.length > 0) {
+      total = coKeys.reduce((acc, k) => acc + (Number(s[k]) || 0), 0);
+    }
+  }
+
+  if (total <= 0 && !isAbsent) {
+    ['partA', 'partB', 'partC'].forEach(partKey => {
+      if (s[partKey] && typeof s[partKey] === 'object') {
+        Object.values(s[partKey]).forEach(item => {
+          // Numeric strings from text inputs ("8") count the same as numbers.
+          if (typeof item === 'number' && !isNaN(item)) total += item;
+          else if (typeof item === 'string' && item.trim() !== '' && !isNaN(Number(item))) total += Number(item);
+          else if (item && typeof item === 'object') {
+            const mv = item.mark ?? item.marks ?? item.score ?? item.value;
+            if (typeof mv === 'number' && !isNaN(mv)) total += mv;
+            else if (typeof mv === 'string' && mv.trim() !== '' && !isNaN(Number(mv))) total += Number(mv);
+          }
+        });
+      }
+    });
+  }
+
+  if (total <= 0 && !isAbsent && s.assignment && typeof s.assignment === 'object') {
+    Object.values(s.assignment).forEach(mark => {
+      const num = Number(mark);
+      if (!isNaN(num)) total += num;
+    });
+  }
+
+  // Last resort for legacy save shapes (flat {Q1:..} maps, nested objects):
+  // deep-sum every finite numeric leaf so entered marks are never invisible.
+  if (total <= 0 && !isAbsent && s && typeof s === 'object') {
+    const skipKeys = new Set(['name', 'reg', 'regno', 'admno', 'admissionno', 'grade', 'gradepoint', 'absent', 'isabsent', 'status', 'radio', 'percentage', 'percent', 'hours', 'topictaught', 'teachingaid', 'teachingmethodology', 'id', 'uid', 'qno', 'question', 'comment', 'remarks']);
+    const stack = [s];
+    const seen = new Set();
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      if (!cur || typeof cur !== 'object' || seen.has(cur)) continue;
+      seen.add(cur);
+      if (Array.isArray(cur)) { cur.forEach(v => stack.push(v)); continue; }
+      Object.entries(cur).forEach(([k, v]) => {
+        const nk = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (skipKeys.has(nk)) return;
+        if (typeof v === 'number' && isFinite(v)) { total += v; return; }
+        if (typeof v === 'string' && v.trim() !== '' && isFinite(Number(v))) { total += Number(v); return; }
+        if (v && typeof v === 'object') stack.push(v);
+      });
+    }
+  }
+
+  return { total, absent: isAbsent };
+};
+
 export default function Reports() {
   const navigate = useNavigate();
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -102,6 +257,7 @@ export default function Reports() {
   const [sectionConfigs, setSectionConfigs] = useState({});
   const userCleanupRef = useRef(null);
   const assignCleanupRef = useRef(null);
+  const marksFallbackRef = useRef({});
 
   // Student List States
   const [students, setStudents] = useState([]);
@@ -138,6 +294,9 @@ export default function Reports() {
   const [loadingOverall, setLoadingOverall] = useState(false);
   const [overallInternalPct, setOverallInternalPct] = useState(0);
   const [overallCourseType, setOverallCourseType] = useState('');
+  // Paper totals from generated_qps per exam (config ID + normalized exam-name keys).
+  // Single source of truth so EXAM MAX and CO MAX always tally.
+  const [paperTotals, setPaperTotals] = useState({});
 
   // Fetch actual CO keys from course_outcomes (set in COConfiguration.jsx)
   useEffect(() => {
@@ -204,12 +363,10 @@ export default function Reports() {
     const unsub = onSnapshot(collection(db, 'marks'), (snapshot) => {
       const ids = new Set();
       snapshot.forEach(doc => {
-        const m = doc.data()._meta || {};
-        if (m.exam && m.programme === programme && m.department === department && m.batch === batch &&
-            m.academic_year === academicYear && m.semester_label === semester &&
-            (!internalSubject || m.subject === internalSubject) &&
-            (!section || m.section === undefined || m.section === section)) {
-          ids.add(m.exam);
+        const docMeta = extractMarksDocMeta(doc);
+        if (matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject: internalSubject, section })) {
+          if (docMeta.exam) ids.add(docMeta.exam);
+          if (docMeta.examName) ids.add(docMeta.examName);
         }
       });
       setEnteredInternalExamIds(Array.from(ids));
@@ -219,6 +376,83 @@ export default function Reports() {
 
   const studentsRef = useRef(students);
   useEffect(() => { studentsRef.current = students; }, [students]);
+
+  // Effective exam max: actual paper total wins over CIA config totalMarks.
+  const examMaxFor = useCallback((key, fallback) => {
+    if (key === undefined || key === null || key === '') return fallback;
+    const hit = paperTotals[key] ?? paperTotals[String(key).trim().toLowerCase()];
+    return hit ?? fallback;
+  }, [paperTotals]);
+
+  // Scan generated_qps for the internal subject's papers → paper totals by exam.
+  // Keys cover every ID/name variant so config-ID, QP-ID and display-name lookups hit.
+  useEffect(() => {
+    if (module !== 'internal' || !internalSubject || !programme) {
+      setPaperTotals({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        let targetCode = parseSubjectCodeKey(internalSubject);
+        if (!targetCode && typeof internalSubject === 'string' && internalSubject.trim().startsWith('{')) {
+          try {
+            const o = JSON.parse(internalSubject);
+            targetCode = parseSubjectCodeKey(o.code || o.subjectCode || '');
+          } catch { /* ignore */ }
+        }
+        if (!targetCode) { if (!cancelled) setPaperTotals({}); return; }
+        const byear = yearStartOf(batch);
+        const qpCodeOf = (qp) => {
+          let raw = qp.subject || qp.course || qp.subject_code || qp.courseCode || '';
+          if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+            try {
+              const o = JSON.parse(raw);
+              raw = o.code || o.subjectCode || '';
+            } catch { return ''; }
+          }
+          return parseSubjectCodeKey(raw);
+        };
+        const snap = await getDocs(collection(db, 'generated_qps'));
+        const map = {};
+        const reg = (k, v) => {
+          if (k === undefined || k === null || String(k).trim() === '' || !(v > 0)) return;
+          map[k] = v;
+          map[String(k).trim().toLowerCase()] = v;
+        };
+        snap.forEach(docSnap => {
+          const dd = docSnap.data() || {};
+          const list = [];
+          if (dd.subject || dd.subject_code || dd.parts || dd.assignment_config || dd.qpaper_name) {
+            list.push({ ...dd, _fieldId: docSnap.id });
+          } else {
+            Object.entries(dd).forEach(([fk, s]) => {
+              if (s && typeof s === 'object' && (s.subject || s.batch)) list.push({ ...s, _fieldId: fk });
+            });
+          }
+          list.forEach(qp => {
+            if (qpCodeOf(qp) !== targetCode) return;
+            if (qp.batch && byear && yearStartOf(qp.batch) && yearStartOf(qp.batch) !== byear) return;
+            let total = 0;
+            (Array.isArray(qp.parts) ? qp.parts : []).forEach(p => {
+              const n = Number(p.num_questions || 0), m = Number(p.marks_per_question || 0);
+              if (n > 0 && m > 0) total += n * m;
+            });
+            if (!(total > 0) && Array.isArray(qp.assignment_config)) {
+              total = qp.assignment_config.reduce((a, q) => a + (Number(q.marks) || 0), 0);
+            }
+            if (!(total > 0)) return;
+            [qp._fieldId, qp.id, qp.qpaper_name, qp.qpaperName, qp.exam_name, qp.examName, qp.exam].forEach(k => reg(k, total));
+          });
+        });
+        if (!cancelled) setPaperTotals(map);
+      } catch (e) {
+        console.warn('paper totals scan failed:', e);
+        if (!cancelled) setPaperTotals({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [module, internalSubject, programme, department, batch]);
 
   // Fetch course type for a subject by trying every known doc key format,
   // then falling back to a field query on the `code` field.
@@ -315,31 +549,62 @@ export default function Reports() {
     const fetchMarks = async () => {
       setLoadingInternalMarks(true);
       try {
-        const config = Object.entries(ciaConfigs || {}).find(([id]) => id === selectedInternalExam)?.[1];
-        const totalMarks = config?.totalMarks || 100;
-        const q = query(collection(db, 'marks'), where('_meta.exam', '==', selectedInternalExam));
-        const snap = await getDocs(q);
+        const selectedConfig = ciaConfigs[selectedInternalExam] || Object.values(ciaConfigs || {}).find(c => c.id === selectedInternalExam || c.examName === selectedInternalExam);
+        const targetExamName = selectedConfig?.examName || selectedInternalExam;
+        // Paper total wins so MARK % is computed against the actual paper, tallying CO MAX.
+        const totalMarks = examMaxFor(selectedInternalExam, examMaxFor(targetExamName, selectedConfig?.totalMarks || 100));
+
+        const snap = await getDocs(collection(db, 'marks'));
         const rowsMap = {};
         const studentMap = {};
-        studentsRef.current.forEach(st => { studentMap[st.reg] = st.name; });
+        studentsRef.current.forEach(st => {
+          studentMap[st.reg] = st;
+          if (st.regNo) studentMap[st.regNo] = st;
+          if (st.admNo) studentMap[st.admNo] = st;
+        });
+
+        const normExam = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+        const selNorm = normExam(selectedInternalExam);
+        const targetNorm = normExam(targetExamName);
+
         snap.forEach(doc => {
-          const data = doc.data();
-          const m = data._meta || {};
-          if (m.programme !== programme || m.department !== department || m.batch !== batch || m.academic_year !== academicYear || m.semester_label !== semester || (internalSubject && m.subject !== internalSubject) || (section && m.section !== undefined && m.section !== section)) return;
+          const docMeta = extractMarksDocMeta(doc);
+          if (!matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject: internalSubject, section })) return;
+
+          const docExamNorm = normExam(docMeta.exam);
+          const docExamNameNorm = normExam(docMeta.examName);
+
+          const isExamMatch = (
+            docMeta.exam === selectedInternalExam ||
+            (docExamNorm && (docExamNorm === selNorm || docExamNorm === targetNorm)) ||
+            docMeta.examName === selectedInternalExam ||
+            (docExamNameNorm && (docExamNameNorm === selNorm || docExamNameNorm === targetNorm)) ||
+            (selectedInternalExam && doc.id.includes(selectedInternalExam)) ||
+            (selNorm && normExam(doc.id).includes(selNorm)) ||
+            (targetNorm && normExam(doc.id).includes(targetNorm))
+          );
+          if (!isExamMatch) return;
+
+          const data = doc.data() || {};
           Object.entries(data.students || {}).forEach(([reg, s]) => {
-            const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
-            const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
-            if (rawTotal <= 0 && !s.absent) return;
-            const name = studentMap[reg] || reg;
-            if (!rowsMap[reg] || rowsMap[reg].total < rawTotal) {
-              rowsMap[reg] = { reg, name, total: rawTotal };
+            const { total, absent } = extractStudentMarkTotal(s);
+            if (total <= 0 && !absent) return;
+
+            const stInfo = studentMap[reg] || {};
+            const name = stInfo.name || reg;
+            const displayReg = stInfo.regNo || stInfo.admNo || reg;
+
+            if (!rowsMap[reg] || rowsMap[reg].total < total) {
+              rowsMap[reg] = { reg: displayReg, rawReg: reg, name, total, absent };
             }
           });
         });
+
         const rows = Object.values(rowsMap).map(r => ({
           ...r,
-          mark: Math.min(100, Math.round((r.total / totalMarks) * 100))
-        })).sort((a, b) => a.reg.localeCompare(b.reg));
+          mark: r.absent ? "Absent" : Math.min(100, Math.round((r.total / totalMarks) * 100))
+        })).sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
+
         if (!cancelled) setInternalMarksRows(rows);
       } catch (err) {
         console.error("Fetch internal marks error:", err);
@@ -350,7 +615,7 @@ export default function Reports() {
     };
     fetchMarks();
     return () => { cancelled = true; };
-  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, internalSubject, section]);
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, internalSubject, section, examMaxFor]);
 
   const getExamCategory = (config) => {
     if (config.isAssignment) return "Activity";
@@ -417,7 +682,7 @@ export default function Reports() {
             return {
               id: eid,
               examName: ciaConf?.examName || eid,
-              totalMarks: ciaConf?.totalMarks || 100,
+              totalMarks: examMaxFor(eid, examMaxFor(ciaConf?.examName, ciaConf?.totalMarks || 100)),
               category: catName,
               catWeight,
               examWeightage: ew,
@@ -433,19 +698,15 @@ export default function Reports() {
         // Group marks by ALL _meta identifiers for maximum matching
         const marksByExam = {};
         marksSnap.forEach(d => {
-          const md = d.data();
-          const m = md._meta || {};
-          if (m.programme !== programme || m.department !== department || m.batch !== batch ||
-              m.academic_year !== academicYear || m.semester_label !== semester ||
-              (internalSubject && m.subject !== internalSubject)) return;
-          if (section && m.section !== undefined && m.section !== section) return;
+          const docMeta = extractMarksDocMeta(d);
+          if (!matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject: internalSubject, section })) return;
 
+          const md = d.data() || {};
           const students = {};
           Object.entries(md.students || {}).forEach(([reg, s]) => {
-            const coSum = ['CO1','CO2','CO3','CO4','CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
-            const rawTotal = Number(s.total) > 0 ? Number(s.total) : coSum;
-            if (rawTotal <= 0 && !s.absent) return;
-            students[reg] = { scored: rawTotal, absent: !!s.absent };
+            const { total, absent } = extractStudentMarkTotal(s);
+            if (total <= 0 && !absent) return;
+            students[reg] = { scored: total, absent };
           });
           if (Object.keys(students).length === 0) return;
 
@@ -455,16 +716,15 @@ export default function Reports() {
             if (!marksByExam[key]) marksByExam[key] = {};
             Object.assign(marksByExam[key], students);
           };
-          addUnder(m.exam);
-          addUnder(m.exam_name);
-          addUnder(sanitizeKey(m.exam));
-          addUnder(sanitizeKey(m.exam_name));
-          // Also index by doc ID (marksDocId contains the exam value)
+          addUnder(docMeta.exam);
+          addUnder(docMeta.examName);
+          addUnder(sanitizeKey(docMeta.exam));
+          addUnder(sanitizeKey(docMeta.examName));
+          // Also index by doc ID
           addUnder(d.id);
-          // Try extracting exam from doc parts: batch_prog_dept_subject_exam_ay_sem_type
           const parts = d.id.split('_');
           if (parts.length >= 8) {
-            const examFromDoc = parts[4]; // 5th segment after sanitizeKey
+            const examFromDoc = parts[4];
             addUnder(examFromDoc);
           }
         });
@@ -528,7 +788,7 @@ export default function Reports() {
     };
     fetchOverall();
     return () => { cancelled = true; };
-  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, internalSubject, internalSubjectCourseType, section, ciaConfigs, courseWeightageData, getRegulationForBatch]);
+  }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, internalSubject, internalSubjectCourseType, section, ciaConfigs, courseWeightageData, getRegulationForBatch, examMaxFor]);
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -664,12 +924,51 @@ export default function Reports() {
 
   const filteredInternalExams = useMemo(() => {
     if (!programme || !department) return [];
-    const exams = expectedExams.filter(ex => !ex.isUniversity && enteredInternalExamIds.includes(ex.id));
-    if (exams.length > 0) {
-      exams.push({ id: "__overall__", examName: "Overall", totalMarks: 100, isOverall: true });
+
+    let exams = expectedExams.filter(ex => {
+      if (ex.isUniversity) return false;
+      if (ex.isIndirectAssessment) return false;
+      const hasMarks = enteredInternalExamIds.some(id =>
+        id === ex.id || id === ex.examName || (ex.examName && id.toLowerCase() === ex.examName.toLowerCase())
+      );
+      const subjectCourseType = internalSubjectCourseType;
+      const matchesCourseType = !subjectCourseType || !ex.courseTypes || ex.courseTypes.length === 0 || ex.courseTypes.includes(subjectCourseType);
+      return hasMarks || matchesCourseType;
+    });
+
+    if (enteredInternalExamIds.length > 0) {
+      const enteredOnly = expectedExams.filter(ex =>
+        !ex.isUniversity && !ex.isIndirectAssessment && enteredInternalExamIds.some(id => id === ex.id || id === ex.examName || (ex.examName && id.toLowerCase() === ex.examName.toLowerCase()))
+      );
+      if (enteredOnly.length > 0) {
+        exams = enteredOnly;
+      }
     }
-    return exams;
-  }, [expectedExams, programme, department, enteredInternalExamIds]);
+
+    if (exams.length > 0) {
+      const uniqueMap = new Map();
+      exams.forEach(ex => {
+        const key = ex.id || ex.examName;
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, ex);
+        }
+      });
+      const uniqueExams = Array.from(uniqueMap.values()).map(ex => ({
+        ...ex,
+        // Paper total wins so dropdown MAX tallies with CO MAX sum.
+        displayTotal: paperTotals[ex.id] ?? paperTotals[String(ex.examName || '').trim().toLowerCase()] ?? ex.totalMarks,
+      }));
+      uniqueExams.push({ id: "__overall__", examName: "Overall", totalMarks: 100, displayTotal: 100, isOverall: true });
+      return uniqueExams;
+    }
+    return [];
+  }, [expectedExams, programme, department, enteredInternalExamIds, internalSubjectCourseType, paperTotals]);
+
+  // Selected internal exam's effective max (paper total preferred).
+  const selectedInternalTotal = useMemo(() => {
+    const found = (filteredInternalExams || []).find(e => e.id === selectedInternalExam);
+    return found?.displayTotal ?? found?.totalMarks ?? 100;
+  }, [filteredInternalExams, selectedInternalExam]);
 
   const passMarkPct = useMemo(() => {
     const subject = module === 'internal' ? internalSubject : extraSubject;
@@ -1183,8 +1482,13 @@ export default function Reports() {
     let rootData = null;
     let examDocs = [];
 
+    // Fallback children built straight from `marks` docs (for mark entries saved
+    // before the co_attainment write existed, or under legacy QP-ID exam slots).
+    // Keyed by coAttainmentDocId so later listener re-fires keep including them.
     const buildChildren = () => {
       let children = [];
+      const fbCached = marksFallbackRef.current[coAttainmentDocId];
+      if (Array.isArray(fbCached)) children.push(...fbCached);
 
       // Add subcollection exam docs (new format from MarkEntry)
       examDocs.forEach(eDoc => {
@@ -1229,9 +1533,19 @@ export default function Reports() {
       }
 
       if (children.length === 0) {
+        // No co_attainment data — fall back to `marks` so entered marks stay visible.
+        if (marksFallbackRef.current[coAttainmentDocId] === undefined) {
+          marksFallbackRef.current[coAttainmentDocId] = 'loading';
+          scanMarksForConsolidation().then(fb => {
+            marksFallbackRef.current[coAttainmentDocId] = fb;
+            if (fb && fb.length > 0) buildChildren();
+            else setLoadingConsolidation(false);
+          });
+        } else if (marksFallbackRef.current[coAttainmentDocId] !== 'loading') {
+          setLoadingConsolidation(false);
+        }
         setConsolidationChildren([]);
         setConsolidationData(null);
-        setLoadingConsolidation(false);
         return;
       }
 
@@ -1253,6 +1567,153 @@ export default function Reports() {
         }
       }
       setLoadingConsolidation(false);
+    };
+
+    // Fallback: build consolidation children straight from `marks` docs so mark
+    // entries stay visible even when co_attainment was never written for them
+    // (legacy saves, QP-ID exam slots). Groups by display exam name.
+    const scanMarksForConsolidation = async () => {
+      const out = [];
+      try {
+        const snap = await getDocs(collection(db, 'marks'));
+        const groups = {};
+        snap.forEach(d => {
+          const docMeta = extractMarksDocMeta(d);
+          if (!matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject: extraSubject, section })) return;
+          const data = d.data() || {};
+          const students = data.students || {};
+          const regs = Object.keys(students).filter(k => !k.startsWith('_'));
+          if (regs.length === 0) return;
+          const rawExam = docMeta.exam || '';
+          const rawName = docMeta.examName || '';
+          const looksLikeKey = (s) => { const t = String(s || '').trim(); return !!t && (t.startsWith('-') || (/^[A-Za-z0-9_-]{16,}$/.test(t) && !t.includes(' '))); };
+          let display = '';
+          if (rawName && !looksLikeKey(rawName)) display = rawName;
+          else if (rawExam && !looksLikeKey(rawExam)) display = rawExam;
+          if (rawExam && ciaConfigs[rawExam]?.examName) display = ciaConfigs[rawExam].examName;
+          if (!display) display = (!looksLikeKey(rawName) && rawName) ? rawName : d.id;
+          const g = groups[display] || (groups[display] = { students: {}, weightage: null, meta: null, examRaw: rawExam, nameRaw: rawName });
+          Object.entries(students).forEach(([reg, s]) => {
+            if (reg.startsWith('_')) return;
+            const { total } = extractStudentMarkTotal(s);
+            const prev = g.students[reg];
+            if (!prev || total > (extractStudentMarkTotal(prev).total || 0)) g.students[reg] = s;
+          });
+          const w = data.qpaper_meta?.co_weightage;
+          if (w && typeof w === 'object' && !g.weightage) {
+            const clean = {};
+            Object.entries(w).forEach(([k, v]) => { if (/^CO\d+/i.test(k) && Number(v) > 0) clean[k.trim().toUpperCase()] = Number(v); });
+            if (Object.keys(clean).length) g.weightage = clean;
+          }
+          if (!g.meta) g.meta = data._meta || {};
+        });
+        // Ground truth for CO max: the actual Question Paper in generated_qps
+        // (parts × marks_per_question grouped by CO, Either/Or-aware — same math
+        // MarkEntry uses on save). Observed student maxima are NOT paper max.
+        const targetCode = parseSubjectCodeKey(extraSubject);
+        const batchYear = yearStartOf(batch);
+        let qpList = [];
+        try {
+          const qpSnap = await getDocs(collection(db, 'generated_qps'));
+          qpSnap.forEach(docSnap => {
+            const dd = docSnap.data() || {};
+            const isFlat = dd.subject || dd.subject_code || dd.parts || dd.assignment_config || dd.qpaper_name;
+            if (isFlat) { qpList.push({ ...dd, _fieldId: docSnap.id }); return; }
+            Object.entries(dd).forEach(([fk, summary]) => {
+              if (summary && typeof summary === 'object' && (summary.subject || summary.batch)) {
+                qpList.push({ ...summary, _fieldId: fk, _parentId: docSnap.id });
+              }
+            });
+          });
+        } catch (e) { console.warn('QP list fetch failed:', e); }
+        const codeOfQp = (qp) => parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+        const deriveCoMaxFromQp = (qp) => {
+          const derived = {};
+          const bump = (co, marks) => {
+            const c = String(co || '').trim().toUpperCase();
+            if (/^CO\d+/i.test(c) && marks > 0) derived[c] = (derived[c] || 0) + marks;
+          };
+          (Array.isArray(qp.parts) ? qp.parts : []).forEach(part => {
+            if (!part || typeof part !== 'object') return;
+            const marks = Number(part.marks_per_question || 0);
+            if (!(marks > 0)) return;
+            const qGroups = {};
+            (Array.isArray(part.questions) ? part.questions : []).forEach(q => {
+              if (!q || typeof q !== 'object') return;
+              const base = String(q.qno ?? '').replace(/\(?[ab]\)?$/i, '').trim();
+              if (!qGroups[base]) qGroups[base] = new Set();
+              String(q.co || q.CO || '').split(',').forEach(c => { if (c.trim()) qGroups[base].add(c.trim().toUpperCase()); });
+            });
+            Object.values(qGroups).forEach(set => set.forEach(co => bump(co, marks)));
+          });
+          (Array.isArray(qp.assignment_config) ? qp.assignment_config : []).forEach(q => {
+            if (!q || typeof q !== 'object') return;
+            (Array.isArray(q.mappings) ? q.mappings : []).forEach(m => bump(m?.co, parseInt(m?.marks, 10) || 0));
+          });
+          return derived;
+        };
+        Object.entries(groups).forEach(([display, g]) => {
+          const regs = Object.keys(g.students);
+          if (!regs.length) return;
+          // co_max_marks priority: actual QP > saved weightage > observed maxima.
+          let coMax = {};
+          if (targetCode) {
+            const dispNorm = String(display).trim().toLowerCase();
+            const examRawNorm = String(g.examRaw || '').trim();
+            const nameRawNorm = String(g.nameRaw || '').trim();
+            let bestQp = null, bestSum = -1;
+            qpList.forEach(qp => {
+              if (codeOfQp(qp) !== targetCode) return;
+              if (qp.batch && batchYear && yearStartOf(qp.batch) && yearStartOf(qp.batch) !== batchYear) return;
+              const ids = [qp._fieldId, qp.id, qp.qpaper_name, qp.qpaperName].filter(Boolean).map(String);
+              const names = [qp.exam_name, qp.examName, qp.exam].filter(Boolean).map(v => String(v).trim().toLowerCase());
+              const hit = ids.some(v => v === examRawNorm || v === nameRawNorm) ||
+                names.some(v => v === dispNorm) ||
+                (qp.qpaper_name && dispNorm && String(qp.qpaper_name).trim().toLowerCase() === dispNorm);
+              if (!hit) return;
+              const d = deriveCoMaxFromQp(qp);
+              const sum = Object.values(d).reduce((a, b) => a + b, 0);
+              if (sum > bestSum) { bestSum = sum; bestQp = qp; }
+            });
+            if (bestQp && bestSum > 0) coMax = deriveCoMaxFromQp(bestQp);
+          }
+          if (Object.keys(coMax).length === 0) coMax = g.weightage || {};
+          if (Object.keys(coMax).length === 0) {
+            coMax = {};
+            regs.forEach(reg => {
+              const s = g.students[reg] || {};
+              Object.keys(s).forEach(k => {
+                if (/^CO\d+/i.test(k)) {
+                  const v = Number(s[k]);
+                  if (!isNaN(v)) coMax[k.trim().toUpperCase()] = Math.max(coMax[k.trim().toUpperCase()] || 0, v);
+                }
+              });
+            });
+          }
+          ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { if (!(co in coMax)) coMax[co] = 0; });
+          const m = g.meta || {};
+          const isUniversity = !!(
+            m.is_university ||
+            (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
+            (m.exam && ciaConfigs[m.exam] && (ciaConfigs[m.exam].is_university || ciaConfigs[m.exam].isUniversity)) ||
+            String(m.exam || '').toLowerCase().includes('uni') ||
+            String(m.qpaper_name || '').toLowerCase().includes('uni')
+          );
+          const isIndirect = !!(
+            m.isIndirectAssessment ||
+            (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
+            (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          );
+          out.push({
+            key: `marks_${sanitizeKey(display)}`,
+            data: { _meta: { ...m, exam: display, exam_name: display }, students: g.students, co_max_marks: coMax },
+            isUniversity, isIndirect, label: display,
+          });
+        });
+      } catch (e) {
+        console.warn('Consolidation marks fallback scan failed:', e);
+      }
+      return out;
     };
 
     // Listen to root doc (legacy format)
@@ -2520,11 +2981,11 @@ export default function Reports() {
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                   >
                     <option value="">Choose Exam</option>
-                    {filteredInternalExams.map(ex => (
-                      <option key={ex.id} value={ex.id}>
-                        {ex.examName} - {ex.totalMarks || "N/A"} Marks
-                      </option>
-                    ))}
+                      {filteredInternalExams.map(ex => (
+                        <option key={ex.id} value={ex.id}>
+                          {ex.examName} - {ex.displayTotal ?? ex.totalMarks ?? "N/A"} Marks
+                        </option>
+                      ))}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                 </div>
@@ -2620,7 +3081,7 @@ export default function Reports() {
                     <tr className="bg-zinc-50">
                       <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[30%]">Admission Number</th>
                       <th className="text-left p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[40%]">Student Name</th>
-                      <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[30%]">Mark (out of 100)</th>
+                      <th className="text-center p-4 text-xs font-bold text-zinc-400 uppercase tracking-widest border-b border-zinc-100 w-[30%]">Mark (out of {selectedInternalTotal})</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
@@ -3262,8 +3723,8 @@ export default function Reports() {
                               const pct = maxTotal > 0 ? Math.min(100, Math.round((rawTotal / maxTotal) * 100)) : Math.min(100, rawTotal);
                               const failed = passMarkPct != null && pct < passMarkPct;
                               return (
-                                <td className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold ${failed ? 'text-red-600 bg-red-50' : 'text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30'}`}>
-                                  {pct}
+                                <td title={maxTotal > 0 ? `${rawTotal} / ${maxTotal} (${pct}%)` : `${rawTotal}`} className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold ${failed ? 'text-red-600 bg-red-50' : 'text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30'}`}>
+                                  {rawTotal}
                                 </td>
                               );
                             })()}
@@ -3278,14 +3739,12 @@ export default function Reports() {
                           {consolidationCoKeys.map(co => (
                             <td key={co} className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages[co]?.toFixed(2)}</td>
                           ))}
-                          <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
-                            {(() => {
-                              const rawAvg = consolidationCoKeys.reduce((s, co) => s + (indirectCoAverages.averages[co] || 0), 0);
-                              const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
-                              const avgPct = maxTotal > 0 ? (Math.round((rawAvg / maxTotal) * 10000) / 100) : rawAvg;
-                              return Math.min(100, avgPct).toFixed(2);
-                            })()}
-                          </td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
+                              {(() => {
+                                const rawAvg = consolidationCoKeys.reduce((s, co) => s + (indirectCoAverages.averages[co] || 0), 0);
+                                return rawAvg.toFixed(2);
+                              })()}
+                            </td>
                         </tr>
                       )}
                     </tbody>

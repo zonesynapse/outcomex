@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { db, auth } from "../firebase";
-import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where } from "firebase/firestore";
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where, documentId } from "firebase/firestore";
 import {
   ChevronDown,
   Save,
@@ -348,6 +348,12 @@ export default function MarkEntry() {
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [gradeConfigs, setGradeConfigs] = useState([]); // Grades for current regulation
   const fileInputRef = useRef(null);
+  // Resolved marks doc ID for the current filter set. Older saves stored the QP
+  // push-ID in the exam slot ("..._CS25C08_-OsVReAuCyJ5lRI2-WsS_...") while the exam
+  // dropdown now carries the display name ("IA 1") — exact-key-only lookup misses
+  // those docs and the table wrongly shows all zeros.
+  const [resolvedMarksDocId, setResolvedMarksDocId] = useState(null);
+  const marksResolveCache = useRef({});
 
   // Warn on accidental reload/close while editing marks
   const isMarksDirty = useMemo(() => {
@@ -1652,12 +1658,94 @@ export default function MarkEntry() {
     fetchGradeConfig();
   }, [programme, batch, getRegulationForBatch]);
 
+  // Resolve a marks doc saved under a legacy exam-slot format (QP push-ID instead of
+  // the display name, e.g. "..._CS25C08_-OsVReAuCyJ5lRI2-WsS_..."). Matches on _meta
+  // so both eras resolve; returns { id, data } of the richest match or null.
+  const findMarksDocByMeta = useCallback(async ({ batch, programme, department, subject, exam, academicYear, semester, markType, section, qpName, qpIds }) => {
+    try {
+      const prefixes = [...new Set([String(batch || ''), canonicalizeBatch(batch)].filter(Boolean))];
+      if (prefixes.length === 0) return null;
+      const snaps = await Promise.all(
+        prefixes.map(pfx => getDocs(query(
+          collection(db, 'marks'),
+          where(documentId(), '>=', pfx),
+          where(documentId(), '<=', pfx + '\uf8ff')
+        )))
+      );
+      const seen = new Set();
+      const docs = [];
+      snaps.forEach(s => s.forEach(d => {
+        if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); }
+      }));
+      if (docs.length === 0) return null;
+
+      const targetProgKey = formatProgrammeKey(programme);
+      const targetSubCode = parseSubjectCodeKey(subject);
+      const targetSemNum = String(deriveSemesterNumber(semester) || '').trim();
+      const ayStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || String(s || '').trim();
+      const targetAyStart = ayStartOf(academicYear);
+      const examTokens = new Set(
+        [exam, sanitizeKey(exam), qpName, ...(qpIds || [])]
+          .filter(Boolean)
+          .map(t => String(t).trim().toLowerCase())
+      );
+
+      let best = null;
+      let bestCount = -1;
+      docs.forEach(d => {
+        const data = d.data() || {};
+        const m = data._meta || {};
+        // Batch gate (fuzzy start-year)
+        if (m.batch && !isBatchMatch(m.batch, batch)) return;
+        // Programme gate
+        if (m.programme && formatProgrammeKey(m.programme) !== targetProgKey) return;
+        // Department gate
+        if (m.department && !isDeptMatch(m.department, department)) return;
+        // Subject gate
+        const metaSub = parseSubjectCodeKey(m.subject || '');
+        if (metaSub && targetSubCode && metaSub !== targetSubCode) return;
+        // Academic year gate
+        if (m.academic_year && targetAyStart && ayStartOf(m.academic_year) !== targetAyStart) return;
+        // Semester gate
+        const metaSemNum = String(deriveSemesterNumber(m.semester || m.semester_label || '') || '').trim();
+        if (metaSemNum && targetSemNum && metaSemNum !== targetSemNum) return;
+        // Section gate: meta.section must match; else doc-ID section marker must
+        // match; docs with no section info anywhere are accepted (pre-section era).
+        if (section) {
+          const secTrim = String(section).trim();
+          if (m.section && String(m.section).trim() !== secTrim) return;
+          if (!m.section) {
+            const secMarker = String(d.id || '').match(/_Sec-?([A-Za-z]+)\s*$/i);
+            if (secMarker && ('Sec-' + secMarker[1]).toLowerCase() !== secTrim.toLowerCase() && secMarker[0].replace(/^_/, '').toLowerCase() !== secTrim.toLowerCase()) return;
+          }
+        }
+        // Mark-type gate
+        if (m.mark_type && markType && String(m.mark_type).trim() !== String(markType).trim()) return;
+        // Exam gate — display name (exam_name covers both eras) or raw QP-ID token
+        const metaExam = String(m.exam || '').trim().toLowerCase();
+        const metaExamName = String(m.exam_name || m.examName || '').trim().toLowerCase();
+        if (!examTokens.has(metaExam) && !examTokens.has(metaExamName)) return;
+        // Richest doc wins (most student entries)
+        const count = data.students && typeof data.students === 'object' ? Object.keys(data.students).length : 0;
+        if (count > bestCount) {
+          bestCount = count;
+          best = { id: d.id, data };
+        }
+      });
+      return best;
+    } catch (e) {
+      console.warn('Legacy marks scan error:', e);
+      return null;
+    }
+  }, [isBatchMatch, isDeptMatch]);
+
   // Fetch Students and Saved Marks
   useEffect(() => {
     const loadData = async () => {
       if (!programme || !department || !batch || !academicYear || !semester || !subject || !exam) {
         setStudents([]);
         setMarksData({});
+        setResolvedMarksDocId(null);
         return;
       }
 
@@ -1803,9 +1891,57 @@ export default function MarkEntry() {
             .map(sanitizeKey)
             .join('_') + (section ? `_${sanitizeKey(section)}` : '');
 
-          const marksDocRef = doc(db, 'marks', marksKey);
-          const marksSnapshot = await getDoc(marksDocRef);
-          const savedMarks = marksSnapshot.data() || {};
+          // Resolve which marks doc to read: exact current-format key first, then
+          // cached legacy resolution, then a _meta scan. Older saves stored the QP
+          // push-ID in the exam slot ("..._CS25C08_-OsVReAuCyJ5lRI2-WsS_...") while
+          // the dropdown now carries the display name ("IA 1") — exact-only lookup
+          // misses those docs and the table wrongly shows all zeros.
+          const resolveSig = [batch, programme, department, subject, exam, academicYear, semester, markType, section].join('|');
+          let savedMarks = {};
+          let activeMarksId = marksKey;
+          try {
+            const cachedId = marksResolveCache.current[resolveSig];
+            if (cachedId) {
+              try {
+                const cachedSnap = await getDoc(doc(db, 'marks', cachedId));
+                if (cachedSnap.exists()) {
+                  savedMarks = cachedSnap.data() || {};
+                  activeMarksId = cachedId;
+                } else {
+                  delete marksResolveCache.current[resolveSig];
+                }
+              } catch { /* fall through to exact + scan */ }
+            }
+            if (Object.keys(savedMarks).length === 0) {
+              const exactSnap = await getDoc(doc(db, 'marks', marksKey));
+              if (exactSnap.exists()) {
+                savedMarks = exactSnap.data() || {};
+                activeMarksId = marksKey;
+              }
+            }
+            if (Object.keys(savedMarks).length === 0) {
+              const targetSubCode = parseSubjectCodeKey(subject);
+              const qpIdTokens = (allQPs || [])
+                .filter(qp => {
+                  const c = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+                  return c && targetSubCode && c === targetSubCode;
+                })
+                .flatMap(qp => [qp.id, qp._id, qp.qpaper_name, qp.qpaperName, qp.exam_name, qp.examName, qp.exam]);
+              const found = await findMarksDocByMeta({
+                batch, programme, department, subject, exam, academicYear, semester, markType, section,
+                qpName: qpMeta?.qpaper_name || '',
+                qpIds: qpIdTokens,
+              });
+              if (found) {
+                savedMarks = found.data;
+                activeMarksId = found.id;
+                marksResolveCache.current[resolveSig] = found.id;
+              }
+            }
+          } catch (e) {
+            console.warn('Marks lookup error:', e);
+          }
+          setResolvedMarksDocId(activeMarksId);
 
           // Query exam_attendance for absentees marked in exam cell roster
           const absentRegsSet = new Set();
@@ -1889,7 +2025,7 @@ export default function MarkEntry() {
     };
 
     loadData();
-  }, [programme, department, batch, academicYear, semester, subject, exam, markType, section, isBatchMatch]);
+  }, [programme, department, batch, academicYear, semester, subject, exam, markType, section, isBatchMatch, findMarksDocByMeta]);
 
   const isAssignmentLike = markType === 'Assignment' || markType === 'Project' || markType === 'Practical';
   const showAbsentColumn = markType !== 'Assignment';
@@ -2079,7 +2215,9 @@ export default function MarkEntry() {
   const handleSave = async () => {
     if (!batch || !programme || !department || !subject || !exam || !academicYear || !semester) return;
 
-    const marksDocId = [batch, programme, department, subject, exam, academicYear, semester, markType]
+    // Reuse the resolved doc ID when this selection was loaded from a legacy
+    // QP-ID exam-slot doc — otherwise re-saving forks a duplicate doc and splits data.
+    const marksDocId = resolvedMarksDocId || [batch, programme, department, subject, exam, academicYear, semester, markType]
       .filter(Boolean)
       .map(sanitizeKey)
       .join('_') + (section ? `_${sanitizeKey(section)}` : '');

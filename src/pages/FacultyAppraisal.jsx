@@ -392,16 +392,122 @@ export default function FacultyAppraisal() {
     showToast("Edits cancelled. Reverted to submitted values.", "success");
   };
 
+  const hasFieldEvidence = (field, fData) => {
+    if (!field || !fData) return false;
+    // 1. Direct fileUrl on customFields[field.id]
+    const entry = fData.customFields?.[field.id];
+    if (entry && entry.fileUrl) return true;
+
+    // 2. Mapped lists for built-in sections
+    const sectionListMap = {
+      sec_subjects_results: ["oddTheorySubjects", "oddPracticalSubjects", "evenTheorySubjects", "evenPracticalSubjects"],
+      sec_academic_nptel: ["onlineCourses", "nptelCertifications"],
+      sec_academic_fdp: ["workshopsFDPs", "fdpAttended"],
+      sec_academic_journals: ["researchPapers", "journalPublications"],
+      sec_academic_books: ["bookPublications", "improvingDetails"],
+      sec_roles_department: [
+        "organizingPrograms",
+        "fundingProposals",
+        "involvementPlacement",
+        "accreditationContributions",
+        "rdContributions",
+        "admissionContribution",
+        "departmentRoles"
+      ],
+      sec_professional_memberships: ["professionalMembership"],
+      sec_awards_honors: ["awardsHonors"],
+      sec_profile_experience: ["experienceRecords"],
+      sec_library_usage: ["libraryUsage"],
+      sec_leave_summary: ["leaveSummary"]
+    };
+
+    const listKeys = sectionListMap[field.id] || [];
+    for (const key of listKeys) {
+      const list = fData[key];
+      if (Array.isArray(list) && list.some(row => row && row.fileUrl)) {
+        return true;
+      }
+    }
+
+    if (Array.isArray(fData[field.id]) && fData[field.id].some(row => row && row.fileUrl)) {
+      return true;
+    }
+
+    if (fData[field.id] && typeof fData[field.id] === 'object' && fData[field.id].fileUrl) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const isSectionPopulated = (field, fData) => {
+    if (!field || !fData) return false;
+    const entry = fData.customFields?.[field.id];
+    if (entry && (entry.value || entry.fileUrl)) return true;
+
+    const sectionListMap = {
+      sec_subjects_results: ["oddTheorySubjects", "oddPracticalSubjects", "evenTheorySubjects", "evenPracticalSubjects"],
+      sec_academic_nptel: ["onlineCourses", "nptelCertifications"],
+      sec_academic_fdp: ["workshopsFDPs", "fdpAttended"],
+      sec_academic_journals: ["researchPapers", "journalPublications"],
+      sec_academic_books: ["bookPublications", "improvingDetails"],
+      sec_roles_department: [
+        "organizingPrograms",
+        "fundingProposals",
+        "involvementPlacement",
+        "accreditationContributions",
+        "rdContributions",
+        "admissionContribution",
+        "departmentRoles"
+      ],
+      sec_professional_memberships: ["professionalMembership"],
+      sec_awards_honors: ["awardsHonors"],
+      sec_profile_experience: ["experienceRecords"],
+      sec_library_usage: ["libraryUsage"],
+      sec_leave_summary: ["leaveSummary"]
+    };
+
+    const listKeys = sectionListMap[field.id] || [];
+    const ignoredKeys = new Set(['fileUrl', 'fileName', 'level', 'type', 'resultAttribution', 'certificateReceived', 'reportSubmitted', 'sciScopusUgc', 'nocObtained']);
+
+    for (const key of listKeys) {
+      const list = fData[key];
+      if (Array.isArray(list)) {
+        for (const row of list) {
+          if (row) {
+            const values = Object.entries(row)
+              .filter(([k]) => !ignoredKeys.has(k))
+              .map(([, v]) => String(v || '').trim())
+              .filter(Boolean);
+            if (values.length > 0) return true;
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(fData[field.id])) {
+      for (const row of fData[field.id]) {
+        if (row) {
+          const values = Object.values(row).map(v => String(v || '').trim()).filter(Boolean);
+          if (values.length > 0) return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
   const handleSave = async (isSubmit = false) => {
     if (!currentUser) return;
     setSaving(true);
 
     if (isSubmit) {
-      // Check mandatory dynamic field evidence files
+      // Check mandatory dynamic field & section evidence files
       for (const field of customFieldsConfig) {
         if (field.evidenceRequired && field.evidenceMandatory) {
-          const entry = formData.customFields?.[field.id];
-          if (!entry || !entry.fileUrl) {
+          const populated = isSectionPopulated(field, formData);
+          const hasEvidence = hasFieldEvidence(field, formData);
+          if (populated && !hasEvidence) {
             showToast(`Evidence document is required for: "${field.title}"`, "error");
             setSaving(false);
             return;

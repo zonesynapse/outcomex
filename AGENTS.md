@@ -1,5 +1,91 @@
 ## Summary of Changes
 
+### 417. Resilient Student Key Resolution, Metadata Extraction & Score Calculation (`student/Marks.jsx`)
+- **Goal**: Fix issue where student mark records existed in Firestore `marks` collection, but [`Marks.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Marks.jsx) in Student Portal displayed `"No marks records found."`.
+- **Root Cause**:
+  1. `fetchMarks` performed a strict document ID prefix check `normId.startsWith(normPrefix)`. Differences in spacing, punctuation, or formatting between user profile fields and Firestore doc IDs (e.g. `25 Batch (2025-29)_UG_...`) caused all documents to be rejected.
+  2. `fetchMarks` checked ONLY `data._meta` for metadata fields (`subject`, `exam_name`, etc.), missing metadata stored at doc root level or inside `data.qpaper_meta`.
+  3. `studentMarks` lookup relied solely on `data.students?.[regNo]`, missing candidate identifiers like `studentData.admNo`, `studentData.admissionNo`, `rollNo`, `canonicalId`, or case/space variations.
+  4. Score evaluation (`getExamDetail`) evaluated `partATotal + partBTotal + partCTotal` for non-CO/non-assignment internal exams, returning `0` whenever student marks were saved with `total` or CO breakdown instead of separate part sub-objects.
+- **Fix**:
+  - In [`Marks.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Marks.jsx):
+    - Added `extractMarksDocMeta` to parse metadata across root `doc.data()`, `doc.data().qpaper_meta`, and `doc.data()._meta`.
+    - Added `candidateKeys` set (`regNo`, `reg`, `admNo`, `admissionNo`, `rollNo`, `uid`, `canonicalId`) and case-insensitive matching for `data.students`.
+    - Added `extractStudentMarkTotal(s)` helper to calculate total marks across all entry formats (`total`, `overall`, `mark`, `score`, CO sums, part sums, assignment sums).
+    - Updated `getExamDetail` and `getDetailBreakdown` to use `extractStudentMarkTotal` and render scores cleanly.
+- **Result**: Student portal now loads and displays all student mark records cleanly. Build passes in 6.31s with 0 errors.
+
+### 416. Multi-Format Exam Matching & Robust Student Mark Extraction (`Reports.jsx`)
+- **Goal**: Fix issue shown in user screenshot where selecting `IA 1 - 100 Marks` in [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx) displayed `"No marks found for this exam"`, despite marks document existing in Firestore with `_meta.exam_name = "IA 1"` and large `students` map.
+- **Root Cause**:
+  1. `selectedInternalExam` holds the dropdown value (the CIA config ID e.g. `"cia_config_id"`), while the Firestore `marks` document stores the Question Paper ID (`_meta.exam = "-OxRmA0yCJBR2-1N6S"`) and `_meta.exam_name = "IA 1"`. Primitive equality checks `docMeta.exam === selectedInternalExam || docMeta.examName === selectedInternalExam` evaluated to `false`.
+  2. Primitive student total extraction (`s.total || coSum`) failed on complex or nested student mark objects in Firestore `students` map.
+- **Fix**:
+  - In [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx):
+    - Added `extractStudentMarkTotal(s)` helper to parse numbers, strings (`"A"`, `"absent"`), `total`, `overall`, `mark`, `marks`, `score`, `CO1-CO6` sums, `partA/B/C`, and `assignment` question marks.
+    - Updated `fetchMarks` to perform normalized cross-matching across `selectedInternalExam`, `targetExamName` (resolved from `ciaConfigs`), `docMeta.exam`, `docMeta.examName`, and `doc.id`.
+    - Indexed `studentMap` by `st.reg`, `st.regNo`, and `st.admNo` for student register number resolution.
+- **Result**: Selecting `IA 1 - 100 Marks` in Reports module populates student mark records from Firestore. Build passes cleanly in 6.41s with 0 errors.
+
+### 415. Resilient Marks Doc Metadata Extraction & Subject Code Matching (`Reports.jsx`)
+- **Goal**: Fix issue where marks exist in Firestore `marks` collection for `CS25C08` (25 Batch, UG, CSE, 3rd Semester, 2026-2027, Sec-A, IA 1), but the "Select Exam" dropdown in [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx) showed only "Choose Exam" (empty list).
+- **Root Cause**:
+  1. In Firestore `marks` collection documents, metadata fields are stored at doc root level (`doc.data().exam`, `doc.data().exam_name`, `doc.data().programme`, `doc.data().department`, `doc.data().batch`, `doc.data().academic_year`) or inside `doc.data().qpaper_meta` (`subject`, `semester_label`, `section`). [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx) previously inspected only `doc.data()._meta`, which returned `undefined` for `_meta.exam`, causing `enteredInternalExamIds` to evaluate to `[]`.
+  2. Selected subject state was full string `"CS25C08 - Data Structures"`, while `qpaper_meta.subject` in Firestore was subject code `"CS25C08"`. Primitive string equality `m.subject === internalSubject` evaluated to `false`.
+  3. `fetchMarks` executed Firestore query `where('_meta.exam', '==', selectedInternalExam)` which failed because `_meta.exam` is not a nested path on root-level exam docs.
+- **Fix**:
+  - In [`Reports.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Reports.jsx):
+    - Added `parseSubjectCodeKey` to normalize subject strings e.g. `"CS25C08 - Data Structures"` ↔ `"CS25C08"`.
+    - Added `extractMarksDocMeta` to extract metadata cleanly across root `doc.data()`, `doc.data().qpaper_meta`, and `doc.data()._meta`.
+    - Added `matchesMarksSelection` helper to compare filters using punctuation/case-insensitive matching and normalized subject codes.
+    - Updated `enteredInternalExamIds` effect and `fetchMarks` to use `extractMarksDocMeta` and `matchesMarksSelection`.
+- **Result**: Selecting Programme, Department, Batch, Semester, Subject, and Section in Reports module populates all entered exams (`IA 1`, `Overall`, etc.) in the Exam dropdown and loads student mark reports cleanly. Build passes in 6.10s with 0 errors.
+
+### 414. Fix State Declaration Order to Resolve ReferenceError in `AppraisalReviews.jsx`
+- **Goal**: Resolve runtime `Uncaught ReferenceError: Cannot access 'selectedAppraisal' before initialization` in [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx).
+- **Root Cause**: `selectedAppraisal` state declaration was placed near line 148, below `appraisalTabs = useMemo(...)` near line 79. When `useMemo` evaluated during initial component render, referencing `selectedAppraisal` caused a Temporal Dead Zone (TDZ) `ReferenceError`.
+- **Fix**:
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx): Hoisted `selectedAppraisal`, `searchTerm`, `deptFilter`, `statusFilter`, and `activeDetailsTab` state declarations to the top of the component function before `useMemo` and helper functions.
+- **Result**: The component renders cleanly with zero console errors. Build passes in 5.94s with 0 errors.
+
+### 413. Exclude Built-in Profile Sub-Fields from "Additional Evidences & Disclosures" (`AppraisalReviews.jsx`)
+- **Goal**: Fix issue shown in user screenshot where built-in profile fields (`FACULTY NAME`, `DATE OF BIRTH`, `AGE`, `DESIGNATION`, `DEPARTMENT`, `SUBJECT SPECIALIZATION`, `DATE OF JOINING CKCET`, `DOJ PRESENT POST`, `ACADEMIC QUALIFICATION`, `TEACHING AT CKCET (YRS)`) were duplicated as empty boxes under "Additional Evidences & Disclosures" on the HOD/Principal Appraisal Review page.
+- **Root Cause**: `renderReviewCustomFields` in [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) filtered fields using `!f.id.startsWith("sec_")`. Because built-in section sub-fields use IDs starting with `f_` (`f_name`, `f_dob`, `f_designation`, etc.), they passed `!f.id.startsWith("sec_")` and were rendered a second time under "Additional Evidences & Disclosures".
+- **Fix**:
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx): Added `isCustomDisclosureField` helper to exclude built-in sub-fields (`f.parentId && f.parentId.startsWith("sec_")`).
+- **Result**: Built-in profile and workload fields render strictly inside their respective section grids (1.1, 1.2, 1.3). "Additional Evidences & Disclosures" only renders genuine dynamic custom fields configured by HR.
+- Build passes cleanly in 6.34s with 0 errors.
+
+### 412. Fix Localhost Functions Emulator Redirection & Surface Descriptive Gateway Errors (`src/firebase.ts` & `functions/index.js`)
+- **Goal**: Fix `internal` error modal displayed when triggering fee payment on `localhost:5173`.
+- **Root Cause**: 
+  1. [`src/firebase.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/firebase.ts) unconditionally attached `connectFunctionsEmulator(functions, "127.0.0.1", 5001)` whenever `window.location.hostname` was `localhost` or `127.0.0.1`. Since local Firebase functions emulator was not running on port 5001, callable requests failed immediately with an `internal` connection error.
+  2. [`functions/index.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/functions/index.js) threw `HttpsError("internal", ...)` for gateway response errors, causing Firebase SDK to swallow descriptive error messages.
+- **Fix**:
+  - In [`src/firebase.ts`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/firebase.ts): Gated `connectFunctionsEmulator` behind explicit `import.meta.env.VITE_USE_FUNCTIONS_EMULATOR === "true"`.
+  - In [`functions/index.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/functions/index.js): Updated error handling to throw `HttpsError("failed-precondition", errMsg)` to surface clear gateway messages.
+  - Re-deployed Cloud Functions (`createPaymentSession`, `verifyPayment`, `paymentCallback`).
+- **Result**: Testing on `localhost:5173` now seamlessly connects to live Cloud Functions and redirects to HDFC SmartGateway without `internal` errors.
+
+### 411. HDFC SmartGateway Live Key & Production URL Deployment (`functions/index.js`)
+- **Goal**: Deploy HDFC SmartGateway Live Key (`7A40AE96D29483F9FB9CA12C608EC2` / Merchant ID `76980`) and Production URL provided by bank in `config.json` / Secret Manager.
+- **Root Cause**: Cloud Secret Manager had Version 2 created for `HDFC_API_KEY`, but Cloud Functions runtime containers pinned to previous secret versions required re-deployment to apply live key bindings. Additionally, `PRODUCTION_BASE` in `functions/index.js` had `https://smartgateway.hdfcbank.in` instead of official bank endpoint `https://smartgateway.hdfc.bank.in`.
+- **Fix**:
+  - In [`functions/index.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/functions/index.js): Updated `PRODUCTION_BASE` URL to `https://smartgateway.hdfc.bank.in`.
+  - Re-deployed Firebase Cloud Functions (`createPaymentSession`, `verifyPayment`, `paymentCallback`) via `firebase deploy --only functions`.
+- **Result**: Firebase Cloud Functions deployed cleanly (`✔ Deploy complete!`) and are actively bound to Secret Manager Version 2 (`HDFC_API_KEY`, `HDFC_MERCHANT_ID`, `HDFC_MODE`).
+
+### 410. Robust Row-Level & Section Evidence Validation in Faculty Appraisal (`FacultyAppraisal.jsx`)
+- **Goal**: Fix issue reported by user ("in hr module appraisal request page la proof attach panalum ipdi warning varudhu: Evidence document is required for: 2.1 Subjects Handled & Exam Pass Targets").
+- **Root Cause**: The submission evidence guard in `handleSave` (`isSubmit === true`) checked ONLY `formData.customFields?.[field.id]?.fileUrl`. For built-in table sections like Section 2.1 (`sec_subjects_results`), evidence files are uploaded on individual table rows (`formData.oddTheorySubjects[i].fileUrl`, `evenTheorySubjects[i].fileUrl`, etc.), leaving `formData.customFields['sec_subjects_results']` empty/undefined and causing submission to fail with a false warning toast despite proof files being attached to all rows.
+- **Fix**:
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx):
+    - Added `hasFieldEvidence(field, formData)` helper to check both section-level `fileUrl` (`formData.customFields?.[field.id]?.fileUrl`) AND row-level `fileUrl` across all mapped section tables (`oddTheorySubjects`, `oddPracticalSubjects`, `evenTheorySubjects`, `evenPracticalSubjects`, `onlineCourses`, `workshopsFDPs`, `researchPapers`, `bookPublications`, `organizingPrograms`, `fundingProposals`, `involvementPlacement`, `professionalMembership`, `awardsHonors`, etc.).
+    - Added `isSectionPopulated(field, formData)` helper to verify whether a section has actual user-entered data before enforcing mandatory evidence.
+    - Updated `handleSave` to run `hasFieldEvidence` validation before submitting.
+- **Result**: Attaching proof files to subject rows in Section 2.1 (or any other section) satisfies mandatory evidence checks and allows appraisal requests to submit cleanly without false warning toasts.
+- Build passes cleanly in 6.94s with 0 errors.
+
 ### 409. Strict Regulation Scoping for CIA Exam Dropdown — Eliminate Ghost `CIA 1/2/3` Entries (`MarkEntry.jsx`)
 - **Goal**: Per user report ("CIA nu aendha exam mum na create panavae ila, after edhu aepdi Firestore la irundhu show aagudhu"), remove `CIA 1/2/3` entries the user never created from the [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) Exam dropdown.
 - **Root Cause**: The `ciaExams` filter scoped by programme/department/batch/AY/semester/courseTypes but NEVER by `regulation`. Since [`CIAConfigPage.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/CIAConfigPage.tsx) always saves a `regulation` on every `cia_configs` doc, `CIA 1/2/3` docs created under a different regulation (empty programme/department/batch fields) sailed through every check and leaked into unrelated subjects (e.g. `GE3791`, 23 Batch / R2021).

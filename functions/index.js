@@ -12,7 +12,7 @@ const HDFC_MERCHANT_ID = defineSecret("HDFC_MERCHANT_ID");
 const HDFC_MODE = defineSecret("HDFC_MODE");
 
 const SANDBOX_BASE = "https://smartgateway.hdfcuat.bank.in";
-const PRODUCTION_BASE = "https://smartgateway.hdfcbank.in";
+const PRODUCTION_BASE = "https://smartgateway.hdfc.bank.in";
 
 function getConfig() {
   const isSandbox = HDFC_MODE.value() !== "production";
@@ -215,9 +215,10 @@ exports.createPaymentSession = onCall(
     if (!response.ok) {
       const errMsg = responseData?.error_info?.developer_message
         || responseData?.error_message
-        || "Payment session creation failed";
+        || responseData?.message
+        || `Payment session creation failed (HTTP ${response.status})`;
       console.error("HDFC API error:", response.status, JSON.stringify(responseData));
-      throw new HttpsError("internal", errMsg);
+      throw new HttpsError("failed-precondition", errMsg);
     }
 
     if (!responseData?.payment_links?.web) {
