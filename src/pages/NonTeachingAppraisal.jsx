@@ -169,7 +169,7 @@ export default function NonTeachingAppraisal() {
   useEffect(() => {
     if (!currentUser || !academicYear) return;
     const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_non_teaching`;
-    
+
     const unsub = onSnapshot(doc(db, "non_teaching_appraisals", docId), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -338,7 +338,7 @@ export default function NonTeachingAppraisal() {
   return (
     <Layout title="Non-Teaching Staff Appraisal Request">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
+
         {/* Toast Alert */}
         {toast.show && (
           <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-5 py-3.5 rounded-xl text-white font-bold shadow-lg animate-slideIn ${toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
@@ -358,9 +358,6 @@ export default function NonTeachingAppraisal() {
               <h1 className="text-lg md:text-xl font-bold font-serif">
                 SELF-APPRAISAL FORM FOR THE STAFF MEMBERS (Non-Teaching / Technical / Lab Staff)
               </h1>
-              <p className="text-indigo-200 text-xs md:text-sm">
-                CK COLLEGE OF ENGINEERING & TECHNOLOGY, CUDDALORE – 607 003.
-              </p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -383,21 +380,19 @@ export default function NonTeachingAppraisal() {
         {existingAppraisal && (
           <div className="mb-6 bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-                existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
-                existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
-              }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
+                  existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
+                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
+                }`}>
                 <FileText size={20} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Submission Status:</span>
-                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                    existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                    existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
-                  }`}>
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
+                      existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
+                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
+                    }`}>
                     {existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to HR' : existingAppraisal.status}
                   </span>
                 </div>

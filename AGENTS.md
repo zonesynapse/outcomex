@@ -1,5 +1,12 @@
 ## Summary of Changes
 
+### 420. Fix `Undo2 is not defined` ReferenceError (`HODDashboard.jsx`)
+- **Goal**: Fix runtime console error `HODDashboard.jsx:3117 Uncaught ReferenceError: Undo2 is not defined`.
+- **Root Cause**: `Undo2` icon was rendered in the appraisal review modal action buttons (`<Undo2 size={14} />`) in [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx), but was missing from the `lucide-react` import statement at the top of the file.
+- **Fix**:
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx): Added `Undo2` to the `lucide-react` import list.
+- **Result**: The appraisal review modal in HOD Dashboard renders cleanly with zero console errors. Build passes in 7.33s with 0 errors.
+
 ### 419. Non-Teaching Faculty Appraisal Request & Image 4 HOD Performance Evaluation Sheet (`NonTeachingAppraisal.jsx`, `HODDashboard.jsx`, `AppraisalReviews.jsx`, `Layout.jsx`, `AdminRoleConfig.jsx`, `App.tsx`)
 - **Goal**: Per user request, create the "Non Teaching Faculty Appraisal Request" page in the HR module, route forms submitted by non-teaching staff to their HOD in `HODDashboard.jsx`, and integrate the HOD Performance Evaluation Sheet (Image 4 format) with 10 performance categories rated (10, 9, 8, 6, 5, 4, 2), live grade assignment, recommendations, and increment options.
 - **Fix**:

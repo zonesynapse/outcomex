@@ -8,7 +8,7 @@ import {
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
   Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
-  Download, FileSpreadsheet
+  Download, FileSpreadsheet, Undo2
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";

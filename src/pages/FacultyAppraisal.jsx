@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -14,7 +13,6 @@ import Layout from "../components/Layout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
 
 export default function FacultyAppraisal() {
-  const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -586,10 +584,9 @@ export default function FacultyAppraisal() {
   };
 
   const handleScorePopupClose = () => {
+    // Stay on this page after viewing the score — no redirect.
+    // The HOD reviews the submitted appraisal separately on the HOD Dashboard.
     setScorePopup(null);
-    // Submitted appraisals go to the department HOD first (HOD Dashboard),
-    // never straight to the central Appraisal Reviews page.
-    navigate("/hod-dashboard");
   };
 
   const isSectionVisible = (id) => {
@@ -2898,7 +2895,7 @@ export default function FacultyAppraisal() {
                   onClick={handleScorePopupClose}
                   className="px-5 py-2.5 bg-gradient-to-r from-indigo-700 to-violet-800 hover:from-indigo-800 hover:to-violet-900 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-indigo-200 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Send size={14} /> Continue to HOD Dashboard
+                  <Send size={14} /> Done
                 </button>
               </div>
             </div>
