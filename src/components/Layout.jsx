@@ -146,7 +146,7 @@ const allPossibleItems = [
   { id: "circulars", icon: Megaphone, label: "Circulars", path: "/circulars" },
 
   // HR Module
-  { id: "faculty-appraisal-request", icon: FileText, label: "Appraisal Request", path: "/hr/appraisal" },
+  { id: "faculty-appraisal-request", icon: FileText, label: "Faculty Appraisal Request", path: "/hr/appraisal" },
   { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
   { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" },
 

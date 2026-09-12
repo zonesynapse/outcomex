@@ -120,7 +120,7 @@ export default function AdminRoleConfig() {
     { id: "mentor-allocation", label: "Mentor — Allocation", path: "/mentor/allocation", module: "Mentoring" },
     { id: "mentor-meetings", label: "Mentor — Activities", path: "/mentor/meetings", module: "Mentoring" },
     { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports", module: "Mentoring" },
-    { id: "faculty-appraisal-request", label: "HR — Appraisal Request", path: "/hr/appraisal", module: "HR" },
+    { id: "faculty-appraisal-request", label: "HR — Faculty Appraisal Request", path: "/hr/appraisal", module: "HR" },
     { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
     { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
     { id: "resource-hub-dashboard", label: "Resource Hub — Overview", path: "/resource-hub", module: "Resource Hub" },

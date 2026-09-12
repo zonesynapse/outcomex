@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { evaluateAppraisal } from "../utils/appraisalScore";
 import { 
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2, 
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
@@ -12,6 +14,7 @@ import Layout from "../components/Layout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
 
 export default function FacultyAppraisal() {
+  const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,6 +24,9 @@ export default function FacultyAppraisal() {
   const [customFieldsConfig, setCustomFieldsConfig] = useState([]);
   const [uploadingMap, setUploadingMap] = useState({});
   const [isEditingSubmitted, setIsEditingSubmitted] = useState(false);
+  // Performance evaluation criteria (AppraisalSettings) + post-submit score popup
+  const [evalCriteria, setEvalCriteria] = useState({ part1: [], part2: [] });
+  const [scorePopup, setScorePopup] = useState(null);
 
   // Form State
   const [academicYear, setAcademicYear] = useState("2024-2025");
@@ -190,6 +196,23 @@ export default function FacultyAppraisal() {
       if (snap.exists()) {
         setCustomFieldsConfig(snap.data().fields || []);
       }
+    });
+    return unsub;
+  }, []);
+
+  // Live performance evaluation criteria for auto-scoring on submit
+  useEffect(() => {
+    const docRef = doc(db, "appraisal_config", "criteria");
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setEvalCriteria({
+          part1: Array.isArray(data.part1) ? data.part1 : [],
+          part2: Array.isArray(data.part2) ? data.part2 : [],
+        });
+      }
+    }, (err) => {
+      console.error("Error loading appraisal criteria:", err);
     });
     return unsub;
   }, []);
@@ -519,6 +542,9 @@ export default function FacultyAppraisal() {
     const docId = `appraisal_${currentUser.uid}_${academicYear}`;
     const status = isSubmit ? "Submitted" : "Draft";
 
+    // Auto-evaluate against Performance Evaluation Criteria on submit
+    const scoreResult = isSubmit ? evaluateAppraisal(formData, evalCriteria) : null;
+
     const payload = {
       uid: currentUser.uid,
       facultyName: formData.name,
@@ -528,21 +554,42 @@ export default function FacultyAppraisal() {
       academicYear,
       status,
       formData,
-      submittedAt: isSubmit ? new Date().toISOString() : null,
+      submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
       updatedAt: new Date().toISOString(),
       hodReview: existingAppraisal?.hodReview || null,
-      principalReview: existingAppraisal?.principalReview || null
+      principalReview: existingAppraisal?.principalReview || null,
+      autoScore: scoreResult
+        ? {
+            total: scoreResult.grandTotal,
+            maxTotal: scoreResult.grandMax,
+            part1Total: scoreResult.part1Total,
+            part2Total: scoreResult.part2Total,
+            computedAt: new Date().toISOString(),
+            breakdown: scoreResult,
+          }
+        : (existingAppraisal?.autoScore || null),
     };
 
     try {
       await setDoc(doc(db, "faculty_appraisals", docId), payload);
       showToast(isSubmit ? "Appraisal Request Submitted Successfully!" : "Draft Saved Successfully!", "success");
       setIsEditingSubmitted(false);
+      // Popup the criteria-wise score, then route to HOD Dashboard for department review
+      if (isSubmit && scoreResult) {
+        setScorePopup(scoreResult);
+      }
     } catch (error) {
       console.error("Error saving appraisal:", error);
       showToast("Failed to save appraisal request.", "error");
     }
     setSaving(false);
+  };
+
+  const handleScorePopupClose = () => {
+    setScorePopup(null);
+    // Submitted appraisals go to the department HOD first (HOD Dashboard),
+    // never straight to the central Appraisal Reviews page.
+    navigate("/hod-dashboard");
   };
 
   const isSectionVisible = (id) => {
@@ -849,7 +896,7 @@ export default function FacultyAppraisal() {
               <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
                 <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
               </div>
-              <h1 className="text-lg md:text-xl font-bold font-serif">Self Appraisal Request Form</h1>
+              <h1 className="text-lg md:text-xl font-bold font-serif">Faculty Appraisal Request Form</h1>
               <p className="text-indigo-200 text-xs md:text-sm">Submit your performance evaluation request for the academic session {academicYear}.</p>
             </div>
             
@@ -2770,6 +2817,93 @@ export default function FacultyAppraisal() {
             </div>
           )}
         </div>
+
+        {/* ═══ Auto Evaluation Score Popup (Performance Evaluation Criteria) ═══ */}
+        {scorePopup && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={handleScorePopupClose} />
+            <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col animate-scaleUp">
+              <div className="bg-gradient-to-r from-[#120c7a] via-[#1a10a0] to-indigo-900 px-6 py-5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5 text-white">
+                  <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+                    <Sparkles size={18} className="text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm md:text-base">Performance Evaluation Score</h3>
+                    <p className="text-indigo-200 text-[10px] uppercase font-bold tracking-wider">
+                      Auto-calculated from Appraisal Settings criteria
+                    </p>
+                  </div>
+                </div>
+                <button onClick={handleScorePopupClose} className="p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto space-y-6">
+                {[
+                  { title: "Part 1 — Academic & Feedback", rows: scorePopup.part1Rows, total: scorePopup.part1Total, max: scorePopup.part1Max },
+                  { title: "Part 2 — Self & Department Contributions", rows: scorePopup.part2Rows, total: scorePopup.part2Total, max: scorePopup.part2Max },
+                ].map((part) => (
+                  <div key={part.title}>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">{part.title}</h4>
+                      <span className="text-[11px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-lg">
+                        {part.total} / {part.max}
+                      </span>
+                    </div>
+                    <div className="border border-zinc-200 rounded-2xl overflow-hidden">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-zinc-50 text-zinc-500 font-bold">
+                            <th className="p-2.5 text-left w-10">S.No</th>
+                            <th className="p-2.5 text-left">Particulars</th>
+                            <th className="p-2.5 text-center">Value</th>
+                            <th className="p-2.5 text-center">Max</th>
+                            <th className="p-2.5 text-center">Scored</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100">
+                          {part.rows.map((r) => (
+                            <tr key={r.id} className="hover:bg-indigo-50/30">
+                              <td className="p-2.5 text-center font-bold text-zinc-500">{r.sNo}</td>
+                              <td className="p-2.5 font-semibold text-slate-700">
+                                {r.particulars}
+                                {r.note && <span className="block text-[10px] font-medium text-amber-600 italic">{r.note}</span>}
+                              </td>
+                              <td className="p-2.5 text-center font-medium text-zinc-500">{r.value === null ? "—" : String(r.value)}{r.valueLabel && r.value !== null ? <span className="block text-[10px] text-zinc-400">{r.valueLabel.split("—")[1]?.trim() || ""}</span> : null}</td>
+                              <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                              <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="bg-gradient-to-r from-indigo-50 to-violet-50 border border-indigo-200 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Grand Total Score</p>
+                    <p className="text-3xl font-black text-[#120c7a]">{scorePopup.grandTotal} <span className="text-sm font-bold text-zinc-400">/ {scorePopup.grandMax}</span></p>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 font-medium max-w-xs text-center sm:text-right">
+                    Your appraisal has been forwarded to your department HOD for review.
+                  </p>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">
+                <button
+                  onClick={handleScorePopupClose}
+                  className="px-5 py-2.5 bg-gradient-to-r from-indigo-700 to-violet-800 hover:from-indigo-800 hover:to-violet-900 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-indigo-200 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Send size={14} /> Continue to HOD Dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </Layout>

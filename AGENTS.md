@@ -1,5 +1,13 @@
 ## Summary of Changes
 
+### 418. Rename HR Appraisal Request Page & Sidebar Label to "Faculty Appraisal Request" (`Layout.jsx`, `FacultyAppraisal.jsx`, `AdminRoleConfig.jsx`)
+- **Goal**: Per user request ("hr module la 'appraisal request' nu show aagura page name 'Faculty appraisal request' nu show aganum"), update the HR module appraisal request page name, sidebar label, and role config permission label to `"Faculty Appraisal Request"`.
+- **Fix**:
+  - In [`Layout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/Layout.jsx): Updated HR sidebar item label to `"Faculty Appraisal Request"`.
+  - In [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx): Updated permission label to `"HR — Faculty Appraisal Request"`.
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx): Updated page header to `"Faculty Appraisal Request Form"`.
+- **Result**: In HR module and sidebar navigation, the page is now named `"Faculty Appraisal Request"`. Build passes in 6.49s with 0 errors.
+
 ### 417. Resilient Student Key Resolution, Metadata Extraction & Score Calculation (`student/Marks.jsx`)
 - **Goal**: Fix issue where student mark records existed in Firestore `marks` collection, but [`Marks.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Marks.jsx) in Student Portal displayed `"No marks records found."`.
 - **Root Cause**:
