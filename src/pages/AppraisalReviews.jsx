@@ -215,27 +215,35 @@ const calculateNonTeachingGrade = (totalMarks) => {
   return "D";
 };
 
-// Fetch all appraisal records (Teaching & Non-Teaching)
+// Fetch all appraisal records (Teaching, Non-Teaching, HOD)
   useEffect(() => {
     if (!currentUser) return;
     let facultyList = [];
     let nonTeachingList = [];
+    let hodList = [];
 
     const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
-      facultyList = snap.docs.map((d) => ({ id: d.id, formType: "faculty", ...d.data() }));
-      setAppraisals([...facultyList, ...nonTeachingList]);
+      facultyList = snap.docs.map((d) => ({ id: d.id, formType: "faculty", facultyName: d.data().facultyName || d.data().name, ...d.data() }));
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
       setLoading(false);
     });
 
     const unsubNonTeaching = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
-      nonTeachingList = snap.docs.map((d) => ({ id: d.id, formType: "non_teaching", ...d.data() }));
-      setAppraisals([...facultyList, ...nonTeachingList]);
+      nonTeachingList = snap.docs.map((d) => ({ id: d.id, formType: "non_teaching", facultyName: d.data().staffName || d.data().name, ...d.data() }));
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+      setLoading(false);
+    });
+
+    const unsubHOD = onSnapshot(collection(db, "hod_appraisals"), (snap) => {
+      hodList = snap.docs.map((d) => ({ id: d.id, formType: "hod", facultyName: d.data().hodName || d.data().name, ...d.data() }));
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
       setLoading(false);
     });
 
     return () => {
       unsubFaculty();
       unsubNonTeaching();
+      unsubHOD();
     };
   }, [currentUser]);
 
@@ -301,7 +309,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     }
 
     try {
-      const targetColl = selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      const targetColl = selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast(`Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
       setSelectedAppraisal(null);
@@ -332,7 +340,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     };
 
     try {
-      const targetColl = selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      const targetColl = selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast("Appraisal returned to faculty for correction.", "success");
       setCorrectionModalOpen(false);

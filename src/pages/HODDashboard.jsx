@@ -74,6 +74,83 @@ const subjectStatPct = (st) => {
   return active > 0 ? ((a / active) * 100).toFixed(1) : "0.0";
 };
 
+// ─── Appraisal review helpers (HOD modal mirrors AppraisalReviews data) ───
+const hodProofLink = (row) => (
+  row?.fileUrl ? (
+    <a href={row.fileUrl} target="_blank" rel="noreferrer" className="inline-block text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100" title={row.fileName || "View Proof"}>Proof</a>
+  ) : (<span className="text-zinc-300 font-semibold text-[10px]">-</span>)
+);
+
+function hodSubjectTable(title, rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return null;
+  return (
+    <div>
+      <span className="text-[11px] font-black text-[#120c7a] block mb-1.5 uppercase tracking-wider">{title}</span>
+      <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr className="bg-zinc-50 font-bold">
+              <th className="border border-zinc-200 p-2 text-left">Class</th>
+              <th className="border border-zinc-200 p-2 text-left">Subject Code & Title</th>
+              <th className="border border-zinc-200 p-2 text-center">Appeared</th>
+              <th className="border border-zinc-200 p-2 text-center">Passed</th>
+              <th className="border border-zinc-200 p-2 text-center">% Result</th>
+              <th className="border border-zinc-200 p-2 text-center">Feedback</th>
+              <th className="border border-zinc-200 p-2 text-center">Evidence</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {list.map((row, i) => (
+              <tr key={i}>
+                <td className="border border-zinc-200 p-2">{row.class}</td>
+                <td className="border border-zinc-200 p-2">{row.subjectCodeTitle}</td>
+                <td className="border border-zinc-200 p-2 text-center">{row.appeared}</td>
+                <td className="border border-zinc-200 p-2 text-center">{row.passed}</td>
+                <td className="border border-zinc-200 p-2 text-center font-bold text-[#120c7a]">{row.resultPercentage}</td>
+                <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating}</td>
+                <td className="border border-zinc-200 p-1.5 text-center">{hodProofLink(row)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function hodEvidenceTable(title, rows, cols) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) return null;
+  return (
+    <div>
+      <span className="text-[11px] font-black text-[#120c7a] block mb-1.5 uppercase tracking-wider">{title}</span>
+      <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr className="bg-zinc-50 font-bold">
+              {cols.map((c) => (
+                <th key={c.key} className="border border-zinc-200 p-2 text-left">{c.label}</th>
+              ))}
+              <th className="border border-zinc-200 p-2 text-center">Evidence</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {list.map((row, i) => (
+              <tr key={i}>
+                {cols.map((c) => (
+                  <td key={c.key} className="border border-zinc-200 p-2">{row?.[c.key]}</td>
+                ))}
+                <td className="border border-zinc-200 p-1.5 text-center">{hodProofLink(row)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const colorMap = {
   blue: { bg: "bg-blue-50", text: "text-blue-600", iconBg: "bg-blue-100", border: "border-blue-200", gradient: "from-blue-500" },
   amber: { bg: "bg-amber-50", text: "text-amber-600", iconBg: "bg-amber-100", border: "border-amber-200", gradient: "from-amber-500" },
@@ -3063,31 +3140,189 @@ const isDeptMatch = (docDept, targetDept) => {
                     </div>
                   </div>
                 ) : (
-                  /* Existing Teaching Appraisal Breakdown */
-                  appraisalReview.autoScore?.breakdown && (
-                    <div className="border border-zinc-200 rounded-2xl overflow-hidden">
-                      <table className="w-full border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-zinc-50 text-zinc-500 font-bold">
-                            <th className="p-2.5 text-left">Particulars</th>
-                            <th className="p-2.5 text-center">Value</th>
-                            <th className="p-2.5 text-center">Max</th>
-                            <th className="p-2.5 text-center">Scored</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100">
-                          {[...(appraisalReview.autoScore.breakdown.part1Rows || []), ...(appraisalReview.autoScore.breakdown.part2Rows || [])].map((r) => (
-                            <tr key={r.id}>
-                              <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
-                              <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
-                              <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
-                              <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                  <>
+                    {/* ── FULL APPRAISAL DATA (AppraisalReviews parity) ── */}
+                    {(() => {
+                      const fd = appraisalReview.formData || {};
+                      const profileItems = [
+                        ["Faculty Name", fd.name || appraisalReview.facultyName],
+                        ["Designation", fd.designation || appraisalReview.designation],
+                        ["Department", fd.department || appraisalReview.department],
+                        ["Qualification", fd.academicQualification],
+                        ["Specialization", fd.subjectSpecialization],
+                        ["DOB", fd.dob],
+                        ["Age", fd.age],
+                        ["DOJ College", fd.dojCollege],
+                        ["DOJ Present Post", fd.dojPresentPost],
+                      ];
+                      const exp = fd.experience || {};
+                      const wl = fd.workloadWeek || {};
+                      const cfEntries = Object.entries(fd.customFields || {}).filter(([, v]) => v && (v.value || v.fileUrl));
+                      return (
+                        <div className="space-y-5 border-b border-zinc-200 pb-5">
+                          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
+                            <span className="font-extrabold text-indigo-950 block uppercase tracking-wider" style={{ fontSize: "11px" }}>1. Profile & Workload</span>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                              {profileItems.map(([k, v]) => (
+                                <div key={k}>
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{k}</span>
+                                  <span className="font-bold text-slate-800">{v || "-"}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                              {[["Teaching CKCET", exp.teachingCKCET], ["Teaching Elsewhere", exp.teachingElsewhere], ["Industrial", exp.industrial]].map(([k, v]) => (
+                                <div key={k} className="bg-white border border-zinc-200 p-2 rounded-xl">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase truncate">{k}</span>
+                                  <span className="text-xs font-bold">{v || "0"} Yrs</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-center">
+                              {[["Odd Theory", wl.oddTheory], ["Odd Lab", wl.oddPractical], ["Odd Total", wl.oddTotal], ["Even Theory", wl.evenTheory], ["Even Lab", wl.evenPractical], ["Even Total", wl.evenTotal]].map(([k, v]) => (
+                                <div key={k} className="bg-white border border-zinc-200 p-2 rounded-xl">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase truncate">{k}</span>
+                                  <span className="text-xs font-bold">{v || "0"} Hrs</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <span className="font-extrabold text-indigo-950 block uppercase tracking-wider" style={{ fontSize: "11px" }}>2. Subjects & Results</span>
+                            {hodSubjectTable("Odd Theory Subjects", fd.oddTheorySubjects)}
+                            {hodSubjectTable("Odd Practical / Project Subjects", fd.oddPracticalSubjects)}
+                            {hodSubjectTable("Even Theory Subjects", fd.evenTheorySubjects)}
+                            {hodSubjectTable("Even Practical / Project Subjects", fd.evenPracticalSubjects)}
+                            <div className="bg-slate-50 p-3 rounded-xl border border-zinc-200 text-xs">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">Result Attribution Opinion</span>
+                              <span className="font-bold text-slate-800">{fd.resultAttribution || "Both"}</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <span className="font-extrabold text-indigo-950 block uppercase tracking-wider" style={{ fontSize: "11px" }}>3. Academic Development</span>
+                            {hodEvidenceTable("Online / MOOC Courses", fd.onlineCourses, [{ key: "title", label: "Course Title" }, { key: "platform", label: "Platform" }, { key: "examDate", label: "Exam Date" }, { key: "certificateReceived", label: "Cert?" }])}
+                            {hodEvidenceTable("Research Publications", fd.researchPapers, [{ key: "title", label: "Paper Title" }, { key: "journal", label: "Journal / Conference" }, { key: "volumeIssue", label: "Volume & Pages" }, { key: "sciScopusUgc", label: "Index" }])}
+                            {hodEvidenceTable("Workshops / FDPs", fd.workshopsFDPs, [{ key: "title", label: "Program Title" }, { key: "dates", label: "Dates" }, { key: "days", label: "Days" }, { key: "organization", label: "Organizer" }])}
+                            {hodEvidenceTable("Qualification Improvement", fd.improvingDetails, [{ key: "degreeRegistered", label: "Degree" }, { key: "specialization", label: "Specialization" }, { key: "university", label: "University" }, { key: "status", label: "Status" }])}
+                          </div>
+
+                          <div className="space-y-4">
+                            <span className="font-extrabold text-indigo-950 block uppercase tracking-wider" style={{ fontSize: "11px" }}>4. Institutional Roles & Contributions</span>
+                            {hodEvidenceTable("Organized Programs", fd.organizingPrograms, [{ key: "title", label: "Title" }, { key: "period", label: "Period" }, { key: "targetAudience", label: "Audience" }, { key: "outcome", label: "Outcome" }])}
+                            {hodEvidenceTable("Funding Proposals", fd.fundingProposals, [{ key: "title", label: "Title" }, { key: "fundingAgencyScheme", label: "Agency / Scheme" }, { key: "fundRequested", label: "Fund" }, { key: "status", label: "Status" }])}
+                            {hodEvidenceTable("Placement / Mentoring Involvement", fd.involvementPlacement, [{ key: "description", label: "Description" }, { key: "role", label: "Role" }, { key: "outcome", label: "Outcome" }])}
+                            {hodEvidenceTable("Accreditation / R&D Contributions", [...(fd.accreditationContributions || []), ...(fd.rdContributions || [])], [{ key: "role", label: "Role" }, { key: "description", label: "Description" }, { key: "outcome", label: "Outcome" }])}
+                            {hodEvidenceTable("Admission Contributions", fd.admissionContribution, [{ key: "teamNoArea", label: "Team / Area" }, { key: "countContributed", label: "Count" }, { key: "teamLeaderName", label: "Team Leader" }])}
+                            {hodEvidenceTable("Professional Memberships", fd.professionalMembership, [{ key: "name", label: "Body" }, { key: "type", label: "Type" }, { key: "membershipNo", label: "Membership No" }])}
+                            {hodEvidenceTable("Awards & Honors", fd.awardsHonors, [{ key: "awardName", label: "Award" }, { key: "organization", label: "Organization" }, { key: "year", label: "Year" }, { key: "level", label: "Level" }])}
+                          </div>
+
+                          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                            <span className="col-span-full font-extrabold text-indigo-950 uppercase tracking-wider" style={{ fontSize: "11px" }}>5 & 6. Library, Leaves, Relations & Targets</span>
+                            {[
+                              ["Library Usage", fd.libraryUsage],
+                              ["Accomplish Assignment", fd.accomplishAssignment],
+                              ["Leave in Advance", fd.applyLeaveInAdvance],
+                              ["CL / C-OFF / LOP", [fd.leaveDetails?.cl, fd.leaveDetails?.coff, fd.leaveDetails?.lop].filter((v) => v !== "" && v !== undefined).join(" / ") || "-"],
+                              ["Relations (Stud/Colleagues/Superiors/Dept)", [fd.relationStudents?.rating, fd.relationColleagues?.rating, fd.relationSuperiors?.rating, fd.relationDepartment?.rating].filter(Boolean).join(" / ") || "-"],
+                              ["Potential Utilized", fd.potentialUtilized],
+                              ["Self Placement Grading", fd.selfPlacementGrading],
+                              ["Targets Next Sem", fd.targetsNextSemester],
+                              ["Difficulties on Campus", fd.difficultiesOnCampus],
+                            ].map(([k, v]) => (
+                              <div key={k}>
+                                <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{k}</span>
+                                <span className="font-bold text-slate-800">{v || "-"}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {cfEntries.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="font-extrabold text-indigo-950 block uppercase tracking-wider" style={{ fontSize: "11px" }}>7. Additional Evidences & Disclosures</span>
+                              {cfEntries.map(([fid, entry]) => (
+                                <div key={fid} className="bg-slate-50 border border-slate-200/50 p-3 rounded-xl text-xs space-y-1">
+                                  <span className="block text-[9px] font-black text-[#120c7a] uppercase tracking-wider">{entry.label || fid}</span>
+                                  {entry.value && <p className="font-bold text-slate-800 bg-white p-2 rounded-lg border border-zinc-100">{entry.value}</p>}
+                                  {entry.fileUrl && (
+                                    <a href={entry.fileUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">{entry.fileName || "View Attachment"}</a>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* ── MARKS WITH TOTAL ── */}
+                    {appraisalReview.autoScore?.breakdown && (
+                      <div className="border border-zinc-200 rounded-2xl overflow-hidden">
+                        <div className="bg-indigo-50/60 px-4 py-2.5 border-b border-indigo-100">
+                          <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
+                        </div>
+                        <table className="w-full border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-zinc-50 text-zinc-500 font-bold">
+                              <th className="p-2.5 text-left">Particulars</th>
+                              <th className="p-2.5 text-center">Value</th>
+                              <th className="p-2.5 text-center">Max</th>
+                              <th className="p-2.5 text-center">Scored</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )
+                          </thead>
+                          {(() => {
+                            const bd = appraisalReview.autoScore.breakdown;
+                            const p1 = bd.part1Rows || [];
+                            const p2 = bd.part2Rows || [];
+                            const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+                            const p1T = appraisalReview.autoScore.part1Total ?? sum(p1, "scored");
+                            const p1M = p1.length ? sum(p1, "maxMarks") : 0;
+                            const p2T = appraisalReview.autoScore.part2Total ?? sum(p2, "scored");
+                            const p2M = p2.length ? sum(p2, "maxMarks") : 0;
+                            const gT = appraisalReview.autoScore.total ?? p1T + p2T;
+                            const gM = appraisalReview.autoScore.maxTotal ?? p1M + p2M;
+                            const rowEls = (rows) => rows.map((r) => (
+                              <tr key={r.id}>
+                                <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
+                                <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
+                                <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                                <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                              </tr>
+                            ));
+                            return (
+                              <>
+                                <tbody className="divide-y divide-zinc-100">
+                                  {p1.length > 0 && (
+                                    <tr className="bg-slate-50/70"><td colSpan={4} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td></tr>
+                                  )}
+                                  {rowEls(p1)}
+                                  {p1.length > 0 && (
+                                    <tr className="bg-slate-50/70 font-bold"><td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td><td className="p-2 text-center text-zinc-700">{p1M}</td><td className="p-2 text-center text-indigo-800 font-black">{p1T}</td></tr>
+                                  )}
+                                  {p2.length > 0 && (
+                                    <tr className="bg-slate-50/70"><td colSpan={4} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td></tr>
+                                  )}
+                                  {rowEls(p2)}
+                                  {p2.length > 0 && (
+                                    <tr className="bg-slate-50/70 font-bold"><td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td><td className="p-2 text-center text-zinc-700">{p2M}</td><td className="p-2 text-center text-indigo-800 font-black">{p2T}</td></tr>
+                                  )}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="bg-indigo-600 text-white font-black">
+                                    <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
+                                    <td className="p-3 text-center">{gM}</td>
+                                    <td className="p-3 text-center text-base">{gT}</td>
+                                  </tr>
+                                </tfoot>
+                              </>
+                            );
+                          })()}
+                        </table>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {appraisalReview.status === "Submitted" || appraisalReview.status === "Returned" ? (

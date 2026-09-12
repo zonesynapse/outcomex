@@ -148,6 +148,7 @@ const allPossibleItems = [
   // HR Module
   { id: "faculty-appraisal-request", icon: FileText, label: "Faculty Appraisal Request", path: "/hr/appraisal" },
   { id: "non-teaching-appraisal-request", icon: FileText, label: "Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal" },
+  { id: "hod-appraisal-request", icon: FileText, label: "HOD Appraisal Request", path: "/hr/hod-appraisal" },
   { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
   { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" },
 
@@ -256,7 +257,7 @@ const modules = [
     id: "hr",
     label: "HR",
     icon: UserCheck,
-    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "faculty-appraisal-reviews", "appraisal-settings"]
+    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "hod-appraisal-request", "faculty-appraisal-reviews", "appraisal-settings"]
   },
   {
     id: "resource_hub",
@@ -591,7 +592,7 @@ export default function Layout({ children, title }) {
   if (effectivePermissions !== null) {
     // Dynamic items based on Admin configuration
     allPossibleItems.forEach(item => {
-      if (item.id === "faculty-appraisal-request" || item.id === "non-teaching-appraisal-request") {
+      if (item.id === "faculty-appraisal-request" || item.id === "non-teaching-appraisal-request" || item.id === "hod-appraisal-request") {
         const isAdminOrHR = userRole === "HR" || userRole === "Admin";
         const isFacultyOrHOD = userRole === "Faculty" || userRole === "HOD";
         

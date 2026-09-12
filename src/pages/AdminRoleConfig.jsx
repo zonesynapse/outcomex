@@ -122,6 +122,7 @@ export default function AdminRoleConfig() {
     { id: "mentor-reports", label: "Mentor — Reports & SGI", path: "/mentor/reports", module: "Mentoring" },
     { id: "faculty-appraisal-request", label: "HR — Faculty Appraisal Request", path: "/hr/appraisal", module: "HR" },
     { id: "non-teaching-appraisal-request", label: "HR — Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal", module: "HR" },
+    { id: "hod-appraisal-request", label: "HR — HOD Appraisal Request", path: "/hr/hod-appraisal", module: "HR" },
     { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
     { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
     { id: "resource-hub-dashboard", label: "Resource Hub — Overview", path: "/resource-hub", module: "Resource Hub" },

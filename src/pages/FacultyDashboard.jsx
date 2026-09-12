@@ -1398,84 +1398,10 @@ export default function FacultyDashboard() {
             });
           });
         } else {
-          // No timetable — check only today + yesterday per subject (can't determine full schedule)
-          const isTodayOrYesterday = (
-            formatDateKey(date) === formatDateKey(today) ||
-            formatDateKey(date) === formatDateKey(yesterday)
-          );
-          if (!isTodayOrYesterday) return;
-
-          const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
-          const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-          const legacyGroupPrefixNum = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
-          const legacyGroupPrefixFull = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
-          const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
-
-          for (const code of (g.codes || [])) {
-            const cleanCode = normClean(code);
-            const cleanSec = normClean(currentSec);
-
-            let hasAnyRecord = false;
-
-            // Direct match: same subject's attendance doc
-            for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
-              const cleanDId = normClean(dId);
-              if (!cleanDId.includes(cleanCode)) continue;
-              if (cleanDept && !cleanDId.includes(cleanDept) && !cleanDept.includes(cleanDId)) continue;
-              if (cleanSec && !cleanDId.includes(cleanSec) && dId.includes('_Sec-')) continue;
-
-              const recs = getAttendanceRecords(aData);
-              if (!recs || typeof recs !== 'object') continue;
-              const datePrefix = `${dateStr}_P`;
-              for (const rk of Object.keys(recs)) {
-                if (rk.startsWith(datePrefix)) { hasAnyRecord = true; break; }
-              }
-              if (hasAnyRecord) break;
-            }
-
-            // Substitute: another subject marked for same group/section
-            if (!hasAnyRecord) {
-              for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
-                const matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : (dId.startsWith(legacyGroupPrefixNum) ? legacyGroupPrefixNum : (dId.startsWith(legacyGroupPrefixFull) ? legacyGroupPrefixFull : null)));
-                if (!matchedPrefix) continue;
-                if (currentSec) {
-                  if (!dId.endsWith(secSuffix)) continue;
-                } else {
-                  if (dId.includes('_Sec-')) continue;
-                }
-                let rest = dId.slice(matchedPrefix.length);
-                if (secSuffix && rest.endsWith(secSuffix)) rest = rest.slice(0, rest.length - secSuffix.length);
-                if (rest && normClean(rest) !== cleanCode) {
-                  const recs = getAttendanceRecords(aData);
-                  if (!recs || typeof recs !== 'object') continue;
-                  const datePrefix = `${dateStr}_P`;
-                  for (const rk of Object.keys(recs)) {
-                    if (rk.startsWith(datePrefix)) { hasAnyRecord = true; break; }
-                  }
-                  if (hasAnyRecord) break;
-                }
-              }
-            }
-
-            if (!hasAnyRecord) {
-              tasks.push({
-                type: 'missed',
-                date: dateStr,
-                period: 0,
-                code,
-                progKey: g.progKey,
-                department: g.department,
-                batch: g.batch,
-                academicYear: g.academicYear,
-                semester: g.semester,
-                section: g.section || '',
-                subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
-                batchLabel: `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`,
-                dayName,
-                groupKey: `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`
-              });
-            }
-          }
+          // No timetable found for this group — skip. Missed attendance is shown
+          // strictly from timetable-scheduled periods; without a timetable we
+          // cannot confirm any period was actually scheduled, so flagging
+          // today/yesterday as "missed" would be wrong (period illadha dates).
         }
       });
     });

@@ -1,5 +1,20 @@
 ## Summary of Changes
 
+### 421. HOD's Performance Appraisal Request Page & Principal Review (`HODAppraisal.jsx`, `Layout.jsx`, `AdminRoleConfig.jsx`, `App.tsx`, `AppraisalReviews.jsx`)
+- **Goal**: Create the "HOD Appraisal Request" form page in the HR module based on official two-page document "HoD's Performance Appraisal for the Academic Year 2024-2025" (CKCET), supporting live score evaluation across 5 KRAs (Max 100 Marks), proof attachments, saving to `hod_appraisals` collection, and review integration in `AppraisalReviews.jsx`.
+- **Fix**:
+  - In [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx): Built the HOD Appraisal Request form covering 5 Key Result Areas (KRAs):
+    1. **KRA I: Department Academic Improvement** (30 Marks - overall Dept Anna University Exam Pass % metrics).
+    2. **KRA II: Department Student Centric Activities** (25 Marks - 5 parameters @ 5 Marks each: co-curricular participation, IPKT, guest lectures, value added course, placement & soft skills).
+    3. **KRA III: Faculty Enrichment Efforts for Department** (20 Marks - 4 parameters @ 5 Marks for 100%, 2.5 Marks for 80-99%: funding proposals, consultancy, online courses, research paper publications).
+    4. **KRA IV: Significant Contribution towards Department / Personal Development** (5 Marks - dynamic table for MoUs, books, CoE, awards @ 2.5 Marks each).
+    5. **KRA V: Academic Excellence and Self Development (IIY)** (20 Marks - AU Subject pass %, online course, research paper publication).
+  - In [`Layout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/Layout.jsx): Added sidebar item `"HOD Appraisal Request"` under HR section with path `"/hr/hod-appraisal"`.
+  - In [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx): Registered permission key `"HR — HOD Appraisal Request"`.
+  - In [`App.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/App.tsx): Registered route `/hr/hod-appraisal` mapped to `<HODAppraisal />`.
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx): Subscribed to `hod_appraisals` collection alongside `faculty_appraisals` and `non_teaching_appraisals`, routing review actions to `hod_appraisals`.
+- **Result**: HODs can fill and submit their official performance appraisal form with live auto-score out of 100 Marks. Principal can review submitted HOD appraisals. Build passes cleanly in 6.93s with 0 errors.
+
 ### 420. Fix `Undo2 is not defined` ReferenceError (`HODDashboard.jsx`)
 - **Goal**: Fix runtime console error `HODDashboard.jsx:3117 Uncaught ReferenceError: Undo2 is not defined`.
 - **Root Cause**: `Undo2` icon was rendered in the appraisal review modal action buttons (`<Undo2 size={14} />`) in [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx), but was missing from the `lucide-react` import statement at the top of the file.
