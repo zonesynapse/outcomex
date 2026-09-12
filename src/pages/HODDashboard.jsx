@@ -26,6 +26,26 @@ function bsKey(key) {
   return String(key).replace(/[.#$[\]/]/g, '_');
 }
 
+const NON_TEACHING_EVALUATION_CATEGORIES = [
+  { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
+  { id: 2, text: "Responds positively to any instruction, guidance, correction and discipline given by Superiors" },
+  { id: 3, text: "Cooperation towards organizing programs in the department/Institute" },
+  { id: 4, text: "Attendance, Discipline, Punctuality and Completion of work on schedule" },
+  { id: 5, text: "Maintenance of Files / Records / Ambiance of the Department / Laboratory" },
+  { id: 6, text: "Ability and willingness to take up additional load in times of requirements" },
+  { id: 7, text: "Contribution towards admission" },
+  { id: 8, text: "IIY / Improve knowledge (Theory & Hands on Training) on all aspects of the job to perform satisfactorily" },
+  { id: 9, text: "The ability and ease in expressing ideas, opinions and information clearly and accurately" },
+  { id: 10, text: "Special efforts taken / Contributions for the development of the Institution / Department" }
+];
+
+const calculateNonTeachingGrade = (totalMarks) => {
+  if (totalMarks > 89) return "A";
+  if (totalMarks >= 70) return "B";
+  if (totalMarks >= 50) return "C";
+  return "D";
+};
+
 const formatDateKey = (date) => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -140,6 +160,22 @@ export default function HODDashboard() {
   const [allocWfId, setAllocWfId] = useState(null);
   const [allocSelected, setAllocSelected] = useState([]);
   const [allocSaving, setAllocSaving] = useState(false);
+
+  // ─── Faculty Appraisal Requests (own department) ───
+  const [appraisalList, setAppraisalList] = useState([]);
+  const [appraisalLoading, setAppraisalLoading] = useState(true);
+  const [appraisalReview, setAppraisalReview] = useState(null);
+  const [appraisalComments, setAppraisalComments] = useState("");
+  const [appraisalGrade, setAppraisalGrade] = useState("Good");
+  const [appraisalActioning, setAppraisalActioning] = useState(false);
+
+  // Non-teaching appraisal review rating states
+  const [nonTeachingEvalMarks, setNonTeachingEvalMarks] = useState({
+    1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 10, 7: 10, 8: 10, 9: 10, 10: 10
+  });
+  const [nonTeachingSpecificComment, setNonTeachingSpecificComment] = useState("");
+  const [nonTeachingRecommendation, setNonTeachingRecommendation] = useState("His / Her contribution to be appreciated and recommended");
+  const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
 
   // HOD Batch Attendance Report state
   const [reportBatch, setReportBatch] = useState("");
@@ -840,6 +876,127 @@ const isDeptMatch = (docDept, targetDept) => {
       unsub2();
     };
   }, [hodDepartment]);
+
+  // ─── Faculty & Non-Teaching Appraisal Requests for this department ───
+  useEffect(() => {
+    if (!hodDepartment) { setAppraisalList([]); setAppraisalLoading(false); return; }
+    setAppraisalLoading(true);
+
+    const unsubFaculty = onSnapshot(collection(db, 'faculty_appraisals'), (snap1) => {
+      const facList = [];
+      snap1.forEach((d) => {
+        const data = d.data() || {};
+        if (isDeptMatch(data.department, hodDepartment)) {
+          facList.push({ id: d.id, collectionName: 'faculty_appraisals', ...data });
+        }
+      });
+
+      getDocs(collection(db, 'non_teaching_appraisals')).then((snap2) => {
+        const nonTeachList = [];
+        snap2.forEach((d) => {
+          const data = d.data() || {};
+          if (isDeptMatch(data.department, hodDepartment)) {
+            nonTeachList.push({ id: d.id, collectionName: 'non_teaching_appraisals', ...data });
+          }
+        });
+        const combined = [...facList, ...nonTeachList];
+        combined.sort((a, b) => new Date(b.submittedAt || b.updatedAt || 0).getTime() - new Date(a.submittedAt || a.updatedAt || 0).getTime());
+        setAppraisalList(combined);
+        setAppraisalLoading(false);
+      }).catch(() => {
+        facList.sort((a, b) => new Date(b.submittedAt || b.updatedAt || 0).getTime() - new Date(a.submittedAt || a.updatedAt || 0).getTime());
+        setAppraisalList(facList);
+        setAppraisalLoading(false);
+      });
+    }, () => { setAppraisalList([]); setAppraisalLoading(false); });
+
+    return () => unsubFaculty();
+  }, [hodDepartment]);
+
+  const pendingAppraisalCount = useMemo(
+    () => appraisalList.filter((a) => a.status === "Submitted").length,
+    [appraisalList]
+  );
+
+  const openAppraisalReview = (app) => {
+    setAppraisalReview(app);
+    setAppraisalComments(app.hodReview?.comments || "");
+    setAppraisalGrade(app.hodReview?.grade || "Good");
+
+    const existingEval = app.performanceEvaluation;
+    if (existingEval?.marks) {
+      setNonTeachingEvalMarks(existingEval.marks);
+      setNonTeachingSpecificComment(existingEval.specificComments || app.hodReview?.comments || "");
+      setNonTeachingRecommendation(existingEval.recommendation || "His / Her contribution to be appreciated and recommended");
+      setNonTeachingIncrementGrade(existingEval.incrementGrade || "A");
+    } else {
+      setNonTeachingEvalMarks({ 1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 10, 7: 10, 8: 10, 9: 10, 10: 10 });
+      setNonTeachingSpecificComment(app.hodReview?.comments || "");
+      setNonTeachingRecommendation("His / Her contribution to be appreciated and recommended");
+      setNonTeachingIncrementGrade("A");
+    }
+  };
+
+  const handleAppraisalAction = async (newStatus) => {
+    if (!appraisalReview) return;
+    const isNonTeaching = appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals";
+
+    if (newStatus === "Returned") {
+      const comm = isNonTeaching ? nonTeachingSpecificComment : appraisalComments;
+      if (!comm.trim()) {
+        alert("Please enter correction comments before returning.");
+        return;
+      }
+    }
+
+    setAppraisalActioning(true);
+    try {
+      const targetColl = isNonTeaching ? 'non_teaching_appraisals' : 'faculty_appraisals';
+
+      let totalScore = 0;
+      let derivedGrade = appraisalGrade;
+
+      if (isNonTeaching) {
+        totalScore = Object.values(nonTeachingEvalMarks).reduce((sum, v) => sum + (Number(v) || 0), 0);
+        derivedGrade = calculateNonTeachingGrade(totalScore);
+      }
+
+      const updateData = {
+        status: newStatus,
+        updatedAt: new Date().toISOString(),
+        hodReview: {
+          comments: isNonTeaching
+            ? (nonTeachingSpecificComment.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : ""))
+            : (appraisalComments.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : "")),
+          grade: isNonTeaching ? derivedGrade : appraisalGrade,
+          reviewedBy: hodName || currentUid || "",
+          reviewedAt: new Date().toISOString()
+        }
+      };
+
+      if (isNonTeaching) {
+        updateData.performanceEvaluation = {
+          marks: nonTeachingEvalMarks,
+          totalMarks: totalScore,
+          gradeSecured: derivedGrade,
+          specificComments: nonTeachingSpecificComment.trim(),
+          recommendation: nonTeachingRecommendation,
+          incrementGrade: nonTeachingIncrementGrade,
+          reviewedBy: hodName || currentUid || "",
+          reviewedAt: new Date().toISOString()
+        };
+      }
+
+      await setDoc(doc(db, targetColl, appraisalReview.id), updateData, { merge: true });
+
+      showToast(newStatus === "HOD_Approved" ? "Appraisal approved and forwarded." : "Appraisal returned to staff for correction.", "success");
+      setAppraisalReview(null);
+    } catch (err) {
+      console.error("Error updating appraisal:", err);
+      showToast("Failed to update appraisal.", "error");
+    }
+    setAppraisalActioning(false);
+  };
 
   // ─── Duty Indents (from Exam Cell) for this department ───
   useEffect(() => {
@@ -2672,6 +2829,305 @@ const isDeptMatch = (docDept, targetDept) => {
             )}
           </div>
         </div>
+
+        {/* ═══ Faculty Appraisal Requests (Own Department) ═══ */}
+        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 mt-6">
+          <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4">
+            <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+              <Award size={18} className="text-[#120c7a]" />
+              Faculty Appraisal Requests
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">{hodDepartment || "Your Department"}</span>
+              {pendingAppraisalCount > 0 && (
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{pendingAppraisalCount} pending</span>
+              )}
+            </h2>
+          </div>
+          <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+            {appraisalLoading ? (
+              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col items-center"><Loader2 className="animate-spin text-zinc-400 mb-2" size={24} /><span className="text-xs text-zinc-400">Loading appraisal requests...</span></div>
+            ) : appraisalList.length === 0 ? (
+              <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col items-center min-h-[140px] justify-center"><div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3"><FileText size={24} /></div><h3 className="text-xs font-bold text-zinc-900">No appraisal requests</h3><p className="text-[11px] text-zinc-400 mt-1">Submitted self-appraisals from {hodDepartment || "your department"} faculty will appear here.</p></div>
+            ) : (
+              appraisalList.map((app) => (
+                <div key={app.id} className="bg-zinc-50/40 rounded-2xl border border-zinc-200 p-4 hover:shadow-md hover:bg-white transition-all">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-zinc-800 truncate">{app.facultyName || "-"} <span className="font-medium text-zinc-400">• {app.designation || ""}</span></p>
+                      <p className="text-[10px] text-zinc-500 mt-0.5">AY: {app.academicYear || "-"} • Submitted: {app.submittedAt ? new Date(app.submittedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "-"}{app.autoScore ? ` • Auto Score: ${app.autoScore.total}/${app.autoScore.maxTotal}` : ""}</p>
+                    </div>
+                    <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold border ${app.status === "Submitted" ? "bg-amber-50 text-amber-700 border-amber-200" : app.status === "HOD_Approved" ? "bg-blue-50 text-blue-700 border-blue-200" : app.status === "Approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : app.status === "Returned" ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-zinc-100 text-zinc-600 border-zinc-200"}`}>{String(app.status || "Draft").replace("_", " ")}</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-end">
+                    <button onClick={() => openAppraisalReview(app)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0f0a66]"><Eye size={13} /> Review</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* ═══ Faculty / Non-Teaching Appraisal Review Modal (HOD) ═══ */}
+        {appraisalReview && (
+          <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-zinc-100 text-zinc-800">
+              <div className="bg-[#120c7a] p-6 text-white flex items-center justify-between sticky top-0 z-20">
+                <div className="flex items-center gap-3">
+                  <Award className="text-yellow-400" size={24} />
+                  <div>
+                    <h4 className="font-extrabold text-xs uppercase tracking-wider text-blue-200">
+                      Appraisal Review (HOD) — {appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals" ? "Non-Teaching Staff" : "Faculty"}
+                    </h4>
+                    <p className="text-base font-bold truncate mt-0.5">{appraisalReview.staffName || appraisalReview.facultyName || "Staff"} ({appraisalReview.academicYear})</p>
+                  </div>
+                </div>
+                <button onClick={() => setAppraisalReview(null)} className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"><X size={16} /></button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  {[
+                    ["Department", appraisalReview.department || "-"],
+                    ["Designation", appraisalReview.designation || "-"],
+                    ["Status", String(appraisalReview.status || "-").replace("_", " ")],
+                    ["Form Type", appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals" ? "Non-Teaching Staff" : "Faculty"],
+                  ].map(([k, v]) => (
+                    <div key={k} className="bg-slate-50 border border-zinc-200 rounded-xl p-3">
+                      <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{k}</span>
+                      <span className="font-bold text-slate-800">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* NON-TEACHING PERFORMANCE EVALUATION SHEET (IMAGE 4) */}
+                {appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals" ? (
+                  <div className="space-y-6 border-t border-zinc-200 pt-5">
+                    {/* Submitted Self-Appraisal Summary */}
+                    {appraisalReview.formData && (
+                      <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-3 text-xs">
+                        <h5 className="font-bold text-indigo-950 uppercase tracking-wider text-[11px]">Staff Self-Appraisal Summary</h5>
+                        <p className="text-zinc-700"><strong>Roles & Responsibilities:</strong> {appraisalReview.formData.rolesResponsibilities || "None specified"}</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                          <div><span className="text-zinc-400 font-medium">Reporting On Time:</span> <strong className="text-zinc-800">{appraisalReview.formData.reportScheduledTime || "Yes"}</strong></div>
+                          <div><span className="text-zinc-400 font-medium">Leave in Advance:</span> <strong className="text-zinc-800">{appraisalReview.formData.applyLeaveAdvance || "Yes"}</strong></div>
+                          <div><span className="text-zinc-400 font-medium">Potential Utilization:</span> <strong className="text-zinc-800">{appraisalReview.formData.potentialUtilization || "-"}</strong></div>
+                          <div><span className="text-zinc-400 font-medium">Self Rating:</span> <strong className="text-zinc-800">{appraisalReview.formData.selfAssessmentPlacement || "-"}</strong></div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Image 4 Evaluation Sheet Title */}
+                    <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest">
+                          PERFORMANCE EVALUATION SHEET (HOD Rating)
+                        </h4>
+                        <p className="text-[11px] text-indigo-700 font-medium mt-0.5">
+                          Select mark for each category (10, 9, 8, 6, 5, 4, 2). Total Marks out of 100.
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="block text-[9px] font-black text-indigo-400 uppercase tracking-widest">Calculated Grade</span>
+                        <span className={`text-xl font-black ${
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'text-emerald-600' :
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'text-blue-600' :
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'text-amber-600' : 'text-rose-600'
+                        }`}>
+                          Grade {calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0))}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 10 Categories Rating Table */}
+                    <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
+                            <th className="p-3 w-12 text-center border-r border-zinc-200">S. No</th>
+                            <th className="p-3 border-r border-zinc-200">CATEGORY</th>
+                            <th className="p-3 text-center w-72">Marks (10, 9, 8, 6, 5, 4, 2)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-200">
+                          {NON_TEACHING_EVALUATION_CATEGORIES.map((cat) => {
+                            const currentScore = Number(nonTeachingEvalMarks[cat.id]) || 10;
+                            return (
+                              <tr key={cat.id} className="hover:bg-zinc-50/50">
+                                <td className="p-3 text-center font-bold text-zinc-500 border-r border-zinc-200">{cat.id}</td>
+                                <td className="p-3 font-semibold text-zinc-800 border-r border-zinc-200">{cat.text}</td>
+                                <td className="p-2 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    {[10, 9, 8, 6, 5, 4, 2].map((mVal) => (
+                                      <button
+                                        key={mVal}
+                                        type="button"
+                                        disabled={appraisalReview.status !== "Submitted" && appraisalReview.status !== "Returned"}
+                                        onClick={() => setNonTeachingEvalMarks({ ...nonTeachingEvalMarks, [cat.id]: mVal })}
+                                        className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                                          currentScore === mVal
+                                            ? "bg-indigo-600 text-white shadow-md scale-105"
+                                            : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
+                                        } disabled:opacity-75`}
+                                      >
+                                        {mVal}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-indigo-50/80 font-bold border-t border-indigo-200">
+                            <td colSpan={2} className="p-3 text-right text-indigo-950 font-bold text-xs uppercase tracking-wider">
+                              Total Marks (100)
+                            </td>
+                            <td className="p-3 text-center text-indigo-700 font-black text-sm">
+                              {Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)} / 100
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Specific Comments & Recommendations */}
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1.5">Any other specific comment:</label>
+                        <textarea
+                          rows={3}
+                          disabled={appraisalReview.status !== "Submitted" && appraisalReview.status !== "Returned"}
+                          value={nonTeachingSpecificComment}
+                          onChange={(e) => setNonTeachingSpecificComment(e.target.value)}
+                          className="w-full rounded-2xl border border-zinc-200 p-3 text-xs font-medium focus:ring-2 focus:ring-indigo-500 bg-white outline-none"
+                          placeholder="Enter evaluation remarks or improvement suggestions..."
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommendation</label>
+                          <select
+                            disabled={appraisalReview.status !== "Submitted" && appraisalReview.status !== "Returned"}
+                            value={nonTeachingRecommendation}
+                            onChange={(e) => setNonTeachingRecommendation(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="His / Her contribution to be appreciated and recommended">His / Her contribution to be appreciated and recommended</option>
+                            <option value="Satisfactory performance">Satisfactory performance</option>
+                            <option value="Potential underutilized">Potential underutilized</option>
+                            <option value="Counseling is required">Counseling is required</option>
+                            <option value="Performance improvement is desired">Performance improvement is desired</option>
+                            <option value="To be warned">To be warned</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommend for Suitable Increment Under Grade</label>
+                          <select
+                            disabled={appraisalReview.status !== "Submitted" && appraisalReview.status !== "Returned"}
+                            value={nonTeachingIncrementGrade}
+                            onChange={(e) => setNonTeachingIncrementGrade(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="A">Grade A (Above 89)</option>
+                            <option value="B">Grade B (70 – 88)</option>
+                            <option value="C">Grade C (50 – 69)</option>
+                            <option value="D">Grade D (&lt; 50)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Grade Scale Summary */}
+                      <div className="border border-zinc-200 rounded-2xl overflow-hidden text-xs bg-zinc-50/60 p-4 space-y-2">
+                        <span className="block font-bold text-zinc-700 uppercase tracking-wider text-[10px]">Evaluation Grade Scale Summary</span>
+                        <div className="grid grid-cols-4 gap-2 text-center font-bold">
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>Above 89</span>
+                            <span className="block text-xs font-black">Grade A</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>70 – 88</span>
+                            <span className="block text-xs font-black">Grade B</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>50 – 69</span>
+                            <span className="block text-xs font-black">Grade C</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'D' ? 'bg-rose-100 border-rose-300 text-rose-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>&lt; 50</span>
+                            <span className="block text-xs font-black">Grade D</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Existing Teaching Appraisal Breakdown */
+                  appraisalReview.autoScore?.breakdown && (
+                    <div className="border border-zinc-200 rounded-2xl overflow-hidden">
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-zinc-50 text-zinc-500 font-bold">
+                            <th className="p-2.5 text-left">Particulars</th>
+                            <th className="p-2.5 text-center">Value</th>
+                            <th className="p-2.5 text-center">Max</th>
+                            <th className="p-2.5 text-center">Scored</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100">
+                          {[...(appraisalReview.autoScore.breakdown.part1Rows || []), ...(appraisalReview.autoScore.breakdown.part2Rows || [])].map((r) => (
+                            <tr key={r.id}>
+                              <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
+                              <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
+                              <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                              <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                )}
+
+                {appraisalReview.status === "Submitted" || appraisalReview.status === "Returned" ? (
+                  <div className="space-y-4 bg-slate-50 border border-zinc-200 rounded-2xl p-4">
+                    {!(appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals") && (
+                      <>
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1.5">HOD Comments / Remarks</label>
+                          <textarea value={appraisalComments} onChange={(e) => setAppraisalComments(e.target.value)} rows={3} placeholder="Write review remarks or correction notes..." className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1.5">Evaluation Grade</label>
+                          <select value={appraisalGrade} onChange={(e) => setAppraisalGrade(e.target.value)} className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:outline-none">
+                            {["Outstanding", "Excellent", "Very Good", "Good", "Average", "Needs Improvement"].map((g) => (
+                              <option key={g} value={g}>{g}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button onClick={() => handleAppraisalAction("HOD_Approved")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md">
+                        {appraisalActioning ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Approve & Forward
+                      </button>
+                      <button onClick={() => handleAppraisalAction("Returned")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-white border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-50 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                        <Undo2 size={14} /> Return for Correction
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4 text-xs">
+                    <p className="font-bold text-blue-800">HOD Review: {appraisalReview.hodReview?.grade || "-"} {appraisalReview.hodReview?.reviewedAt ? `• ${new Date(appraisalReview.hodReview.reviewedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}</p>
+                    {appraisalReview.hodReview?.comments && <p className="text-zinc-600 mt-1">{appraisalReview.hodReview.comments}</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ═══ Activity Review Modal ═══ */}
         {showActivityModal && reviewActivity && (

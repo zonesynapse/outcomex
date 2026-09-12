@@ -195,18 +195,48 @@ export default function AppraisalReviews() {
     return unsub;
   }, []);
 
-  // Fetch all appraisal records
+const NON_TEACHING_EVALUATION_CATEGORIES = [
+  { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
+  { id: 2, text: "Responds positively to any instruction, guidance, correction and discipline given by Superiors" },
+  { id: 3, text: "Cooperation towards organizing programs in the department/Institute" },
+  { id: 4, text: "Attendance, Discipline, Punctuality and Completion of work on schedule" },
+  { id: 5, text: "Maintenance of Files / Records / Ambiance of the Department / Laboratory" },
+  { id: 6, text: "Ability and willingness to take up additional load in times of requirements" },
+  { id: 7, text: "Contribution towards admission" },
+  { id: 8, text: "IIY / Improve knowledge (Theory & Hands on Training) on all aspects of the job to perform satisfactorily" },
+  { id: 9, text: "The ability and ease in expressing ideas, opinions and information clearly and accurately" },
+  { id: 10, text: "Special efforts taken / Contributions for the development of the Institution / Department" }
+];
+
+const calculateNonTeachingGrade = (totalMarks) => {
+  if (totalMarks > 89) return "A";
+  if (totalMarks >= 70) return "B";
+  if (totalMarks >= 50) return "C";
+  return "D";
+};
+
+// Fetch all appraisal records (Teaching & Non-Teaching)
   useEffect(() => {
     if (!currentUser) return;
-    const unsub = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
-      const list = [];
-      snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() });
-      });
-      setAppraisals(list);
+    let facultyList = [];
+    let nonTeachingList = [];
+
+    const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
+      facultyList = snap.docs.map((d) => ({ id: d.id, formType: "faculty", ...d.data() }));
+      setAppraisals([...facultyList, ...nonTeachingList]);
       setLoading(false);
     });
-    return () => unsub();
+
+    const unsubNonTeaching = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
+      nonTeachingList = snap.docs.map((d) => ({ id: d.id, formType: "non_teaching", ...d.data() }));
+      setAppraisals([...facultyList, ...nonTeachingList]);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubFaculty();
+      unsubNonTeaching();
+    };
   }, [currentUser]);
 
   const filteredAppraisals = appraisals.filter((app) => {
@@ -271,7 +301,8 @@ export default function AppraisalReviews() {
     }
 
     try {
-      await updateDoc(doc(db, "faculty_appraisals", selectedAppraisal.id), updatePayload);
+      const targetColl = selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast(`Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
       setSelectedAppraisal(null);
     } catch (error) {
@@ -301,7 +332,8 @@ export default function AppraisalReviews() {
     };
 
     try {
-      await updateDoc(doc(db, "faculty_appraisals", selectedAppraisal.id), updatePayload);
+      const targetColl = selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast("Appraisal returned to faculty for correction.", "success");
       setCorrectionModalOpen(false);
       setCorrectionComments("");

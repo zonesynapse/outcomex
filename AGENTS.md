@@ -1,5 +1,15 @@
 ## Summary of Changes
 
+### 419. Non-Teaching Faculty Appraisal Request & Image 4 HOD Performance Evaluation Sheet (`NonTeachingAppraisal.jsx`, `HODDashboard.jsx`, `AppraisalReviews.jsx`, `Layout.jsx`, `AdminRoleConfig.jsx`, `App.tsx`)
+- **Goal**: Per user request, create the "Non Teaching Faculty Appraisal Request" page in the HR module, route forms submitted by non-teaching staff to their HOD in `HODDashboard.jsx`, and integrate the HOD Performance Evaluation Sheet (Image 4 format) with 10 performance categories rated (10, 9, 8, 6, 5, 4, 2), live grade assignment, recommendations, and increment options.
+- **Fix**:
+  - In [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx): Created the 22-question Non-Teaching Staff Appraisal Request form divided into 6 sections (Staff Info, Roles & Responsibilities, Punctuality & Discipline, Grievance & Relationships, Invest In Yourself dynamic table, Admission Contributions dynamic table, digital declaration). Saves to `non_teaching_appraisals` collection.
+  - In [`Layout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/Layout.jsx): Added HR module sidebar item `"Non Teaching Faculty Appraisal Request"`.
+  - In [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx): Added role permission `"HR — Non-Teaching Appraisal Request"`.
+  - In [`App.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/App.tsx): Added route `/hr/non-teaching-appraisal` mapped to `<NonTeachingAppraisal />`.
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) & [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx): Subscribed to both `faculty_appraisals` and `non_teaching_appraisals`. Built interactive **HOD Performance Evaluation Sheet** matching Image 4 with 10 rating categories (max 10 pts each), auto-calculated total (out of 100), live Grade assignment (Grade A >89, Grade B 70–88, Grade C 50–69, Grade D <50), HOD specific comments, recommendations selector, and increment options.
+- **Result**: Non-teaching staff can fill and submit appraisal requests. HODs and Principal/HR can review non-teaching appraisals using the Image 4 Performance Evaluation Sheet. Build passes cleanly in 6.45s with 0 errors.
+
 ### 418. Rename HR Appraisal Request Page & Sidebar Label to "Faculty Appraisal Request" (`Layout.jsx`, `FacultyAppraisal.jsx`, `AdminRoleConfig.jsx`)
 - **Goal**: Per user request ("hr module la 'appraisal request' nu show aagura page name 'Faculty appraisal request' nu show aganum"), update the HR module appraisal request page name, sidebar label, and role config permission label to `"Faculty Appraisal Request"`.
 - **Fix**:

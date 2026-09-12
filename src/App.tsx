@@ -94,6 +94,7 @@ import CircularCreate from "./pages/CircularCreate";
 import CircularList from "./pages/CircularList";
 import StudentCirculars from "./pages/student/Circulars";
 import FacultyAppraisal from "./pages/FacultyAppraisal";
+import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import IAScheduleCreation from "./pages/IAScheduleCreation";
@@ -228,6 +229,7 @@ export default function App() {
 
         {/* HR Module Routes */}
         <Route path="/hr/appraisal" element={<ProtectedRoute><FacultyAppraisal /></ProtectedRoute>} />
+        <Route path="/hr/non-teaching-appraisal" element={<ProtectedRoute><NonTeachingAppraisal /></ProtectedRoute>} />
         <Route path="/hr/reviews" element={<ProtectedRoute><AppraisalReviews /></ProtectedRoute>} />
         <Route path="/hr/settings" element={<ProtectedRoute><AppraisalSettings /></ProtectedRoute>} />
 
