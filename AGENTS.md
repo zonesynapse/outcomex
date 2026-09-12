@@ -1,5 +1,12 @@
 ## Summary of Changes
 
+### 423. Fix `setIsPortalOpen` & `checkingSchedule` ReferenceErrors (`NonTeachingAppraisal.jsx`)
+- **Goal**: Fix runtime console errors `ReferenceError: Can't find variable: setIsPortalOpen` and `ReferenceError: Can't find variable: checkingSchedule` in [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx).
+- **Root Cause**: `isPortalOpen` and `checkingSchedule` states were referenced in the schedule snapshot listener and render check, but were missing from the component state declarations.
+- **Fix**:
+  - In [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx): Added `const [isPortalOpen, setIsPortalOpen] = useState(true);` and `const [checkingSchedule, setCheckingSchedule] = useState(true);` declarations.
+- **Result**: `NonTeachingAppraisal.jsx` compiles and renders cleanly with zero console errors. Build passes in 7.01s with 0 errors.
+
 ### 422. Propagate HR Appraisal Settings & Portal Schedule Window to Non-Teaching & HOD Appraisal Forms (`NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
 - **Goal**: Apply the active academic year (`academicYear`) and submission window schedule (`openTime`, `closeTime`, `isActive`) configured in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx) to both [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx) and [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx), matching [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx).
 - **Fix**:

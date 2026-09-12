@@ -39,6 +39,8 @@ export default function NonTeachingAppraisal() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [appraisalSchedule, setAppraisalSchedule] = useState(null);
+  const [isPortalOpen, setIsPortalOpen] = useState(true);
+  const [checkingSchedule, setCheckingSchedule] = useState(true);
   const [existingAppraisal, setExistingAppraisal] = useState(null);
 
   // Academic Year State
