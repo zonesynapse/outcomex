@@ -160,7 +160,26 @@ export default function NonTeachingAppraisal() {
         if (sched.academicYear) {
           setAcademicYear(sched.academicYear);
         }
+
+        if (sched.isActive) {
+          const now = new Date().getTime();
+          const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
+          const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
+
+          let open = true;
+          if (start && now < start) open = false;
+          if (end && now > end) open = false;
+          setIsPortalOpen(open);
+        } else {
+          setIsPortalOpen(false);
+        }
+      } else {
+        setIsPortalOpen(true);
       }
+      setCheckingSchedule(false);
+    }, (err) => {
+      console.error("Error checking appraisal schedule:", err);
+      setCheckingSchedule(false);
     });
     return () => unsub();
   }, []);
@@ -325,11 +344,56 @@ export default function NonTeachingAppraisal() {
       existingAppraisal?.status === "Approved") &&
     existingAppraisal?.status !== "Returned";
 
-  if (loading) {
+  if (loading || checkingSchedule) {
     return (
       <Layout title="Non-Teaching Staff Appraisal Request">
-        <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
           <Loader2 className="animate-spin text-indigo-700" size={40} />
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Checking appraisal window schedule...</span>
+        </div>
+      </Layout>
+    );
+  }
+
+  const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
+  if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
+    return (
+      <Layout title="Non-Teaching Staff Appraisal Request">
+        <div className="max-w-xl mx-auto py-16 px-4">
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
+            <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
+              <Calendar size={32} />
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">Appraisal Portal is Closed</h2>
+              <p className="text-zinc-500 text-xs font-medium">
+                The non-teaching staff appraisal request submission portal is currently inactive or has reached its deadline.
+              </p>
+            </div>
+
+            {appraisalSchedule && (
+              <div className="bg-slate-50 border border-slate-150 p-5 rounded-2xl text-left text-xs space-y-3">
+                <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
+                  <strong className="text-slate-800">
+                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                  </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
+                  <strong className="text-slate-800">
+                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                  </strong>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </Layout>
     );

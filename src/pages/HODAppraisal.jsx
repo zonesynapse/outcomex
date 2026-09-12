@@ -110,6 +110,10 @@ export default function HODAppraisal() {
       if (snap.exists()) {
         const sched = snap.data();
         setAppraisalSchedule(sched);
+        if (sched.academicYear) {
+          setAcademicYear(sched.academicYear);
+        }
+
         const now = Date.now();
         const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
         const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
@@ -355,18 +359,44 @@ export default function HODAppraisal() {
     );
   }
 
-  if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft")) {
+  const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
+  if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
     return (
       <Layout title="HOD Appraisal Request">
-        <div className="max-w-4xl mx-auto px-4 py-12">
-          <div className="bg-rose-50 border border-rose-200 rounded-3xl p-8 text-center space-y-4 shadow-sm">
-            <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+        <div className="max-w-xl mx-auto py-16 px-4">
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
+            <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
               <AlertTriangle size={32} />
             </div>
-            <h2 className="text-xl font-bold text-rose-900 font-serif">HOD Appraisal Window Closed</h2>
-            <p className="text-xs text-rose-700 max-w-md mx-auto leading-relaxed">
-              The appraisal submission schedule is currently inactive or closed by the HR administration.
-            </p>
+
+            <div className="space-y-2">
+              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">HOD Appraisal Portal is Closed</h2>
+              <p className="text-zinc-500 text-xs font-medium">
+                The HOD performance appraisal request submission portal is currently inactive or has reached its deadline.
+              </p>
+            </div>
+
+            {appraisalSchedule && (
+              <div className="bg-slate-50 border border-slate-150 p-5 rounded-2xl text-left text-xs space-y-3">
+                <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
+                  <strong className="text-slate-800">
+                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                  </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
+                  <strong className="text-slate-800">
+                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                  </strong>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </Layout>

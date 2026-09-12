@@ -1,5 +1,12 @@
 ## Summary of Changes
 
+### 422. Propagate HR Appraisal Settings & Portal Schedule Window to Non-Teaching & HOD Appraisal Forms (`NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
+- **Goal**: Apply the active academic year (`academicYear`) and submission window schedule (`openTime`, `closeTime`, `isActive`) configured in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx) to both [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx) and [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx), matching [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx).
+- **Fix**:
+  - In [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx): Added schedule checking effect listening to `doc(db, "appraisal_config", "schedule")`. Automatically sets default `academicYear` to `sched.academicYear` and evaluates `isPortalOpen` based on `isActive`, `openTime`, and `closeTime`. Displays "Appraisal Portal is Closed" banner with target session and deadline details when the window is inactive.
+  - In [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx): Updated schedule listener to automatically bind `academicYear` to `sched.academicYear` from `AppraisalSettings.jsx`. Added Admin/HR bypass check and detailed schedule info box to closed portal view.
+- **Result**: Setting active academic year, opening, or closing appraisal windows in Appraisal Settings now instantly controls access and sets the academic year on Non-Teaching and HOD Appraisal Request pages. Build passes in 6.37s with 0 errors.
+
 ### 421. HOD's Performance Appraisal Request Page & Principal Review (`HODAppraisal.jsx`, `Layout.jsx`, `AdminRoleConfig.jsx`, `App.tsx`, `AppraisalReviews.jsx`)
 - **Goal**: Create the "HOD Appraisal Request" form page in the HR module based on official two-page document "HoD's Performance Appraisal for the Academic Year 2024-2025" (CKCET), supporting live score evaluation across 5 KRAs (Max 100 Marks), proof attachments, saving to `hod_appraisals` collection, and review integration in `AppraisalReviews.jsx`.
 - **Fix**:
