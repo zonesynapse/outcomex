@@ -13,6 +13,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 import { formatProgrammeKey, formatProgDisplay, sanitizeKey } from "../lib/utils";
+import { computePaidByConfig } from "../utils/feeAllocation";
 import Layout from "../components/Layout";
 import * as XLSX from "xlsx";
 
@@ -306,7 +307,7 @@ export default function FeeOperations() {
   const [selectedStudentCategory, setSelectedStudentCategory] = useState("");
   const [selectedStudentStage, setSelectedStudentStage] = useState("");
   const [appPayments, setAppPayments] = useState([]);
-  const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
+  const [paymentForm, setPaymentForm] = useState({ amount: "", mode: "cash", feeHead: "", academicYear: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
 
   // Receipt state
   const [receiptSearch, setReceiptSearch] = useState("");
@@ -479,7 +480,7 @@ export default function FeeOperations() {
         status: "SUCCESS",
         mode: paymentForm.mode,
         feeHead: paymentForm.feeHead,
-        semester: paymentForm.semester,
+        academicYear: paymentForm.academicYear,
         remarks: paymentForm.remarks,
         refNo: paymentForm.refNo,
         receiptNo,
@@ -489,7 +490,7 @@ export default function FeeOperations() {
       await addDoc(collection(db, "fee_payments"), payData);
       await addDoc(collection(db, "fee_receipts"), { ...payData, status: "active", cancelledAt: null, reason: null, reprintCount: 0 });
       showToast(`Payment recorded — Receipt #${receiptNo}`);
-      setPaymentForm({ amount: "", mode: "cash", feeHead: "", semester: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
+      setPaymentForm({ amount: "", mode: "cash", feeHead: "", academicYear: "", remarks: "", refNo: "", paymentDate: new Date().toISOString().split("T")[0] });
     } catch (err) { showToast("Error recording payment: " + err.message, "error"); }
     finally { setSaving(false); }
   };
@@ -674,30 +675,15 @@ export default function FeeOperations() {
     const totalPaid = allStudentPayments.reduce((s, p) => s + (p.chargedAmount || p.amount || 0), 0);
     const outstanding = Math.max(0, totalFees - totalPaid);
 
-    const yearStart = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
+    // Each portal payment reduces exactly ONE config (year-tagged → that year,
+    // untagged legacy → oldest due first). Shared allocator keeps office & portal consistent.
+    const paidByConfigId = computePaidByConfig({
+      configs: fees,
+      portalPayments: studentPayments.filter((p) => isSuccessfulPayment(p)),
+      appPayments: appPayments.filter((p) => isSuccessfulPayment(p)),
+    });
 
-    const isFirstYearConfig = (cfg) => {
-      const nh = normHead(cfg.head);
-      const siblings = fees.filter((c) => normHead(c.head) === nh);
-      if (siblings.length <= 1) return true;
-      const distinctYears = [...new Set(siblings.map((c) => String(c.academicYear || '').trim()))];
-      if (distinctYears.length <= 1) return true;
-      return yearStart(cfg.academicYear) === Math.min(...siblings.map((c) => yearStart(c.academicYear)));
-    };
-
-    const paidForHead = (cfg) => {
-      const nh = normHead(cfg.head);
-      const portalPaid = studentPayments
-        .filter((p) => normHead(p.feeHead) === nh)
-        .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-      if (isFirstYearConfig(cfg)) {
-        const appPaid = appPayments
-          .filter((p) => normHead(p.feeHead) === nh)
-          .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-        return portalPaid + appPaid;
-      }
-      return portalPaid;
-    };
+    const paidForHead = (cfg) => paidByConfigId.get(cfg.id) || 0;
 
     // Calculate individual paid amount head-wise
     const headBreakdown = fees.map(f => {
@@ -1215,17 +1201,27 @@ export default function FeeOperations() {
                           <h4 className="font-bold text-sm text-zinc-700 mb-4 flex items-center gap-2"><IndianRupee size={16} /> Record Payment</h4>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
+                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Academic Year</label>
+                              <select value={paymentForm.academicYear} onChange={e => setPaymentForm({...paymentForm, academicYear: e.target.value, feeHead: "", amount: ""})}
+                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
+                                <option value="">Auto (oldest due first)</option>
+                                {[...new Set(studentFeeDetails.headBreakdown.filter(h => h.due > 0).map(h => h.academicYear))].sort().map(y => (
+                                  <option key={y} value={y}>{y}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
                               <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Fee Head *</label>
                               <select value={paymentForm.feeHead} onChange={e => {
                                 const head = e.target.value;
-                                const headItem = studentFeeDetails.headBreakdown.find(h => h.head === head);
+                                const headItem = studentFeeDetails.headBreakdown.find(h => h.head === head && (!paymentForm.academicYear || h.academicYear === paymentForm.academicYear));
                                 const autoAmount = headItem ? headItem.due : "";
                                 setPaymentForm({...paymentForm, feeHead: head, amount: autoAmount ? String(autoAmount) : paymentForm.amount});
                               }}
                                 className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium">
                                 <option value="">Select Fee Head</option>
-                                {studentFeeDetails.headBreakdown.filter(h => h.due > 0).map(h => (
-                                  <option key={h.head} value={h.head}>{h.head} — ₹{h.due.toLocaleString()} due</option>
+                                {studentFeeDetails.headBreakdown.filter(h => h.due > 0 && (!paymentForm.academicYear || h.academicYear === paymentForm.academicYear)).map(h => (
+                                  <option key={`${h.academicYear}_${h.semester}_${h.head}`} value={h.head}>{h.head} — {h.academicYear} — ₹{h.due.toLocaleString()} due</option>
                                 ))}
                               </select>
                             </div>
@@ -1247,11 +1243,6 @@ export default function FeeOperations() {
                               <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Payment Date</label>
                               <input value={paymentForm.paymentDate} onChange={e => setPaymentForm({...paymentForm, paymentDate: e.target.value})} type="date"
                                 className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" />
-                            </div>
-                            <div>
-                              <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Semester</label>
-                              <input value={paymentForm.semester} onChange={e => setPaymentForm({...paymentForm, semester: e.target.value})}
-                                className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] text-sm font-medium" placeholder="e.g. Sem 3" />
                             </div>
                             <div>
                               <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Ref No / Remarks</label>

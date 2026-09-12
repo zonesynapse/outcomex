@@ -50,7 +50,7 @@ exports.createPaymentSession = onCall(
     const userEmail = request.auth.token.email || "";
     const userName = request.auth.token.name || "";
 
-    const { amount, feeHead, returnUrl } = data;
+    const { amount, feeHead, returnUrl, academicYear: requestedYear } = data;
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
       throw new HttpsError("invalid-argument", "Valid amount is required.");
@@ -110,13 +110,15 @@ exports.createPaymentSession = onCall(
       }
     }
 
-    let matchingConfig = null;
     const normStudentProg = (programme || "").replace(/[_.\s]/g, '').toLowerCase();
     const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
     const normStudentBatch = (batch || "").trim().toLowerCase();
 
+    const matchingConfigs = [];
+    const normReqHead = String(feeHead || '').trim().toLowerCase();
     feeConfigsSnap.forEach((doc) => {
       const data = doc.data();
+      if (String(data.head || '').trim().toLowerCase() !== normReqHead) return;
       const normDataProg = (data.programme || "").replace(/[_.\s]/g, '').toLowerCase();
       const normDataDept = (data.department || "").replace(/[_.\s]/g, '').toLowerCase();
       const normDataBatch = (data.batch || "").trim().toLowerCase();
@@ -127,27 +129,75 @@ exports.createPaymentSession = onCall(
       const isQuotaMatch = !seatCategory || !data.quota || data.quota === seatCategory;
 
       if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch) {
-        matchingConfig = data;
+        matchingConfigs.push(data);
       }
     });
 
-    if (!matchingConfig) {
+    if (!matchingConfigs.length) {
       throw new HttpsError("invalid-argument", `No fee configuration found for ${feeHead}.`);
     }
 
-    const configAmount = Number(matchingConfig.amount) || 0;
+    // Year-aware outstanding: each payment reduces exactly ONE year's config
+    // (tagged → that year, untagged legacy → oldest due first). Mirrors
+    // src/utils/feeAllocation.js so portal validation matches portal display.
+    const yearStartOf = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
+    const eqYear = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    const byYear = [...matchingConfigs].sort((a, b) => yearStartOf(a.academicYear) - yearStartOf(b.academicYear));
 
-    let totalPaid = 0;
+    const prevPayments = [];
     previousPaymentsSnap.forEach((doc) => {
       const data = doc.data();
       if (data.status === "SUCCESS") {
-        totalPaid += Number(data.chargedAmount || data.amount || 0);
+        const amt = Number(data.chargedAmount || data.amount || 0);
+        if (amt > 0) {
+          const ts = data.createdAt?.toMillis ? data.createdAt.toMillis() : new Date(data.createdAt || 0).getTime();
+          prevPayments.push({ academicYear: data.academicYear || '', amount: amt, ts: isNaN(ts) ? 0 : ts });
+        }
       }
     });
+    prevPayments.sort((a, b) => a.ts - b.ts);
 
-    const maxAllowedPay = Math.max(0, configAmount - totalPaid);
+    const paidPerYear = new Map(); // year -> paid
+    const remainingFor = (cfg) => Math.max(0, Number(cfg.amount || 0) - (paidPerYear.get(String(cfg.academicYear || '')) || 0));
+    const addPaid = (year, v) => paidPerYear.set(year, (paidPerYear.get(year) || 0) + v);
+
+    const untagged = [];
+    prevPayments.forEach((p) => {
+      const yr = String(p.academicYear || '').trim();
+      const hit = yr ? byYear.find((c) => eqYear(c.academicYear, yr)) : null;
+      if (hit) {
+        addPaid(String(hit.academicYear || ''), p.amount);
+      } else {
+        untagged.push(p);
+      }
+    });
+    untagged.forEach((p) => {
+      let left = p.amount;
+      for (const cfg of byYear) {
+        if (left <= 0) break;
+        const r = remainingFor(cfg);
+        if (r <= 0) continue;
+        const take = Math.min(r, left);
+        addPaid(String(cfg.academicYear || ''), take);
+        left -= take;
+      }
+      if (left > 0 && byYear.length) addPaid(String(byYear[0].academicYear || ''), left);
+    });
+
+    // Target year: requested year if configured, else earliest year with dues.
+    let targetCfg = requestedYear
+      ? byYear.find((c) => eqYear(c.academicYear, requestedYear))
+      : null;
+    if (!targetCfg) {
+      targetCfg = byYear.find((c) => remainingFor(c) > 0) || byYear[0];
+    }
+    const targetYear = String(targetCfg.academicYear || '');
+    const yearTotal = byYear.filter((c) => eqYear(c.academicYear, targetYear)).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    const yearPaid = paidPerYear.get(targetYear) || 0;
+
+    const maxAllowedPay = Math.max(0, yearTotal - yearPaid);
     if (amount > maxAllowedPay + 1) { // 1 rupee buffer for rounding
-      throw new HttpsError("invalid-argument", `Requested amount ₹${amount} exceeds the outstanding balance of ₹${maxAllowedPay} for ${feeHead}.`);
+      throw new HttpsError("invalid-argument", `Requested amount ₹${amount} exceeds the outstanding balance of ₹${maxAllowedPay} for ${feeHead} (${targetYear || 'current year'}).`);
     }
 
     const { baseUrl, merchantId, basicAuth, isSandbox } = getConfig();

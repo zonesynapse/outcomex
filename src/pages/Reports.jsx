@@ -1626,7 +1626,11 @@ export default function Reports() {
             });
           });
         } catch (e) { console.warn('QP list fetch failed:', e); }
-        const codeOfQp = (qp) => parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+        // JSON-string subjects ({"code":"BM3591",...}) must resolve via getQpSubjectCode —
+        // plain parseSubjectCodeKey returns '' for them and every QP gets skipped.
+        const codeOfQp = (qp) => getQpSubjectCode(qp) || parseSubjectCodeKey(qp.course || qp.subject_code || qp.courseCode);
+        // Exam-name compare ignoring "(Set 1)" / regulation tags: "IA 1 (Set 1)" → "ia1".
+        const normExamKey = (s) => String(s || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]/g, '').replace(/set[0-9a-z]+$/, '');
         const deriveCoMaxFromQp = (qp) => {
           const derived = {};
           const bump = (co, marks) => {
@@ -1658,18 +1662,19 @@ export default function Reports() {
           // co_max_marks priority: actual QP > saved weightage > observed maxima.
           let coMax = {};
           if (targetCode) {
-            const dispNorm = String(display).trim().toLowerCase();
+            const dispKey = normExamKey(display);
             const examRawNorm = String(g.examRaw || '').trim();
             const nameRawNorm = String(g.nameRaw || '').trim();
+            const rawNameKey = normExamKey(g.nameRaw);
             let bestQp = null, bestSum = -1;
             qpList.forEach(qp => {
               if (codeOfQp(qp) !== targetCode) return;
               if (qp.batch && batchYear && yearStartOf(qp.batch) && yearStartOf(qp.batch) !== batchYear) return;
               const ids = [qp._fieldId, qp.id, qp.qpaper_name, qp.qpaperName].filter(Boolean).map(String);
-              const names = [qp.exam_name, qp.examName, qp.exam].filter(Boolean).map(v => String(v).trim().toLowerCase());
-              const hit = ids.some(v => v === examRawNorm || v === nameRawNorm) ||
-                names.some(v => v === dispNorm) ||
-                (qp.qpaper_name && dispNorm && String(qp.qpaper_name).trim().toLowerCase() === dispNorm);
+              const names = [qp.exam_name, qp.examName, qp.exam, qp.qpaper_name, qp.qpaperName].filter(Boolean).map((v) => normExamKey(v));
+              const hit = ids.some((v) => v === examRawNorm || v === nameRawNorm) ||
+                (dispKey && names.some((v) => v === dispKey)) ||
+                (rawNameKey && names.some((v) => v === rawNameKey));
               if (!hit) return;
               const d = deriveCoMaxFromQp(qp);
               const sum = Object.values(d).reduce((a, b) => a + b, 0);

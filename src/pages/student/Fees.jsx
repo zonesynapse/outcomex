@@ -9,6 +9,7 @@ import {
   Ban, ShieldAlert,
 } from "lucide-react";
 import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, sanitizeKey } from "../../lib/utils";
+import { computePaidByConfig, yearStart } from "../../utils/feeAllocation";
 
 const PAYMENT_STATUS = {
   PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
@@ -467,14 +468,125 @@ export default function Fees() {
     return subscribeAppPaymentsForStudent(studentData, setAppPayments);
   }, [studentData]);
 
+  // Semester configs from Academic Calendar — the source of "current academic year".
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'semester_config'), (snap) => {
+      setSemesterConfigs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, () => setSemesterConfigs([]));
+    return () => unsub();
+  }, []);
+
+  // Current academic year per Academic Calendar: the semester_config covering
+  // TODAY for this student's programme + batch. Falls back to '' (date logic below).
+  const batchStartOf = (s) => {
+    const m = String(s || '').match(/(\d{4})/);
+    return m ? Number(m[1]) : null;
+  };
+
+  const calendarAcademicYear = useMemo(() => {
+    if (!studentData || !semesterConfigs.length) return '';
+    const progKey = formatProgrammeKey(studentData.programme || '');
+    const bStart = batchStartOf(studentData.batch || '');
+    if (!progKey || !bStart) return '';
+    const mine = semesterConfigs.filter((c) => {
+      if (c.programme && formatProgrammeKey(c.programme) !== progKey) return false;
+      const batches = Array.isArray(c.batch) ? c.batch : (c.batch ? [c.batch] : []);
+      if (!batches.length) return false;
+      return batches.some((b) => batchStartOf(b) === bStart);
+    });
+    if (!mine.length) return '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const inRange = mine.filter((c) => {
+      if (!c.startDate || !c.endDate) return false;
+      return today >= new Date(`${c.startDate}T00:00:00`) && today <= new Date(`${c.endDate}T00:00:00`);
+    });
+    const distToRange = (c) => {
+      if (!c.startDate || !c.endDate) return Infinity;
+      const t = today.getTime();
+      const s = new Date(`${c.startDate}T00:00:00`).getTime();
+      const e = new Date(`${c.endDate}T00:00:00`).getTime();
+      if (isNaN(s) || isNaN(e)) return Infinity;
+      if (t < s) return s - t;
+      if (t > e) return t - e;
+      return 0;
+    };
+    const pick = (inRange.length ? inRange : [...mine].sort((a, b) => distToRange(a) - distToRange(b)))[0];
+    return String(pick?.academicYear || '').trim();
+  }, [studentData, semesterConfigs]);
+
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(t);
   }, [toast]);
 
+  const isSuccessfulPayment = (p) => {
+    if (!p) return false;
+    if (p.status === "FAILED" || p.status === "CANCELLED" || p.status === "cancelled") return false;
+    return p.status === "SUCCESS" || p.status === "active" || p.status === undefined || p.status === null;
+  };
+
+  // Each portal payment reduces exactly ONE config (year-tagged → that year,
+  // untagged legacy → oldest due first). Application payments keep the
+  // first-year-only rule. Shared allocator keeps office & portal consistent.
+  // Declared BEFORE the gating memos below (they read this map).
+  const paidByConfigId = useMemo(() => computePaidByConfig({
+    configs: feeConfigs,
+    portalPayments: payments.filter((p) => isSuccessfulPayment(p)),
+    appPayments: appPayments.filter((p) => isSuccessfulPayment(p)),
+  }), [feeConfigs, payments, appPayments]);
+
+  // --- Single-year gating: show only ONE academic year at a time ---
+  // Case 2: earliest year with dues. Case 1: otherwise the current academic year.
+  const isRealYear = (y) => /^\d{4}-\d{4}$/.test(String(y || '').trim());
+
+  const currentAcademicYear = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const start = (now.getMonth() + 1) >= 6 ? y : y - 1; // June–May academic year
+    return `${start}-${start + 1}`;
+  };
+
+  // Target year = batch + Academic Calendar year (date fallback).
+  const targetYear = calendarAcademicYear || currentAcademicYear();
+
+  // Visible year rule:
+  //  - Previous academic year incomplete → show earliest due year (current stays hidden).
+  //  - Previous years clear → show the calendar/target year, paid or not.
+  const visibleYear = useMemo(() => {
+    const years = [...new Set(feeConfigs.map((c) => String(c.academicYear || '—')).filter(isRealYear))]
+      .sort((a, b) => yearStart(a) - yearStart(b));
+    if (!years.length) return '';
+    const dueByYear = new Map();
+    feeConfigs.forEach((c) => {
+      const y = String(c.academicYear || '—');
+      if (!isRealYear(y)) return;
+      const paid = paidByConfigId.get(c.id) || 0;
+      dueByYear.set(y, (dueByYear.get(y) || 0) + Math.max(0, (Number(c.amount) || 0) - paid));
+    });
+    const dueOf = (y) => dueByYear.get(y) || 0;
+    // Only years up to the target can pull the view back; future dues never do.
+    const eligible = targetYear ? years.filter((y) => yearStart(y) <= yearStart(targetYear)) : years;
+    const pool = eligible.length ? eligible : years;
+    const pendingPrev = pool.find((y) => dueOf(y) > 0);
+    if (pendingPrev) return pendingPrev;
+    if (targetYear && years.includes(targetYear)) return targetYear;
+    return years[years.length - 1];
+  }, [feeConfigs, paidByConfigId, targetYear]);
+
+  // Year-agnostic rows (e.g. Transport "—") always stay visible.
+  const visibleFeeConfigs = useMemo(() => {
+    if (!visibleYear) return feeConfigs.filter((c) => !isRealYear(c.academicYear));
+    return feeConfigs.filter((c) => {
+      const y = String(c.academicYear || '—');
+      return y === visibleYear || !isRealYear(y);
+    });
+  }, [feeConfigs, visibleYear]);
+
   const groupedFeeConfigs = useMemo(() => {
-    const sorted = [...feeConfigs].sort((a, b) => {
+    const sorted = [...visibleFeeConfigs].sort((a, b) => {
       const yr = (a.academicYear || '').localeCompare(b.academicYear || '');
       if (yr) return yr;
       const semA = a.semester || 'All';
@@ -499,28 +611,22 @@ export default function Fees() {
       currentSem.rows.push(cfg);
     });
     return groups;
-  }, [feeConfigs]);
+  }, [visibleFeeConfigs]);
 
+  // Summary cards show ONLY the visible year's sums.
   const totalFee = useMemo(() => {
-    return feeConfigs.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-  }, [feeConfigs]);
+    return visibleFeeConfigs.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  }, [visibleFeeConfigs]);
 
-  const isSuccessfulPayment = (p) => {
-    if (!p) return false;
-    if (p.status === "FAILED" || p.status === "CANCELLED" || p.status === "cancelled") return false;
-    return p.status === "SUCCESS" || p.status === "active" || p.status === undefined || p.status === null;
-  };
+  const visiblePaid = useMemo(() => {
+    return visibleFeeConfigs.reduce((s, c) => s + (paidByConfigId.get(c.id) || 0), 0);
+  }, [visibleFeeConfigs, paidByConfigId]);
 
-  const totalPaid = useMemo(() => {
-    return [...payments, ...appPayments]
-      .filter((p) => isSuccessfulPayment(p))
-      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-  }, [payments, appPayments]);
+  const totalPaid = visiblePaid;
 
   const pending = Math.max(0, totalFee - totalPaid);
 
   // Determine the FIRST academic year per fee head — application-time payments only reduce that year's head
-  const yearStart = (y) => Number(String(y || '').match(/^\d{4}/)?.[0] || 99999);
   const normHead = (s) => {
     const str = String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
     if (!str) return '';
@@ -534,32 +640,7 @@ export default function Fees() {
     return str;
   };
 
-  // A config is the "first year" instance of its head when it's the only config for that head,
-  // or when all same-headed configs share the same year, or when it's the chronologically earliest year.
-  const isFirstYearConfig = (cfg) => {
-    const nh = normHead(cfg.head);
-    const siblings = feeConfigs.filter((c) => normHead(c.head) === nh);
-    if (siblings.length <= 1) return true;
-    const distinctYears = [...new Set(siblings.map((c) => String(c.academicYear || '').trim()))];
-    if (distinctYears.length <= 1) return true;
-    return yearStart(cfg.academicYear) === Math.min(...siblings.map((c) => yearStart(c.academicYear)));
-  };
-
-  const paidForHead = (cfg) => {
-    const nh = normHead(cfg.head);
-    // Portal payments count against every matching head
-    const portalPaid = payments
-      .filter((p) => isSuccessfulPayment(p) && normHead(p.feeHead) === nh)
-      .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-    // Application payments ONLY reduce the FIRST academic year's config for that head
-    if (isFirstYearConfig(cfg)) {
-      const appPaid = appPayments
-        .filter((p) => isSuccessfulPayment(p) && normHead(p.feeHead) === nh)
-        .reduce((s, p) => s + (Number(p.chargedAmount || p.amount) || 0), 0);
-      return portalPaid + appPaid;
-    }
-    return portalPaid;
-  };
+  const paidForHead = (cfg) => paidByConfigId.get(cfg.id) || 0;
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
@@ -590,6 +671,7 @@ export default function Fees() {
       const result = await createSession({
         amount,
         feeHead: payModal.feeHead,
+        academicYear: payModal.academicYear || "",
         returnUrl,
         phone: studentData?.phone || "",
       });
@@ -677,8 +759,16 @@ export default function Fees() {
           <div className="bg-[#120c7a] px-6 py-3 flex items-center gap-3">
             <Wallet size={20} className="text-white" />
             <h2 className="text-white font-bold text-lg">Fee Structure</h2>
+            {visibleYear ? (
+              <span className="ml-auto text-[10px] font-bold bg-white/15 text-white px-2.5 py-1 rounded-full uppercase tracking-widest">{visibleYear} only</span>
+            ) : null}
           </div>
-          {feeConfigs.length === 0 ? (
+          {visibleYear && targetYear && yearStart(visibleYear) < yearStart(targetYear) ? (
+            <p className="px-6 pt-3 text-[11px] font-semibold text-amber-600">
+              Showing {visibleYear} dues only — clear them to unlock {targetYear}.
+            </p>
+          ) : null}
+          {visibleFeeConfigs.length === 0 ? (
             <div className="py-12 text-center">
               <IndianRupee size={36} className="mx-auto text-slate-200 mb-2" />
               <p className="text-sm font-medium text-slate-400">No fee structure configured.</p>
@@ -735,7 +825,7 @@ export default function Fees() {
                               }`}
                               onClick={() => {
                                 if (!isFullyPaid) {
-                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
+                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', academicYear: cfg.academicYear || '', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
                                 }
                               }}
                             >{cfg.head || 'Fee'}</td>
@@ -747,7 +837,7 @@ export default function Fees() {
                               }`}
                               onClick={() => {
                                 if (!isFullyPaid) {
-                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
+                                  setPayModal({ open: true, feeHead: cfg.head || 'Fee', academicYear: cfg.academicYear || '', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
                                 }
                               }}
                             >
@@ -931,7 +1021,7 @@ export default function Fees() {
             </div>
             <div className="p-6 space-y-4">
               <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100">
-                <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Fee Head</p>
+                <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Fee Head{payModal.academicYear ? ` • ${payModal.academicYear}` : ""}</p>
                 <p className="text-lg font-black text-zinc-800 mt-1">{payModal.feeHead}</p>
                 <div className="mt-3 pt-3 border-t border-blue-100/50">
                   <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Amount to Pay</p>
