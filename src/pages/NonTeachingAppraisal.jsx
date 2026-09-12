@@ -431,8 +431,8 @@ export default function NonTeachingAppraisal() {
               <select
                 value={academicYear}
                 onChange={(e) => setAcademicYear(e.target.value)}
-                disabled={isReadOnly}
-                className="bg-white/10 text-white font-bold text-sm px-4 py-2 rounded-xl border border-white/20 outline-none focus:bg-white/20 transition-all cursor-pointer disabled:opacity-50"
+                disabled={true}
+                className="bg-white/10 text-white font-bold text-sm px-4 py-2 rounded-xl border border-white/20 outline-none transition-all cursor-not-allowed opacity-80"
               >
                 <option value="2024-2025" className="text-zinc-900">2024 – 2025</option>
                 <option value="2025-2026" className="text-zinc-900">2025 – 2026</option>

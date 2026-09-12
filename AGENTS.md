@@ -1,5 +1,12 @@
 ## Summary of Changes
 
+### 424. Lock Academic Year Dropdown Selection in Non-Teaching & HOD Appraisal Forms (`NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
+- **Goal**: Lock the Academic Year dropdown selection (`disabled={true}`) in both [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx) and [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx) to match [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx), ensuring the active academic session is strictly controlled by HR in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
+- **Fix**:
+  - In [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx): Updated Academic Session `<select>` element to set `disabled={true}` and `cursor-not-allowed opacity-80`.
+  - In [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx): Updated Academic Year `<select>` element to set `disabled={true}` and `cursor-not-allowed opacity-80`.
+- **Result**: Users cannot manually change the academic year in the dropdown on Non-Teaching and HOD Appraisal Request pages; the academic session is strictly set by the active HR schedule. Build passes in 6.71s with 0 errors.
+
 ### 423. Fix `setIsPortalOpen` & `checkingSchedule` ReferenceErrors (`NonTeachingAppraisal.jsx`)
 - **Goal**: Fix runtime console errors `ReferenceError: Can't find variable: setIsPortalOpen` and `ReferenceError: Can't find variable: checkingSchedule` in [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx).
 - **Root Cause**: `isPortalOpen` and `checkingSchedule` states were referenced in the schedule snapshot listener and render check, but were missing from the component state declarations.
