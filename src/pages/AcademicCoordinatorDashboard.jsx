@@ -33,6 +33,24 @@ const formatDateKey = (date) => {
   return `${y}-${m}-${d}`;
 };
 
+const getBase64ImageFromUrl = async (imageUrl) => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const dataURL = canvas.toDataURL('image/png');
+      resolve(dataURL);
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageUrl;
+  });
+};
+
 const createdAtMillis = (val) => {
   if (!val) return 0;
   if (typeof val === "number") return val;
@@ -97,6 +115,316 @@ const timeAgo = (dateStr) => {
   if (diffDays === 1) return "Yesterday";
   if (diffDays < 7) return `${diffDays}d ago`;
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+};
+
+// IA Consolidation helpers
+const deriveIAReportSemesterNumber = (semStr) => {
+  if (!semStr) return null;
+  const match = String(semStr).match(/\d+/);
+  return match ? parseInt(match[0]) : null;
+};
+
+const parseIAReportSubjectCode = (val) => {
+  if (!val) return '';
+  if (typeof val === 'object') val = val.code || val.CODE || val.subjectCode || val.courseCode || '';
+  let str = String(val).trim();
+  if (!str || str.startsWith('{') || str.startsWith('[') || str.includes('OBJECT')) return '';
+  if (str.includes(' - ')) str = str.split(' - ')[0].trim();
+  return str.split(/\s+/)[0].trim().toUpperCase();
+};
+
+const extractIAReportMarksMeta = (d) => {
+  if (!d) return {};
+  const data = typeof d.data === 'function' ? d.data() : (d || {});
+  const m = data._meta || {};
+  const qm = data.qpaper_meta || {};
+  return {
+    programme: data.programme || m.programme || qm.programme || '',
+    department: data.department || m.department || qm.department || '',
+    batch: data.batch || m.batch || qm.batch || '',
+    academicYear: data.academic_year || m.academic_year || qm.academic_year || data.academicYear || '',
+    semesterLabel: data.semester_label || qm.semester_label || m.semester_label || data.semester || m.semester || qm.semester || '',
+    section: data.section || qm.section || m.section || '',
+    subject: data.subject || qm.subject || m.subject || '',
+    exam: data.exam || m.exam || qm.exam || '',
+    examName: data.exam_name || m.exam_name || qm.exam_name || '',
+    students: data.students || {}
+  };
+};
+
+const extractIAReportStudentTotal = (s) => {
+  if (s == null) return { total: 0, absent: false, hasRecord: false };
+  if (typeof s === 'number') return { total: s, absent: false, hasRecord: true };
+  if (typeof s === 'string') {
+    const t = s.trim();
+    if (t.toUpperCase() === 'A' || t.toLowerCase() === 'absent') return { total: 0, absent: true, hasRecord: true };
+    if (t === '') return { total: 0, absent: false, hasRecord: false };
+    const num = Number(t);
+    return { total: isNaN(num) ? 0 : num, absent: false, hasRecord: true };
+  }
+  const isAbsent = Boolean(s.absent === true || s.absent === 'true' || s.isAbsent === true || s.status === 'absent' || String(s.total || '').toUpperCase() === 'A' || String(s.mark || '').toUpperCase() === 'A' || String(s.score || '').toUpperCase() === 'A');
+  
+  let total = 0;
+  let hasExplicitValue = false;
+
+  if (s.total !== undefined && s.total !== null && s.total !== '' && String(s.total).toUpperCase() !== 'A') {
+    total = Number(s.total) || 0;
+    hasExplicitValue = true;
+  } else if (s.overall !== undefined && s.overall !== null && s.overall !== '') {
+    total = Number(s.overall) || 0;
+    hasExplicitValue = true;
+  } else if (s.mark !== undefined && s.mark !== null && s.mark !== '') {
+    total = Number(s.mark) || 0;
+    hasExplicitValue = true;
+  } else if (s.marks !== undefined && s.marks !== null && s.marks !== '') {
+    total = Number(s.marks) || 0;
+    hasExplicitValue = true;
+  } else if (s.score !== undefined && s.score !== null && s.score !== '') {
+    total = Number(s.score) || 0;
+    hasExplicitValue = true;
+  }
+
+  if (!hasExplicitValue && total <= 0 && !isAbsent) {
+    const coKeys = Object.keys(s).filter(k => /^CO\d+/i.test(k));
+    if (coKeys.length > 0) {
+      total = coKeys.reduce((acc, k) => acc + (Number(s[k]) || 0), 0);
+      hasExplicitValue = true;
+    }
+  }
+
+  if (!hasExplicitValue && total <= 0 && !isAbsent) {
+    ['partA', 'partB', 'partC'].forEach(partKey => {
+      if (s[partKey] && typeof s[partKey] === 'object') {
+        Object.values(s[partKey]).forEach(item => {
+          if (typeof item === 'number' && !isNaN(item)) { total += item; hasExplicitValue = true; }
+          else if (typeof item === 'string' && item.trim() !== '' && !isNaN(Number(item))) { total += Number(item); hasExplicitValue = true; }
+          else if (item && typeof item === 'object') {
+            const mv = item.mark ?? item.marks ?? item.score ?? item.value;
+            if (typeof mv === 'number' && !isNaN(mv)) { total += mv; hasExplicitValue = true; }
+            else if (typeof mv === 'string' && mv.trim() !== '' && !isNaN(Number(mv))) { total += Number(mv); hasExplicitValue = true; }
+          }
+        });
+      }
+    });
+  }
+
+  if (!hasExplicitValue && total <= 0 && !isAbsent && s.assignment && typeof s.assignment === 'object') {
+    Object.values(s.assignment).forEach(mark => {
+      const num = Number(mark);
+      if (!isNaN(num)) { total += num; hasExplicitValue = true; }
+    });
+  }
+
+  return { total, absent: isAbsent, hasRecord: true };
+};
+
+const lookupStudentScoreInMap = (scoreMap, stInfo, fallbackKey) => {
+  if (!scoreMap) return null;
+  const candidateKeys = Array.from(new Set([
+    stInfo.reg,
+    stInfo.admNo,
+    stInfo.admissionNo,
+    stInfo.rollNo,
+    stInfo.uid,
+    fallbackKey
+  ].filter(Boolean).map(k => String(k).trim().toUpperCase())));
+
+  for (const ck of candidateKeys) {
+    if (scoreMap.has(ck)) {
+      return scoreMap.get(ck);
+    }
+  }
+
+  if (scoreMap.size > 0) {
+    const scoreKeys = Array.from(scoreMap.keys());
+    for (const ck of candidateKeys) {
+      const matchedKey = scoreKeys.find(sk => sk === ck || sk.endsWith(ck) || ck.endsWith(sk));
+      if (matchedKey) {
+        return scoreMap.get(matchedKey);
+      }
+    }
+  }
+  return null;
+};
+
+const iaReportYearStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || '';
+
+const iaReportMatchMeta = (docMeta, { programme, department, batch, academicYear, semester, subject, section }) => {
+  const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (programme && docMeta.programme && norm(docMeta.programme) !== norm(programme)) return false;
+  if (department && docMeta.department && norm(docMeta.department) !== norm(department)) return false;
+  if (batch && docMeta.batch) {
+    const y1 = iaReportYearStartOf(docMeta.batch), y2 = iaReportYearStartOf(batch);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.batch) !== norm(batch)) return false;
+  }
+  if (academicYear && docMeta.academicYear) {
+    const y1 = iaReportYearStartOf(docMeta.academicYear), y2 = iaReportYearStartOf(academicYear);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.academicYear) !== norm(academicYear)) return false;
+  }
+  if (semester && docMeta.semesterLabel) {
+    const n1 = deriveIAReportSemesterNumber(docMeta.semesterLabel), n2 = deriveIAReportSemesterNumber(semester);
+    if (n1 && n2) { if (Number(n1) !== Number(n2)) return false; }
+    else if (norm(docMeta.semesterLabel) !== norm(semester)) return false;
+  }
+  if (section && docMeta.section && docMeta.section !== 'all' && norm(docMeta.section) !== norm(section)) return false;
+  if (subject && docMeta.subject) {
+    const selCode = parseIAReportSubjectCode(subject);
+    const docCode = parseIAReportSubjectCode(docMeta.subject);
+    if (selCode && docCode && selCode !== docCode) return false;
+  }
+  return true;
+};
+
+const resolveExamMaxMark = (ciaConfigs, targetExamName, targetAY, docMeta, courseWeightageData = {}) => {
+  if (!targetExamName) return 100;
+  const normExamName = String(targetExamName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetAyYear = iaReportYearStartOf(targetAY);
+
+  // Helper to extract exam mark from a category's exam_marks map
+  const getMarkFromExamMarksMap = (examMarksMap) => {
+    if (!examMarksMap || typeof examMarksMap !== 'object') return null;
+    for (const [eKey, mVal] of Object.entries(examMarksMap)) {
+      if (mVal !== undefined && mVal !== null && mVal !== '' && Number(mVal) > 0) {
+        const eKeyClean = String(eKey).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (eKeyClean === normExamName) {
+          return Number(mVal);
+        }
+
+        const ciaObj = ciaConfigs?.[eKey] || ciaConfigs?.[String(eKey).trim()];
+        if (ciaObj) {
+          const ciaNameClean = String(ciaObj.examName || ciaObj.exam_name || ciaObj.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (ciaNameClean === normExamName) {
+            return Number(mVal);
+          }
+        }
+
+        const ciaEntries = Object.entries(ciaConfigs || {});
+        const foundEntry = ciaEntries.find(([cId, cVal]) => {
+          if (cId === eKey || String(cId).trim() === String(eKey).trim()) return true;
+          const cName = String(cVal?.examName || cVal?.exam_name || cVal?.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          return cName && cName === eKeyClean;
+        });
+
+        if (foundEntry) {
+          const ciaNameClean = String(foundEntry[1]?.examName || foundEntry[1]?.exam_name || foundEntry[1]?.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (ciaNameClean === normExamName) {
+            return Number(mVal);
+          }
+        }
+      }
+    }
+    return null;
+  };
+
+  // Helper to search a course_type_weightage doc object
+  const searchDocForExamMark = (docVal) => {
+    if (!docVal || typeof docVal !== 'object') return null;
+    for (const [ctKey, ctVal] of Object.entries(docVal)) {
+      if (!ctVal || typeof ctVal !== 'object' || ctKey.startsWith('_')) continue;
+      
+      const catConfig = ctVal._category_config;
+      if (catConfig && typeof catConfig === 'object') {
+        for (const catVal of Object.values(catConfig)) {
+          const m = getMarkFromExamMarksMap(catVal?.exam_marks);
+          if (m) return m;
+        }
+      }
+
+      if (ctVal.exam_marks) {
+        const m = getMarkFromExamMarksMap(ctVal.exam_marks);
+        if (m) return m;
+      }
+
+      for (const [k, v] of Object.entries(ctVal)) {
+        if (!k.startsWith('_') && v && typeof v === 'object' && v.exam_marks) {
+          const m = getMarkFromExamMarksMap(v.exam_marks);
+          if (m) return m;
+        }
+      }
+    }
+    return null;
+  };
+
+  // 1. Scan course_type_weightage (Curriculum Course Categories & Weightage per AY as configured in Image 2)
+  if (courseWeightageData && Object.keys(courseWeightageData).length > 0) {
+    for (const [docId, docVal] of Object.entries(courseWeightageData)) {
+      const docIdClean = String(docId).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const targetAyClean = String(targetAY || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const targetAyStart = targetAyYear ? String(targetAyYear).toLowerCase() : '';
+
+      const matchesAy = targetAY && ((targetAyClean && docIdClean.includes(targetAyClean)) || (targetAyStart && docIdClean.includes(targetAyStart)));
+      if (matchesAy) {
+        const m = searchDocForExamMark(docVal);
+        if (m) return m;
+      }
+    }
+
+    for (const [, docVal] of Object.entries(courseWeightageData)) {
+      const m = searchDocForExamMark(docVal);
+      if (m) return m;
+    }
+  }
+
+  // 2. Check docMeta if max_marks / maxMarks / totalMarks is explicitly recorded on the marks doc
+  const docMax = Number(
+    docMeta?.max_marks ||
+    docMeta?.maxMarks ||
+    docMeta?.max_mark ||
+    docMeta?.totalMarks ||
+    docMeta?.qpaper_meta?.max_marks ||
+    docMeta?.qpaper_meta?.max_marks_total ||
+    docMeta?._meta?.max_marks ||
+    0
+  );
+  if (docMax > 0) return docMax;
+
+  // 3. Search in cia_configs for matching examName and academicYear
+  const ciaEntries = Object.entries(ciaConfigs || {});
+
+  const matchedEntry = ciaEntries.find(([id, cfg]) => {
+    if (!cfg) return false;
+    const cfgName = String(cfg.examName || cfg.exam_name || cfg.name || id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (cfgName !== normExamName) return false;
+
+    const cfgAy = cfg.academicYear || cfg.academic_year || cfg.ay || '';
+    if (cfgAy && targetAyYear) {
+      const cfgAyYear = iaReportYearStartOf(cfgAy);
+      return cfgAyYear === targetAyYear;
+    }
+    return true;
+  });
+
+  if (matchedEntry) {
+    const matchedConfig = matchedEntry[1];
+    if (matchedConfig.maxMarksByAy && targetAY && matchedConfig.maxMarksByAy[targetAY]) {
+      return Number(matchedConfig.maxMarksByAy[targetAY]);
+    }
+    const sanAy = String(targetAY || '').replace(/[.#$[\]]/g, '_');
+    if (matchedConfig.maxMarksByAy && sanAy && matchedConfig.maxMarksByAy[sanAy]) {
+      return Number(matchedConfig.maxMarksByAy[sanAy]);
+    }
+    if (matchedConfig.totalMarks && Number(matchedConfig.totalMarks) > 0) {
+      return Number(matchedConfig.totalMarks);
+    }
+    if (matchedConfig.maxMarks && Number(matchedConfig.maxMarks) > 0) {
+      return Number(matchedConfig.maxMarks);
+    }
+  }
+
+  // 4. Fallback search across all cia_configs
+  const anyEntry = ciaEntries.find(([id, cfg]) => {
+    if (!cfg) return false;
+    const cfgName = String(cfg.examName || cfg.exam_name || cfg.name || id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return cfgName === normExamName && (cfg.totalMarks || cfg.maxMarks || cfg.max_marks);
+  });
+
+  if (anyEntry) {
+    return Number(anyEntry[1].totalMarks || anyEntry[1].maxMarks || anyEntry[1].max_marks || 100);
+  }
+
+  return 100;
 };
 
 export default function AcademicCoordinatorDashboard() {
@@ -181,6 +509,12 @@ export default function AcademicCoordinatorDashboard() {
   const [reportSemester, setReportSemester] = useState("");
   const [selectedReportSubjects, setSelectedReportSubjects] = useState([]);
   const [pendingAttendanceModal, setPendingAttendanceModal] = useState({ open: false, items: [] });
+
+  // IA Consolidation Report state
+  const [iaReportLoading, setIaReportLoading] = useState(false);
+  const [iaReportData, setIaReportData] = useState(null);
+  const [iaReportExam, setIaReportExam] = useState("");
+  const [nonObeSubjectCodes, setNonObeSubjectCodes] = useState(new Set());
 
   const averageAttendance = useMemo(() => {
     if (!generatedReport || generatedReport.students.length === 0) return "0.0";
@@ -920,14 +1254,24 @@ export default function AcademicCoordinatorDashboard() {
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 5000);
   };
 
+  const [courseWeightageData, setCourseWeightageData] = useState({});
+
+  useEffect(() => {
+    const wRef = collection(db, 'course_type_weightage');
+    const unsub = onSnapshot(wRef, (snap) => {
+      const data = {};
+      snap.forEach(doc => { data[doc.id] = doc.data(); });
+      setCourseWeightageData(data);
+    });
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     const ciaRef = collection(db, 'cia_configs');
     const unsubscribe = onSnapshot(ciaRef, (snapshot) => {
-      if (snapshot.exists) {
-        const data = {};
-        snapshot.forEach(d => { data[d.id] = d.data(); });
-        setCiaConfigs(data);
-      }
+      const data = {};
+      snapshot.forEach(d => { data[d.id] = d.data(); });
+      setCiaConfigs(data);
     });
     return () => unsubscribe();
   }, []);
@@ -1901,6 +2245,31 @@ export default function AcademicCoordinatorDashboard() {
     return unique.sort((a, b) => a.code.localeCompare(b.code));
   }, [reportBatch, reportSemester, reportSection, reportBatchItems, subjectNamesMap]);
 
+  const availableReportExams = useMemo(() => {
+    if (!reportSemester) return [];
+    const ciaArray = Array.isArray(ciaConfigs) ? Object.values(ciaConfigs) : Object.values(ciaConfigs || {});
+    const exams = [];
+    const seen = new Set();
+    ciaArray.forEach(cfg => {
+      if (!cfg) return;
+      if (cfg.isPractical || cfg.isAssignment || cfg.isActivity || cfg.isProject || cfg.isIndirectAssessment || cfg.isUniversity) return;
+      const examName = cfg.examName || cfg.exam_name || cfg.name || '';
+      if (!examName || seen.has(examName)) return;
+      const cfgSem = deriveIAReportSemesterNumber(cfg.semester);
+      if (cfgSem && cfgSem !== Number(reportSemester)) return;
+      seen.add(examName);
+      const maxForExam = resolveExamMaxMark(ciaConfigs, examName, reportAcademicYear, null, courseWeightageData);
+      exams.push({ id: cfg.id || examName, name: examName, totalMarks: maxForExam });
+    });
+    if (exams.length === 0) {
+      ['IA 1', 'IA 2', 'IA 3', 'Model Exam'].forEach(name => {
+        const maxForExam = resolveExamMaxMark(ciaConfigs, name, reportAcademicYear, null, courseWeightageData);
+        exams.push({ id: name, name, totalMarks: maxForExam });
+      });
+    }
+    return exams;
+  }, [ciaConfigs, reportSemester, reportAcademicYear, courseWeightageData]);
+
   // Determine current academic year (Jul→Dec = current+next, Jan→Jun = prev-current)
   const currentAcademicYear = useMemo(() => {
     const today = new Date();
@@ -2009,6 +2378,481 @@ export default function AcademicCoordinatorDashboard() {
     setReportFromDate(prev => (prev && prev >= reportDateRange.min ? prev : reportDateRange.min));
     setReportToDate(prev => (prev && prev <= reportDateRange.max ? prev : reportDateRange.max));
   }, [reportDateRange]);
+
+  // ═══ IA Consolidation Report — fetch non-OBE subject codes from syllabus_data ═══
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { collection, onSnapshot } = await import('firebase/firestore');
+        const { db } = await import('../firebase');
+        const unsub = onSnapshot(collection(db, 'syllabus_data'), (snap) => {
+          if (cancelled) return;
+          const setOfCodes = new Set();
+          snap.docs.forEach(doc => {
+            const data = doc.data();
+            const semesters = data.semesters || {};
+            Object.values(semesters).forEach(subs => {
+              const arr = Array.isArray(subs) ? subs : Object.values(subs);
+              arr.forEach(sub => {
+                if (sub && (sub.isNonOBE === true || sub.isNonOBE === 'true' || sub.nonObe === true || sub.isNonObe === true) && sub.code) {
+                  setOfCodes.add(String(sub.code).trim().toUpperCase());
+                }
+              });
+            });
+          });
+          if (!cancelled) setNonObeSubjectCodes(setOfCodes);
+        }, err => console.warn('syllabus_data listener error:', err));
+        return () => unsub();
+      } catch (e) {
+        console.warn('syllabus_data fetch error:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ═══ IA Consolidation Report — load marks from Firestore (Exam mode) ═══
+  useEffect(() => {
+    if (!iaReportExam) { setIaReportData(null); return; }
+    let cancelled = false;
+    (async () => {
+      setIaReportLoading(true);
+      try {
+        const { collection, onSnapshot } = await import('firebase/firestore');
+        const { db } = await import('../firebase');
+
+        const colRef = collection(db, 'marks');
+
+        const studentMap = new Map();
+        sectionStudents.forEach(st => {
+          if (!st.reg && !st.admNo) return;
+          if (reportBatch && st.batch !== reportBatch) return;
+          if (reportSection) {
+            const stSec = st.docId?.split('_').find(p => p.startsWith('Sec-'));
+            if (stSec && stSec !== reportSection) return;
+          }
+          const key = st.reg || st.admNo || '';
+          if (key) {
+            studentMap.set(key, {
+              reg: st.reg || '',
+              admNo: st.admNo || st.admissionNo || st.rollNo || '',
+              admissionNo: st.admissionNo || '',
+              rollNo: st.rollNo || '',
+              uid: st.uid || '',
+              name: st.name || allStudentNames[st.reg] || '',
+              batch: st.batch || '',
+              section: st.docId?.split('_').find(p => p.startsWith('Sec-')) || ''
+            });
+          }
+        });
+
+        const unsub = onSnapshot(colRef, async (snap) => {
+          if (cancelled) return;
+
+          const defaultExamMax = resolveExamMaxMark(ciaConfigs, iaReportExam, reportAcademicYear, null, courseWeightageData) || 100;
+
+          const subjectMap = new Map();
+          const subjectStudentScores = new Map();
+
+          snap.docs.forEach(doc => {
+            const meta = extractIAReportMarksMeta(doc);
+            if (!iaReportMatchMeta(meta, { department: hodDepartment || '', batch: reportBatch, academicYear: reportAcademicYear, semester: reportSemester })) return;
+
+            const docExamName = meta.examName || meta.exam || '';
+            if (docExamName !== iaReportExam && doc.id !== iaReportExam) return;
+
+            const rawSub = meta.subject || '';
+            const subCode = parseIAReportSubjectCode(rawSub);
+            if (!subCode) return;
+            const normSubCode = String(subCode).trim().toUpperCase();
+
+            // EXCLUDE NON-OBE SUBJECTS
+            if (nonObeSubjectCodes.has(normSubCode)) return;
+
+            const studentsObj = meta.students || {};
+            const hasMarks = Object.values(studentsObj).some(val => val != null);
+            if (!hasMarks) return;
+
+            const maxForExam = resolveExamMaxMark(ciaConfigs, iaReportExam, reportAcademicYear, meta, courseWeightageData) || defaultExamMax;
+
+            if (!subjectMap.has(subCode)) {
+              const matchedSubject = availableReportSubjects.find(s => s.code === subCode);
+              const subName = matchedSubject?.name || subjectNamesMap[subCode] || rawSub;
+              subjectMap.set(subCode, { id: subCode, code: subCode, name: subName, max: maxForExam });
+            } else {
+              const existingSub = subjectMap.get(subCode);
+              if (maxForExam && maxForExam > 0) {
+                existingSub.max = maxForExam;
+              }
+            }
+
+            if (!subjectStudentScores.has(subCode)) {
+              subjectStudentScores.set(subCode, new Map());
+            }
+            const scoreMap = subjectStudentScores.get(subCode);
+
+            Object.entries(studentsObj).forEach(([rawKey, val]) => {
+              if (val == null) return;
+              const normKey = String(rawKey).trim().toUpperCase();
+              const { total, absent, hasRecord } = extractIAReportStudentTotal(val);
+              if (!hasRecord) return;
+              const isAb = Boolean(absent || (val && (val.absent || val.isAbsent || String(val.total || '').toUpperCase() === 'A' || String(val.mark || '').toUpperCase() === 'A' || String(val.score || '').toUpperCase() === 'A')));
+              const existing = scoreMap.get(normKey);
+              if (!existing || total > existing.score || (!isAb && existing.isAbsent)) {
+                scoreMap.set(normKey, { score: total, max: maxForExam, isAbsent: isAb, hasRecord: true });
+              }
+            });
+          });
+
+          const subjectColumns = Array.from(subjectMap.values())
+            .filter(sub => !nonObeSubjectCodes.has(String(sub.code).trim().toUpperCase()))
+            .sort((a, b) => a.code.localeCompare(b.code));
+
+          subjectColumns.forEach(sub => {
+            if (!subjectStudentScores.has(sub.code)) {
+              subjectStudentScores.set(sub.code, new Map());
+            }
+          });
+
+          const studentData = [];
+          studentMap.forEach((stInfo, key) => {
+            const marks = {};
+            let totalScored = 0;
+            let totalMax = 0;
+            let hasAnyRecord = false;
+            let allAbsent = true;
+            let hasAnyFail = false;
+
+            subjectColumns.forEach(sub => {
+              const scoreMap = subjectStudentScores.get(sub.code);
+              const val = lookupStudentScoreInMap(scoreMap, stInfo, key);
+              marks[sub.code] = val;
+              if (val && val.hasRecord) {
+                hasAnyRecord = true;
+                const effMax = val.max || sub.max || defaultExamMax;
+                if (!val.isAbsent) {
+                  totalScored += val.score;
+                  allAbsent = false;
+                  if (val.score < effMax * 0.5) {
+                    hasAnyFail = true;
+                  }
+                } else {
+                  hasAnyFail = true;
+                }
+                totalMax += effMax;
+              }
+            });
+            if (studentMap.size > 0) {
+              const avgNum = totalMax > 0 ? (totalScored / totalMax) * 100 : 0;
+              const isPass = hasAnyRecord && !allAbsent && !hasAnyFail && avgNum >= 50;
+              studentData.push({
+                reg: stInfo.reg || key,
+                name: stInfo.name || allStudentNames[key] || '',
+                marks,
+                total: totalScored,
+                max: totalMax,
+                avg: totalMax > 0 ? avgNum.toFixed(1) : '0.0',
+                status: !hasAnyRecord ? 'N/A' : (allAbsent ? 'ABSENT' : (isPass ? 'PASSED' : 'FAILED')),
+                batch: stInfo.batch,
+                section: stInfo.section
+              });
+            }
+          });
+
+          studentData.sort((a, b) => (a.reg || '').localeCompare(b.reg || '', undefined, { numeric: true }));
+
+          // Calculate subject-wise statistics
+          const subjectStats = {};
+          subjectColumns.forEach(sub => {
+            const scoreMap = subjectStudentScores.get(sub.code);
+            let present = 0;
+            let absent = 0;
+            let pass = 0;
+            let fail = 0;
+
+            studentMap.forEach((stInfo, key) => {
+              const val = lookupStudentScoreInMap(scoreMap, stInfo, key);
+              if (!val || !val.hasRecord || val.isAbsent) {
+                absent++;
+              } else {
+                present++;
+                const effMax = val.max || sub.max || defaultExamMax;
+                if (val.score >= effMax * 0.5) {
+                  pass++;
+                } else {
+                  fail++;
+                }
+              }
+            });
+
+            const totalStr = studentData.length;
+            const passPct = present > 0 ? ((pass / present) * 100).toFixed(2) : "0.00";
+
+            subjectStats[sub.code] = {
+              totalStrength: totalStr,
+              presentCount: present,
+              absentCount: absent,
+              passCount: pass,
+              failCount: fail,
+              passPercentage: passPct
+            };
+          });
+
+          let overallPresent = 0;
+          let overallAbsent = 0;
+          let overallPass = 0;
+          let overallFail = 0;
+
+          studentData.forEach(st => {
+            if (st.status === 'PASSED') overallPass++;
+            else if (st.status === 'FAILED') overallFail++;
+            else if (st.status === 'ABSENT') overallAbsent++;
+
+            if (st.status !== 'ABSENT' && st.status !== 'N/A') overallPresent++;
+          });
+
+          const overallPassPct = overallPresent > 0 ? ((overallPass / overallPresent) * 100).toFixed(2) : "0.00";
+
+          const overallStats = {
+            totalStrength: studentData.length,
+            presentCount: overallPresent,
+            absentCount: overallAbsent,
+            passCount: overallPass,
+            failCount: overallFail,
+            passPercentage: overallPassPct
+          };
+
+          // Fetch Faculty Names for subjects from subject_assignments & users
+          const facultyMap = {};
+          try {
+            const assignSnap = await getDocs(collection(db, 'subject_assignments'));
+            const userSnap = await getDocs(collection(db, 'users'));
+            const userNames = {};
+            userSnap.forEach(d => {
+              const ud = d.data();
+              userNames[d.id] = ud?.facultyName || ud?.displayName || ud?.name || '';
+            });
+
+            assignSnap.forEach(doc => {
+              const data = doc.data();
+              Object.entries(data).forEach(([uid, subs]) => {
+                if (Array.isArray(subs) && userNames[uid]) {
+                  subs.forEach(s => {
+                    const sCode = parseIAReportSubjectCode(s);
+                    if (sCode) {
+                      if (!facultyMap[sCode]) {
+                        facultyMap[sCode] = userNames[uid];
+                      } else if (!facultyMap[sCode].includes(userNames[uid])) {
+                        facultyMap[sCode] += `, ${userNames[uid]}`;
+                      }
+                    }
+                  });
+                }
+              });
+            });
+          } catch (err) {
+            console.warn('Faculty map resolution error:', err);
+          }
+
+          setIaReportData({
+            type: 'exam',
+            students: studentData,
+            columns: subjectColumns,
+            exam: iaReportExam,
+            batch: reportBatch,
+            section: reportSection || 'All',
+            academicYear: reportAcademicYear,
+            semester: reportSemester,
+            subjectStats,
+            overallStats,
+            facultyMap
+          });
+          setIaReportLoading(false);
+        }, (error) => {
+          console.warn('IA Report exam marks listener error:', error);
+          if (!cancelled) setIaReportLoading(false);
+        });
+
+        return () => { cancelled = true; unsub(); };
+      } catch (err) {
+        console.error('IA Report error:', err);
+        if (!cancelled) setIaReportLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [iaReportExam, reportBatch, reportAcademicYear, reportSemester, reportSection, hodDepartment, sectionStudents, allStudentNames, ciaConfigs, availableReportSubjects, subjectNamesMap, nonObeSubjectCodes, courseWeightageData]);
+
+  const handleExportIAReportPDF = async () => {
+    if (!iaReportData || !iaReportData.students || iaReportData.students.length === 0) return;
+
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 10;
+
+      // Load logo from /logo.png
+      const logoBase64 = await getBase64ImageFromUrl('/logo.png');
+      let headerStartY = 10;
+
+      if (logoBase64) {
+        const logoWidth = 100;
+        const logoHeight = 16;
+        const logoX = (pageWidth - logoWidth) / 2;
+        doc.addImage(logoBase64, 'PNG', logoX, margin, logoWidth, logoHeight);
+        headerStartY = margin + logoHeight + 4;
+      }
+
+      // Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(18, 12, 122); // #120c7a
+      const titleText = `IA CONSOLIDATION REPORT — ${iaReportExam || 'EXAM OVERVIEW'}`;
+      doc.text(titleText, pageWidth / 2, headerStartY, { align: 'center' });
+
+      // Metadata Subtitle
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(80, 80, 80);
+      const metaText = `Department: ${hodDepartment || 'All'}   |   Batch: ${reportBatch || '—'}   |   Academic Year: ${reportAcademicYear || '—'}   |   Semester: ${reportSemester || '—'}   |   Section: ${reportSection || 'All'}`;
+      doc.text(metaText, pageWidth / 2, headerStartY + 4.5, { align: 'center' });
+
+      doc.setDrawColor(210, 210, 210);
+      doc.line(margin, headerStartY + 7, pageWidth - margin, headerStartY + 7);
+
+      // Table Header
+      const head = [
+        [
+          'S.No',
+          'Reg No',
+          'Student Name',
+          ...iaReportData.columns.map(col => `${col.code}\n(Max: ${col.max})`),
+          'Status'
+        ]
+      ];
+
+      // Table Body
+      const body = iaReportData.students.map((st, idx) => {
+        const row = [
+          idx + 1,
+          st.reg,
+          st.name || '—'
+        ];
+
+        iaReportData.columns.forEach(col => {
+          const key = iaReportData.type === 'exam' ? col.code : col.name;
+          const val = st.marks[key];
+          if (!val) {
+            row.push('—');
+          } else if (val.isAbsent) {
+            row.push('AB');
+          } else {
+            row.push(String(val.score));
+          }
+        });
+
+        row.push(st.status);
+        return row;
+      });
+
+      // Table Footer (8 summary rows matching Image 3)
+      const foot = [
+        [
+          { content: 'Total Strength', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: String(iaReportData.subjectStats?.[col.code]?.totalStrength ?? iaReportData.students.length), styles: { halign: 'center', fontStyle: 'bold' } })),
+          { content: String(iaReportData.overallStats?.totalStrength ?? iaReportData.students.length), colSpan: 1, styles: { halign: 'center', fontStyle: 'bold' } }
+        ],
+        [
+          { content: 'Number of Present', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: String(iaReportData.subjectStats?.[col.code]?.presentCount ?? 0), styles: { halign: 'center', fontStyle: 'bold' } })),
+          { content: String(iaReportData.overallStats?.presentCount ?? 0), colSpan: 1, styles: { halign: 'center', fontStyle: 'bold' } }
+        ],
+        [
+          { content: 'Number of Absent', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: String(iaReportData.subjectStats?.[col.code]?.absentCount ?? 0), styles: { halign: 'center', fontStyle: 'bold', textColor: [225, 29, 72] } })),
+          { content: String(iaReportData.overallStats?.absentCount ?? 0), colSpan: 1, styles: { halign: 'center', fontStyle: 'bold', textColor: [225, 29, 72] } }
+        ],
+        [
+          { content: 'Number of Pass', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: String(iaReportData.subjectStats?.[col.code]?.passCount ?? 0), styles: { halign: 'center', fontStyle: 'bold', textColor: [16, 185, 129] } })),
+          { content: String(iaReportData.overallStats?.passCount ?? 0), colSpan: 1, styles: { halign: 'center', fontStyle: 'bold', textColor: [16, 185, 129] } }
+        ],
+        [
+          { content: 'Number of Fail', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: String(iaReportData.subjectStats?.[col.code]?.failCount ?? 0), styles: { halign: 'center', fontStyle: 'bold', textColor: [225, 29, 72] } })),
+          { content: String(iaReportData.overallStats?.failCount ?? 0), colSpan: 1, styles: { halign: 'center', fontStyle: 'bold', textColor: [225, 29, 72] } }
+        ],
+        [
+          { content: 'Pass Percentage', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: `${iaReportData.subjectStats?.[col.code]?.passPercentage ?? "0.00"}%`, styles: { halign: 'center', fontStyle: 'bold', textColor: [67, 56, 202] } })),
+          { content: `${iaReportData.overallStats?.passPercentage ?? "0.00"}%`, colSpan: 1, styles: { halign: 'center', fontStyle: 'bold', textColor: [67, 56, 202] } }
+        ],
+        [
+          { content: 'Faculty Name', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(col => ({ content: iaReportData.facultyMap?.[col.code] || '—', styles: { halign: 'center', fontStyle: 'bold', fontSize: 6.5 } })),
+          { content: '—', colSpan: 1, styles: { halign: 'center' } }
+        ],
+        [
+          { content: 'Faculty Signature', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          ...iaReportData.columns.map(() => ({ content: '', styles: { halign: 'center' } })),
+          { content: '', colSpan: 1, styles: { halign: 'center' } }
+        ]
+      ];
+
+      autoTable(doc, {
+        startY: headerStartY + 10,
+        head: head,
+        body: body,
+        foot: foot,
+        showFoot: 'lastPage',
+        theme: 'grid',
+        styles: {
+          fontSize: 7,
+          cellPadding: 1.5,
+          valign: 'middle',
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [18, 12, 122],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          halign: 'center',
+          fontSize: 7
+        },
+        footStyles: {
+          fillColor: [248, 250, 252],
+          textColor: [30, 41, 59],
+          fontSize: 6.5
+        },
+        didParseCell: function (data) {
+          if (data.section === 'body') {
+            const colIdx = data.column.index;
+            if (colIdx >= 3 && colIdx < 3 + iaReportData.columns.length) {
+              data.cell.styles.halign = 'center';
+              const val = data.cell.raw;
+              if (val === 'AB') {
+                data.cell.styles.textColor = [225, 29, 72];
+                data.cell.styles.fontStyle = 'bold';
+              } else if (val !== '—') {
+                const numVal = Number(val);
+                const colObj = iaReportData.columns[colIdx - 3];
+                if (colObj && numVal < colObj.max * 0.5) {
+                  data.cell.styles.textColor = [225, 29, 72];
+                } else {
+                  data.cell.styles.textColor = [16, 185, 129];
+                }
+              }
+            }
+          }
+        }
+      });
+
+      const blob = doc.output('blob');
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+    } catch (err) {
+      console.error("PDF export error:", err);
+    }
+  };
 
   const taskCount = useMemo(() => tasks.length, [tasks]);
 
@@ -3537,6 +4381,319 @@ export default function AcademicCoordinatorDashboard() {
                   );
                 })}
               </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ IA Consolidation Report ═══ */}
+      <div className="mt-8 bg-white rounded-[2rem] border border-zinc-200 shadow-md overflow-hidden transition-all duration-300 hover:shadow-lg mb-8">
+        <div className="bg-gradient-to-r from-violet-800 via-purple-900 to-indigo-950 px-5 md:px-7 py-4 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/15 rounded-xl backdrop-blur-sm">
+              <FileSpreadsheet size={18} className="text-white" />
+            </div>
+            <div>
+              <h2 className="text-white font-bold text-base leading-tight">IA Consolidation Report</h2>
+              <p className="text-violet-200 text-[10px] font-bold uppercase tracking-widest">Internal Assessment Marks Overview</p>
+            </div>
+          </div>
+          {iaReportData && iaReportData.students && iaReportData.students.length > 0 && (
+            <button
+              onClick={handleExportIAReportPDF}
+              className="flex items-center gap-2 bg-white/15 hover:bg-white/25 active:bg-white/30 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm border border-white/20 hover:border-white/40 cursor-pointer"
+            >
+              <Download size={15} />
+              <span>Export PDF</span>
+            </button>
+          )}
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Filter Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-violet-300 hover:bg-white transition-all duration-200">
+              <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Batch</label>
+              <select value={reportBatch} onChange={(e) => { setReportBatch(e.target.value); setIaReportSubject(""); setIaReportExam(""); setIaReportData(null); }} className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer">
+                <option value="">-- Choose Batch --</option>
+                {availableReportBatches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-violet-300 hover:bg-white transition-all duration-200">
+              <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Academic Year</label>
+              <select value={reportAcademicYear} onChange={(e) => { setReportAcademicYear(e.target.value); setIaReportSubject(""); setIaReportExam(""); setIaReportData(null); }} disabled={!reportBatch} className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                <option value="">-- Choose AY --</option>
+                {availableReportAcademicYears.map(ay => <option key={ay} value={ay}>{ay}</option>)}
+              </select>
+            </div>
+            <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-violet-300 hover:bg-white transition-all duration-200">
+              <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Semester</label>
+              <select value={reportSemester} onChange={(e) => { setReportSemester(e.target.value); setIaReportSubject(""); setIaReportExam(""); setIaReportData(null); }} disabled={!reportAcademicYear} className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                <option value="">-- Choose Semester --</option>
+                {availableReportSemesters.map(sem => <option key={sem} value={sem}>Semester {sem}</option>)}
+              </select>
+            </div>
+            <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-violet-300 hover:bg-white transition-all duration-200">
+              <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Exam</label>
+              <select value={iaReportExam} onChange={(e) => { setIaReportExam(e.target.value); setIaReportData(null); }} disabled={!reportSemester} className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                <option value="">-- Choose Exam --</option>
+                {availableReportExams.map(ex => <option key={ex.id} value={ex.name}>{ex.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Loading State */}
+          {iaReportLoading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="flex items-center gap-3 text-violet-600">
+                <Loader2 size={20} className="animate-spin" />
+                <span className="text-xs font-bold">Loading IA marks data...</span>
+              </div>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {!iaReportLoading && !iaReportData && (
+            <div className="text-center py-16 bg-zinc-50 rounded-2xl border border-dashed border-zinc-300">
+              <FileSpreadsheet size={40} className="mx-auto text-zinc-300 mb-3" />
+              <p className="text-sm font-bold text-zinc-400">
+                Select an Exam to view IA Consolidation Report
+              </p>
+              <p className="text-[10px] text-zinc-300 mt-1">Marks from all internal assessments will be displayed</p>
+            </div>
+          )}
+
+          {/* Marks Table */}
+          {!iaReportLoading && iaReportData && iaReportData.students.length > 0 && (
+            <div className="space-y-4">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Total Students</span>
+                    <div className="p-1.5 bg-violet-100 text-violet-700 rounded-lg"><Users size={14} /></div>
+                  </div>
+                  <p className="text-2xl font-black text-zinc-800">{iaReportData.students.length}</p>
+                </div>
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                      {iaReportData.type === 'exam' ? 'Total Subjects' : 'Exams Tracked'}
+                    </span>
+                    <div className="p-1.5 bg-sky-100 text-sky-700 rounded-lg"><Award size={14} /></div>
+                  </div>
+                  <p className="text-2xl font-black text-zinc-800">{iaReportData.columns.length}</p>
+                </div>
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Class Average</span>
+                    <div className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg"><TrendingUp size={14} /></div>
+                  </div>
+                  <p className="text-2xl font-black text-emerald-600">
+                    {iaReportData.students.length > 0
+                      ? (iaReportData.students.reduce((sum, s) => sum + parseFloat(s.avg || 0), 0) / iaReportData.students.length).toFixed(1)
+                      : '0.0'}%
+                  </p>
+                </div>
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Absent Students</span>
+                    <div className="p-1.5 bg-rose-100 text-rose-700 rounded-lg"><AlertTriangle size={14} /></div>
+                  </div>
+                  <p className="text-2xl font-black text-rose-600">
+                    {iaReportData.students.filter(s => s.status === 'ABSENT').length}
+                  </p>
+                </div>
+              </div>
+
+              {/* Info Banner */}
+              <div className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-center gap-2">
+                <Award size={14} className="text-violet-600 shrink-0" />
+                <p className="text-[11px] text-violet-700 font-bold">
+                  {iaReportData.type === 'exam' ? (
+                    <>{iaReportData.exam} &middot; Batch {iaReportData.batch} &middot; AY {iaReportData.academicYear} &middot; Sem {iaReportData.semester} &middot; Section: {iaReportData.section} &middot; {iaReportData.columns.length} Subjects &middot; {iaReportData.students.length} Students</>
+                  ) : (
+                    <>{iaReportData.subjectCode} &middot; Batch {iaReportData.batch} &middot; AY {iaReportData.academicYear} &middot; Sem {iaReportData.semester} &middot; Section: {iaReportData.section} &middot; {iaReportData.columns.length} Exams &middot; {iaReportData.students.length} Students</>
+                  )}
+                </p>
+              </div>
+              <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+                <table className="min-w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-violet-800 text-white">
+                      <th className="px-3 py-2.5 text-left font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">S.No</th>
+                      <th className="px-3 py-2.5 text-left font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">Reg No</th>
+                      <th className="px-3 py-2.5 text-left font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">Student Name</th>
+                      {iaReportData.columns.map(col => (
+                        <th key={col.id || col.code} className="px-3 py-2.5 text-center font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">
+                          <div>{col.code || col.name}</div>
+                          <div className="text-[9px] font-bold text-violet-200">(Max: {col.max})</div>
+                        </th>
+                      ))}
+                      <th className="px-3 py-2.5 text-center font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">Total</th>
+                      <th className="px-3 py-2.5 text-center font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">Max Total</th>
+                      <th className="px-3 py-2.5 text-center font-extrabold text-[10px] uppercase tracking-wider border-r border-violet-600">Avg %</th>
+                      <th className="px-3 py-2.5 text-center font-extrabold text-[10px] uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {iaReportData.students.map((st, idx) => (
+                      <tr key={st.reg || idx} className={`border-b border-zinc-100 hover:bg-violet-50/40 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-zinc-50'}`}>
+                        <td className="px-3 py-2.5 text-zinc-500 font-bold border-r border-zinc-100">{idx + 1}</td>
+                        <td className="px-3 py-2.5 font-mono font-extrabold text-zinc-800 border-r border-zinc-100">{st.reg}</td>
+                        <td className="px-3 py-2.5 text-zinc-700 font-medium max-w-[180px] truncate border-r border-zinc-100" title={st.name}>{st.name || '—'}</td>
+                        {iaReportData.columns.map(col => {
+                          const key = iaReportData.type === 'exam' ? col.code : col.name;
+                          const val = st.marks[key];
+                          if (!val) {
+                            return (
+                              <td key={col.id || col.code} className="px-3 py-2.5 text-center font-bold border-r border-zinc-100">
+                                <span className="text-zinc-300">—</span>
+                              </td>
+                            );
+                          }
+                          if (val.isAbsent) {
+                            return (
+                              <td key={col.id || col.code} className="px-3 py-2.5 text-center font-bold border-r border-zinc-100">
+                                <span className="text-rose-600 font-extrabold bg-rose-50 px-1.5 py-0.5 rounded text-xs">AB</span>
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={col.id || col.code} className="px-3 py-2.5 text-center font-bold border-r border-zinc-100">
+                              <span className={val.score >= col.max * 0.5 ? 'text-emerald-700' : 'text-rose-600 font-bold'}>{val.score}</span>
+                            </td>
+                          );
+                        })}
+                        <td className="px-3 py-2.5 text-center font-extrabold text-zinc-800 border-r border-zinc-100">{st.total}</td>
+                        <td className="px-3 py-2.5 text-center font-bold text-zinc-500 border-r border-zinc-100">{st.max}</td>
+                        <td className="px-3 py-2.5 text-center border-r border-zinc-100">
+                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${
+                            parseFloat(st.avg) >= 50 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                          }`}>{st.avg}%</span>
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${
+                            st.status === 'PASSED' ? 'bg-emerald-100 text-emerald-700'
+                              : st.status === 'FAILED' ? 'bg-rose-100 text-rose-700'
+                                : st.status === 'ABSENT' ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-zinc-100 text-zinc-600'
+                          }`}>{st.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {iaReportData.type === 'exam' && (
+                    <tfoot className="border-t-2 border-zinc-300 bg-zinc-50/90 font-bold text-xs">
+                      {/* Row 1: Total Strength */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Total Strength</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-zinc-800 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.totalStrength ?? iaReportData.students.length}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-zinc-800 bg-zinc-100/60 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.totalStrength ?? iaReportData.students.length}
+                        </td>
+                      </tr>
+
+                      {/* Row 2: Number of Present */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Number of Present</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-zinc-800 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.presentCount ?? 0}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-zinc-800 bg-zinc-100/60 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.presentCount ?? 0}
+                        </td>
+                      </tr>
+
+                      {/* Row 3: Number of Absent */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Number of Absent</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-rose-600 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.absentCount ?? 0}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-rose-600 bg-zinc-100/60 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.absentCount ?? 0}
+                        </td>
+                      </tr>
+
+                      {/* Row 4: Number of Pass */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Number of Pass</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-emerald-700 bg-emerald-50/40 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.passCount ?? 0}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-emerald-700 bg-emerald-50/40 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.passCount ?? 0}
+                        </td>
+                      </tr>
+
+                      {/* Row 5: Number of Fail */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Number of Fail</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-rose-700 bg-rose-50/40 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.failCount ?? 0}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-rose-700 bg-rose-50/40 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.failCount ?? 0}
+                        </td>
+                      </tr>
+
+                      {/* Row 6: Pass Percentage */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Pass Percentage</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2 text-center font-extrabold text-indigo-700 bg-indigo-50/40 border-r border-b border-zinc-200">
+                            {iaReportData.subjectStats?.[col.code]?.passPercentage ?? "0.00"}%
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2 text-center font-extrabold text-indigo-700 bg-indigo-50/40 border-l border-b border-zinc-200">
+                          {iaReportData.overallStats?.passPercentage ?? "0.00"}%
+                        </td>
+                      </tr>
+
+                      {/* Row 7: Faculty Name */}
+                      <tr className="border-b border-zinc-200">
+                        <td colSpan={3} className="px-3 py-2.5 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Faculty Name</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-2.5 text-center font-bold text-zinc-800 border-r border-b border-zinc-200 text-[11px] max-w-[140px] truncate" title={iaReportData.facultyMap?.[col.code] || '—'}>
+                            {iaReportData.facultyMap?.[col.code] || '—'}
+                          </td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-2.5 text-center text-zinc-400 bg-zinc-100/60 border-l border-b border-zinc-200">—</td>
+                      </tr>
+
+                      {/* Row 8: Faculty Signature */}
+                      <tr>
+                        <td colSpan={3} className="px-3 py-4 text-left font-extrabold text-zinc-700 bg-zinc-100/90 border-r border-b border-zinc-200">Faculty Signature</td>
+                        {iaReportData.columns.map(col => (
+                          <td key={col.id || col.code} className="px-3 py-4 text-center border-r border-b border-zinc-200"></td>
+                        ))}
+                        <td colSpan={4} className="px-3 py-4 text-center bg-zinc-100/60 border-l border-b border-zinc-200"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {!iaReportLoading && iaReportData && iaReportData.students.length === 0 && (
+            <div className="text-center py-12 bg-zinc-50 rounded-2xl border border-dashed border-zinc-300">
+              <Users size={40} className="mx-auto text-zinc-300 mb-3" />
+              <p className="text-sm font-bold text-zinc-400">No students found for the selected filters</p>
+              <p className="text-[10px] text-zinc-300 mt-1">Try changing batch, semester, or subject selection</p>
             </div>
           )}
         </div>

@@ -1,5 +1,28 @@
 ## Summary of Changes
 
+### 426. Fix Mark 0 Displaying as Dash in IA Consolidation Report & PDF Export (`HODDashboard.jsx`, `AcademicCoordinatorDashboard.jsx`)
+- **Goal**: Fix issue where student score of `0` in IA Consolidation Report was being converted to `—` (dash) in both the on-screen table and PDF export.
+- **Root Cause**:
+  1. PDF export body generator checked `else if (val && val.score > 0)`. When a student scored `0`, `0 > 0` evaluated to `false`, causing the system to fall into the `else` block and output `—` (dash).
+  2. `extractIAReportStudentTotal` did not track explicit record existence (`hasRecord`), causing `0` marks to return `{ total: 0, absent: false }` which was treated identically to unentered marks.
+  3. Student key lookup in `scoreMap` omitted candidate properties (`admNo`, `admissionNo`, `rollNo`, `uid`), causing lookup failures for students registered under admission or roll numbers.
+- **Fix**:
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) & [`AcademicCoordinatorDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AcademicCoordinatorDashboard.jsx):
+    - Updated `extractIAReportStudentTotal` to return `{ total, absent, hasRecord }` distinguishing explicit mark entries (including 0) from missing records.
+    - Added `lookupStudentScoreInMap` helper to perform robust candidate key matching (`reg`, `admNo`, `admissionNo`, `rollNo`, `uid`) against `scoreMap`.
+    - Fixed PDF export row pushing logic: `!val || !val.hasRecord` $\rightarrow$ `—`, `val.isAbsent` $\rightarrow$ `AB`, `else` $\rightarrow$ `String(val.score)` (which prints `0` in red text).
+- **Result**: Entered mark `0` renders cleanly as `0` (in red text) in both the interactive dashboard table and the exported PDF preview. Build passes in 6.99s with 0 errors.
+
+### 425. IA Consolidation Report on HOD Dashboard (`HODDashboard.jsx`)
+- **Goal**: Add an IA Consolidation Report section directly to [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx), matching the implementation already on [`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx), so the HOD can view per-subject CIA exam-wise marks for their department students.
+- **Fix**:
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx):
+    - Added 7 top-level helper functions: `deriveIAReportSemesterNumber`, `parseIAReportSubjectCode`, `extractIAReportMarksMeta`, `extractIAReportStudentTotal`, `iaReportYearStartOf`, `iaReportMatchMeta` — identical to the PrincipalDashboard helpers for consistent marks resolution.
+    - Added 3 state variables: `iaReportLoading`, `iaReportData`, `iaReportSubject`.
+    - Added a comprehensive `useEffect` that dynamically imports Firebase, listens to the `marks` collection, filters by department/batch/semester/academic-year/subject, extracts per-student CIA exam scores from multi-format Firestore student mark objects, and builds a structured `iaReportData` payload with exam columns (e.g. IA 1, IA 2, IA 3) and per-student totals/averages.
+    - Rendered a full IA Consolidation Report card below the attendance section with: subject selector dropdown populated from `availableReportSubjects`, a data table showing Reg No, Name, per-exam scores, Total, Average %, and Status, plus a Class Average footer row. Covers loading spinner, empty state, and close button.
+- **Result**: HOD can select any assigned subject from the dropdown on their Dashboard and view a complete CIA marks breakdown for all department students. Build passes in 7.22s with 0 errors.
+
 ### 424. Lock Academic Year Dropdown Selection in Non-Teaching & HOD Appraisal Forms (`NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
 - **Goal**: Lock the Academic Year dropdown selection (`disabled={true}`) in both [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx) and [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx) to match [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx), ensuring the active academic session is strictly controlled by HR in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
 - **Fix**:

@@ -135,16 +135,17 @@ const isApprovedOrAllocatedStatus = (st) => {
 
 const isAllocatedAndReleasedStatus = (qp) => {
   if (!qp) return false;
-  const norm = String(qp.status || '').toLowerCase().trim();
+  const norm = String(typeof qp === 'string' ? qp : qp.status || '').toLowerCase().trim();
   if (
     norm === 'allocated & released' ||
     norm === 'allocated' ||
     norm === 'released' ||
+    norm === 'approved_by_coe' ||
     norm === 'approved by exam cell'
   ) {
     return true;
   }
-  if (qp.allocated === true || Boolean(qp.allocatedTo)) {
+  if (typeof qp === 'object' && (qp.allocated === true || Boolean(qp.allocatedTo) || Boolean(qp.releasedAt))) {
     return true;
   }
   return false;
@@ -2990,7 +2991,7 @@ export default function FacultyDashboard() {
                         )}
                       </div>
                       <div className="shrink-0 flex items-center gap-1.5">
-                        {isApprovedOrAllocatedStatus(qp.status) && (
+                        {isAllocatedAndReleasedStatus(qp) && (
                           <button
                             onClick={() => navigate('/markk', { state: { qp: buildMarkEntryPayload(qp) } })}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm active:scale-95"
@@ -3060,7 +3061,7 @@ export default function FacultyDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {isApprovedOrAllocatedStatus(selectedQP.status) && (
+                {isAllocatedAndReleasedStatus(selectedQP) && (
                   <button
                     onClick={() => { setShowQPModal(false); navigate('/markk', { state: { qp: buildMarkEntryPayload(selectedQP) } }); }}
                     className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"

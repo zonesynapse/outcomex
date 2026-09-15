@@ -1410,11 +1410,8 @@ export default function AddEnquiryModal({
             </tr>
           </table>
 
+          <div style="font-weight:bold;font-size:10px;color:#192a56;margin:6px 0 4px">38. Details of Qualifying Examinations Passed:</div>
           <table class="form-table">
-            <tr>
-              <td class="col-num" rowspan="6">38</td>
-              <td colspan="6" class="col-label" style="background:#f0f4ff">Details of Qualifying Examinations Passed:</td>
-            </tr>
             <tr style="text-align:center;font-weight:bold;background:#f8f9fa">
               <td style="width:18%">Programme</td>
               <td style="width:30%">Institute</td>
