@@ -1298,7 +1298,7 @@ const isDeptMatch = (docDept, targetDept) => {
       const facList = [];
       snap1.forEach((d) => {
         const data = d.data() || {};
-        if (isDeptMatch(data.department, hodDepartment)) {
+        if (isDeptMatch(data.department, hodDepartment) && data.status === "Submitted") {
           facList.push({ id: d.id, collectionName: 'faculty_appraisals', ...data });
         }
       });
@@ -1307,7 +1307,7 @@ const isDeptMatch = (docDept, targetDept) => {
         const nonTeachList = [];
         snap2.forEach((d) => {
           const data = d.data() || {};
-          if (isDeptMatch(data.department, hodDepartment)) {
+          if (isDeptMatch(data.department, hodDepartment) && data.status === "Submitted") {
             nonTeachList.push({ id: d.id, collectionName: 'non_teaching_appraisals', ...data });
           }
         });
