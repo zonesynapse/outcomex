@@ -357,13 +357,14 @@ export default function FeeOperations() {
       setSelectedStudentStage("");
       return;
     }
-    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || obj?.studentCategory || "";
+    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || "";
+    const getCategory = (obj) => obj?.studentCategory || obj?.category || obj?.admissionType || obj?.entryType || "";
     const reg = selectedStudent.regNo || selectedStudent.examNumber || "";
     const appNo = selectedStudent.applicationNo || selectedStudent.enquiryId || selectedStudent._profile_data?.applicationNo || "";
 
     (async () => {
       let foundQuota = getQuota(selectedStudent) || getQuota(selectedStudent._profile_data);
-      let foundCategory = selectedStudent._profile_data?.studentCategory || "";
+      let foundCategory = getCategory(selectedStudent) || getCategory(selectedStudent._profile_data);
       let foundStage = selectedStudent._profile_data?.transportStage || "";
 
       if (reg) {
@@ -376,7 +377,7 @@ export default function FeeOperations() {
               if (sSnap.exists()) {
                 const extra = sSnap.data()._student_data?.[reg] || {};
                 if (!foundQuota) foundQuota = getQuota(extra);
-                if (!foundCategory) foundCategory = extra.studentCategory || "";
+                if (!foundCategory) foundCategory = getCategory(extra);
                 if (!foundStage) foundStage = extra.transportStage || "";
               }
             }
@@ -385,28 +386,30 @@ export default function FeeOperations() {
       }
 
       // If still missing, check enquiries collection
-      if (!foundQuota) {
+      if (!foundQuota || !foundCategory) {
         const lookupKeys = [appNo, reg, selectedStudent.id, selectedStudent.uid, selectedStudent._docId].filter(Boolean);
         for (const k of lookupKeys) {
           try {
             const q1 = await getDocs(query(collection(db, "enquiries"), where("applicationNo", "==", k)));
             if (!q1.empty) {
               const d = q1.docs[0].data();
-              foundQuota = getQuota(d);
-              if (foundQuota) break;
+              if (!foundQuota) foundQuota = getQuota(d);
+              if (!foundCategory) foundCategory = getCategory(d);
+              if (foundQuota && foundCategory) break;
             }
             const q2 = await getDocs(query(collection(db, "enquiries"), where("enquiryId", "==", k)));
             if (!q2.empty) {
               const d = q2.docs[0].data();
-              foundQuota = getQuota(d);
-              if (foundQuota) break;
+              if (!foundQuota) foundQuota = getQuota(d);
+              if (!foundCategory) foundCategory = getCategory(d);
+              if (foundQuota && foundCategory) break;
             }
           } catch (_) {}
         }
       }
 
       setSelectedStudentQuota(foundQuota || "");
-      setSelectedStudentCategory(foundCategory || "");
+      setSelectedStudentCategory(foundCategory || "Regular");
       setSelectedStudentStage(foundStage || "");
     })();
   }, [selectedStudent]);
@@ -582,7 +585,30 @@ export default function FeeOperations() {
       return isQuotaMatchExact(configQuota, studentQuota);
     };
 
-    // 1. Filter configs based on programme, department, batch AND quota/seatCategory
+    const normalizeCategoryStr = (cat) => {
+      if (!cat) return '';
+      const s = String(cat).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (s === 'all' || s === 'allcategories' || s === '') return 'all';
+      if (s.includes('lateral')) return 'lateral entry';
+      if (s.includes('regular')) return 'regular';
+      if (s.includes('transfer')) return 'transfer';
+      if (s.includes('readmission') || s.includes('re-admission')) return 'readmission';
+      return s;
+    };
+
+    const isCategoryMatchExact = (configCategory, sCategory) => {
+      const cc = normalizeCategoryStr(configCategory);
+      const sc = normalizeCategoryStr(sCategory || 'regular');
+      if (!cc || cc === 'all') return true;
+      return cc === sc;
+    };
+
+    const isCategoryApplicable = (configCategory, sCategory) => {
+      if (!configCategory || configCategory.trim().toLowerCase() === 'all' || configCategory.trim().toLowerCase() === 'all categories') return true;
+      return isCategoryMatchExact(configCategory, sCategory || 'regular');
+    };
+
+    // 1. Filter configs based on programme, department, batch AND quota/seatCategory AND studentCategory
     const matchedFees = feeConfigs.filter(f => {
       const normDataProg = formatProgrammeKey(f.programme);
       const normDataDept = (f.department || "").replace(/[_.\s]/g, '').toLowerCase();
@@ -592,7 +618,7 @@ export default function FeeOperations() {
       const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
       const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
       const isQuotaMatch = isQuotaApplicable(f.quota, selectedStudentQuota);
-      const isCategoryMatch = !selectedStudentCategory || !f.studentCategory || f.studentCategory === selectedStudentCategory;
+      const isCategoryMatch = isCategoryApplicable(f.studentCategory, selectedStudentCategory);
 
       return isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch && isCategoryMatch;
     });

@@ -142,6 +142,7 @@ export default function Fees() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [seatCategory, setSeatCategory] = useState("");
+  const [studentCategoryState, setStudentCategoryState] = useState("");
   const [studentStage, setStudentStage] = useState("");
   const [transportStages, setTransportStages] = useState([]);
   const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
@@ -249,15 +250,17 @@ export default function Fees() {
     return () => clearInterval(interval);
   }, [processing]);
 
-  // Load seatCategory from _student_data or _profile_data or enquiries (reactive)
+  // Load seatCategory and studentCategory from _student_data or _profile_data or enquiries (reactive)
   useEffect(() => {
     if (!studentData) return;
-    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || obj?.studentCategory || "";
+    const getQuota = (obj) => obj?.seatCategory || obj?.quotaAskedFor || obj?.quota || "";
+    const getCategory = (obj) => obj?.studentCategory || obj?.category || obj?.admissionType || obj?.entryType || "";
     const reg = studentData.regNo || studentData.examNumber || "";
     const appNo = studentData.applicationNo || studentData.enquiryId || studentData._profile_data?.applicationNo || "";
 
     (async () => {
       let foundQuota = getQuota(studentData) || getQuota(studentData._profile_data);
+      let foundCategory = getCategory(studentData) || getCategory(studentData._profile_data);
       let foundStage = studentData._profile_data?.transportStage || "";
 
       if (reg) {
@@ -270,6 +273,7 @@ export default function Fees() {
               if (sSnap.exists()) {
                 const extra = sSnap.data()._student_data?.[reg] || {};
                 if (!foundQuota) foundQuota = getQuota(extra);
+                if (!foundCategory) foundCategory = getCategory(extra);
                 if (!foundStage) foundStage = extra.transportStage || "";
               }
             }
@@ -278,27 +282,30 @@ export default function Fees() {
       }
 
       // If still missing, check enquiries collection
-      if (!foundQuota) {
+      if (!foundQuota || !foundCategory) {
         const lookupKeys = [appNo, reg, studentData.id, studentData.uid, studentData._docId].filter(Boolean);
         for (const k of lookupKeys) {
           try {
             const q1 = await getDocs(query(collection(db, "enquiries"), where("applicationNo", "==", k)));
             if (!q1.empty) {
               const d = q1.docs[0].data();
-              foundQuota = getQuota(d);
-              if (foundQuota) break;
+              if (!foundQuota) foundQuota = getQuota(d);
+              if (!foundCategory) foundCategory = getCategory(d);
+              if (foundQuota && foundCategory) break;
             }
             const q2 = await getDocs(query(collection(db, "enquiries"), where("enquiryId", "==", k)));
             if (!q2.empty) {
               const d = q2.docs[0].data();
-              foundQuota = getQuota(d);
-              if (foundQuota) break;
+              if (!foundQuota) foundQuota = getQuota(d);
+              if (!foundCategory) foundCategory = getCategory(d);
+              if (foundQuota && foundCategory) break;
             }
           } catch (_) {}
         }
       }
 
       if (foundQuota) setSeatCategory(foundQuota);
+      setStudentCategoryState(foundCategory || "Regular");
       if (foundStage) setStudentStage(foundStage);
     })();
   }, [studentData]);
@@ -332,6 +339,7 @@ export default function Fees() {
         const normStudentDept = (department || "").replace(/[_.\s]/g, '').toLowerCase();
         const normStudentBatch = (batch || "").trim().toLowerCase();
         const resolvedQuota = studentData.seatCategory || studentData.quotaAskedFor || studentData.quota || studentData._profile_data?.quotaAskedFor || studentData._profile_data?.seatCategory || seatCategory || "";
+        const resolvedCategory = studentData.studentCategory || studentData.category || studentData.admissionType || studentData.entryType || studentData._profile_data?.studentCategory || studentCategoryState || "Regular";
 
         const normalizeQuotaStr = (q) => {
           if (!q) return '';
@@ -356,6 +364,29 @@ export default function Fees() {
           return isQuotaMatchExact(configQuota, studentQuota);
         };
 
+        const normalizeCategoryStr = (cat) => {
+          if (!cat) return '';
+          const s = String(cat).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (s === 'all' || s === 'allcategories' || s === '') return 'all';
+          if (s.includes('lateral')) return 'lateral entry';
+          if (s.includes('regular')) return 'regular';
+          if (s.includes('transfer')) return 'transfer';
+          if (s.includes('readmission') || s.includes('re-admission')) return 'readmission';
+          return s;
+        };
+
+        const isCategoryMatchExact = (configCategory, sCategory) => {
+          const cc = normalizeCategoryStr(configCategory);
+          const sc = normalizeCategoryStr(sCategory || 'regular');
+          if (!cc || cc === 'all') return true;
+          return cc === sc;
+        };
+
+        const isCategoryApplicable = (configCategory, sCategory) => {
+          if (!configCategory || configCategory.trim().toLowerCase() === 'all' || configCategory.trim().toLowerCase() === 'all categories') return true;
+          return isCategoryMatchExact(configCategory, sCategory || 'regular');
+        };
+
         feeSnap.forEach((d) => {
           const data = d.data();
           const normDataProg = formatProgrammeKey(data.programme);
@@ -366,13 +397,14 @@ export default function Fees() {
           const isDeptMatch = !normDataDept || normDataDept === "all" || normDataDept === normStudentDept;
           const isBatchMatch = normDataBatch && normDataBatch === normStudentBatch;
           const isQuotaMatch = isQuotaApplicable(data.quota, resolvedQuota);
+          const isCategoryMatch = isCategoryApplicable(data.studentCategory, resolvedCategory);
 
-          if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch) {
+          if (isProgMatch && isDeptMatch && isBatchMatch && isQuotaMatch && isCategoryMatch) {
             matchedConfigs.push({ id: d.id, ...data });
           }
         });
 
-        // Deduplicate & prioritize quota-specific configs over generic configs per (academicYear + semester + head)
+        // Deduplicate & prioritize quota & studentCategory specific configs over generic configs per (academicYear + semester + head)
         const configMap = new Map();
         matchedConfigs.forEach((c) => {
           const key = `${c.academicYear || ''}_${c.semester || ''}_${normHead(c.head)}`;
@@ -380,16 +412,17 @@ export default function Fees() {
           if (!existing) {
             configMap.set(key, c);
           } else {
-            const existingMatchesExact = isQuotaMatchExact(existing.quota, resolvedQuota);
-            const currentMatchesExact = isQuotaMatchExact(c.quota, resolvedQuota);
+            const existingMatchesQuota = isQuotaMatchExact(existing.quota, resolvedQuota);
+            const currentMatchesQuota = isQuotaMatchExact(c.quota, resolvedQuota);
 
-            if (currentMatchesExact && !existingMatchesExact) {
+            const existingMatchesCategory = isCategoryMatchExact(existing.studentCategory, resolvedCategory);
+            const currentMatchesCategory = isCategoryMatchExact(c.studentCategory, resolvedCategory);
+
+            const existingScore = (existingMatchesQuota ? 2 : 0) + (existingMatchesCategory ? 1 : 0);
+            const currentScore = (currentMatchesQuota ? 2 : 0) + (currentMatchesCategory ? 1 : 0);
+
+            if (currentScore > existingScore) {
               configMap.set(key, c);
-            } else if (!existingMatchesExact && (!existing.quota || existing.quota.trim().toLowerCase() === 'all')) {
-              const currentHasQuota = Boolean(c.quota && c.quota.trim().toLowerCase() !== 'all');
-              if (currentHasQuota) {
-                configMap.set(key, c);
-              }
             }
           }
         });

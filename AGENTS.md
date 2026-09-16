@@ -1,5 +1,24 @@
 ## Summary of Changes
 
+### 428. Fix Lateral Entry Fee Structures Reflecting for Regular Students (`student/Fees.jsx`, `FeeOperations.jsx`)
+- **Goal**: Fix issue where Fee Structures created for `"Lateral Entry"` students in [`FeeOperations.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FeeOperations.jsx) were incorrectly reflecting for `"Regular"` students on the student portal [`student/Fees.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Fees.jsx).
+- **Root Cause**:
+  1. In [`student/Fees.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Fees.jsx), `fetchConfigs` did not evaluate `f.studentCategory` when filtering `fee_configurations` docs, causing fee rules targeted specifically at "Lateral Entry" to match Regular students.
+  2. `getQuota` helper in both `student/Fees.jsx` and `FeeOperations.jsx` fallback-checked `obj?.studentCategory`, which corrupted quota resolution when `seatCategory` was missing.
+  3. Student category resolution for logged-in students (Regular vs Lateral Entry vs Transfer vs Readmission) was not fallback-resolved to `"Regular"` when missing in profile fields.
+- **Fix**:
+  - In [`student/Fees.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Fees.jsx):
+    - Added `studentCategoryState` and `getCategory` helper to resolve student category from `studentData`, `_profile_data`, `students`, or `enquiries`.
+    - Fixed `getQuota` to remove `studentCategory` fallback.
+    - Added `normalizeCategoryStr`, `isCategoryMatchExact`, and `isCategoryApplicable` helpers to match fee configuration targets (`"Regular"`, `"Lateral Entry"`, `"Transfer"`, `"Readmission"`, or `"All Categories"` / empty).
+    - Updated `feeSnap.forEach` matching to check `isCategoryMatch = isCategoryApplicable(data.studentCategory, resolvedCategory)`.
+    - Updated deduplication logic to prioritize exact category matches.
+  - In [`FeeOperations.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FeeOperations.jsx):
+    - Fixed `getQuota` and added `getCategory` helper.
+    - Updated `setSelectedStudentCategory` resolution to default to `"Regular"`.
+    - Updated `matchedFees` filter using `isCategoryApplicable`.
+- **Result**: Fee structures created for "Lateral Entry" apply strictly to Lateral Entry students, while "Regular" fee structures apply strictly to Regular students. Build passes cleanly in 6.05s with 0 errors.
+
 ### 427. Self Analyse Score & Interactive HOD Criteria Evaluation in Faculty Appraisal (`HODDashboard.jsx`, `AppraisalReviews.jsx`)
 - **Goal**: Update Performance Score criteria evaluation table on [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) to rename `"Scored"` column to `"Self Analyse Score"`, add interactive `"HOD Score"` input cells for each criteria row, auto-calculate Part 1, Part 2, and Grand HOD totals, and update the review action button to `"Forward to Principal"`, forwarding review data to [`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx) / [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx).
 - **Fix**:
