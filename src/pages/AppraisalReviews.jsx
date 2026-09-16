@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -12,6 +13,7 @@ import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
 export default function AppraisalReviews() {
+  const location = useLocation();
   const [currentUser, setCurrentUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [userDept, setUserDept] = useState(null);
@@ -23,7 +25,9 @@ export default function AppraisalReviews() {
   // Search, Filter & View Details States
   const [searchTerm, setSearchTerm] = useState("");
   const [deptFilter, setDeptFilter] = useState("All");
-  const [statusFilter, setStatusFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState(() => {
+    return location.state?.statusFilter || "HOD_Approved";
+  });
   const [selectedAppraisal, setSelectedAppraisal] = useState(null);
   const [activeDetailsTab, setActiveDetailsTab] = useState(1);
 
@@ -184,6 +188,12 @@ export default function AppraisalReviews() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (location.state?.statusFilter) {
+      setStatusFilter(location.state.statusFilter);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     const docRef = doc(db, "appraisal_config", "form_fields");

@@ -1005,7 +1005,7 @@ export default function PrincipalDashboard() {
     { key: "students", label: "Student Strength", value: totalStrength, icon: GraduationCap, color: "blue", href: null, onClick: "strengthModal", format: (v) => v.toLocaleString() },
     { key: "pending", label: "Admission Pending Approvals", value: stats.admission, icon: Clock, color: "amber", href: null, onClick: "pendingPopup", format: (v) => String(v) },
     { key: "monthlyReports", label: "Monthly Reports Pending", value: pendingReports.length, icon: FileText, color: "rose", href: null, onClick: "reportsPopup", format: (v) => String(v) },
-    { key: "appraisals", label: "Appraisals Pending", value: pendingAppraisals.length, icon: Award, color: "emerald", href: "/hr/reviews", format: (v) => String(v) },
+    { key: "appraisals", label: "Appraisals Pending", value: pendingAppraisals.length, icon: Award, color: "emerald", href: "/hr/reviews", state: { statusFilter: "HOD_Approved" }, format: (v) => String(v) },
     { key: "enquiries", label: "Total Enquiries", value: stats.total, icon: FileText, color: "indigo", href: "/admissions/enquiries", format: (v) => v.toLocaleString() },
     { key: "placed", label: "Students Placed", value: placedCount, icon: Briefcase, color: "emerald", href: "/placement/dashboard", format: (v) => v.toLocaleString() },
     { key: "circulars", label: "Circulars Pending", value: pendingCirculars.length, icon: Megaphone, color: "cyan", href: null, onClick: "circularModal", format: (v) => String(v) },
@@ -1018,18 +1018,18 @@ export default function PrincipalDashboard() {
     emerald: { bg: "bg-emerald-50", text: "text-emerald-600", iconBg: "bg-emerald-100", border: "border-emerald-200", gradient: "from-emerald-500" },
     violet: { bg: "bg-violet-50", text: "text-violet-600", iconBg: "bg-violet-100", border: "border-violet-200", gradient: "from-violet-500" },
     rose: { bg: "bg-rose-50", text: "text-rose-600", iconBg: "bg-rose-100", border: "border-rose-200", gradient: "from-rose-500" },
-    cyan: { bg: "bg-cyan-50", text: "text-cyan-600", iconBg: "bg-cyan-100", border: "border-cyan-200", gradient: "from-cyan-500" },
+    cyan: { bg: "bg-cyan-50", text: "text-cyan-600", iconBg: "bg-cyan-100", border: "border-cyan-200", gradient: "from-cyan-500" }
   };
 
   const quickActions = [
-    { label: "Admission Confirmation", icon: UserCheck, desc: "Review & approve applications", href: "/admissions/confirm", color: "bg-emerald-500" },
-    { label: "Fee Dashboard", icon: DollarSign, desc: "Fee collection & reports", href: "/fee/dashboard", color: "bg-violet-500" },
-    { label: "Placement Overview", icon: Briefcase, desc: "Drives, offers & placements", href: "/placement/dashboard", color: "bg-blue-500" },
-    { label: "Library", icon: Library, desc: "Catalog, circulation & reports", href: "/library/catalog", color: "bg-amber-500" },
-    { label: "Attendance", icon: Activity, desc: "Daily & overall attendance", color: "bg-rose-500", onClick: "attendanceModal" },
-    { label: "Course Enrolment", icon: BookOpen, desc: "Student course registration", href: "/course-enrolment", color: "bg-cyan-500" },
-    { label: "Academic Calendar", icon: Calendar, desc: "Events & holidays", href: "/academic-calendar", color: "bg-orange-500" },
-    { label: "Marks Entry", icon: Award, desc: "Internal assessment marks", href: "/markk", color: "bg-teal-500" },
+    { label: "Pending Admissions", desc: "Review Applications", icon: Clock, color: "bg-amber-500", onClick: 'pendingPopup' },
+    { label: "Monthly Reports", desc: "Pending HOD Submissions", icon: FileText, color: "bg-rose-500", onClick: 'reportsPopup' },
+    { label: "All Enquiries", desc: "View Leads Database", icon: FileText, color: "bg-indigo-500", href: "/admissions/enquiries" },
+    { label: "Class Attendance", desc: "Daily Absentee Count", icon: CalendarCheck2, color: "bg-cyan-500", onClick: 'attendanceModal' },
+    { label: "Fee Dashboard", desc: "Collections Summary", icon: CreditCard, color: "bg-violet-500", href: "/fee/dashboard" },
+    { label: "Placements", desc: "Drives & Placed List", icon: Briefcase, color: "bg-emerald-500", href: "/placement/dashboard" },
+    { label: "Circulars", desc: "Pending Circular Approval", icon: Megaphone, color: "bg-sky-500", onClick: 'circularModal' },
+    { label: "Pending IA Schedule", desc: "IA 1, 2, 3 Exams Approval", icon: BookOpen, color: "bg-[#120c7a]", href: "/academic/ia-schedule" }
   ];
 
   const moduleCards = [
