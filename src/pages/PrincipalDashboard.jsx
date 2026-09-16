@@ -5,7 +5,7 @@ import {
   CheckCircle2, XCircle, Eye, Send, AlertTriangle, ArrowRight,
   UserCheck, Library, Activity, Zap, FileText, Clock,
   Calendar, DollarSign, Target, Award, BarChart3, Bell,
-  ChevronRight, School, MapPin, X, User, Megaphone, Loader2, Globe, Building2, Pencil
+  ChevronRight, School, MapPin, X, User, Megaphone, Loader2, Globe, Building2, Pencil, CalendarCheck2
 } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
