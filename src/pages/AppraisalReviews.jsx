@@ -1442,6 +1442,107 @@ const calculateNonTeachingGrade = (totalMarks) => {
                     </div>
                   </div>
                 )}
+
+                {/* ── PERFORMANCE SCORE (CRITERIA EVALUATION) TABLE ── */}
+                {selectedAppraisal.autoScore?.breakdown && (
+                  <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+                    <div className="bg-indigo-50/70 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
+                      <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
+                      {selectedAppraisal.hodReview?.hodTotalScore !== undefined && (
+                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                          HOD Score: {selectedAppraisal.hodReview.hodTotalScore} / {selectedAppraisal.autoScore.maxTotal || 100}
+                        </span>
+                      )}
+                    </div>
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-200">
+                          <th className="p-2.5 text-left">Particulars</th>
+                          <th className="p-2.5 text-center">Value</th>
+                          <th className="p-2.5 text-center">Max</th>
+                          <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
+                          <th className="p-2.5 text-center text-emerald-700 font-black">HOD Score</th>
+                        </tr>
+                      </thead>
+                      {(() => {
+                        const bd = selectedAppraisal.autoScore.breakdown;
+                        const p1 = bd.part1Rows || [];
+                        const p2 = bd.part2Rows || [];
+                        const hodMap = selectedAppraisal.hodReview?.hodScores || {};
+                        const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodMap[r.id] ?? r.scored) || 0), 0);
+
+                        const p1T = selectedAppraisal.autoScore.part1Total ?? sum(p1, "scored");
+                        const p1M = p1.length ? sum(p1, "maxMarks") : 0;
+                        const p1HodT = selectedAppraisal.hodReview?.hodPart1Total ?? sumHod(p1);
+
+                        const p2T = selectedAppraisal.autoScore.part2Total ?? sum(p2, "scored");
+                        const p2M = p2.length ? sum(p2, "maxMarks") : 0;
+                        const p2HodT = selectedAppraisal.hodReview?.hodPart2Total ?? sumHod(p2);
+
+                        const gT = selectedAppraisal.autoScore.total ?? p1T + p2T;
+                        const gM = selectedAppraisal.autoScore.maxTotal ?? p1M + p2M;
+                        const gHodT = selectedAppraisal.hodReview?.hodTotalScore ?? (p1HodT + p2HodT);
+
+                        const rowEls = (rows) => rows.map((r) => {
+                          const hodVal = hodMap[r.id] ?? r.scored;
+                          return (
+                            <tr key={r.id} className="hover:bg-slate-50/50">
+                              <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
+                              <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
+                              <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                              <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                              <td className="p-2.5 text-center font-black text-emerald-700">{hodVal}</td>
+                            </tr>
+                          );
+                        });
+
+                        return (
+                          <>
+                            <tbody className="divide-y divide-zinc-100">
+                              {p1.length > 0 && (
+                                <tr className="bg-slate-50/70">
+                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
+                                </tr>
+                              )}
+                              {rowEls(p1)}
+                              {p1.length > 0 && (
+                                <tr className="bg-slate-50/70 font-bold">
+                                  <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td>
+                                  <td className="p-2 text-center text-zinc-700">{p1M}</td>
+                                  <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
+                                  <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
+                                </tr>
+                              )}
+                              {p2.length > 0 && (
+                                <tr className="bg-slate-50/70">
+                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
+                                </tr>
+                              )}
+                              {rowEls(p2)}
+                              {p2.length > 0 && (
+                                <tr className="bg-slate-50/70 font-bold">
+                                  <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td>
+                                  <td className="p-2 text-center text-zinc-700">{p2M}</td>
+                                  <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
+                                  <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
+                                </tr>
+                              )}
+                            </tbody>
+                            <tfoot>
+                              <tr className="bg-gradient-to-r from-indigo-700 via-emerald-700 to-teal-800 text-white font-black">
+                                <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
+                                <td className="p-3 text-center text-zinc-200">{gM}</td>
+                                <td className="p-3 text-center text-base">{gT}</td>
+                                <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
+                              </tr>
+                            </tfoot>
+                          </>
+                        );
+                      })()}
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Right Column: Reviewing Actions & Comments Portlet */}

@@ -573,6 +573,7 @@ export default function HODDashboard() {
   const [appraisalComments, setAppraisalComments] = useState("");
   const [appraisalGrade, setAppraisalGrade] = useState("Good");
   const [appraisalActioning, setAppraisalActioning] = useState(false);
+  const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
 
   // Non-teaching appraisal review rating states
   const [nonTeachingEvalMarks, setNonTeachingEvalMarks] = useState({
@@ -1334,6 +1335,19 @@ const isDeptMatch = (docDept, targetDept) => {
     setAppraisalComments(app.hodReview?.comments || "");
     setAppraisalGrade(app.hodReview?.grade || "Good");
 
+    // Initialize HOD faculty criteria scores map
+    const initialHodScores = {};
+    if (app.hodReview?.hodScores) {
+      Object.assign(initialHodScores, app.hodReview.hodScores);
+    } else if (app.autoScore?.breakdown) {
+      const bd = app.autoScore.breakdown;
+      const allRows = [...(bd.part1Rows || []), ...(bd.part2Rows || [])];
+      allRows.forEach((r) => {
+        initialHodScores[r.id] = r.scored ?? 0;
+      });
+    }
+    setHodFacultyScoresMap(initialHodScores);
+
     const existingEval = app.performanceEvaluation;
     if (existingEval?.marks) {
       setNonTeachingEvalMarks(existingEval.marks);
@@ -1385,6 +1399,20 @@ const isDeptMatch = (docDept, targetDept) => {
         }
       };
 
+      if (!isNonTeaching && appraisalReview.autoScore?.breakdown) {
+        const bd = appraisalReview.autoScore.breakdown;
+        const p1 = bd.part1Rows || [];
+        const p2 = bd.part2Rows || [];
+        const p1HodT = p1.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+        const p2HodT = p2.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+        const gHodT = p1HodT + p2HodT;
+
+        updateData.hodReview.hodScores = hodFacultyScoresMap;
+        updateData.hodReview.hodPart1Total = p1HodT;
+        updateData.hodReview.hodPart2Total = p2HodT;
+        updateData.hodReview.hodTotalScore = gHodT;
+      }
+
       if (isNonTeaching) {
         updateData.performanceEvaluation = {
           marks: nonTeachingEvalMarks,
@@ -1401,7 +1429,7 @@ const isDeptMatch = (docDept, targetDept) => {
       await setDoc(doc(db, targetColl, appraisalReview.id), updateData, { merge: true });
 
       const isForward = newStatus === "HOD_Approved";
-      showToast(isForward ? "Appraisal approved and forwarded." : "Appraisal returned to staff for correction.", "success");
+      showToast(isForward ? "Appraisal approved and forwarded to Principal." : "Appraisal returned to staff for correction.", "success");
       setAppraisalReview(null);
       // Approved & Forwarded appraisals move to the Principal Dashboard next.
       if (isForward) {
@@ -4110,17 +4138,21 @@ const isDeptMatch = (docDept, targetDept) => {
 
                     {/* ── MARKS WITH TOTAL ── */}
                     {appraisalReview.autoScore?.breakdown && (
-                      <div className="border border-zinc-200 rounded-2xl overflow-hidden">
-                        <div className="bg-indigo-50/60 px-4 py-2.5 border-b border-indigo-100">
+                      <div className="border border-zinc-200 rounded-2xl overflow-hidden shadow-xs">
+                        <div className="bg-indigo-50/60 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
                           <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
+                          <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-100/70 border border-emerald-200 px-2 py-0.5 rounded-md">
+                            HOD Score Evaluation
+                          </span>
                         </div>
                         <table className="w-full border-collapse text-xs">
                           <thead>
-                            <tr className="bg-zinc-50 text-zinc-500 font-bold">
+                            <tr className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-200">
                               <th className="p-2.5 text-left">Particulars</th>
                               <th className="p-2.5 text-center">Value</th>
                               <th className="p-2.5 text-center">Max</th>
-                              <th className="p-2.5 text-center">Scored</th>
+                              <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
+                              <th className="p-2.5 text-center text-emerald-700 font-black">HOD Score</th>
                             </tr>
                           </thead>
                           {(() => {
@@ -4128,43 +4160,94 @@ const isDeptMatch = (docDept, targetDept) => {
                             const p1 = bd.part1Rows || [];
                             const p2 = bd.part2Rows || [];
                             const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+                            const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+
                             const p1T = appraisalReview.autoScore.part1Total ?? sum(p1, "scored");
                             const p1M = p1.length ? sum(p1, "maxMarks") : 0;
+                            const p1HodT = sumHod(p1);
+
                             const p2T = appraisalReview.autoScore.part2Total ?? sum(p2, "scored");
                             const p2M = p2.length ? sum(p2, "maxMarks") : 0;
+                            const p2HodT = sumHod(p2);
+
                             const gT = appraisalReview.autoScore.total ?? p1T + p2T;
                             const gM = appraisalReview.autoScore.maxTotal ?? p1M + p2M;
-                            const rowEls = (rows) => rows.map((r) => (
-                              <tr key={r.id}>
-                                <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
-                                <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
-                                <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
-                                <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
-                              </tr>
-                            ));
+                            const gHodT = p1HodT + p2HodT;
+
+                            const isEditable = appraisalReview.status === "Submitted" || appraisalReview.status === "Returned";
+
+                            const rowEls = (rows) => rows.map((r) => {
+                              const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
+                              return (
+                                <tr key={r.id} className="hover:bg-slate-50/50">
+                                  <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
+                                  <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
+                                  <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                                  <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                                  <td className="p-2.5 text-center font-black">
+                                    {isEditable ? (
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        max={r.maxMarks}
+                                        value={hodVal === undefined || hodVal === null ? "" : hodVal}
+                                        onChange={(e) => {
+                                          const inputVal = e.target.value;
+                                          const parsed = inputVal === "" ? "" : Math.min(Number(r.maxMarks), Math.max(0, Number(inputVal)));
+                                          setHodFacultyScoresMap((prev) => ({
+                                            ...prev,
+                                            [r.id]: parsed
+                                          }));
+                                        }}
+                                        className="w-16 text-center font-black text-emerald-800 bg-emerald-50/70 border border-emerald-300 rounded-lg p-1 focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
+                                      />
+                                    ) : (
+                                      <span className="text-emerald-700">{hodVal}</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            });
+
                             return (
                               <>
                                 <tbody className="divide-y divide-zinc-100">
                                   {p1.length > 0 && (
-                                    <tr className="bg-slate-50/70"><td colSpan={4} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td></tr>
+                                    <tr className="bg-slate-50/70">
+                                      <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
+                                    </tr>
                                   )}
                                   {rowEls(p1)}
                                   {p1.length > 0 && (
-                                    <tr className="bg-slate-50/70 font-bold"><td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td><td className="p-2 text-center text-zinc-700">{p1M}</td><td className="p-2 text-center text-indigo-800 font-black">{p1T}</td></tr>
+                                    <tr className="bg-slate-50/70 font-bold">
+                                      <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td>
+                                      <td className="p-2 text-center text-zinc-700">{p1M}</td>
+                                      <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
+                                      <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
+                                    </tr>
                                   )}
                                   {p2.length > 0 && (
-                                    <tr className="bg-slate-50/70"><td colSpan={4} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td></tr>
+                                    <tr className="bg-slate-50/70">
+                                      <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
+                                    </tr>
                                   )}
                                   {rowEls(p2)}
                                   {p2.length > 0 && (
-                                    <tr className="bg-slate-50/70 font-bold"><td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td><td className="p-2 text-center text-zinc-700">{p2M}</td><td className="p-2 text-center text-indigo-800 font-black">{p2T}</td></tr>
+                                    <tr className="bg-slate-50/70 font-bold">
+                                      <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td>
+                                      <td className="p-2 text-center text-zinc-700">{p2M}</td>
+                                      <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
+                                      <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
+                                    </tr>
                                   )}
                                 </tbody>
                                 <tfoot>
-                                  <tr className="bg-indigo-600 text-white font-black">
+                                  <tr className="bg-gradient-to-r from-indigo-700 via-emerald-700 to-teal-800 text-white font-black">
                                     <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
-                                    <td className="p-3 text-center">{gM}</td>
+                                    <td className="p-3 text-center text-zinc-200">{gM}</td>
                                     <td className="p-3 text-center text-base">{gT}</td>
+                                    <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
                                   </tr>
                                 </tfoot>
                               </>
@@ -4196,10 +4279,10 @@ const isDeptMatch = (docDept, targetDept) => {
                     )}
 
                     <div className="flex flex-col sm:flex-row gap-2">
-                      <button onClick={() => handleAppraisalAction("HOD_Approved")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md">
-                        {appraisalActioning ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Approve & Forward
+                      <button onClick={() => handleAppraisalAction("HOD_Approved")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-bold disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-md cursor-pointer">
+                        {appraisalActioning ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Forward to Principal
                       </button>
-                      <button onClick={() => handleAppraisalAction("Returned")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-white border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-50 disabled:opacity-50 flex items-center justify-center gap-1.5">
+                      <button onClick={() => handleAppraisalAction("Returned")} disabled={appraisalActioning} className="flex-1 py-3 rounded-xl bg-white border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-50 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer">
                         <Undo2 size={14} /> Return for Correction
                       </button>
                     </div>

@@ -1,5 +1,18 @@
 ## Summary of Changes
 
+### 427. Self Analyse Score & Interactive HOD Criteria Evaluation in Faculty Appraisal (`HODDashboard.jsx`, `AppraisalReviews.jsx`)
+- **Goal**: Update Performance Score criteria evaluation table on [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx) to rename `"Scored"` column to `"Self Analyse Score"`, add interactive `"HOD Score"` input cells for each criteria row, auto-calculate Part 1, Part 2, and Grand HOD totals, and update the review action button to `"Forward to Principal"`, forwarding review data to [`PrincipalDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/PrincipalDashboard.jsx) / [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx).
+- **Fix**:
+  - In [`HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx):
+    - Added `hodFacultyScoresMap` state (`useState({})`).
+    - In `openAppraisalReview`: pre-filled `hodFacultyScoresMap` from `app.hodReview?.hodScores` or default to `r.scored` for all breakdown rows.
+    - Updated criteria evaluation table: renamed `"Scored"` header to `"Self Analyse Score"`, added `"HOD Score"` header, rendered interactive `<input type="number">` per row, and computed live Part 1, Part 2, and Grand HOD totals.
+    - Updated `handleAppraisalAction`: merged `hodScores: hodFacultyScoresMap`, `hodPart1Total`, `hodPart2Total`, and `hodTotalScore` into Firestore `updateData.hodReview` when status is `"HOD_Approved"`.
+    - Renamed action button label from `"Approve & Forward"` to `"Forward to Principal"`.
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx):
+    - Added `Performance Score (Criteria Evaluation)` table inside review details modal displaying **Self Analyse Score** and **HOD Score** side-by-side with live totals for faculty appraisal reviews.
+- **Result**: HOD can evaluate and customize per-row criteria scores alongside self-analyse scores. Forwarding sends the completed evaluation to the Principal for final review. Build passes cleanly in 6.37s with 0 errors.
+
 ### 426. Fix Mark 0 Displaying as Dash in IA Consolidation Report & PDF Export (`HODDashboard.jsx`, `AcademicCoordinatorDashboard.jsx`)
 - **Goal**: Fix issue where student score of `0` in IA Consolidation Report was being converted to `—` (dash) in both the on-screen table and PDF export.
 - **Root Cause**:
