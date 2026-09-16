@@ -1431,10 +1431,6 @@ const isDeptMatch = (docDept, targetDept) => {
       const isForward = newStatus === "HOD_Approved";
       showToast(isForward ? "Appraisal approved and forwarded to Principal." : "Appraisal returned to staff for correction.", "success");
       setAppraisalReview(null);
-      // Approved & Forwarded appraisals move to the Principal Dashboard next.
-      if (isForward) {
-        navigate("/principal-dashboard");
-      }
     } catch (err) {
       console.error("Error updating appraisal:", err);
       showToast("Failed to update appraisal.", "error");
