@@ -91,6 +91,35 @@ export default function PrincipalDashboard() {
   const [circularActioning, setCircularActioning] = useState(false);
 
   const [pendingIACount, setPendingIACount] = useState(-1);
+  const [pendingAppraisals, setPendingAppraisals] = useState([]);
+
+  // Fetch pending appraisals forwarded by HOD
+  useEffect(() => {
+    let facultyList = [];
+    let nonTeachingList = [];
+    let hodList = [];
+
+    const unsubF = onSnapshot(query(collection(db, "faculty_appraisals"), where("status", "==", "HOD_Approved")), (snap) => {
+      facultyList = snap.docs.map(d => ({ id: d.id, collectionName: "faculty_appraisals", ...d.data() }));
+      setPendingAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+    });
+
+    const unsubN = onSnapshot(query(collection(db, "non_teaching_appraisals"), where("status", "==", "HOD_Approved")), (snap) => {
+      nonTeachingList = snap.docs.map(d => ({ id: d.id, collectionName: "non_teaching_appraisals", ...d.data() }));
+      setPendingAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+    });
+
+    const unsubH = onSnapshot(query(collection(db, "hod_appraisals"), where("status", "==", "HOD_Approved")), (snap) => {
+      hodList = snap.docs.map(d => ({ id: d.id, collectionName: "hod_appraisals", ...d.data() }));
+      setPendingAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+    });
+
+    return () => {
+      unsubF();
+      unsubN();
+      unsubH();
+    };
+  }, []);
 
   useEffect(() => {
     const q = query(
@@ -976,9 +1005,9 @@ export default function PrincipalDashboard() {
     { key: "students", label: "Student Strength", value: totalStrength, icon: GraduationCap, color: "blue", href: null, onClick: "strengthModal", format: (v) => v.toLocaleString() },
     { key: "pending", label: "Admission Pending Approvals", value: stats.admission, icon: Clock, color: "amber", href: null, onClick: "pendingPopup", format: (v) => String(v) },
     { key: "monthlyReports", label: "Monthly Reports Pending", value: pendingReports.length, icon: FileText, color: "rose", href: null, onClick: "reportsPopup", format: (v) => String(v) },
+    { key: "appraisals", label: "Appraisals Pending", value: pendingAppraisals.length, icon: Award, color: "emerald", href: "/hr/reviews", format: (v) => String(v) },
     { key: "enquiries", label: "Total Enquiries", value: stats.total, icon: FileText, color: "indigo", href: "/admissions/enquiries", format: (v) => v.toLocaleString() },
     { key: "placed", label: "Students Placed", value: placedCount, icon: Briefcase, color: "emerald", href: "/placement/dashboard", format: (v) => v.toLocaleString() },
-    { key: "fee", label: "Fee Collected", value: feeTotal, icon: CreditCard, color: "violet", href: "/fee/dashboard", format: (v) => formatCurrency(v) },
     { key: "circulars", label: "Circulars Pending", value: pendingCirculars.length, icon: Megaphone, color: "cyan", href: null, onClick: "circularModal", format: (v) => String(v) },
   ];
 
@@ -1243,6 +1272,33 @@ export default function PrincipalDashboard() {
               );
             })}
           </div>
+
+          {/* Pending Appraisals Forwarded by HOD Banner */}
+          {pendingAppraisals.length > 0 && (
+            <div className="bg-gradient-to-r from-emerald-900 via-teal-850 to-indigo-950 text-white rounded-3xl p-5 shadow-lg flex flex-col md:flex-row items-center justify-between gap-4 border border-emerald-700/40">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center backdrop-blur-md shrink-0">
+                  <Award size={24} className="text-amber-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-amber-400 text-indigo-950 text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full">
+                      {pendingAppraisals.length} Forwarded
+                    </span>
+                    <span className="text-xs text-emerald-200 font-bold uppercase tracking-wider">HOD Appraisal Reviews</span>
+                  </div>
+                  <h3 className="text-base font-bold mt-0.5">Faculty & Staff Appraisal Requests Forwarded by HOD</h3>
+                  <p className="text-xs text-emerald-100/80">Review Self-Analyse scores, HOD evaluated scores, and complete final appraisal approval.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => navigate("/hr/reviews")}
+                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-indigo-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Review Pending Appraisals <ArrowRight size={14} />
+              </button>
+            </div>
+          )}
 
           {/* Quick Actions */}
           <div>
