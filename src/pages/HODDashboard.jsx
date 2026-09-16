@@ -4174,7 +4174,7 @@ const isDeptMatch = (docDept, targetDept) => {
                             const gM = appraisalReview.autoScore.maxTotal ?? p1M + p2M;
                             const gHodT = p1HodT + p2HodT;
 
-                            const isEditable = appraisalReview.status === "Submitted" || appraisalReview.status === "Returned";
+                            const isEditable = appraisalReview.status !== "Approved";
 
                             const rowEls = (rows) => rows.map((r) => {
                               const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
@@ -4200,10 +4200,10 @@ const isDeptMatch = (docDept, targetDept) => {
                                             [r.id]: parsed
                                           }));
                                         }}
-                                        className="w-16 text-center font-black text-emerald-800 bg-emerald-50/70 border border-emerald-300 rounded-lg p-1 focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
+                                        className="w-16 text-center font-black text-emerald-900 bg-white border-2 border-emerald-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 focus:outline-none"
                                       />
                                     ) : (
-                                      <span className="text-emerald-700">{hodVal}</span>
+                                      <span className="text-emerald-700 font-bold">{hodVal}</span>
                                     )}
                                   </td>
                                 </tr>
@@ -4259,7 +4259,7 @@ const isDeptMatch = (docDept, targetDept) => {
                   </>
                 )}
 
-                {appraisalReview.status === "Submitted" || appraisalReview.status === "Returned" ? (
+                {appraisalReview.status !== "Approved" ? (
                   <div className="space-y-4 bg-slate-50 border border-zinc-200 rounded-2xl p-4">
                     {!(appraisalReview.formType === "non_teaching" || appraisalReview.collectionName === "non_teaching_appraisals") && (
                       <>
