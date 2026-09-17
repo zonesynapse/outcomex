@@ -5,7 +5,7 @@ import {
   Calendar, Loader2, Save, Play, XCircle, Settings, Plus, Trash2, Edit2,
   Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock
 } from "lucide-react";
-import Layout from "../components/Layout";
+import HRLayout from "../components/HRLayout";
 
 const DEFAULT_CRITERIA = {
   part1: [
@@ -384,25 +384,14 @@ export default function AppraisalSettings() {
     setSavingFormConfig(false);
   };
 
-  const handleAddField = (parentSection = null) => {
-    const tId = parentSection ? parentSection.tabId : 7;
-    const names = {
-      1: "Profile & Workload",
-      2: "Subjects & Results",
-      3: "Academic Development",
-      4: "Contributions",
-      5: "Library & Leaves",
-      6: "Relations & Targets",
-      7: "Evidences & Disclosures"
-    };
+  const handleAddField = () => {
     setEditingField({
       id: `field_${Date.now()}`,
       title: "",
       description: "",
       type: "text",
-      tabId: tId,
-      tabName: names[tId] || "Evidences & Disclosures",
-      parentId: parentSection ? parentSection.id : "",
+      tabId: 7,
+      tabName: "Evidences & Disclosures",
       visible: true,
       evidenceRequired: true,
       evidenceMandatory: false
@@ -412,10 +401,9 @@ export default function AppraisalSettings() {
 
   const handleEditField = (field) => {
     setEditingField({ 
-      tabId: field.tabId || 7,
-      tabName: field.tabName || "Evidences & Disclosures",
-      visible: field.visible !== false,
-      parentId: field.parentId || "",
+      tabId: 7,
+      tabName: "Evidences & Disclosures",
+      visible: true,
       ...field 
     });
     setFormModalOpen(true);
@@ -448,15 +436,6 @@ export default function AppraisalSettings() {
     setEditingField(null);
   };
 
-  const availableSectionsForTab = useMemo(() => {
-    if (!editingField || !editingField.tabId) return [];
-    const tId = parseInt(editingField.tabId);
-    return customFields.filter(f => 
-      (f.tabId === tId) &&
-      (f.id.startsWith("sec_") || f.type?.startsWith("section_"))
-    );
-  }, [customFields, editingField?.tabId]);
-
   const groupedFields = useMemo(() => {
     const groups = {};
     const tabsList = [
@@ -476,49 +455,22 @@ export default function AppraisalSettings() {
       };
     });
     
-    const tabBuckets = {};
     customFields.forEach(f => {
       const tId = f.tabId || 7;
-      if (!tabBuckets[tId]) tabBuckets[tId] = [];
-      tabBuckets[tId].push(f);
-    });
-
-    Object.keys(tabBuckets).forEach(tIdStr => {
-      const tId = parseInt(tIdStr);
-      const rawList = tabBuckets[tIdStr];
-
-      const sections = rawList.filter(f => f.id.startsWith("sec_") || f.type?.startsWith("section_"));
-      const assignedIds = new Set();
-      const ordered = [];
-
-      sections.forEach(sec => {
-        ordered.push(sec);
-        assignedIds.add(sec.id);
-        
-        const children = rawList.filter(f => f.parentId === sec.id);
-        children.forEach(child => {
-          ordered.push(child);
-          assignedIds.add(child.id);
-        });
-      });
-
-      const unassigned = rawList.filter(f => !assignedIds.has(f.id));
-      unassigned.forEach(u => ordered.push(u));
-
       if (!groups[tId]) {
         groups[tId] = {
-          name: rawList[0]?.tabName || `Tab ${tId}`,
+          name: f.tabName || `Tab ${tId}`,
           fields: []
         };
       }
-      groups[tId].fields = ordered;
+      groups[tId].fields.push(f);
     });
     
     return Object.entries(groups).sort(([a], [b]) => parseInt(a) - parseInt(b));
   }, [customFields]);
 
   return (
-    <Layout>
+    <HRLayout>
       {/* Toast Notification Alert */}
       {toast && (
         <div className="fixed bottom-5 right-5 z-50 animate-bounce">
@@ -540,21 +492,21 @@ export default function AppraisalSettings() {
           <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 space-y-2">
             <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
-              <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
+              <Sparkles size={12} className="text-indigo-600mber-400" /> HR Appraisal System
             </div>
-            <h1 className="text-xl md:text-2xl font-bold font-serif">Appraisal Settings Control Panel</h1>
-            <p className="text-indigo-200 text-xs md:text-sm">Manage portal visibility schedule, submission windows, and dynamic performance validation criteria points.</p>
+            <h1 className="text-xl md:text-indigo-600xl font-bold font-serif">Appraisal Settings Control Panel</h1>
+            <p className="text-indigo-100 font-medium text-xs md:text-sm">Manage portal visibility schedule, submission windows, and dynamic performance validation criteria points.</p>
           </div>
         </div>
 
         {/* Setting Tabs */}
-        <div className="flex border-b border-zinc-200 mb-8 overflow-x-auto gap-4 no-scrollbar">
+        <div className="flex border-b border-slate-200 mb-8 overflow-x-auto gap-4 no-scrollbar">
           <button
             onClick={() => setActiveTab("schedule")}
             className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "schedule"
-                ? "border-[#120c7a] text-[#120c7a]"
-                : "border-transparent text-zinc-400 hover:text-zinc-700"
+                ? "border-indigo-500 text-indigo-400"
+                : "border-transparent text-slate-600 hover:text-slate-800"
             }`}
           >
             Portal Scheduling & Access
@@ -563,8 +515,8 @@ export default function AppraisalSettings() {
             onClick={() => setActiveTab("criteria")}
             className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "criteria"
-                ? "border-[#120c7a] text-[#120c7a]"
-                : "border-transparent text-zinc-400 hover:text-zinc-700"
+                ? "border-indigo-500 text-indigo-400"
+                : "border-transparent text-slate-600 hover:text-slate-800"
             }`}
           >
             Performance Evaluation Criteria
@@ -573,8 +525,8 @@ export default function AppraisalSettings() {
             onClick={() => setActiveTab("form")}
             className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "form"
-                ? "border-[#120c7a] text-[#120c7a]"
-                : "border-transparent text-zinc-400 hover:text-zinc-700"
+                ? "border-indigo-500 text-indigo-400"
+                : "border-transparent text-slate-600 hover:text-slate-800"
             }`}
           >
             Appraisal Form Fields Builder
@@ -583,7 +535,7 @@ export default function AppraisalSettings() {
 
         {/* Loading Spinner */}
         {((activeTab === "schedule" && scheduleLoading) || (activeTab === "criteria" && criteriaLoading) || (activeTab === "form" && formConfigLoading)) ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-zinc-400">
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-600">
             <Loader2 className="animate-spin text-indigo-700" size={32} />
             <span className="text-xs font-bold uppercase tracking-wider">Loading settings details...</span>
           </div>
@@ -595,19 +547,19 @@ export default function AppraisalSettings() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 
                 <div className="md:col-span-2 space-y-6">
-                  <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 space-y-6">
-                    <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider pb-3 border-b border-zinc-100 flex items-center gap-2">
+                  <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm p-6 space-y-6">
+                    <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider pb-3 border-b border-slate-200 flex items-center gap-2">
                       <Calendar size={16} className="text-indigo-600" /> Portal Open & Close Window
                     </h2>
 
                     <div className="space-y-4 text-xs">
                       {/* Academic Year */}
                       <div className="space-y-1.5">
-                        <label className="block font-bold text-zinc-500 uppercase tracking-wider">Active Academic Year</label>
+                        <label className="block font-bold text-slate-600 uppercase tracking-wider">Active Academic Year</label>
                         <select
                           value={academicYear}
                           onChange={(e) => setAcademicYear(e.target.value)}
-                          className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                          className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                         >
                           <option value="2024-2025">2024-2025</option>
                           <option value="2025-2026">2025-2026</option>
@@ -618,27 +570,27 @@ export default function AppraisalSettings() {
                       {/* Timestamps */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
-                          <label className="block font-bold text-zinc-500 uppercase tracking-wider">Open Date & Time</label>
+                          <label className="block font-bold text-slate-600 uppercase tracking-wider">Open Date & Time</label>
                           <input
                             type="datetime-local"
                             value={openTime}
                             onChange={(e) => setOpenTime(e.target.value)}
-                            className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                            className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <label className="block font-bold text-zinc-500 uppercase tracking-wider">Closing Deadline</label>
+                          <label className="block font-bold text-slate-600 uppercase tracking-wider">Closing Deadline</label>
                           <input
                             type="datetime-local"
                             value={closeTime}
                             onChange={(e) => setCloseTime(e.target.value)}
-                            className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                            className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                           />
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex gap-4 pt-4 border-t border-zinc-100">
+                    <div className="flex gap-4 pt-4 border-t border-slate-200">
                       <button
                         onClick={handlePostAppraisalRequest}
                         disabled={savingSchedule}
@@ -661,27 +613,27 @@ export default function AppraisalSettings() {
 
                 {/* Live Status View */}
                 <div className="space-y-6">
-                  <div className="bg-zinc-50 rounded-3xl border border-zinc-200 p-6 space-y-5">
-                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <Clock size={14} className="text-zinc-500" /> Live Visibility Status
+                  <div className="bg-slate-50 rounded-3xl border border-slate-200 p-6 space-y-5">
+                    <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest flex items-center gap-1.5">
+                      <Clock size={14} className="text-slate-600" /> Live Visibility Status
                     </h3>
                     <div className="space-y-4">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Portal State:</span>
+                        <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Portal State:</span>
                         <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${
                           timeStatus.color === "green" 
                             ? "bg-emerald-50 border-emerald-250 text-emerald-800" 
                             : timeStatus.color === "amber"
-                            ? "bg-amber-50 border-amber-250 text-amber-800"
+                            ? "bg-indigo-600mber-50 border-amber-250 text-indigo-600mber-800"
                             : "bg-red-50 border-red-250 text-red-800"
                         }`}>
                           {timeStatus.label}
                         </span>
                       </div>
 
-                      <div className="bg-white rounded-2xl border border-zinc-200 p-4 shadow-sm text-center">
-                        <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider mb-1">Time Remaining / Status</span>
-                        <p className="text-sm font-black text-slate-800">{countdownText}</p>
+                      <div className="glass-card rounded-2xl border border-slate-200 text-slate-900 p-4 shadow-sm text-indigo-600enter">
+                        <span className="block text-[9px] font-black text-slate-600 uppercase tracking-wider mb-1">Time Remaining / Status</span>
+                        <p className="text-sm font-black text-slate-900">{countdownText}</p>
                       </div>
 
                       <div className="flex items-start gap-2 bg-indigo-50/30 border border-indigo-150 p-4 rounded-2xl text-[11px] text-slate-700 font-medium">
@@ -703,13 +655,13 @@ export default function AppraisalSettings() {
               <div className="space-y-8">
                 
                 {/* Part 1 Table */}
-                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/50">
+                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
                     <div>
-                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                      <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
                         Part One Criteria Rules (Academic & Feedback Pass Targets)
                       </h2>
-                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Define sliding scale performance validation marks for theory, practicals, and student feedback averages.</p>
+                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">Define sliding scale performance validation marks for theory, practicals, and student feedback averages.</p>
                     </div>
                     <button
                       onClick={() => handleEditItem("part1", null)}
@@ -721,24 +673,24 @@ export default function AppraisalSettings() {
 
                   <table className="w-full border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
-                        <th className="p-4 w-12 text-center">S.No</th>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                        <th className="p-4 w-12 text-indigo-600enter">S.No</th>
                         <th className="p-4">KRA</th>
                         <th className="p-4">Particulars Details</th>
-                        <th className="p-4 w-28 text-center">Max Marks</th>
+                        <th className="p-4 w-28 text-indigo-600enter">Max Marks</th>
                         <th className="p-4 w-32">Rule Slots</th>
-                        <th className="p-4 w-24 text-center">Actions</th>
+                        <th className="p-4 w-24 text-indigo-600enter">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-150">
                       {criteria.part1.map((item) => (
-                        <tr key={item.id} className="hover:bg-zinc-50/30 transition-colors">
-                          <td className="p-4 text-center font-bold text-slate-500">{item.sNo}</td>
+                        <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
+                          <td className="p-4 text-indigo-600enter font-bold text-slate-600">{item.sNo}</td>
                           <td className="p-4 font-bold text-slate-700">{item.kra}</td>
                           <td className="p-4 font-medium text-zinc-650">{item.particulars}</td>
-                          <td className="p-4 text-center font-black text-indigo-700 text-sm">{item.maxMarks}</td>
+                          <td className="p-4 text-indigo-600enter font-black text-indigo-700 text-sm">{item.maxMarks}</td>
                           <td className="p-4">
-                            <span className="inline-block px-2.5 py-1 rounded bg-indigo-50 border border-indigo-100 text-[#120c7a] font-bold text-[10px] uppercase">
+                            <span className="inline-block px-2.5 py-1 rounded bg-indigo-50 border border-indigo-100 text-indigo-400 font-bold text-[10px] uppercase">
                               {item.rules?.length || 0} Slots Configured
                             </span>
                           </td>
@@ -746,7 +698,7 @@ export default function AppraisalSettings() {
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleEditItem("part1", item)}
-                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-xl transition-all cursor-pointer"
+                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-xl transition-all cursor-pointer"
                               >
                                 <Edit2 size={13} />
                               </button>
@@ -765,13 +717,13 @@ export default function AppraisalSettings() {
                 </div>
 
                 {/* Part 2 Table */}
-                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/50">
+                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
                     <div>
-                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                      <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
                         Part Two Criteria Rules (Self & Department Contributions)
                       </h2>
-                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Configure unit limits, targeted minimums, and weight per unit for academic growth and departmental work.</p>
+                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">Configure unit limits, targeted minimums, and weight per unit for academic growth and departmental work.</p>
                     </div>
                     <button
                       onClick={() => handleEditItem("part2", null)}
@@ -783,30 +735,30 @@ export default function AppraisalSettings() {
 
                   <table className="w-full border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
-                        <th className="p-4 w-12 text-center">S.No</th>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                        <th className="p-4 w-12 text-indigo-600enter">S.No</th>
                         <th className="p-4">KRA</th>
                         <th className="p-4">Particulars Details</th>
-                        <th className="p-4 w-28 text-center">Max Marks</th>
-                        <th className="p-4 w-24 text-center">Target</th>
-                        <th className="p-4 w-24 text-center">Points/Unit</th>
-                        <th className="p-4 w-24 text-center">Actions</th>
+                        <th className="p-4 w-28 text-indigo-600enter">Max Marks</th>
+                        <th className="p-4 w-24 text-indigo-600enter">Target</th>
+                        <th className="p-4 w-24 text-indigo-600enter">Points/Unit</th>
+                        <th className="p-4 w-24 text-indigo-600enter">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-150">
                       {criteria.part2.map((item) => (
-                        <tr key={item.id} className="hover:bg-zinc-50/30 transition-colors">
-                          <td className="p-4 text-center font-bold text-slate-500">{item.sNo}</td>
+                        <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
+                          <td className="p-4 text-indigo-600enter font-bold text-slate-600">{item.sNo}</td>
                           <td className="p-4 font-bold text-slate-700">{item.kra}</td>
                           <td className="p-4 font-medium text-zinc-650">{item.particulars}</td>
-                          <td className="p-4 text-center font-black text-indigo-700 text-sm">{item.maxMarks}</td>
-                          <td className="p-4 text-center font-bold text-zinc-600">{item.targetCount} units</td>
-                          <td className="p-4 text-center font-bold text-emerald-700">{item.marksPerUnit} pts</td>
+                          <td className="p-4 text-indigo-600enter font-black text-indigo-700 text-sm">{item.maxMarks}</td>
+                          <td className="p-4 text-indigo-600enter font-bold text-slate-700">{item.targetCount} units</td>
+                          <td className="p-4 text-indigo-600enter font-bold text-emerald-700">{item.marksPerUnit} pts</td>
                           <td className="p-4">
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleEditItem("part2", item)}
-                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-xl transition-all cursor-pointer"
+                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-xl transition-all cursor-pointer"
                               >
                                 <Edit2 size={13} />
                               </button>
@@ -830,13 +782,13 @@ export default function AppraisalSettings() {
             {/* ═══ TAB 3: DYNAMIC FORM FIELDS CONFIGURATION ═══ */}
             {activeTab === "form" && (
               <div className="space-y-6 animate-fadeIn">
-                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 space-y-4">
+                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm p-6 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <h2 className="text-sm font-black text-slate-805 uppercase tracking-wider">
                         Dynamic Form Fields & Evidences Configurator
                       </h2>
-                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
+                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">
                         Build custom fields/questions for the self-appraisal form. Set whether evidence files must be attached by the faculty.
                       </p>
                     </div>
@@ -849,69 +801,59 @@ export default function AppraisalSettings() {
                   </div>
 
                   {customFields.length === 0 ? (
-                    <div className="border border-dashed border-zinc-200 rounded-2xl py-12 text-center text-zinc-400 space-y-2">
+                    <div className="border border-dashed border-slate-200 rounded-2xl py-12 text-indigo-600enter text-slate-600 space-y-2">
                       <Settings className="mx-auto text-zinc-300" size={32} />
                       <p className="text-xs font-bold uppercase tracking-wider">No Custom Appraisal Fields Added Yet</p>
-                      <p className="text-[10px] text-zinc-400 font-medium max-w-sm mx-auto">
+                      <p className="text-[10px] text-slate-600 font-medium max-w-sm mx-auto">
                         Click the button above to add custom inputs/topics for faculty self appraisal documents.
                       </p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto border border-zinc-150 rounded-2xl">
+                    <div className="overflow-x-auto border border-slate-200/60 rounded-2xl">
                       <table className="w-full border-collapse text-left text-xs">
                         <thead>
-                          <tr className="bg-zinc-50 border-b border-zinc-250 text-zinc-500 font-bold">
+                          <tr className="bg-slate-50 border-b border-zinc-250 text-slate-600 font-bold">
                             <th className="p-4">Field Title / Label</th>
                             <th className="p-4">Description</th>
-                            <th className="p-4 w-24 text-center">Type</th>
-                            <th className="p-4 w-24 text-center">Status</th>
-                            <th className="p-4 w-28 text-center">Evidence Req.</th>
-                            <th className="p-4 w-24 text-center">Actions</th>
+                            <th className="p-4 w-24 text-indigo-600enter">Type</th>
+                            <th className="p-4 w-24 text-indigo-600enter">Status</th>
+                            <th className="p-4 w-28 text-indigo-600enter">Evidence Req.</th>
+                            <th className="p-4 w-24 text-indigo-600enter">Actions</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 font-semibold text-zinc-700">
+                        <tbody className="divide-y divide-zinc-100 font-semibold text-slate-800">
                           {groupedFields.map(([tabId, group]) => {
                             if (group.fields.length === 0) return null;
                             return (
                               <React.Fragment key={tabId}>
-                                <tr className="bg-slate-100/60 border-y border-zinc-200">
-                                  <td colSpan={6} className="px-4 py-2 font-black text-slate-800 uppercase tracking-wider text-[10px]">
+                                <tr className="bg-slate-100/60 border-y border-slate-200">
+                                  <td colSpan={6} className="px-4 py-2 font-black text-slate-900 uppercase tracking-wider text-[10px]">
                                     {group.name}
                                   </td>
                                 </tr>
                                 {group.fields.map((field) => {
                                   const isDefault = field.id.startsWith("sec_") || field.id.startsWith("f_");
-                                  const isSectionHeader = field.id.startsWith("sec_") || field.type?.startsWith("section_");
                                   const isSubField = !!field.parentId;
-                                  const parentSecTitle = isSubField ? customFields.find(p => p.id === field.parentId)?.title : null;
-
                                   return (
-                                    <tr key={field.id} className={`hover:bg-zinc-50/40 ${isSectionHeader ? "bg-slate-50/50 border-t border-zinc-200" : ""}`}>
+                                    <tr key={field.id} className="hover:bg-slate-50/40">
                                       <td className="p-4 space-y-1">
-                                        <div className="flex items-center gap-2" style={{ paddingLeft: isSubField ? "24px" : "0" }}>
-                                          {isSubField && <span className="text-indigo-400 font-black mr-0.5 text-sm">↳</span>}
-                                          <span className={`font-bold ${isSectionHeader ? "text-slate-900 text-xs uppercase" : "text-slate-805"}`}>
-                                            {field.title}
-                                          </span>
+                                        <div className="flex items-center gap-2" style={{ paddingLeft: isSubField ? "20px" : "0" }}>
+                                          {isSubField && <span className="text-slate-600 font-black mr-0.5">↳</span>}
+                                          <span className="font-bold text-slate-805">{field.title}</span>
                                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
                                             isDefault 
-                                              ? (isSectionHeader ? "bg-purple-50 text-purple-700 border border-purple-150" : "bg-green-50 text-green-700 border border-green-150")
-                                              : (isSubField ? "bg-cyan-50 text-cyan-700 border border-cyan-150" : "bg-blue-50 text-blue-700 border border-blue-150")
+                                              ? "bg-green-50 text-green-700 border border-green-150" 
+                                              : "bg-blue-50 text-blue-700 border border-blue-150"
                                           }`}>
-                                            {isDefault ? (isSubField ? "Sub-Field" : "Default Section") : (isSubField ? "Custom Sub-Field" : "Custom")}
+                                            {isDefault ? (isSubField ? "Sub-Field" : "Default Section") : "Custom"}
                                           </span>
-                                          {isSubField && parentSecTitle && (
-                                            <span className="text-[9px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded border border-zinc-200">
-                                              under {parentSecTitle.length > 25 ? parentSecTitle.substring(0, 25) + "..." : parentSecTitle}
-                                            </span>
-                                          )}
                                         </div>
                                       </td>
                                       <td className="p-4 font-medium text-zinc-450">{field.description || "-"}</td>
-                                      <td className="p-4 text-center text-zinc-500 font-mono text-[9px] uppercase">
+                                      <td className="p-4 text-indigo-600enter text-slate-600 font-mono text-[9px] uppercase">
                                         {field.type.replace("section_", "grid ").replace("_", " ")}
                                       </td>
-                                      <td className="p-4 text-center">
+                                      <td className="p-4 text-indigo-600enter">
                                         <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                           field.visible !== false 
                                             ? "bg-emerald-50 text-emerald-700 border border-emerald-150" 
@@ -920,7 +862,7 @@ export default function AppraisalSettings() {
                                           {field.visible !== false ? "Visible" : "Hidden"}
                                         </span>
                                       </td>
-                                      <td className="p-4 text-center space-y-1">
+                                      <td className="p-4 text-indigo-600enter space-y-1">
                                         {field.evidenceRequired ? (
                                           <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                             field.evidenceMandatory 
@@ -930,24 +872,14 @@ export default function AppraisalSettings() {
                                             {field.evidenceMandatory ? "Mandatory" : "Optional"}
                                           </span>
                                         ) : (
-                                          <span className="text-zinc-400 font-medium text-[9px]">-</span>
+                                          <span className="text-slate-600 font-medium text-[9px]">-</span>
                                         )}
                                       </td>
                                       <td className="p-4">
                                         <div className="flex items-center justify-center gap-1.5">
-                                          {isSectionHeader && (
-                                            <button
-                                              onClick={() => handleAddField(field)}
-                                              className="px-2 py-1 bg-[#120c7a] hover:bg-[#100b6e] text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
-                                              title={`Add a new field under ${field.title}`}
-                                            >
-                                              <Plus size={11} /> Add Sub-Field
-                                            </button>
-                                          )}
                                           <button
                                             onClick={() => handleEditField(field)}
-                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-lg transition-colors cursor-pointer"
-                                            title="Edit Field"
+                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-lg transition-colors cursor-pointer"
                                           >
                                             <Edit2 size={12} />
                                           </button>
@@ -955,12 +887,11 @@ export default function AppraisalSettings() {
                                             <button
                                               onClick={() => handleDeleteField(field.id)}
                                               className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-colors cursor-pointer"
-                                              title="Delete Field"
                                             >
                                               <Trash2 size={12} />
                                             </button>
                                           ) : (
-                                            !isSectionHeader && <span className="w-[28px] inline-block" />
+                                            <span className="w-[28px] inline-block" />
                                           )}
                                         </div>
                                       </td>
@@ -986,7 +917,7 @@ export default function AppraisalSettings() {
       {/* ═══ Dynamic Form Field Add/Edit Modal ═══ */}
       {formModalOpen && editingField && (
         <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-805">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200 text-zinc-805">
             <div className="bg-[#120c7a] p-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings size={20} className="text-yellow-400" />
@@ -1011,32 +942,32 @@ export default function AppraisalSettings() {
 
             <div className="p-6 space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Field Title / Label</label>
+                <label className="font-bold text-slate-600 uppercase tracking-wider block">Field Title / Label</label>
                 <input 
                   type="text" 
                   value={editingField.title}
                   onChange={(e) => setEditingField({ ...editingField, title: e.target.value })}
                   placeholder="e.g. NPTEL Course Certifications" 
-                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Description / Instruction</label>
+                <label className="font-bold text-slate-600 uppercase tracking-wider block">Description / Instruction</label>
                 <textarea 
                   value={editingField.description}
                   onChange={(e) => setEditingField({ ...editingField, description: e.target.value })}
                   placeholder="e.g. Enter details and upload your completion certificate." 
-                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600 h-20"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600 h-20"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="font-bold text-zinc-500 uppercase tracking-wider block">Tab Category</label>
+                  <label className="font-bold text-slate-600 uppercase tracking-wider block">Tab Category</label>
                   {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
-                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
-                      <Lock size={13} className="text-zinc-400 flex-shrink-0" />
+                    <div className="w-full rounded-xl border border-slate-200/60 bg-slate-50 p-2.5 font-bold text-slate-600 flex items-center gap-2 cursor-not-allowed select-none">
+                      <Lock size={13} className="text-slate-600 flex-shrink-0" />
                       <span>
                         {
                           {
@@ -1065,9 +996,9 @@ export default function AppraisalSettings() {
                           6: "Relations & Targets",
                           7: "Evidences & Disclosures"
                         };
-                        setEditingField({ ...editingField, tabId: tId, tabName: names[tId], parentId: "" });
+                        setEditingField({ ...editingField, tabId: tId, tabName: names[tId] });
                       }}
-                      className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
+                      className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
                     >
                       <option value="1">1. Profile & Workload</option>
                       <option value="2">2. Subjects & Results</option>
@@ -1081,51 +1012,26 @@ export default function AppraisalSettings() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="font-bold text-zinc-500 uppercase tracking-wider block">Sub-Category / Parent Section</label>
+                  <label className="font-bold text-slate-600 uppercase tracking-wider block">Input Type</label>
                   {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
-                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
-                      <Lock size={13} className="text-zinc-400 flex-shrink-0" />
-                      <span>
-                        {customFields.find(s => s.id === editingField.parentId)?.title || (editingField.id?.startsWith("sec_") ? "Root Section" : "Built-in Section")}
-                      </span>
+                    <div className="w-full rounded-xl border border-slate-200/60 bg-slate-50 p-2.5 font-bold text-slate-600 flex items-center gap-2 cursor-not-allowed select-none">
+                      <Lock size={13} className="text-slate-600 flex-shrink-0" />
+                      <span>Built-in {editingField.id?.startsWith("sec_") ? "Section" : "Field"}</span>
                     </div>
                   ) : (
                     <select 
-                      value={editingField.parentId || ""} 
-                      onChange={(e) => setEditingField({ ...editingField, parentId: e.target.value })}
-                      className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
+                      value={editingField.type} 
+                      onChange={(e) => setEditingField({ ...editingField, type: e.target.value })}
+                      className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
                     >
-                      <option value="">-- Top-Level Field (No Sub-Section) --</option>
-                      {availableSectionsForTab.map((sec) => (
-                        <option key={sec.id} value={sec.id}>
-                          ↳ {sec.title}
-                        </option>
-                      ))}
+                      <option value="text">Text Box</option>
+                      <option value="textarea">Large Text Area</option>
+                      <option value="number">Number Input</option>
+                      <option value="date">Date Picker</option>
+                      <option value="file_only">File Upload Only</option>
                     </select>
                   )}
                 </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Input Type</label>
-                {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
-                  <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
-                    <Lock size={13} className="text-zinc-400 flex-shrink-0" />
-                    <span>Built-in {editingField.id?.startsWith("sec_") ? "Section" : "Field"}</span>
-                  </div>
-                ) : (
-                  <select 
-                    value={editingField.type} 
-                    onChange={(e) => setEditingField({ ...editingField, type: e.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
-                  >
-                    <option value="text">Text Box</option>
-                    <option value="textarea">Large Text Area</option>
-                    <option value="number">Number Input</option>
-                    <option value="date">Date Picker</option>
-                    <option value="file_only">File Upload Only</option>
-                  </select>
-                )}
               </div>
 
               {(editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_")) && (
@@ -1144,7 +1050,7 @@ export default function AppraisalSettings() {
                       type="checkbox" 
                       checked={editingField.visible !== false}
                       onChange={(e) => setEditingField({ ...editingField, visible: e.target.checked })}
-                      className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="font-bold text-zinc-650 text-[10px] uppercase">Section Visible to Faculty?</span>
                   </label>
@@ -1156,7 +1062,7 @@ export default function AppraisalSettings() {
                       type="checkbox" 
                       checked={editingField.evidenceRequired}
                       onChange={(e) => setEditingField({ ...editingField, evidenceRequired: e.target.checked })}
-                      className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="font-bold text-zinc-650 text-[10px] uppercase">Evidence Required?</span>
                   </label>
@@ -1168,13 +1074,13 @@ export default function AppraisalSettings() {
                           type="checkbox" 
                           checked={editingField.evidenceMandatory}
                           onChange={(e) => setEditingField({ ...editingField, evidenceMandatory: e.target.checked })}
-                          className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         />
                         <span className="font-bold text-zinc-650 text-[10px] uppercase">Upload Mandatory?</span>
                       </label>
 
                       <div className="space-y-1">
-                        <label className="font-bold text-zinc-500 uppercase tracking-wider block text-[10px]">Max File Size Limit (1 KB to 300 KB)</label>
+                        <label className="font-bold text-slate-600 uppercase tracking-wider block text-[10px]">Max File Size Limit (1 KB to 300 KB)</label>
                         <input 
                           type="number"
                           min="1"
@@ -1191,9 +1097,9 @@ export default function AppraisalSettings() {
                             if (val > 300) val = 300;
                             setEditingField({ ...editingField, maxSizeKb: val });
                           }}
-                          className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none"
+                          className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
                         />
-                        <p className="text-[9px] text-zinc-400 font-semibold uppercase mt-0.5">Configures the maximum allowed file size in kilobytes.</p>
+                        <p className="text-[9px] text-slate-600 font-semibold uppercase mt-0.5">Configures the maximum allowed file size in kilobytes.</p>
                       </div>
                     </div>
                   )}
@@ -1201,7 +1107,7 @@ export default function AppraisalSettings() {
               </div>
             </div>
 
-            <div className="bg-zinc-50 border-t border-zinc-150 p-4 flex justify-end gap-3">
+            <div className="bg-slate-50 border-t border-slate-200/60 p-4 flex justify-end gap-3">
               <button
                 onClick={() => { setFormModalOpen(false); setEditingField(null); }}
                 className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-650 rounded-xl text-xs font-bold transition-all cursor-pointer"
@@ -1223,7 +1129,7 @@ export default function AppraisalSettings() {
       {/* Edit Modal Overlay */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-800">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200 text-slate-800">
             
             <div className="bg-[#120c7a] p-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1244,54 +1150,54 @@ export default function AppraisalSettings() {
               
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="font-bold text-zinc-500 uppercase tracking-wider">S.No Label</label>
+                  <label className="font-bold text-slate-600 uppercase tracking-wider">S.No Label</label>
                   <input
                     type="text"
                     value={editingItem.sNo}
                     onChange={(e) => setEditingItem({ ...editingItem, sNo: e.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
+                    className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
                     placeholder="e.g. 1a or 3"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-bold text-zinc-500 uppercase tracking-wider">Maximum Marks Cap</label>
+                  <label className="font-bold text-slate-600 uppercase tracking-wider">Maximum Marks Cap</label>
                   <input
                     type="number"
                     value={editingItem.maxMarks}
                     onChange={(e) => setEditingItem({ ...editingItem, maxMarks: parseInt(e.target.value) || 0 })}
-                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
+                    className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="font-bold text-zinc-500 uppercase tracking-wider">KRA (Category Heading)</label>
+                <label className="font-bold text-slate-600 uppercase tracking-wider">KRA (Category Heading)</label>
                 <input
                   type="text"
                   value={editingItem.kra}
                   onChange={(e) => setEditingItem({ ...editingItem, kra: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
                   placeholder="e.g. Academic Performance or Contributions"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="font-bold text-zinc-500 uppercase tracking-wider">Particulars Description</label>
+                <label className="font-bold text-slate-600 uppercase tracking-wider">Particulars Description</label>
                 <textarea
                   value={editingItem.particulars}
                   onChange={(e) => setEditingItem({ ...editingItem, particulars: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600 h-20"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600 h-20"
                   placeholder="Describe evaluation detail rules..."
                 />
               </div>
 
               {activePart === "part1" && (
                 <div className="space-y-1">
-                  <label className="font-bold text-zinc-500 uppercase tracking-wider">Type Mapping</label>
+                  <label className="font-bold text-slate-600 uppercase tracking-wider">Type Mapping</label>
                   <select
                     value={editingItem.type || "custom"}
                     onChange={(e) => setEditingItem({ ...editingItem, type: e.target.value })}
-                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white"
+                    className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white"
                   >
                     <option value="theory_pass">Theory Pass Percentage</option>
                     <option value="practical_pass">Practical Pass Percentage</option>
@@ -1303,12 +1209,12 @@ export default function AppraisalSettings() {
 
               {/* Conditional parameters based on Tab Part */}
               {activePart === "part1" ? (
-                <div className="space-y-4 pt-3 border-t border-zinc-100">
+                <div className="space-y-4 pt-3 border-t border-slate-200">
                   <div className="flex items-center justify-between">
-                    <span className="font-black text-slate-800 uppercase tracking-wide">Sliding Scale Performance Points</span>
+                    <span className="font-black text-slate-900 uppercase tracking-wide">Sliding Scale Performance Points</span>
                     <button
                       onClick={handleAddRule}
-                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] font-bold rounded-lg flex items-center gap-1 cursor-pointer"
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 font-bold rounded-lg flex items-center gap-1 cursor-pointer"
                     >
                       <Plus size={12} /> Add Slot
                     </button>
@@ -1316,35 +1222,35 @@ export default function AppraisalSettings() {
 
                   <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
                     {(editingItem.rules || []).map((rule, idx) => (
-                      <div key={idx} className="flex items-center gap-3 bg-zinc-50 border border-zinc-150 p-3 rounded-2xl">
+                      <div key={idx} className="flex items-center gap-3 bg-slate-50 border border-slate-200/60 p-3 rounded-2xl">
                         <div className="flex-1 grid grid-cols-3 gap-2">
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-zinc-400 uppercase">Min %</span>
+                            <span className="text-[9px] font-black text-slate-600 uppercase">Min %</span>
                             <input
                               type="number"
                               step="0.01"
                               value={rule.min}
                               onChange={(e) => handleEditPart1RuleChange(idx, "min", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
+                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
                             />
                           </div>
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-zinc-400 uppercase">Max %</span>
+                            <span className="text-[9px] font-black text-slate-600 uppercase">Max %</span>
                             <input
                               type="number"
                               step="0.01"
                               value={rule.max}
                               onChange={(e) => handleEditPart1RuleChange(idx, "max", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
+                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
                             />
                           </div>
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-zinc-400 uppercase">Allocated Marks</span>
+                            <span className="text-[9px] font-black text-slate-600 uppercase">Allocated Marks</span>
                             <input
                               type="number"
                               value={rule.marks}
                               onChange={(e) => handleEditPart1RuleChange(idx, "marks", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
+                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
                             />
                           </div>
                         </div>
@@ -1359,15 +1265,15 @@ export default function AppraisalSettings() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-4 pt-3 border-t border-zinc-100">
-                  <span className="font-black text-slate-800 uppercase tracking-wide block">Part 2 Unit Calibration Settings</span>
+                <div className="space-y-4 pt-3 border-t border-slate-200">
+                  <span className="font-black text-slate-900 uppercase tracking-wide block">Part 2 Unit Calibration Settings</span>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-1">
-                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Unit Mapping Code</label>
+                      <label className="font-bold text-slate-600 uppercase tracking-wider">Unit Mapping Code</label>
                       <select
                         value={editingItem.type}
                         onChange={(e) => setEditingItem({ ...editingItem, type: e.target.value })}
-                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white"
+                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white"
                       >
                         <option value="online_courses">Online Courses (MOOC)</option>
                         <option value="publications">Research Papers</option>
@@ -1381,22 +1287,22 @@ export default function AppraisalSettings() {
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Target Units Count</label>
+                      <label className="font-bold text-slate-600 uppercase tracking-wider">Target Units Count</label>
                       <input
                         type="number"
                         value={editingItem.targetCount}
                         onChange={(e) => setEditingItem({ ...editingItem, targetCount: parseInt(e.target.value) || 0 })}
-                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold"
+                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Marks Allotment / Unit</label>
+                      <label className="font-bold text-slate-600 uppercase tracking-wider">Marks Allotment / Unit</label>
                       <input
                         type="number"
                         step="0.5"
                         value={editingItem.marksPerUnit}
                         onChange={(e) => setEditingItem({ ...editingItem, marksPerUnit: parseFloat(e.target.value) || 0 })}
-                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold"
+                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold"
                       />
                     </div>
                   </div>
@@ -1405,10 +1311,10 @@ export default function AppraisalSettings() {
 
             </div>
 
-            <div className="bg-zinc-50 border-t border-zinc-150 p-4 flex justify-end gap-3">
+            <div className="bg-slate-50 border-t border-slate-200/60 p-4 flex justify-end gap-3">
               <button
                 onClick={() => { setEditModalOpen(false); setEditingItem(null); }}
-                className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 Cancel
               </button>
@@ -1424,6 +1330,6 @@ export default function AppraisalSettings() {
         </div>
       )}
 
-    </Layout>
+    </HRLayout>
   );
 }

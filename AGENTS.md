@@ -1,5 +1,16 @@
 ## Summary of Changes
 
+### 429. Add Sub-Category / Parent Section Support in Dynamic Form Field Configurator (`AppraisalSettings.jsx`)
+- **Goal**: Enable adding and editing custom form sub-fields under specific sub-categories / parent sections (e.g., `1.3 Weekly Workload Grid`, `1.1 Basic Profile Details`, `3.1 NPTEL Certifications Completed`, etc.) in the Dynamic Form Fields Configurator on [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Added `availableSectionsForTab` memoized selector that lists all parent sections (`sec_*` or `section_*`) belonging to the selected tab.
+    - Updated `CREATE CUSTOM FORM FIELD` modal to render a **Sub-Category / Parent Section** dropdown alongside **Tab Category**, allowing admins to attach custom fields directly under any section.
+    - Updated `handleAddField` to support passing a target `parentSection`, pre-filling `tabId`, `tabName`, and `parentId`.
+    - Added inline `+ Add Sub-Field` action buttons directly next to section rows in the dynamic form configurator table.
+    - Updated `groupedFields` sorting logic to group sections and display sub-fields immediately under their parent section with indentation (`↳`) and parent section tags.
+- **Result**: Admins can easily add custom sub-fields under specific sub-categories or default sections. Build passes cleanly in 6.75s with 0 errors.
+
 ### 428. Fix Lateral Entry Fee Structures Reflecting for Regular Students (`student/Fees.jsx`, `FeeOperations.jsx`)
 - **Goal**: Fix issue where Fee Structures created for `"Lateral Entry"` students in [`FeeOperations.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FeeOperations.jsx) were incorrectly reflecting for `"Regular"` students on the student portal [`student/Fees.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Fees.jsx).
 - **Root Cause**:
