@@ -54,20 +54,58 @@ const defaultFields = [
 
   // Tab 2: Subjects & Results
   { id: "sec_subjects_results", title: "2.1 Subjects Handled & Exam Pass Targets", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_subjects_code", title: "Subject Code & Title", description: "Subject code and title column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_handled", title: "No. of Students Handled", description: "Handled student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passed", title: "No. of Students Passed", description: "Passed student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passPercent", title: "Pass Percentage (%)", description: "Pass percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_feedback", title: "Student Feedback Score (%)", description: "Feedback percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
 
   // Tab 3: Academic Development
   { id: "sec_academic_nptel", title: "3.1 NPTEL Certifications Completed", description: "Certification details and credits earned via SWAYAM/NPTEL portals.", type: "section_academic_nptel", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_nptel_title", title: "Title of the Course", description: "Name/title of online course column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_startDate", title: "Start Date", description: "Course start date column", type: "date", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_endDate", title: "End Date", description: "Course end date column", type: "date", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_weeks", title: "Weeks", description: "Duration in weeks column", type: "number", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_platform", title: "Platform", description: "Platform name column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_examDate", title: "Exam Date", description: "Exam date column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_certificate", title: "Certificate?", description: "Certificate received status column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+
   { id: "sec_academic_fdp", title: "3.2 FDP / Seminars Organized & Attended", description: "List of faculty development programs, seminars, workshops participated.", type: "section_academic_fdp", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_fdp_title", title: "Title of Workshop / FDP / Special Program", description: "Program title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_dates", title: "Dates", description: "Event dates column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_days", title: "No. of Days", description: "Duration in days column", type: "number", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_org", title: "Organization", description: "Organizing institute column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_report", title: "Submitted Report?", description: "Report status column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+
   { id: "sec_academic_journals", title: "3.3 Journal Publications", description: "Details of research publications in indexed journals.", type: "section_academic_journals", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_journals_title", title: "Title of the Paper", description: "Paper title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_date", title: "Date / Month / Year", description: "Publication date column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_journal", title: "Name of Journal / Conference", description: "Journal name column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_volIssue", title: "Vol. No, Issue No, Page No", description: "Volume and page details column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_index", title: "SCI / SCOPUS / UGC", description: "Indexing category column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+
   { id: "sec_academic_books", title: "3.4 Book & Chapter Publications", description: "Chapters or books written and published with ISBN.", type: "section_academic_books", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_books_title", title: "Title of the Book / Chapter", description: "Book/chapter title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
+  { id: "f_books_publisher", title: "Publisher Name & ISBN", description: "Publisher details column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
+  { id: "f_books_year", title: "Month & Year of Publication", description: "Publication year column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
 
   // Tab 4: Contributions
   { id: "sec_roles_department", title: "4.1 Department & College Level Roles", description: "Responsibilities held like Lab Coordinator, Placement Coordinator, etc.", type: "section_roles_department", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_roles_program", title: "Title of Workshop / Special Program Organized", description: "Organized program title column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+  { id: "f_roles_dates", title: "Dates & Duration", description: "Event duration column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+  { id: "f_roles_agency", title: "Sponsoring Agency & Grant", description: "Grant details column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_resultImprovementHOD", title: "Result Improvement & Maintenance (HOD)", description: "For HODs: Actions taken to maintain and improve results.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_deptAdministrationHOD", title: "Department Administration & Planning (HOD)", description: "For HODs: Contribution to department planning/admin.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_otherRolesContribution", title: "Other Role / Contribution Description", description: "Other administrative roles or institutional contributions.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+
   { id: "sec_professional_memberships", title: "4.2 Professional Body Memberships", description: "Memberships in technical bodies like ISTE, IEEE, CSI, ACM, etc.", type: "section_professional_memberships", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_memberships_society", title: "Name of Professional Society / Body", description: "Society name column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_professional_memberships" },
+  { id: "f_memberships_no", title: "Membership No. & Grade", description: "Membership number column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_professional_memberships" },
+
   { id: "sec_awards_honors", title: "4.3 Awards & Recognitions", description: "Prizes, honors, and professional recognition received.", type: "section_awards_honors", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_awards_title", title: "Name of Award / Recognition", description: "Award title column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
+  { id: "f_awards_body", title: "Awarding Body / Organization", description: "Issuing body column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
+  { id: "f_awards_year", title: "Year of Award", description: "Award year column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
 
   // Tab 5: Library & Leaves
   { id: "sec_library_usage", title: "5.1 Library Books & Journals Referenced", description: "Audit of resources, text books, and digital library systems utilized.", type: "section_library_usage", tabId: 5, tabName: "Library & Leaves", visible: true, evidenceRequired: false, evidenceMandatory: false },

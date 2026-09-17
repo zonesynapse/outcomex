@@ -1,5 +1,18 @@
 ## Summary of Changes
 
+### 430. Dynamic Table Grid Column Renaming & Custom Column Field Additions (`AppraisalSettings.jsx`, `FacultyAppraisal.jsx`)
+- **Goal**:
+  1. Allow admins to rename/edit table column headers for dynamic grid sections (e.g. `Title of the Course`, `Start Date`, `Title of the Paper`, `SCI / SCOPUS / UGC`, `Dates`, etc.) in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
+  2. Enable adding brand new custom table fields/columns under any grid section (e.g. NPTEL, FDP, Journals, Books, Subjects Handled, Roles, Memberships, Awards) that render dynamically in [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx).
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Seeded all built-in grid table column sub-fields under their parent section IDs (`sec_academic_nptel`, `sec_academic_journals`, `sec_academic_fdp`, `sec_academic_books`, `sec_subjects_results`, `sec_roles_department`, `sec_professional_memberships`, `sec_awards_honors`) in `defaultFields`.
+    - Allowed editing any grid column's title, input type, evidence requirements, and visibility, or adding new custom column fields via `+ Add Sub-Field`.
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx):
+    - Wrapped built-in table column header labels in `{getSectionTitle("f_...")}` so edited column titles automatically update in real time.
+    - Added `getCustomGridColumnsForSection`, `renderCustomGridHeaders`, and `renderCustomGridCells` helpers to dynamically render new table columns and input cells added by admins under any section grid.
+- **Result**: Admins can customize any table column header name and add new dynamic table fields/columns. Build passes cleanly in 6.41s with 0 errors.
+
 ### 429. Add Sub-Category / Parent Section Support in Dynamic Form Field Configurator (`AppraisalSettings.jsx`)
 - **Goal**: Enable adding and editing custom form sub-fields under specific sub-categories / parent sections (e.g., `1.3 Weekly Workload Grid`, `1.1 Basic Profile Details`, `3.1 NPTEL Certifications Completed`, etc.) in the Dynamic Form Fields Configurator on [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
 - **Fix**:

@@ -604,6 +604,62 @@ export default function FacultyAppraisal() {
     return field ? field.description : defaultDesc;
   };
 
+  const getCustomGridColumnsForSection = (secId) => {
+    const knownBuiltInIds = new Set([
+      "f_nptel_title", "f_nptel_startDate", "f_nptel_endDate", "f_nptel_weeks", "f_nptel_platform", "f_nptel_examDate", "f_nptel_certificate",
+      "f_journals_title", "f_journals_date", "f_journals_journal", "f_journals_volIssue", "f_journals_index",
+      "f_fdp_title", "f_fdp_dates", "f_fdp_days", "f_fdp_org", "f_fdp_report",
+      "f_books_title", "f_books_publisher", "f_books_year",
+      "f_subjects_code", "f_subjects_handled", "f_subjects_passed", "f_subjects_passPercent", "f_subjects_feedback",
+      "f_roles_program", "f_roles_dates", "f_roles_agency",
+      "f_memberships_society", "f_memberships_no",
+      "f_awards_title", "f_awards_body", "f_awards_year"
+    ]);
+    
+    return customFieldsConfig.filter(f => 
+      f.parentId === secId && 
+      f.visible !== false && 
+      !knownBuiltInIds.has(f.id)
+    );
+  };
+
+  const renderCustomGridHeaders = (secId) => {
+    const customCols = getCustomGridColumnsForSection(secId);
+    return customCols.map(col => (
+      <th key={col.id} className="border border-zinc-200 p-2 text-center">
+        {col.title}
+      </th>
+    ));
+  };
+
+  const renderCustomGridCells = (row, i, listKey, secId) => {
+    const customCols = getCustomGridColumnsForSection(secId);
+    return customCols.map(col => {
+      const val = row[col.id] || "";
+      return (
+        <td key={col.id} className="border border-zinc-200 p-1">
+          {col.type === "textarea" ? (
+            <textarea
+              value={val}
+              onChange={(e) => updateRow(listKey, i, col.id, e.target.value)}
+              disabled={isReadOnly}
+              rows={1}
+              className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none"
+            />
+          ) : (
+            <input
+              type={col.type === "number" ? "number" : col.type === "date" ? "date" : "text"}
+              value={val}
+              onChange={(e) => updateRow(listKey, i, col.id, e.target.value)}
+              disabled={isReadOnly}
+              className="w-full border-0 p-1 text-xs text-center focus:ring-0 focus:outline-none"
+            />
+          )}
+        </td>
+      );
+    });
+  };
+
   const tabs = useMemo(() => {
     const baseTabs = [
       { id: 1, name: "Profile & Workload" },
@@ -1426,13 +1482,14 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">Title of the Course</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">Start Date</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">End Date</th>
-                          <th className="border border-zinc-200 p-2 text-center w-20">Weeks</th>
-                          <th className="border border-zinc-200 p-2 text-center w-28">Platform</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">Exam Date</th>
-                          <th className="border border-zinc-200 p-2 text-center w-20">Certificate?</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_nptel_title", "Title of the Course")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_startDate", "Start Date")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_endDate", "End Date")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_weeks", "Weeks")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_nptel_platform", "Platform")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_examDate", "Exam Date")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_certificate", "Certificate?")}</th>
+                          {renderCustomGridHeaders("sec_academic_nptel")}
                           {renderRowEvidenceHeader("sec_academic_nptel")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
                         </tr>
@@ -1453,6 +1510,7 @@ export default function FacultyAppraisal() {
                                 <option value="No">No</option>
                               </select>
                             </td>
+                            {renderCustomGridCells(row, i, "onlineCourses", "sec_academic_nptel")}
                             {renderRowEvidenceCell("onlineCourses", row, i, "sec_academic_nptel")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("onlineCourses", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
                           </tr>
@@ -1491,11 +1549,12 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">Title of the Paper</th>
-                          <th className="border border-zinc-200 p-2 text-center w-28">Date / Month / Year</th>
-                          <th className="border border-zinc-200 p-2">Name of Journal / Conference</th>
-                          <th className="border border-zinc-200 p-2">Vol. No, Issue No, Page No</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">SCI / SCOPUS / UGC</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_title", "Title of the Paper")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_journals_date", "Date / Month / Year")}</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_journal", "Name of Journal / Conference")}</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_volIssue", "Vol. No, Issue No, Page No")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_journals_index", "SCI / SCOPUS / UGC")}</th>
+                          {renderCustomGridHeaders("sec_academic_journals")}
                           {renderRowEvidenceHeader("sec_academic_journals")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
                         </tr>
@@ -1516,6 +1575,7 @@ export default function FacultyAppraisal() {
                                 <option value="Other">Other Non-indexed</option>
                               </select>
                             </td>
+                            {renderCustomGridCells(row, i, "researchPapers", "sec_academic_journals")}
                             {renderRowEvidenceCell("researchPapers", row, i, "sec_academic_journals")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("researchPapers", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
                           </tr>
@@ -1550,11 +1610,12 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">Title of Workshop / FDP / Special Program</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">Dates</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">No. of Days</th>
-                          <th className="border border-zinc-200 p-2">Organization</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">Submitted Report?</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_title", "Title of Workshop / FDP / Special Program")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_dates", "Dates")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_fdp_days", "No. of Days")}</th>
+                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_org", "Organization")}</th>
+                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_report", "Submitted Report?")}</th>
+                          {renderCustomGridHeaders("sec_academic_fdp")}
                           {renderRowEvidenceHeader("sec_academic_fdp")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
                         </tr>
@@ -1573,6 +1634,7 @@ export default function FacultyAppraisal() {
                                 <option value="No">No</option>
                               </select>
                             </td>
+                            {renderCustomGridCells(row, i, "workshopsFDPs", "sec_academic_fdp")}
                             {renderRowEvidenceCell("workshopsFDPs", row, i, "sec_academic_fdp")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("workshopsFDPs", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
                           </tr>
