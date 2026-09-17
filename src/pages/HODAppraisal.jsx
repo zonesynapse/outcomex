@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
+import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 
 export default function HODAppraisal() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -114,16 +115,8 @@ export default function HODAppraisal() {
           setAcademicYear(sched.academicYear);
         }
 
-        const now = Date.now();
-        const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
-        const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
-        const active = sched.isActive;
-
-        let open = true;
-        if (!active) open = false;
-        if (start && now < start) open = false;
-        if (end && now > end) open = false;
-        setIsPortalOpen(open);
+        const { isOpen } = checkAppraisalPortalStatus(sched);
+        setIsPortalOpen(isOpen);
       } else {
         setIsPortalOpen(true);
       }
@@ -361,6 +354,8 @@ export default function HODAppraisal() {
 
   const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
   if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
+    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
+    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
       <Layout title="HOD Appraisal Request">
         <div className="max-w-xl mx-auto py-16 px-4">
@@ -381,18 +376,18 @@ export default function HODAppraisal() {
                 <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear}</strong>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
                   </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
                   </strong>
                 </div>
               </div>

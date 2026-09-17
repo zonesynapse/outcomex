@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Layout from "../components/Layout";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { db, auth } from "../firebase";
-import { doc, setDoc, getDoc, getDocs, collection } from "firebase/firestore";
+import { doc, setDoc, getDoc, getDocs, collection, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
@@ -26,6 +26,25 @@ const toArray = (val) => {
   if (Array.isArray(val)) return val
   return [val]
 }
+
+// Normalize strings for fuzzy timetable doc matching across key-format drifts
+// (e.g. "B.E. Computer Science and Engineering" vs "Computer_Science_and_Engineering",
+//  "2025-2029" vs "25 Batch (2025-29)", "2025-26" vs "2025-2026")
+const normFlat = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const batchStartYear = (b) => {
+  const m = String(b ?? '').match(/(19|20)\d{2}/);
+  return m ? m[0] : '';
+};
+// Academic-year start from a plain AY value ("2026-2027" -> "2026") or from a
+// full composite doc id ("…_2025-2029_2026-2027_…" -> "2026", i.e. 3rd year
+// token: batchStart, batchEnd, ayStart, ayEnd).
+const ayStartYear = (ay) => {
+  const all = String(ay ?? '').match(/(19|20)\d{2}/g) || [];
+  if (all.length >= 3) return all[2];
+  return all[0] || '';
+};
+
+const LAST_TT_FILTERS_KEY = 'ttc_last_filters';
 
 
 
@@ -67,6 +86,9 @@ export default function TimetableCreation() {
   const [userProgramme, setUserProgramme] = useState("");
   const [userDepartment, setUserDepartment] = useState("");
   const [effectiveKey, setEffectiveKey] = useState("");
+  const restoredRef = useRef(false);
+  const autoLoadAttemptedRef = useRef(false);
+  const pendingAutoLoadRef = useRef(false);
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
@@ -138,7 +160,7 @@ export default function TimetableCreation() {
     fetchCourseNames();
   }, []);
 
-  // Fetch current user's programme and department
+  // Fetch current user's programme and department (don't clobber restored filters)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -147,12 +169,32 @@ export default function TimetableCreation() {
           const userData = snap.data();
           setUserProgramme(userData.programme || "");
           setUserDepartment(userData.department || "");
-          setProgramme(userData.programme || "");
-          setDepartment(userData.department || "");
+          setProgramme(prev => prev || userData.programme || "");
+          setDepartment(prev => prev || userData.department || "");
         }
       }
     });
     return unsub;
+  }, []);
+
+  // Restore last-used filters so a revisit after save doesn't land on an empty page
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    try {
+      const raw = localStorage.getItem(LAST_TT_FILTERS_KEY);
+      if (!raw) return;
+      const f = JSON.parse(raw);
+      if (!f) return;
+      if (f.programme) setProgramme(f.programme);
+      if (f.department) setDepartment(f.department);
+      if (f.batch) setBatch(f.batch);
+      if (f.academicYear) setAcademicYear(f.academicYear);
+      if (f.semester) setSemester(f.semester);
+      if (f.programme && f.department && f.batch && f.academicYear && f.semester) {
+        pendingAutoLoadRef.current = true;
+      }
+    } catch { /* storage unavailable - ignore */ }
   }, []);
 
   const handleLoad = async () => {
@@ -176,6 +218,55 @@ export default function TimetableCreation() {
         snap = await getDoc(doc(db, 'timetable_allocations', legacyCompositeKey));
         if (snap.exists()) usedKey = legacyCompositeKey;
       }
+      // Fallback: scan collection with normalized matching. Exact keys can drift
+      // when department/batch/AY strings differ slightly between TimetableSetup
+      // allocation and this page (dots vs underscores, "25 Batch (2025-29)"
+      // vs "2025-2029", "2025-26" vs "2025-2026"). When duplicate docs exist
+      // for the same combo, deterministically prefer the doc that actually
+      // holds a saved grid (non-empty subjectAllocation) so a revisit after
+      // save never lands on an empty duplicate.
+      if (!snap.exists()) {
+        try {
+          const allSnap = await getDocs(collection(db, 'timetable_allocations'));
+          const needProg = normFlat(formatProgrammeKey(programme) || programme);
+          const needDept = normFlat(department);
+          const needBatchStart = batchStartYear(batch);
+          const needAyStart = ayStartYear(academicYear);
+          let best = null;
+          let bestScore = -1;
+          for (const d of allSnap.docs) {
+            const dd = d.data() || {};
+            const dProg = normFlat(dd.progKey || formatProgrammeKey(dd.programme) || '');
+            const dDept = normFlat(dd.deptKey || dd.department || '');
+            const dBatchStart = batchStartYear(dd.batchKey || dd.batch || d.id);
+            const dAyStart = ayStartYear(dd.ayKey || dd.academicYear || d.id);
+            const dSem = String(dd.semNum || dd.semester || '').match(/\d+/)?.[0] || '';
+            const idNorm = normFlat(d.id);
+            const keyMatch = d.id === compositeKey || d.id === legacyCompositeKey;
+            const fieldMatch =
+              (!needProg || dProg === needProg || (dProg && needProg && (dProg.includes(needProg) || needProg.includes(dProg)))) &&
+              (!needDept || dDept === needDept || (dDept && needDept && (dDept.includes(needDept) || needDept.includes(dDept)))) &&
+              (!needBatchStart || dBatchStart === needBatchStart) &&
+              (!needAyStart || dAyStart === needAyStart) &&
+              (!semNum || dSem === semNum);
+            const idFallback =
+              (!needBatchStart || idNorm.includes(normFlat(needBatchStart))) &&
+              (!semNum || idNorm.includes(normFlat(semNum))) &&
+              (!needDept || idNorm.includes(needDept) || needDept.includes(idNorm));
+            if (!keyMatch && !fieldMatch && !idFallback) continue;
+            let score = keyMatch ? 4 : fieldMatch ? 2 : 1;
+            const alloc = dd.subjectAllocation || {};
+            if (Object.keys(alloc).length > 0) score += 3;
+            if (score > bestScore) { bestScore = score; best = d; }
+          }
+          if (best) {
+            snap = await getDoc(doc(db, 'timetable_allocations', best.id));
+            if (snap.exists()) usedKey = best.id;
+          }
+        } catch (scanErr) {
+          console.warn('Timetable fallback scan failed:', scanErr);
+        }
+      }
       if (!snap.exists()) {
         showToast("No allocated timetable found for this combination.", "error");
         setAllocatedTemplate(null);
@@ -188,14 +279,36 @@ export default function TimetableCreation() {
       setAllocatedTemplate(data);
       setSubjectAllocation(data.subjectAllocation || {});
       setEffectiveKey(usedKey);
+      console.info('[TimetableCreation] loaded doc:', usedKey,
+        '| grid days:', Object.keys(data.subjectAllocation || {}).length);
 
-      // Fetch subject assignments — match by prefix (may have section suffix like _Sec-A)
+      // Fetch subject assignments — subject_assignments doc IDs are built from
+      // syllabus/HOD-side strings which may differ in format from the timetable
+      // key (dept naming, batch display). Match by exact key first, then by
+      // normalized fields so "allocated subjects 0" doesn't happen on revisit.
       const allAssignSnap = await getDocs(collection(db, 'subject_assignments'));
       const subjects = [];
       const fMap = {};
 
-      // Filter docs whose ID matches the effective key or starts with it + underscore (section suffix)
-      const matchingDocs = allAssignSnap.docs.filter(d => d.id === usedKey || d.id.startsWith(usedKey + '_'));
+      const needProgA = normFlat(formatProgrammeKey(programme) || programme);
+      const needDeptA = normFlat(department);
+      const needBatchStartA = batchStartYear(batch);
+      const needAyStartA = ayStartYear(academicYear);
+      const matchingDocs = allAssignSnap.docs.filter(d => {
+        if (d.id === usedKey || d.id.startsWith(usedKey + '_')) return true;
+        const idNoSec = d.id.replace(/_(sec|section)[-_]?[a-z0-9]*$/i, '');
+        const idNorm = normFlat(idNoSec);
+        const idBatchStart = batchStartYear(idNoSec);
+        const idAyStart = ayStartYear(idNoSec);
+        const semSegs = String(idNoSec).split('_');
+        const dSemA = semSegs.length > 0 ? (String(semSegs[semSegs.length - 1]).match(/\d+/)?.[0] || '') : '';
+        const progOk = !needProgA || idNorm.includes(needProgA) || needProgA.includes(idNorm);
+        const deptOk = !needDeptA || idNorm.includes(needDeptA) || needDeptA.includes(idNorm);
+        const batchOk = !needBatchStartA || idBatchStart === needBatchStartA;
+        const ayOk = !needAyStartA || idAyStart === needAyStartA;
+        const semOk = !semNum || dSemA === semNum;
+        return progOk && deptOk && batchOk && ayOk && semOk;
+      });
 
       // Merge all matching docs (e.g. multiple sections)
       const mergedAssignmentData = {};
@@ -248,6 +361,9 @@ export default function TimetableCreation() {
       }
 
       setAllocatedSubjects(subjects);
+      try {
+        localStorage.setItem(LAST_TT_FILTERS_KEY, JSON.stringify({ programme, department, batch, academicYear, semester }));
+      } catch { /* storage unavailable - ignore */ }
       showToast(`Loaded: ${data.timetableName} (${subjects.length} subjects)`);
     } catch (err) {
       console.error(err);
@@ -353,17 +469,37 @@ export default function TimetableCreation() {
 
       const saveKey = effectiveKey || compositeKey;
 
-      await setDoc(doc(db, 'timetable_allocations', saveKey), {
+      // updateDoc replaces the whole `subjectAllocation` map field, while
+      // setDoc(..., {merge:true}) deep-merges nested maps and would resurrect
+      // day/period slots the user deleted. Whole-field replace guarantees the
+      // revisit-after-save grid matches exactly what was saved.
+      const payload = {
         ...allocatedTemplate,
         subjectAllocation
-      }, { merge: true });
-
-      if (saveKey === legacyCompositeKey && compositeKey !== legacyCompositeKey) {
-        await setDoc(doc(db, 'timetable_allocations', compositeKey), {
-          ...allocatedTemplate,
-          subjectAllocation
-        }, { merge: true });
+      };
+      try {
+        await updateDoc(doc(db, 'timetable_allocations', saveKey), payload);
+      } catch (updErr) {
+        // Doc may not exist yet (or offline) - fall back to creating it
+        await setDoc(doc(db, 'timetable_allocations', saveKey), payload, { merge: true });
       }
+
+      if (saveKey !== compositeKey) {
+        // Mirror to the canonical key as well: the revisit computes
+        // compositeKey first, so it must always hold the latest grid even
+        // when the doc was originally resolved via legacy/fallback id.
+        try {
+          await updateDoc(doc(db, 'timetable_allocations', compositeKey), payload);
+        } catch {
+          await setDoc(doc(db, 'timetable_allocations', compositeKey), payload, { merge: true });
+        }
+      }
+
+      // Keep in-memory template in sync so further edits build on saved grid
+      setAllocatedTemplate(prev => (prev ? { ...prev, subjectAllocation } : prev));
+      try {
+        localStorage.setItem(LAST_TT_FILTERS_KEY, JSON.stringify({ programme, department, batch, academicYear, semester }));
+      } catch { /* storage unavailable - ignore */ }
 
       showToast("Timetable saved successfully!");
     } catch (err) {
@@ -373,6 +509,32 @@ export default function TimetableCreation() {
       setSaving(false);
     }
   };
+
+  // Auto-load restored filters once on revisit (only when they came from storage,
+  // never on manual filter selection).
+  const handleLoadRef = useRef(null);
+  handleLoadRef.current = handleLoad;
+  useEffect(() => {
+    if (autoLoadAttemptedRef.current || !pendingAutoLoadRef.current) return;
+    if (!programme || !department || !batch || !academicYear || !semester) return;
+    if (allocatedTemplate || loading) return;
+    // Only auto-load if current filters still match the stored snapshot, so
+    // manual filter changes by the user never trigger an unexpected load.
+    try {
+      const raw = localStorage.getItem(LAST_TT_FILTERS_KEY);
+      const f = raw ? JSON.parse(raw) : null;
+      const matchesStored = f &&
+        f.programme === programme &&
+        f.department === department &&
+        f.batch === batch &&
+        f.academicYear === academicYear &&
+        f.semester === semester;
+      if (!matchesStored) { pendingAutoLoadRef.current = false; return; }
+    } catch { pendingAutoLoadRef.current = false; return; }
+    autoLoadAttemptedRef.current = true;
+    pendingAutoLoadRef.current = false;
+    handleLoadRef.current?.();
+  }, [programme, department, batch, academicYear, semester, allocatedTemplate, loading]);
 
   return (
     <Layout title="Time Table Creation">

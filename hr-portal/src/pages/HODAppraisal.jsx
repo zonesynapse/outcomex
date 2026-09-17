@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
+import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 
 export default function HODAppraisal() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -114,16 +115,8 @@ export default function HODAppraisal() {
           setAcademicYear(sched.academicYear);
         }
 
-        const now = Date.now();
-        const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
-        const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
-        const active = sched.isActive;
-
-        let open = true;
-        if (!active) open = false;
-        if (start && now < start) open = false;
-        if (end && now > end) open = false;
-        setIsPortalOpen(open);
+        const { isOpen } = checkAppraisalPortalStatus(sched);
+        setIsPortalOpen(isOpen);
       } else {
         setIsPortalOpen(true);
       }
@@ -350,10 +343,10 @@ export default function HODAppraisal() {
 
   if (loading || checkingSchedule) {
     return (
-      <HRLayout title="Coordinator Appraisal Request">
+      <HRLayout title="HOD Appraisal Request">
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-          <Loader2 className="w-10 h-10 animate-spin text-indigo-400" />
-          <p className="text-xs font-bold text-slate-600 uppercase tracking-widest">Loading Coordinator Appraisal Portal...</p>
+          <Loader2 className="w-10 h-10 animate-spin text-[#120c7a]" />
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Loading HOD Appraisal Portal...</p>
         </div>
       </HRLayout>
     );
@@ -361,38 +354,40 @@ export default function HODAppraisal() {
 
   const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
   if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
+    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
+    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
-      <HRLayout title="Coordinator Appraisal Request">
+      <HRLayout title="HOD Appraisal Request">
         <div className="max-w-xl mx-auto py-16 px-4">
-          <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-xl overflow-hidden text-indigo-600enter p-8 space-y-6">
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
             <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
               <AlertTriangle size={32} />
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">Coordinator Appraisal Portal is Closed</h2>
-              <p className="text-slate-600 text-xs font-medium">
-                The Coordinator performance appraisal request submission portal is currently inactive or has reached its deadline.
+              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">HOD Appraisal Portal is Closed</h2>
+              <p className="text-zinc-500 text-xs font-medium">
+                The HOD performance appraisal request submission portal is currently inactive or has reached its deadline.
               </p>
             </div>
 
             {appraisalSchedule && (
               <div className="bg-slate-50 border border-slate-150 p-5 rounded-2xl text-left text-xs space-y-3">
-                <span className="font-bold text-slate-900 block border-b border-slate-200 pb-1.5 uppercase">Schedule Details</span>
+                <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-900">{appraisalSchedule.academicYear}</strong>
+                  <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Open Time:</span>
-                  <strong className="text-slate-900">
-                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                  <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
+                  <strong className="text-slate-800">
+                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
                   </strong>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Deadline Time:</span>
-                  <strong className="text-slate-900">
-                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                  <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
+                  <strong className="text-slate-800">
+                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
                   </strong>
                 </div>
               </div>
@@ -404,7 +399,7 @@ export default function HODAppraisal() {
   }
 
   return (
-    <HRLayout title="Coordinator Appraisal Request">
+    <HRLayout title="HOD Appraisal Request">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
         {/* Toast Notification */}
@@ -416,39 +411,33 @@ export default function HODAppraisal() {
         )}
 
         {/* Top Header Banner */}
-        <div className="bg-gradient-to-r from-indigo-700 via-indigo-800 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">
+        <div className="bg-gradient-to-tr from-[#120c7a] via-[#1a10a0] to-indigo-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden">
           <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-2">
-              <div className="flex items-center gap-2 px-3.5 py-1 bg-white/15 backdrop-blur-md rounded-full text-xs font-bold tracking-wider uppercase text-amber-300 w-fit">
-                <Sparkles size={13} className="text-amber-300" /> HR Appraisal System
+              <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
+                <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
               </div>
-              <h1 className="text-xl md:text-2xl font-bold font-heading text-white tracking-tight">
-                Coordinator's Performance Appraisal for the Academic Year {academicYear}
+              <h1 className="text-lg md:text-xl font-bold font-serif">
+                HoD's Performance Appraisal for the Academic Year {academicYear}
               </h1>
-              <p className="text-indigo-100 text-xs font-medium">
+              <p className="text-indigo-200 text-xs font-medium">
                 CK COLLEGE OF ENGINEERING AND TECHNOLOGY, CUDDALORE – 607 003. (ISO 9001:2015)
               </p>
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="bg-white/15 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/20 text-center">
-                <span className="block text-[10px] font-bold uppercase text-indigo-100 tracking-wider">Total Score</span>
-                <span className="text-2xl font-black text-amber-300">{totalScore} <span className="text-xs text-white/80 font-normal">/ 100</span></span>
+              <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/20 text-center">
+                <span className="block text-[10px] font-black uppercase text-indigo-200 tracking-wider">Total Score</span>
+                <span className="text-2xl font-black text-amber-400">{totalScore} <span className="text-xs text-white/70 font-normal">/ 100</span></span>
               </div>
 
               <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-bold text-indigo-100 uppercase tracking-wider">Academic Year</span>
-                <select
-                  value={academicYear}
-                  onChange={(e) => setAcademicYear(e.target.value)}
-                  disabled={true}
-                  className="bg-white/10 text-white font-bold text-xs px-3 py-2 rounded-xl border border-white/20 outline-none transition-all cursor-not-allowed opacity-80"
-                >
-                  <option value="2024-2025" className="text-slate-900">2024 – 2025</option>
-                  <option value="2025-2026" className="text-slate-900">2025 – 2026</option>
-                  <option value="2026-2027" className="text-slate-900">2026 – 2027</option>
-                </select>
+                <span className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider">Academic Year</span>
+                <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/15 backdrop-blur-md border border-white/25 rounded-xl text-xs font-black text-white tracking-wide shadow-sm">
+                  <Calendar size={13} className="text-amber-400" />
+                  <span>{academicYear}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -459,25 +448,25 @@ export default function HODAppraisal() {
           <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-                existingAppraisal.status === 'Submitted' ? 'bg-indigo-600mber-100 text-indigo-600mber-700' :
+                existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
                 existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-slate-800'
+                existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
               }`}>
                 <FileText size={20} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-600 font-bold uppercase tracking-wider">Status:</span>
+                  <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Status:</span>
                   <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                    existingAppraisal.status === 'Submitted' ? 'bg-indigo-600mber-50 text-indigo-600mber-600 border border-amber-200' :
+                    existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
                     existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-slate-700'
+                    existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
                   }`}>
                     {existingAppraisal.status === 'Submitted' ? 'Pending Principal Review' : existingAppraisal.status}
                   </span>
                 </div>
                 {existingAppraisal.submittedAt && (
-                  <p className="text-[10px] text-slate-600 font-medium mt-0.5">
+                  <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
                     Submitted on: {new Date(existingAppraisal.submittedAt).toLocaleString("en-IN")}
                   </p>
                 )}
@@ -487,7 +476,7 @@ export default function HODAppraisal() {
             {isReadOnly && existingAppraisal.status !== "Approved" && (
               <button
                 onClick={() => setIsEditingSubmitted(true)}
-                className="px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-400 font-bold text-xs rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-indigo-50 border border-indigo-200 text-[#120c7a] font-bold text-xs rounded-xl hover:bg-indigo-100 transition-all flex items-center gap-1.5"
               >
                 <RefreshCw size={14} /> Edit Submission
               </button>
@@ -495,86 +484,86 @@ export default function HODAppraisal() {
           </div>
         )}
 
-        {/* Coordinator Personal Info Card */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-200/60 pb-3">
-            <User className="text-indigo-400" size={18} />
-            <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">General Information of Coordinator</h2>
+        {/* HOD Personal Info Card */}
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex items-center gap-2 border-b border-zinc-150 pb-3">
+            <User className="text-[#120c7a]" size={18} />
+            <h2 className="text-sm font-black text-slate-850 uppercase tracking-wider">General Information of HoD</h2>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Name of the Coordinator</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Name of the HoD</label>
               <input
                 type="text"
                 value={hodName}
                 onChange={(e) => setHodName(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="Dr. / Prof. Name"
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Department</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Department</label>
               <input
                 type="text"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="Department Name"
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Designation</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Designation</label>
               <input
                 type="text"
                 value={designation}
                 onChange={(e) => setDesignation(e.target.value)}
                 disabled={isReadOnly}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Date of Joining</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Date of Joining</label>
               <input
                 type="text"
                 value={doj}
                 onChange={(e) => setDoj(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="DD/MM/YYYY"
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div className="sm:col-span-2 lg:col-span-2">
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Qualification</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Qualification</label>
               <input
                 type="text"
                 value={qualification}
                 onChange={(e) => setQualification(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="Ph.D. / M.E. / M.Tech."
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
           </div>
         </div>
 
         {/* KRA I: Department Academic Improvement */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-400 font-black text-xs flex items-center justify-center">I</span>
+              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">I</span>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Department Academic Improvement</h3>
-                <p className="text-[10px] text-slate-600 font-semibold">Department Performance in Anna University Examination (Target: Overall Pass % = 65%)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Department Academic Improvement</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold">Department Performance in Anna University Examination (Target: Overall Pass % = 65%)</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-indigo-600enter">
+            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
               <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 30 Marks</span>
               <span className="block text-xs font-black text-indigo-700">Score: {kra1Score} / 30</span>
             </div>
@@ -582,7 +571,7 @@ export default function HODAppraisal() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Overall Dept Pass Percentage (%)</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Overall Dept Pass Percentage (%)</label>
               <input
                 type="number"
                 min="0"
@@ -595,12 +584,12 @@ export default function HODAppraisal() {
                 }}
                 disabled={isReadOnly}
                 placeholder="e.g. 72.5"
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Performance Metric Tier</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Performance Metric Tier</label>
               <div className="grid grid-cols-2 gap-1.5">
                 {[
                   { tier: "65_above", label: "≥ 65% (30 Marks)" },
@@ -618,7 +607,7 @@ export default function HODAppraisal() {
                     className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${
                       kra1Tier === item.tier || (kra1Score > 0 && item.tier === (kra1Score === 30 ? "65_above" : kra1Score === 25 ? "50_64" : kra1Score === 20 ? "40_49" : kra1Score === 12 ? "30_39" : kra1Score === 8 ? "21_29" : "below_20"))
                         ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
-                        : "bg-slate-50 text-slate-800 border-slate-200 hover:bg-zinc-100"
+                        : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     {item.label}
@@ -628,14 +617,14 @@ export default function HODAppraisal() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Remarks / Remarks on Exam Performance</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Remarks / Remarks on Exam Performance</label>
               <textarea
                 rows={2}
                 value={kra1Remarks}
                 onChange={(e) => setKra1Remarks(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="Details of Anna University results, pass count, top performers..."
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-slate-50"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
@@ -652,7 +641,7 @@ export default function HODAppraisal() {
                 </div>
               ) : (
                 !isReadOnly && (
-                  <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-slate-800 font-bold text-xs rounded-xl cursor-pointer transition-all">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl cursor-pointer transition-all">
                     <UploadCloud size={14} />
                     <span>{uploadingMap["kra1"] ? "Uploading..." : "Attach Proof (PDF / Image)"}</span>
                     <input
@@ -668,16 +657,16 @@ export default function HODAppraisal() {
         </div>
 
         {/* KRA II: Department Student Centric Activities */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-400 font-black text-xs flex items-center justify-center">II</span>
+              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">II</span>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Department Student Centric Activities</h3>
-                <p className="text-[10px] text-slate-600 font-semibold">Organizing Student Centered Special Programs & Co-curricular Participation (5 Marks each parameter)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Department Student Centric Activities</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold">Organizing Student Centered Special Programs & Co-curricular Participation (5 Marks each parameter)</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-indigo-600enter">
+            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
               <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 25 Marks</span>
               <span className="block text-xs font-black text-indigo-700">Score: {kra2Score} / 25</span>
             </div>
@@ -695,7 +684,7 @@ export default function HODAppraisal() {
               return (
                 <div key={param.key} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="font-bold text-slate-900 text-xs">{param.label}</span>
+                    <span className="font-bold text-slate-800 text-xs">{param.label}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -707,7 +696,7 @@ export default function HODAppraisal() {
                         className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${
                           currentData.achieved
                             ? "bg-emerald-600 text-white shadow-sm"
-                            : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                            : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                         }`}
                       >
                         100% Target Achieved (5 Marks)
@@ -722,7 +711,7 @@ export default function HODAppraisal() {
                         className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${
                           !currentData.achieved
                             ? "bg-zinc-700 text-white shadow-sm"
-                            : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                            : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                         }`}
                       >
                         Below Target (0 Marks)
@@ -741,12 +730,12 @@ export default function HODAppraisal() {
                         }}
                         disabled={isReadOnly}
                         placeholder="Details of programs conducted / outcome..."
-                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                        className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                       />
                     </div>
                     <div>
                       {currentData.fileUrl ? (
-                        <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
+                        <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
                           <Paperclip size={12} />
                           <a href={currentData.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{currentData.fileName || "Proof"}</a>
                           {!isReadOnly && (
@@ -757,7 +746,7 @@ export default function HODAppraisal() {
                         </div>
                       ) : (
                         !isReadOnly && (
-                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
+                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                             <UploadCloud size={12} />
                             <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
                             <input
@@ -779,16 +768,16 @@ export default function HODAppraisal() {
         </div>
 
         {/* KRA III: Faculty Enrichment Efforts for Department */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-400 font-black text-xs flex items-center justify-center">III</span>
+              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">III</span>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Faculty Enrichment Efforts for Department</h3>
-                <p className="text-[10px] text-slate-600 font-semibold">Developing Ambience for R&D Activities & Invest in Yourself (100% Target: 5 Marks | 80-99%: 2.5 Marks)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Faculty Enrichment Efforts for Department</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold">Developing Ambience for R&D Activities & Invest in Yourself (100% Target: 5 Marks | 80-99%: 2.5 Marks)</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-indigo-600enter">
+            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
               <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 20 Marks</span>
               <span className="block text-xs font-black text-indigo-700">Score: {kra3Score} / 20</span>
             </div>
@@ -805,7 +794,7 @@ export default function HODAppraisal() {
               return (
                 <div key={param.key} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="font-bold text-slate-900 text-xs">{param.label}</span>
+                    <span className="font-bold text-slate-800 text-xs">{param.label}</span>
                     <div className="flex items-center gap-1.5">
                       {[
                         { tier: "100", label: "100% Target (5 Marks)" },
@@ -820,7 +809,7 @@ export default function HODAppraisal() {
                           className={`px-2.5 py-1 rounded-xl font-bold text-[10px] transition-all ${
                             currentData.tier === t.tier
                               ? "bg-[#120c7a] text-white shadow-sm"
-                              : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                              : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                           }`}
                         >
                           {t.label}
@@ -840,12 +829,12 @@ export default function HODAppraisal() {
                         }}
                         disabled={isReadOnly}
                         placeholder="Details of proposals / revenue / courses completed..."
-                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                        className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                       />
                     </div>
                     <div>
                       {currentData.fileUrl ? (
-                        <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
+                        <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
                           <Paperclip size={12} />
                           <a href={currentData.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{currentData.fileName || "Proof"}</a>
                           {!isReadOnly && (
@@ -856,7 +845,7 @@ export default function HODAppraisal() {
                         </div>
                       ) : (
                         !isReadOnly && (
-                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
+                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                             <UploadCloud size={12} />
                             <span>{uploadingMap[`kra3_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
                             <input
@@ -878,16 +867,16 @@ export default function HODAppraisal() {
         </div>
 
         {/* KRA IV: Significant Contribution towards Department / Personal Development */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-400 font-black text-xs flex items-center justify-center">IV</span>
+              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">IV</span>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Significant Contribution towards Department / Personal Development</h3>
-                <p className="text-[10px] text-slate-600 font-semibold">CoE / MoU / Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards (2.5 Marks for each contribution, Max 5 Marks)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Significant Contribution towards Department / Personal Development</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold">CoE / MoU / Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards (2.5 Marks for each contribution, Max 5 Marks)</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-indigo-600enter">
+            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
               <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 5 Marks</span>
               <span className="block text-xs font-black text-indigo-700">Score: {kra4Score} / 5</span>
             </div>
@@ -897,7 +886,7 @@ export default function HODAppraisal() {
             {kra4Contributions.map((contrib, idx) => (
               <div key={idx} className="bg-slate-50 border border-slate-200/70 p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-slate-900">Contribution #{idx + 1}</span>
+                  <span className="text-xs font-bold text-slate-800">Contribution #{idx + 1}</span>
                   {!isReadOnly && kra4Contributions.length > 1 && (
                     <button
                       type="button"
@@ -911,7 +900,7 @@ export default function HODAppraisal() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Title / Category</label>
+                    <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Title / Category</label>
                     <input
                       type="text"
                       value={contrib.title || ""}
@@ -921,12 +910,12 @@ export default function HODAppraisal() {
                       }}
                       disabled={isReadOnly}
                       placeholder="e.g. Signed MoU with TechCorp / Published Book Chapter"
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-bold text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                      className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">Details & Outcome</label>
+                    <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Details & Outcome</label>
                     <input
                       type="text"
                       value={contrib.description || ""}
@@ -936,13 +925,13 @@ export default function HODAppraisal() {
                       }}
                       disabled={isReadOnly}
                       placeholder="Scope, dates, outcomes achieved..."
-                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                      className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                     />
                   </div>
 
                   <div className="sm:col-span-2 flex items-center gap-3">
                     {contrib.fileUrl ? (
-                      <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1 rounded-xl text-[10px] font-bold text-indigo-700">
+                      <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1 rounded-xl text-[10px] font-bold text-indigo-700">
                         <Paperclip size={12} />
                         <a href={contrib.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-xs">{contrib.fileName || "Proof Attachment"}</a>
                         {!isReadOnly && (
@@ -953,7 +942,7 @@ export default function HODAppraisal() {
                       </div>
                     ) : (
                       !isReadOnly && (
-                        <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all">
+                        <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all">
                           <UploadCloud size={12} />
                           <span>{uploadingMap[`kra4_${idx}`] ? "Uploading..." : "Attach Proof File"}</span>
                           <input
@@ -975,7 +964,7 @@ export default function HODAppraisal() {
               <button
                 type="button"
                 onClick={() => setKra4Contributions(prev => [...prev, { title: "", description: "", fileUrl: "", fileName: "" }])}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-400 font-bold text-xs rounded-xl hover:bg-indigo-100 transition-all"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 border border-indigo-200 text-[#120c7a] font-bold text-xs rounded-xl hover:bg-indigo-100 transition-all"
               >
                 <Plus size={14} /> Add Another Contribution
               </button>
@@ -984,16 +973,16 @@ export default function HODAppraisal() {
         </div>
 
         {/* KRA V: Academic Excellence and Self Development (IIY) */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-indigo-400 font-black text-xs flex items-center justify-center">V</span>
+              <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">V</span>
               <div>
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Academic Excellence and Self Development (IIY)</h3>
-                <p className="text-[10px] text-slate-600 font-semibold">Anna University Subject Exam Pass % (Max 10 Marks) + Online Course (5 Marks) + Research Publication (5 Marks)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Academic Excellence and Self Development (IIY)</h3>
+                <p className="text-[10px] text-zinc-400 font-semibold">Anna University Subject Exam Pass % (Max 10 Marks) + Online Course (5 Marks) + Research Publication (5 Marks)</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-indigo-600enter">
+            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
               <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 20 Marks</span>
               <span className="block text-xs font-black text-indigo-700">Score: {kra5Score} / 20</span>
             </div>
@@ -1002,7 +991,7 @@ export default function HODAppraisal() {
           <div className="space-y-4 text-xs">
             {/* Sub-item 1: Exam Result */}
             <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
-              <span className="font-bold text-slate-900 text-xs block">1. Anna University Examination Result (Theory Pass % Target: 95% | Analytical Pass % Target: 90%)</span>
+              <span className="font-bold text-slate-800 text-xs block">1. Anna University Examination Result (Theory Pass % Target: 95% | Analytical Pass % Target: 90%)</span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {[
                   { tier: "90_above", label: "≥ 90% (10 Marks)" },
@@ -1020,7 +1009,7 @@ export default function HODAppraisal() {
                     className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${
                       kra5ResultTier === item.tier
                         ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
-                        : "bg-white text-slate-800 border-slate-200 hover:bg-zinc-100"
+                        : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     {item.label}
@@ -1036,12 +1025,12 @@ export default function HODAppraisal() {
                     onChange={(e) => setKra5ResultRemarks(e.target.value)}
                     disabled={isReadOnly}
                     placeholder="Subject code, course name, theory & analytical pass percentage details..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                   />
                 </div>
                 <div>
                   {kra5ResultProof.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
+                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
                       <Paperclip size={12} />
                       <a href={kra5ResultProof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5ResultProof.fileName || "Proof"}</a>
                       {!isReadOnly && (
@@ -1052,7 +1041,7 @@ export default function HODAppraisal() {
                     </div>
                   ) : (
                     !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
+                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
                         <span>{uploadingMap["kra5_result"] ? "Uploading..." : "Attach Result Sheet"}</span>
                         <input
@@ -1070,14 +1059,14 @@ export default function HODAppraisal() {
             {/* Sub-item 2: Online Course */}
             <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="font-bold text-slate-900 text-xs">2. Online Course – 1 per Semester</span>
+                <span className="font-bold text-slate-800 text-xs">2. Online Course – 1 per Semester</span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     disabled={isReadOnly}
                     onClick={() => setKra5OnlineCourse(prev => ({ ...prev, achieved: true }))}
                     className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      kra5OnlineCourse.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                      kra5OnlineCourse.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     100% Target Achieved (5 Marks)
@@ -1087,7 +1076,7 @@ export default function HODAppraisal() {
                     disabled={isReadOnly}
                     onClick={() => setKra5OnlineCourse(prev => ({ ...prev, achieved: false }))}
                     className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      !kra5OnlineCourse.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                      !kra5OnlineCourse.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     Below (0 Marks)
@@ -1106,12 +1095,12 @@ export default function HODAppraisal() {
                     }}
                     disabled={isReadOnly}
                     placeholder="Course name, NPTEL/Coursera details, score..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                   />
                 </div>
                 <div>
                   {kra5OnlineCourse.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
+                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
                       <Paperclip size={12} />
                       <a href={kra5OnlineCourse.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5OnlineCourse.fileName || "Proof"}</a>
                       {!isReadOnly && (
@@ -1122,7 +1111,7 @@ export default function HODAppraisal() {
                     </div>
                   ) : (
                     !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
+                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
                         <span>{uploadingMap["kra5_course"] ? "Uploading..." : "Attach Certificate"}</span>
                         <input
@@ -1140,14 +1129,14 @@ export default function HODAppraisal() {
             {/* Sub-item 3: Research Publication */}
             <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="font-bold text-slate-900 text-xs">3. Publication of Research Paper in reputed Journal / International Conference – 1 per Semester</span>
+                <span className="font-bold text-slate-800 text-xs">3. Publication of Research Paper in reputed Journal / International Conference – 1 per Semester</span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     disabled={isReadOnly}
                     onClick={() => setKra5Publication(prev => ({ ...prev, achieved: true }))}
                     className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      kra5Publication.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                      kra5Publication.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     100% Target Achieved (5 Marks)
@@ -1157,7 +1146,7 @@ export default function HODAppraisal() {
                     disabled={isReadOnly}
                     onClick={() => setKra5Publication(prev => ({ ...prev, achieved: false }))}
                     className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      !kra5Publication.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-slate-700 border border-slate-200 hover:bg-zinc-100"
+                      !kra5Publication.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                   >
                     Below (0 Marks)
@@ -1176,12 +1165,12 @@ export default function HODAppraisal() {
                     }}
                     disabled={isReadOnly}
                     placeholder="Paper title, journal name, Scopus/WOS indexing, volume/page..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 font-medium text-slate-900 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                   />
                 </div>
                 <div>
                   {kra5Publication.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
+                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
                       <Paperclip size={12} />
                       <a href={kra5Publication.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5Publication.fileName || "Proof"}</a>
                       {!isReadOnly && (
@@ -1192,7 +1181,7 @@ export default function HODAppraisal() {
                     </div>
                   ) : (
                     !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-zinc-100 text-slate-800 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
+                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
                         <span>{uploadingMap["kra5_pub"] ? "Uploading..." : "Attach Paper Copy"}</span>
                         <input
@@ -1210,24 +1199,24 @@ export default function HODAppraisal() {
         </div>
 
         {/* Declaration & Action Buttons */}
-        <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900/80 p-6 shadow-sm space-y-6">
-          <div className="flex items-start gap-3 bg-indigo-600mber-50/60 border border-amber-200/80 p-4 rounded-2xl">
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-6">
+          <div className="flex items-start gap-3 bg-amber-50/60 border border-amber-200/80 p-4 rounded-2xl">
             <input
               type="checkbox"
               id="hod_declaration"
               checked={declaration}
               onChange={(e) => setDeclaration(e.target.checked)}
               disabled={isReadOnly}
-              className="mt-0.5 w-4 h-4 rounded text-indigo-400 focus:ring-indigo-500 cursor-pointer"
+              className="mt-0.5 w-4 h-4 rounded text-[#120c7a] focus:ring-indigo-500 cursor-pointer"
             />
-            <label htmlFor="hod_declaration" className="text-xs text-indigo-600mber-950 font-medium leading-relaxed cursor-pointer select-none">
+            <label htmlFor="hod_declaration" className="text-xs text-amber-950 font-medium leading-relaxed cursor-pointer select-none">
               I hereby declare that the particulars furnished above in my HOD Performance Appraisal for the Academic Year <strong>{academicYear}</strong> are true, correct, and complete to the best of my knowledge and belief.
             </label>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-slate-200/60">
-            <div className="text-xs font-extrabold text-slate-900">
-              Signature of the Head of the Department: <span className="text-indigo-400 underline ml-1">{hodName || "Digital Signature"}</span>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-zinc-150">
+            <div className="text-xs font-extrabold text-slate-800">
+              Signature of the Head of the Department: <span className="text-[#120c7a] underline ml-1">{hodName || "Digital Signature"}</span>
             </div>
 
             <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -1237,7 +1226,7 @@ export default function HODAppraisal() {
                     type="button"
                     onClick={() => handleSave(false)}
                     disabled={saving}
-                    className="flex-1 sm:flex-none px-5 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+                    className="flex-1 sm:flex-none px-5 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
                   >
                     {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     <span>Save Draft</span>

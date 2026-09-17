@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { 
+import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
   X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
@@ -60,10 +60,10 @@ export default function AppraisalReviews() {
     return (
       <td className="border border-zinc-200 p-1.5 text-center min-w-[100px]">
         {row.fileUrl ? (
-          <a 
-            href={row.fileUrl} 
-            target="_blank" 
-            rel="noreferrer" 
+          <a
+            href={row.fileUrl}
+            target="_blank"
+            rel="noreferrer"
             className="inline-block text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all"
             title={row.fileName || "View Proof"}
           >
@@ -132,9 +132,9 @@ export default function AppraisalReviews() {
                 {field.evidenceRequired && savedEntry.fileUrl && (
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
-                    <a 
-                      href={savedEntry.fileUrl} 
-                      target="_blank" 
+                    <a
+                      href={savedEntry.fileUrl}
+                      target="_blank"
                       rel="noreferrer"
                       className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
                     >
@@ -157,7 +157,8 @@ export default function AppraisalReviews() {
   // Review Form States
   const [comments, setComments] = useState("");
   const [evaluationGrade, setEvaluationGrade] = useState("Good");
-  
+  const [finalRating, setFinalRating] = useState("");
+
   // Principal Checkboxes
   const [principalCheckboxes, setPrincipalCheckboxes] = useState({
     appreciated: false,
@@ -205,27 +206,27 @@ export default function AppraisalReviews() {
     return unsub;
   }, []);
 
-const NON_TEACHING_EVALUATION_CATEGORIES = [
-  { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
-  { id: 2, text: "Responds positively to any instruction, guidance, correction and discipline given by Superiors" },
-  { id: 3, text: "Cooperation towards organizing programs in the department/Institute" },
-  { id: 4, text: "Attendance, Discipline, Punctuality and Completion of work on schedule" },
-  { id: 5, text: "Maintenance of Files / Records / Ambiance of the Department / Laboratory" },
-  { id: 6, text: "Ability and willingness to take up additional load in times of requirements" },
-  { id: 7, text: "Contribution towards admission" },
-  { id: 8, text: "IIY / Improve knowledge (Theory & Hands on Training) on all aspects of the job to perform satisfactorily" },
-  { id: 9, text: "The ability and ease in expressing ideas, opinions and information clearly and accurately" },
-  { id: 10, text: "Special efforts taken / Contributions for the development of the Institution / Department" }
-];
+  const NON_TEACHING_EVALUATION_CATEGORIES = [
+    { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
+    { id: 2, text: "Responds positively to any instruction, guidance, correction and discipline given by Superiors" },
+    { id: 3, text: "Cooperation towards organizing programs in the department/Institute" },
+    { id: 4, text: "Attendance, Discipline, Punctuality and Completion of work on schedule" },
+    { id: 5, text: "Maintenance of Files / Records / Ambiance of the Department / Laboratory" },
+    { id: 6, text: "Ability and willingness to take up additional load in times of requirements" },
+    { id: 7, text: "Contribution towards admission" },
+    { id: 8, text: "IIY / Improve knowledge (Theory & Hands on Training) on all aspects of the job to perform satisfactorily" },
+    { id: 9, text: "The ability and ease in expressing ideas, opinions and information clearly and accurately" },
+    { id: 10, text: "Special efforts taken / Contributions for the development of the Institution / Department" }
+  ];
 
-const calculateNonTeachingGrade = (totalMarks) => {
-  if (totalMarks > 89) return "A";
-  if (totalMarks >= 70) return "B";
-  if (totalMarks >= 50) return "C";
-  return "D";
-};
+  const calculateNonTeachingGrade = (totalMarks) => {
+    if (totalMarks > 89) return "A";
+    if (totalMarks >= 70) return "B";
+    if (totalMarks >= 50) return "C";
+    return "D";
+  };
 
-// Fetch all appraisal records (Teaching, Non-Teaching, HOD)
+  // Fetch all appraisal records (Teaching, Non-Teaching, HOD)
   useEffect(() => {
     if (!currentUser) return;
     let facultyList = [];
@@ -260,13 +261,13 @@ const calculateNonTeachingGrade = (totalMarks) => {
   const filteredAppraisals = appraisals.filter((app) => {
     const nameMatch = (app.facultyName || "").toLowerCase().includes(searchTerm.toLowerCase());
     const emailMatch = (app.facultyEmail || "").toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const depMatch = userRole === "HOD" 
+
+    const depMatch = userRole === "HOD"
       ? app.department === userDept
       : (deptFilter === "All" || app.department === deptFilter);
-      
+
     const statusMatch = statusFilter === "All" || app.status === statusFilter;
-    
+
     return (nameMatch || emailMatch) && depMatch && statusMatch;
   });
 
@@ -275,13 +276,14 @@ const calculateNonTeachingGrade = (totalMarks) => {
   const handleOpenDetails = (app) => {
     setSelectedAppraisal(app);
     setActiveDetailsTab(1);
-    
+
     if (userRole === "HOD") {
       setComments(app.hodReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || "Good");
     } else if (userRole === "Principal" || userRole === "Admin") {
       setComments(app.principalReview?.comments || "");
       setEvaluationGrade(app.principalReview?.grade || "Good");
+      setFinalRating(app.principalReview?.finalRating ?? app.principalReview?.rating ?? "");
       setPrincipalCheckboxes({
         appreciated: app.principalReview?.checkboxes?.appreciated || false,
         satisfactory: app.principalReview?.checkboxes?.satisfactory || false,
@@ -312,6 +314,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
       updatePayload.principalReview = {
         comments: comments || "Approved by Principal",
         grade: evaluationGrade,
+        finalRating: finalRating !== "" ? finalRating : (selectedAppraisal.principalReview?.finalRating ?? ""),
         checkboxes: principalCheckboxes,
         reviewedBy: currentUser.email,
         reviewedAt: new Date().toISOString()
@@ -366,7 +369,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
   const handlePrintPDF = (app) => {
     const data = app.formData || app;
     const doc = new jsPDF("p", "pt", "a4");
-    
+
     doc.setFont("Times", "bold");
     doc.setFontSize(14);
     doc.text("CK COLLEGE OF ENGINEERING & TECHNOLOGY, CUDDALORE - 607 003", 30, 45);
@@ -375,7 +378,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     doc.text("SELF APPRAISAL FORM FOR TEACHING FACULTY", 190, 65);
     doc.setFont("Times", "italic");
     doc.text(`Academic Session: ${app.academicYear || "2024-2025"}`, 230, 80);
-    
+
     doc.setDrawColor(200, 200, 200);
     doc.line(30, 95, 565, 95);
 
@@ -383,7 +386,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     doc.setFont("Times", "bold");
     doc.setFontSize(10);
     doc.text("1. PERSONAL & POST DETAILS", 30, 115);
-    
+
     const info = [
       ["Faculty Name:", data.name || "", "Designation:", data.designation || ""],
       ["Department:", data.department || "", "Date of Birth:", data.dob || ""],
@@ -404,7 +407,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     // Experience Summary
     doc.setFont("Times", "bold");
     doc.text("2. EXPERIENCE SUMMARY (Years)", 30, doc.lastAutoTable.finalY + 25);
-    
+
     const expData = [
       ["Teaching at CKCET", data.experience?.teachingCKCET || "0"],
       ["Teaching Elsewhere", data.experience?.teachingElsewhere || "0"],
@@ -430,7 +433,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
 
     doc.setFontSize(10);
     doc.text("HOD RECOMMENDATION / REMARKS", 30, 80);
-    
+
     const hodInfo = [
       ["Evaluation Grade:", app.hodReview?.grade || "Not Reviewed Yet"],
       ["Remarks:", app.hodReview?.comments || "N/A"],
@@ -448,7 +451,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     });
 
     doc.text("PRINCIPAL APPROVAL & RATING", 30, doc.lastAutoTable.finalY + 30);
-    
+
     // Checkboxes text
     const cb = app.principalReview?.checkboxes || {};
     const cbText = [
@@ -460,6 +463,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
     ].join("\n");
 
     const principalInfo = [
+      ["Final Rating:", app.principalReview?.finalRating ? String(app.principalReview.finalRating) : "-"],
       ["Principal Grading:", app.principalReview?.grade || "Pending Approval"],
       ["Assessment Status:", cbText],
       ["Remarks:", app.principalReview?.comments || "N/A"],
@@ -498,7 +502,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
   return (
     <Layout title="Faculty Appraisal Requests">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        
+
         {/* Toast Alert */}
         {toast.show && (
           <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-5 py-3.5 rounded-xl text-white font-bold shadow-lg animate-slideIn ${toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
@@ -518,7 +522,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
               >
                 <ArrowLeft size={14} /> Back to Requests
               </button>
-              
+
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => handlePrintPDF(selectedAppraisal)}
@@ -526,13 +530,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                 >
                   <Printer size={14} /> Print PDF
                 </button>
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                  selectedAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" :
-                  selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
-                  selectedAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-700 border border-amber-500/30" :
-                  selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
-                  "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
-                }`}>
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" :
+                    selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
+                      selectedAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-700 border border-amber-500/30" :
+                        selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
+                          "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
+                  }`}>
                   {selectedAppraisal.status.replace("_", " ")}
                 </span>
               </div>
@@ -540,21 +543,20 @@ const calculateNonTeachingGrade = (totalMarks) => {
 
             {/* Appraisal Details Content */}
             <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
+
               {/* Left Column: Form Details & Tables (2 cols wide) */}
               <div className="lg:col-span-2 space-y-8">
-                
+
                 {/* Custom internal detail tabs */}
                 <div className="flex border-b border-zinc-100 overflow-x-auto gap-2 no-scrollbar mb-4">
                   {appraisalTabs.map((subTab) => (
                     <button
                       key={subTab.id}
                       onClick={() => setActiveDetailsTab(subTab.id)}
-                      className={`pb-3 px-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${
-                        activeDetailsTab === subTab.id
+                      className={`pb-3 px-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${activeDetailsTab === subTab.id
                           ? "border-indigo-600 text-indigo-600"
                           : "border-transparent text-zinc-500 hover:text-zinc-700"
-                      }`}
+                        }`}
                     >
                       {subTab.name}
                     </button>
@@ -663,51 +665,95 @@ const calculateNonTeachingGrade = (totalMarks) => {
                     )}
 
                     {isSectionVisible("sec_profile_workload") && (
-                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
                         <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block border-b border-zinc-200 pb-1 uppercase tracking-wider">
-                          {getSectionTitle("sec_profile_workload", "1.3 Weekly Work Load (Hours)")}
+                          {getSectionTitle("sec_profile_workload", "1.3 WEEKLY WORKLOAD GRID")}
                         </span>
                         {getSectionDescription("sec_profile_workload") && (
                           <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_profile_workload")}</p>
                         )}
-                        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                          {isSectionVisible("f_oddTheory") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddTheory", "Odd Theory")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddTheory || "0"} Hrs</span>
+                        
+                        {/* Odd Semester Workload Card */}
+                        {isSectionVisible("f_workload_odd_title") && (
+                          <div className="bg-white p-4 rounded-xl border border-zinc-200 space-y-2">
+                            <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                              {getSectionTitle("f_workload_odd_title", "ODD SEMESTER WORKLOAD / WEEK (HRS)")}
+                            </span>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                              {isSectionVisible("f_oddTheory") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddTheory", "THEORY CLASSES")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddTheory || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_oddPractical") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddPractical", "PRACTICAL CLASSES")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddPractical || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_oddSpecial") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddSpecial", "C) SPECIAL CLASS (HRS)")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddSpecial || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_oddOther") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddOther", "D) OTHER ACTIVITY (HRS)")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddOther || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_oddTotal") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddTotal", "ODD TOTAL HOURS")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddTotal || "0"} Hrs</span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {isSectionVisible("f_oddPractical") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddPractical", "Odd Lab")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddPractical || "0"} Hrs</span>
+                          </div>
+                        )}
+
+                        {/* Even Semester Workload Card */}
+                        {isSectionVisible("f_workload_even_title") && (
+                          <div className="bg-white p-4 rounded-xl border border-zinc-200 space-y-2">
+                            <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                              {getSectionTitle("f_workload_even_title", "EVEN SEMESTER WORKLOAD / WEEK (HRS)")}
+                            </span>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                              {isSectionVisible("f_evenTheory") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenTheory", "EVEN SEM THEORY HOURS")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenTheory || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_evenPractical") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenPractical", "EVEN PRACTICAL/PROJECT HOURS")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenPractical || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_evenSpecial") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenSpecial", "C) SPECIAL CLASS (HRS)")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenSpecial || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_evenOther") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenOther", "D) OTHER ACTIVITY (HRS)")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenOther || "0"} Hrs</span>
+                                </div>
+                              )}
+                              {isSectionVisible("f_evenTotal") && (
+                                <div className="bg-slate-50 border border-zinc-200 p-2.5 rounded-lg text-center">
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenTotal", "EVEN TOTAL HOURS")}</span>
+                                  <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenTotal || "0"} Hrs</span>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {isSectionVisible("f_oddTotal") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_oddTotal", "Odd Total")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.oddTotal || "0"} Hrs</span>
-                            </div>
-                          )}
-                          {isSectionVisible("f_evenTheory") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenTheory", "Even Theory")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenTheory || "0"} Hrs</span>
-                            </div>
-                          )}
-                          {isSectionVisible("f_evenPractical") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenPractical", "Even Lab")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenPractical || "0"} Hrs</span>
-                            </div>
-                          )}
-                          {isSectionVisible("f_evenTotal") && (
-                            <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_evenTotal", "Even Total")}</span>
-                              <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.workloadWeek?.evenTotal || "0"} Hrs</span>
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -734,12 +780,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                           <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">Odd Semester Theory Subjects</span>
                           <table className="w-full border-collapse border border-zinc-200 text-xs">
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center">Feedback Rating</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
                               {renderRowEvidenceHeader("sec_subjects_results")}
                             </tr>
                             {(selectedAppraisal.formData?.oddTheorySubjects || []).map((row, i) => (
@@ -760,12 +806,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                           <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">Odd Semester Practical / Project Subjects</span>
                           <table className="w-full border-collapse border border-zinc-200 text-xs">
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center">Feedback Rating</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
                               {renderRowEvidenceHeader("sec_subjects_results")}
                             </tr>
                             {(selectedAppraisal.formData?.oddPracticalSubjects || []).map((row, i) => (
@@ -787,12 +833,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                           <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">Even Semester Theory Subjects</span>
                           <table className="w-full border-collapse border border-zinc-200 text-xs">
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center">Feedback Rating</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
                               {renderRowEvidenceHeader("sec_subjects_results")}
                             </tr>
                             {(selectedAppraisal.formData?.evenTheorySubjects || []).map((row, i) => (
@@ -813,12 +859,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                           <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">Even Semester Practical / Project Subjects</span>
                           <table className="w-full border-collapse border border-zinc-200 text-xs">
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center">Feedback Rating</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
+                              <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>
+                              <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
                               {renderRowEvidenceHeader("sec_subjects_results")}
                             </tr>
                             {(selectedAppraisal.formData?.evenPracticalSubjects || []).map((row, i) => (
@@ -836,7 +882,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
                         </div>
 
                         <div className="bg-slate-50 p-4 rounded-xl border border-zinc-200">
-                          <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">11. Result Attribution Opinion</span>
+                          <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">Result Attribution Opinion</span>
                           <span className="text-xs font-bold text-slate-800">{selectedAppraisal.formData?.resultAttribution || "Both"}</span>
                         </div>
                       </>
@@ -1436,10 +1482,10 @@ const calculateNonTeachingGrade = (totalMarks) => {
                             {field.evidenceRequired && entry.fileUrl && (
                               <div className="flex items-center gap-2 mt-2">
                                 <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
-                                <a 
-                                  href={entry.fileUrl} 
-                                  target="_blank" 
-                                  rel="noreferrer" 
+                                <a
+                                  href={entry.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
                                   className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg"
                                 >
                                   View Evidence ({entry.fileName || "File"})
@@ -1557,7 +1603,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
 
               {/* Right Column: Reviewing Actions & Comments Portlet */}
               <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 h-fit space-y-6">
-                
+
                 <div>
                   <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                     <Star size={14} className="text-[#120c7a]" /> Evaluation & Recommendation
@@ -1653,6 +1699,21 @@ const calculateNonTeachingGrade = (totalMarks) => {
                   </div>
                 )}
 
+                {/* Final Rating Number Input Box */}
+                {(userRole === "Principal" || userRole === "Admin") && (
+                  <div>
+                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Final Rating</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 0 to 100"
+                      value={finalRating}
+                      onChange={(e) => setFinalRating(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a]"
+                    />
+                  </div>
+                )}
+
                 {/* Recommendation Remarks */}
                 <div>
                   <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Detailed Review Comments</label>
@@ -1713,7 +1774,7 @@ const calculateNonTeachingGrade = (totalMarks) => {
         ) : (
           /* Appraisal Grid & Request Table */
           <div className="space-y-6">
-            
+
             {/* Filter Portlet */}
             <div className="bg-white border border-zinc-200 rounded-3xl p-5 shadow-sm flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-1 items-center gap-2 max-w-md bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-zinc-500">
@@ -1797,13 +1858,12 @@ const calculateNonTeachingGrade = (totalMarks) => {
                             {app.academicYear}
                           </td>
                           <td className="p-4 text-center">
-                            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                              app.status === "Approved" ? "bg-emerald-500/10 text-emerald-700" :
-                              app.status === "HOD_Approved" ? "bg-blue-500/10 text-blue-700" :
-                              app.status === "Submitted" ? "bg-amber-500/10 text-amber-700" :
-                              app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
-                              "bg-zinc-500/10 text-zinc-700"
-                            }`}>
+                            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${app.status === "Approved" ? "bg-emerald-500/10 text-emerald-700" :
+                                app.status === "HOD_Approved" ? "bg-blue-500/10 text-blue-700" :
+                                  app.status === "Submitted" ? "bg-amber-500/10 text-amber-700" :
+                                    app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
+                                      "bg-zinc-500/10 text-zinc-700"
+                              }`}>
                               {app.status.replace("_", " ")}
                             </span>
                           </td>
@@ -1817,7 +1877,11 @@ const calculateNonTeachingGrade = (totalMarks) => {
                             )}
                           </td>
                           <td className="p-4 text-center font-bold text-emerald-950">
-                            {app.principalReview?.grade ? (
+                            {(app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "") ? (
+                              <span className="inline-flex items-center justify-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full text-xs font-black border border-emerald-200 shadow-sm">
+                                <Star size={11} className="fill-amber-400 text-amber-400" /> {app.principalReview.finalRating}
+                              </span>
+                            ) : app.principalReview?.grade ? (
                               <span className="flex items-center justify-center gap-1">
                                 <Star size={10} className="fill-amber-400 text-amber-400" /> {app.principalReview.grade}
                               </span>

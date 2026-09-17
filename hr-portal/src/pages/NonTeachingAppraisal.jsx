@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import HRLayout from "../components/HRLayout";
+import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 import {
   FileText,
   Save,
@@ -163,24 +164,11 @@ export default function NonTeachingAppraisal() {
           setAcademicYear(sched.academicYear);
         }
 
-        if (sched.isActive) {
-          const now = new Date().getTime();
-          const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
-          const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
-
-          let open = true;
-          if (start && now < start) open = false;
-          if (end && now > end) open = false;
-          setIsPortalOpen(open);
-        } else {
-          setIsPortalOpen(false);
-        }
+        const { isOpen } = checkAppraisalPortalStatus(sched);
+        setIsPortalOpen(isOpen);
       } else {
         setIsPortalOpen(true);
       }
-      setCheckingSchedule(false);
-    }, (err) => {
-      console.error("Error checking appraisal schedule:", err);
       setCheckingSchedule(false);
     });
     return () => unsub();
@@ -351,7 +339,7 @@ export default function NonTeachingAppraisal() {
       <HRLayout title="Non-Teaching Staff Appraisal Request">
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
           <Loader2 className="animate-spin text-indigo-700" size={40} />
-          <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Checking appraisal window schedule...</span>
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Checking appraisal window schedule...</span>
         </div>
       </HRLayout>
     );
@@ -359,38 +347,40 @@ export default function NonTeachingAppraisal() {
 
   const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
   if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
+    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
+    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
       <HRLayout title="Non-Teaching Staff Appraisal Request">
         <div className="max-w-xl mx-auto py-16 px-4">
-          <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-xl overflow-hidden text-indigo-600enter p-8 space-y-6">
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
             <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
               <Calendar size={32} />
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">Appraisal Portal is Closed</h2>
-              <p className="text-slate-600 text-xs font-medium">
+              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">Appraisal Portal is Closed</h2>
+              <p className="text-zinc-500 text-xs font-medium">
                 The non-teaching staff appraisal request submission portal is currently inactive or has reached its deadline.
               </p>
             </div>
 
             {appraisalSchedule && (
               <div className="bg-slate-50 border border-slate-150 p-5 rounded-2xl text-left text-xs space-y-3">
-                <span className="font-bold text-slate-900 block border-b border-slate-200 pb-1.5 uppercase">Schedule Details</span>
+                <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-900">{appraisalSchedule.academicYear}</strong>
+                  <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Open Time:</span>
-                  <strong className="text-slate-900">
-                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                  <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
+                  <strong className="text-slate-800">
+                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
                   </strong>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600 font-bold uppercase">Deadline Time:</span>
-                  <strong className="text-slate-900">
-                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                  <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
+                  <strong className="text-slate-800">
+                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
                   </strong>
                 </div>
               </div>
@@ -414,30 +404,24 @@ export default function NonTeachingAppraisal() {
         )}
 
         {/* Top Header Banner */}
-        <div className="bg-gradient-to-r from-indigo-700 via-indigo-800 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">
+        <div className="bg-gradient-to-tr from-[#120c7a] via-[#1a10a0] to-indigo-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">
           <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-2">
-              <div className="flex items-center gap-2 px-3.5 py-1 bg-white/15 backdrop-blur-md rounded-full text-xs font-bold tracking-wider uppercase text-amber-300 w-fit">
-                <Sparkles size={13} className="text-amber-300" /> HR Appraisal System
+              <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
+                <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
               </div>
-              <h1 className="text-xl md:text-2xl font-bold font-heading text-white tracking-tight">
+              <h1 className="text-lg md:text-xl font-bold font-serif">
                 SELF-APPRAISAL FORM FOR THE STAFF MEMBERS (Non-Teaching / Technical / Lab Staff)
               </h1>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
-              <span className="text-xs font-bold text-indigo-100 whitespace-nowrap">Academic Session:</span>
-              <select
-                value={academicYear}
-                onChange={(e) => setAcademicYear(e.target.value)}
-                disabled={true}
-                className="bg-white/20 border border-white/30 rounded-xl px-3.5 py-2 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-white/40 cursor-not-allowed opacity-80"
-              >
-                <option value="2024-2025" className="bg-slate-900 text-white">2024 – 2025</option>
-                <option value="2025-2026" className="bg-slate-900 text-white">2025 – 2026</option>
-                <option value="2026-2027" className="bg-slate-900 text-white">2026 – 2027</option>
-              </select>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-indigo-200 whitespace-nowrap">Academic Session:</span>
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/15 backdrop-blur-md border border-white/25 rounded-xl text-xs font-black text-white tracking-wide shadow-sm">
+                <Calendar size={13} className="text-amber-400" />
+                <span>{academicYear}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -446,31 +430,31 @@ export default function NonTeachingAppraisal() {
         {existingAppraisal && (
           <div className="mb-6 bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' ? 'bg-indigo-600mber-100 text-indigo-600mber-700' :
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
                   existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-slate-800'
+                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
                 }`}>
                 <FileText size={20} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-600 font-bold uppercase tracking-wider">Submission Status:</span>
-                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' ? 'bg-indigo-600mber-50 text-indigo-600mber-600 border border-amber-200' :
+                  <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Submission Status:</span>
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
                       existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-slate-700'
+                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
                     }`}>
                     {existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to HR' : existingAppraisal.status}
                   </span>
                 </div>
                 {existingAppraisal.hodReview?.comments && (
-                  <p className="text-xs text-slate-700 mt-1 italic">
+                  <p className="text-xs text-zinc-600 mt-1 italic">
                     HOD Remarks: "{existingAppraisal.hodReview.comments}"
                   </p>
                 )}
               </div>
             </div>
             {isReadOnly && (
-              <span className="text-xs font-bold text-indigo-600mber-600 bg-indigo-600mber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
+              <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
                 Submitted form is currently locked for review
               </span>
             )}
@@ -478,103 +462,103 @@ export default function NonTeachingAppraisal() {
         )}
 
         {/* ═══ SECTION 1: GENERAL STAFF DETAILS (Q1-Q6) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
+          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
               <User size={18} />
             </div>
-            <h2 className="text-base font-bold text-slate-900">1. Staff Details (Questions 1 – 6)</h2>
+            <h2 className="text-base font-bold text-zinc-900">1. Staff Details (Questions 1 – 6)</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">1. Staff Name *</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">1. Staff Name *</label>
               <input
                 type="text"
                 disabled={isReadOnly}
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 placeholder="Enter full name"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">2. Date of Birth</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">2. Date of Birth</label>
               <input
                 type="date"
                 disabled={isReadOnly}
                 value={formData.dob}
                 onChange={(e) => handleDobChange(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Age</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Age</label>
               <input
                 type="text"
                 readOnly
                 value={formData.age}
-                className="w-full bg-zinc-100 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-800 outline-none"
+                className="w-full bg-zinc-100 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-bold text-zinc-700 outline-none"
                 placeholder="Auto-calculated"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">3. Designation</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">3. Designation</label>
               <input
                 type="text"
                 disabled={isReadOnly}
                 value={formData.designation}
                 onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 placeholder="e.g. Lab Technician / Instructor / Superintendent"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Department *</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Department *</label>
               <input
                 type="text"
                 disabled={isReadOnly}
                 value={formData.department}
                 onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 placeholder="e.g. CSE / ECE / Mechanical / Office"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">4. Date of Joining College</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">4. Date of Joining College</label>
               <input
                 type="date"
                 disabled={isReadOnly}
                 value={formData.dojCollege}
                 onChange={(e) => setFormData({ ...formData, dojCollege: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Date of Joining Present Post</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Date of Joining Present Post</label>
               <input
                 type="date"
                 disabled={isReadOnly}
                 value={formData.dojPresentPost}
                 onChange={(e) => setFormData({ ...formData, dojPresentPost: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               />
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">5. Academic Qualification</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">5. Academic Qualification</label>
               <input
                 type="text"
                 disabled={isReadOnly}
                 value={formData.qualification}
                 onChange={(e) => setFormData({ ...formData, qualification: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 placeholder="e.g. B.Sc. / B.E. / Diploma / M.Sc."
               />
             </div>
@@ -582,40 +566,40 @@ export default function NonTeachingAppraisal() {
 
           {/* Q6: Experience */}
           <div className="pt-2">
-            <label className="block text-xs font-bold text-slate-800 mb-2">6. Experience (Years)</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+            <label className="block text-xs font-bold text-zinc-700 mb-2">6. Experience (Years)</label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-50/70 p-4 rounded-2xl border border-zinc-100">
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">a) At CKCET (Yrs)</label>
+                <label className="block text-[11px] font-bold text-zinc-500 mb-1">a) At CKCET (Yrs)</label>
                 <input
                   type="text"
                   disabled={isReadOnly}
                   value={formData.expCKCET}
                   onChange={(e) => setFormData({ ...formData, expCKCET: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                   placeholder="e.g. 5"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">b) Other Institutions (Yrs)</label>
+                <label className="block text-[11px] font-bold text-zinc-500 mb-1">b) Other Institutions (Yrs)</label>
                 <input
                   type="text"
                   disabled={isReadOnly}
                   value={formData.expOther}
                   onChange={(e) => setFormData({ ...formData, expOther: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                   placeholder="e.g. 2"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">c) Industrial (Yrs)</label>
+                <label className="block text-[11px] font-bold text-zinc-500 mb-1">c) Industrial (Yrs)</label>
                 <input
                   type="text"
                   disabled={isReadOnly}
                   value={formData.expIndustrial}
                   onChange={(e) => setFormData({ ...formData, expIndustrial: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                   placeholder="e.g. 1"
                 />
               </div>
@@ -624,16 +608,16 @@ export default function NonTeachingAppraisal() {
         </div>
 
         {/* ═══ SECTION 2: ROLES & RESPONSIBILITIES (Q7) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-4">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-4">
+          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
               <Briefcase size={18} />
             </div>
-            <h2 className="text-base font-bold text-slate-900">2. Roles & Responsibilities (Question 7)</h2>
+            <h2 className="text-base font-bold text-zinc-900">2. Roles & Responsibilities (Question 7)</h2>
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-800 mb-2">
+            <label className="block text-xs font-bold text-zinc-700 mb-2">
               7. Explain the Roles and Responsibilities carried out during the Academic Year with details *
             </label>
             <textarea
@@ -641,40 +625,40 @@ export default function NonTeachingAppraisal() {
               disabled={isReadOnly}
               value={formData.rolesResponsibilities}
               onChange={(e) => setFormData({ ...formData, rolesResponsibilities: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+              className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               placeholder="Describe your laboratory maintenance, register updates, student practical support, stock verification, and administrative duties..."
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Attach Additional Proof / Details Document URL (Optional)</label>
+            <label className="block text-xs font-bold text-zinc-600 mb-1.5">Attach Additional Proof / Details Document URL (Optional)</label>
             <input
               type="text"
               disabled={isReadOnly}
               value={formData.rolesEvidenceUrl}
               onChange={(e) => setFormData({ ...formData, rolesEvidenceUrl: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+              className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
               placeholder="https://drive.google.com/..."
             />
           </div>
         </div>
 
         {/* ═══ SECTION 3: PUNCTUALITY, DISCIPLINE & LEAVE DETAILS (Q8-Q12) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
+          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
               <Clock size={18} />
             </div>
-            <h2 className="text-base font-bold text-slate-900">3. Punctuality, Discipline & Leave (Questions 8 – 12)</h2>
+            <h2 className="text-base font-bold text-zinc-900">3. Punctuality, Discipline & Leave (Questions 8 – 12)</h2>
           </div>
 
           <div className="space-y-4">
             {/* Q8 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200 gap-3">
-              <span className="text-xs font-bold text-slate-800">8. Do you report on the scheduled time?</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
+              <span className="text-xs font-bold text-zinc-700">8. Do you report on the scheduled time?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q8"
@@ -690,11 +674,11 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q9 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200 gap-3">
-              <span className="text-xs font-bold text-slate-800">9. Do you seek permission while attending outside work during working hours?</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
+              <span className="text-xs font-bold text-zinc-700">9. Do you seek permission while attending outside work during working hours?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q9"
@@ -710,11 +694,11 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q10 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200 gap-3">
-              <span className="text-xs font-bold text-slate-800">10. Do you apply for leave in advance?</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
+              <span className="text-xs font-bold text-zinc-700">10. Do you apply for leave in advance?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q10"
@@ -730,11 +714,11 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q11 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200 gap-3">
-              <span className="text-xs font-bold text-slate-800">11. Do you consume your balance CL in last month of academic session?</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
+              <span className="text-xs font-bold text-zinc-700">11. Do you consume your balance CL in last month of academic session?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "If required", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q11"
@@ -752,20 +736,20 @@ export default function NonTeachingAppraisal() {
 
           {/* Q12: Details of leave taken */}
           <div className="pt-2">
-            <label className="block text-xs font-bold text-slate-800 mb-3">12. Details of leave taken during the Academic Year (July to June)</label>
-            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+            <label className="block text-xs font-bold text-zinc-700 mb-3">12. Details of leave taken during the Academic Year (July to June)</label>
+            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-zinc-100 text-slate-800 font-bold border-b border-slate-200">
-                    <th colSpan={3} className="p-3 text-indigo-600enter border-r border-slate-200">No. of Leave availed</th>
-                    <th colSpan={3} className="p-3 text-indigo-600enter">No. of On Duty (OD) availed</th>
+                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
+                    <th colSpan={3} className="p-3 text-center border-r border-zinc-200">No. of Leave availed</th>
+                    <th colSpan={3} className="p-3 text-center">No. of On Duty (OD) availed</th>
                   </tr>
-                  <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 text-indigo-600enter">
-                    <th className="p-2.5 border-r border-slate-200">CL</th>
-                    <th className="p-2.5 border-r border-slate-200">C-OFF</th>
-                    <th className="p-2.5 border-r border-slate-200">LLP / LOP</th>
-                    <th className="p-2.5 border-r border-slate-200">Department</th>
-                    <th className="p-2.5 border-r border-slate-200">Institution</th>
+                  <tr className="bg-zinc-50 text-zinc-600 font-bold border-b border-zinc-200 text-center">
+                    <th className="p-2.5 border-r border-zinc-200">CL</th>
+                    <th className="p-2.5 border-r border-zinc-200">C-OFF</th>
+                    <th className="p-2.5 border-r border-zinc-200">LLP / LOP</th>
+                    <th className="p-2.5 border-r border-zinc-200">Department</th>
+                    <th className="p-2.5 border-r border-zinc-200">Institution</th>
                     <th className="p-2.5">Others</th>
                   </tr>
                 </thead>
@@ -778,7 +762,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.cl}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, cl: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                     <td className="p-2">
@@ -788,7 +772,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.coff}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, coff: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                     <td className="p-2">
@@ -798,7 +782,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.llp}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, llp: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                     <td className="p-2">
@@ -808,7 +792,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.odDept}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odDept: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                     <td className="p-2">
@@ -818,7 +802,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.odInst}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odInst: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                     <td className="p-2">
@@ -828,7 +812,7 @@ export default function NonTeachingAppraisal() {
                         disabled={isReadOnly}
                         value={formData.leaveDetails.odOthers}
                         onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odOthers: e.target.value } })}
-                        className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                       />
                     </td>
                   </tr>
@@ -839,21 +823,21 @@ export default function NonTeachingAppraisal() {
         </div>
 
         {/* ═══ SECTION 4: GRIEVANCES & INTERPERSONAL RELATIONSHIPS (Q13-Q19) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
+          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
               <HelpCircle size={18} />
             </div>
-            <h2 className="text-base font-bold text-slate-900">4. Grievances & Relationships (Questions 13 – 19)</h2>
+            <h2 className="text-base font-bold text-zinc-900">4. Grievances & Relationships (Questions 13 – 19)</h2>
           </div>
 
           <div className="space-y-5">
             {/* Q13 */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-800">13. Are you happy with the redressal of your grievances?</span>
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs font-bold text-zinc-700">13. Are you happy with the redressal of your grievances?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "No", "Not Applicable"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q13"
@@ -869,12 +853,12 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q14: Relationship with Students */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-800">14. Relationship with the Students</span>
+                <span className="text-xs font-bold text-zinc-700">14. Relationship with the Students</span>
                 <div className="flex flex-wrap items-center gap-3">
                   {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                       <input
                         type="radio"
                         name="q14"
@@ -894,19 +878,19 @@ export default function NonTeachingAppraisal() {
                   disabled={isReadOnly}
                   value={formData.relStudents.reason}
                   onChange={(e) => setFormData({ ...formData, relStudents: { ...formData.relStudents, reason: e.target.value } })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Specify reason for improvement..."
                 />
               )}
             </div>
 
             {/* Q15: Relationship with Colleagues */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-800">15. Relationship with the Colleagues</span>
+                <span className="text-xs font-bold text-zinc-700">15. Relationship with the Colleagues</span>
                 <div className="flex flex-wrap items-center gap-3">
                   {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                       <input
                         type="radio"
                         name="q15"
@@ -926,19 +910,19 @@ export default function NonTeachingAppraisal() {
                   disabled={isReadOnly}
                   value={formData.relColleagues.reason}
                   onChange={(e) => setFormData({ ...formData, relColleagues: { ...formData.relColleagues, reason: e.target.value } })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Specify reason for improvement..."
                 />
               )}
             </div>
 
             {/* Q16: Relationship with Superiors */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-slate-800">16. Relationship with the Superiors</span>
+                <span className="text-xs font-bold text-zinc-700">16. Relationship with the Superiors</span>
                 <div className="flex flex-wrap items-center gap-3">
                   {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                       <input
                         type="radio"
                         name="q16"
@@ -958,18 +942,18 @@ export default function NonTeachingAppraisal() {
                   disabled={isReadOnly}
                   value={formData.relSuperiors.reason}
                   onChange={(e) => setFormData({ ...formData, relSuperiors: { ...formData.relSuperiors, reason: e.target.value } })}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Specify reason for improvement..."
                 />
               )}
             </div>
 
             {/* Q17 */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-800">17. Do you accomplish the given assignment in time?</span>
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs font-bold text-zinc-700">17. Do you accomplish the given assignment in time?</span>
               <div className="flex items-center gap-4">
                 {["Yes", "With reminder", "Depends on my interest"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q17"
@@ -985,11 +969,11 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q18 */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-800">18. How do you feel about your potential utilization by Department / Institution?</span>
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs font-bold text-zinc-700">18. How do you feel about your potential utilization by Department / Institution?</span>
               <div className="flex flex-wrap items-center gap-3">
                 {["Over Burdened", "Properly Utilized", "Under Utilized", "Not utilized At all"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q18"
@@ -1005,11 +989,11 @@ export default function NonTeachingAppraisal() {
             </div>
 
             {/* Q19 */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-800">19. From the above assessment, where would you put yourself?</span>
+            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs font-bold text-zinc-700">19. From the above assessment, where would you put yourself?</span>
               <div className="flex items-center gap-4">
                 {["Above", "At par", "Below"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
                     <input
                       type="radio"
                       name="q19"
@@ -1027,18 +1011,18 @@ export default function NonTeachingAppraisal() {
         </div>
 
         {/* ═══ SECTION 5: INVEST IN YOURSELF & ADMISSIONS (Q20-Q22) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
+          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
               <Award size={18} />
             </div>
-            <h2 className="text-base font-bold text-slate-900">5. Invest In Yourself & Admissions (Questions 20 – 22)</h2>
+            <h2 className="text-base font-bold text-zinc-900">5. Invest In Yourself & Admissions (Questions 20 – 22)</h2>
           </div>
 
           {/* Q20: IIY Courses Table */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-800">
+              <label className="block text-xs font-bold text-zinc-700">
                 20. INVEST IN YOURSELF (IIY) – Details of Online Courses / Training Completed
               </label>
               {!isReadOnly && (
@@ -1052,32 +1036,32 @@ export default function NonTeachingAppraisal() {
               )}
             </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-zinc-100 text-slate-800 font-bold border-b border-slate-200">
-                    <th className="p-3 w-12 text-indigo-600enter">#</th>
+                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
+                    <th className="p-3 w-12 text-center">#</th>
                     <th className="p-3">Title of Course</th>
                     <th className="p-3 w-32">Start Date</th>
                     <th className="p-3 w-32">End Date</th>
-                    <th className="p-3 w-20 text-indigo-600enter">Weeks</th>
+                    <th className="p-3 w-20 text-center">Weeks</th>
                     <th className="p-3 w-32">Platform</th>
                     <th className="p-3 w-32">Exam Date</th>
-                    <th className="p-3 w-28 text-indigo-600enter">Certificate (Y/N)</th>
-                    {!isReadOnly && <th className="p-3 w-12 text-indigo-600enter">Action</th>}
+                    <th className="p-3 w-28 text-center">Certificate (Y/N)</th>
+                    {!isReadOnly && <th className="p-3 w-12 text-center">Action</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200">
                   {formData.iiyCourses.map((c, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50">
-                      <td className="p-2 text-indigo-600enter font-bold text-slate-600">{idx + 1}</td>
+                    <tr key={idx} className="hover:bg-zinc-50/50">
+                      <td className="p-2 text-center font-bold text-zinc-500">{idx + 1}</td>
                       <td className="p-2">
                         <input
                           type="text"
                           disabled={isReadOnly}
                           value={c.title}
                           onChange={(e) => updateIiyCourse(idx, "title", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="e.g. NPTEL Lab Safety"
                         />
                       </td>
@@ -1087,7 +1071,7 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={c.startDate}
                           onChange={(e) => updateIiyCourse(idx, "startDate", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                         />
                       </td>
                       <td className="p-2">
@@ -1096,7 +1080,7 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={c.endDate}
                           onChange={(e) => updateIiyCourse(idx, "endDate", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                         />
                       </td>
                       <td className="p-2">
@@ -1106,7 +1090,7 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={c.weeks}
                           onChange={(e) => updateIiyCourse(idx, "weeks", e.target.value)}
-                          className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="4"
                         />
                       </td>
@@ -1116,7 +1100,7 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={c.platform}
                           onChange={(e) => updateIiyCourse(idx, "platform", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="e.g. NPTEL / Coursera"
                         />
                       </td>
@@ -1126,22 +1110,22 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={c.examDate}
                           onChange={(e) => updateIiyCourse(idx, "examDate", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                         />
                       </td>
-                      <td className="p-2 text-indigo-600enter">
+                      <td className="p-2 text-center">
                         <select
                           disabled={isReadOnly}
                           value={c.certificateReceived}
                           onChange={(e) => updateIiyCourse(idx, "certificateReceived", e.target.value)}
-                          className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                           <option value="Yes">Yes</option>
                           <option value="No">No</option>
                         </select>
                       </td>
                       {!isReadOnly && (
-                        <td className="p-2 text-indigo-600enter">
+                        <td className="p-2 text-center">
                           <button
                             type="button"
                             onClick={() => removeIiyCourse(idx)}
@@ -1158,13 +1142,13 @@ export default function NonTeachingAppraisal() {
             </div>
 
             <div className="pt-2">
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Specify the Outcome and Achievements of IIY</label>
+              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Specify the Outcome and Achievements of IIY</label>
               <textarea
                 rows={2}
                 disabled={isReadOnly}
                 value={formData.iiyOutcome}
                 onChange={(e) => setFormData({ ...formData, iiyOutcome: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-3.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                 placeholder="Mention practical skills acquired, certifications earned, or laboratory improvements implemented..."
               />
             </div>
@@ -1173,7 +1157,7 @@ export default function NonTeachingAppraisal() {
           {/* Q21: Admissions Table */}
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-800">
+              <label className="block text-xs font-bold text-zinc-700">
                 21. No of admission contributed to the Institutions for the AY
               </label>
               {!isReadOnly && (
@@ -1187,28 +1171,28 @@ export default function NonTeachingAppraisal() {
               )}
             </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-zinc-100 text-slate-800 font-bold border-b border-slate-200">
-                    <th className="p-3 w-12 text-indigo-600enter">#</th>
+                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
+                    <th className="p-3 w-12 text-center">#</th>
                     <th className="p-3">Team No & Area</th>
-                    <th className="p-3 w-40 text-indigo-600enter">No of Admissions Contributed</th>
+                    <th className="p-3 w-40 text-center">No of Admissions Contributed</th>
                     <th className="p-3">Name of the Team Leader</th>
-                    {!isReadOnly && <th className="p-3 w-12 text-indigo-600enter">Action</th>}
+                    {!isReadOnly && <th className="p-3 w-12 text-center">Action</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200">
                   {formData.admissionsContributed.map((adm, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50">
-                      <td className="p-2 text-indigo-600enter font-bold text-slate-600">{idx + 1}</td>
+                    <tr key={idx} className="hover:bg-zinc-50/50">
+                      <td className="p-2 text-center font-bold text-zinc-500">{idx + 1}</td>
                       <td className="p-2">
                         <input
                           type="text"
                           disabled={isReadOnly}
                           value={adm.teamNoArea}
                           onChange={(e) => updateAdmission(idx, "teamNoArea", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="Team 3 - Cuddalore"
                         />
                       </td>
@@ -1219,7 +1203,7 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={adm.count}
                           onChange={(e) => updateAdmission(idx, "count", e.target.value)}
-                          className="w-full text-indigo-600enter bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="2"
                         />
                       </td>
@@ -1229,12 +1213,12 @@ export default function NonTeachingAppraisal() {
                           disabled={isReadOnly}
                           value={adm.teamLeader}
                           onChange={(e) => updateAdmission(idx, "teamLeader", e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
                           placeholder="Prof. Name / HOD"
                         />
                       </td>
                       {!isReadOnly && (
-                        <td className="p-2 text-indigo-600enter">
+                        <td className="p-2 text-center">
                           <button
                             type="button"
                             onClick={() => removeAdmission(idx)}
@@ -1253,7 +1237,7 @@ export default function NonTeachingAppraisal() {
 
           {/* Q22: Other Info */}
           <div className="pt-2">
-            <label className="block text-xs font-bold text-slate-800 mb-1.5">
+            <label className="block text-xs font-bold text-zinc-700 mb-1.5">
               22. Any other relevant information not covered above
             </label>
             <textarea
@@ -1261,14 +1245,14 @@ export default function NonTeachingAppraisal() {
               disabled={isReadOnly}
               value={formData.otherInfo}
               onChange={(e) => setFormData({ ...formData, otherInfo: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="Any additional responsibilities, achievements, or contributions..."
             />
           </div>
         </div>
 
         {/* ═══ SECTION 6: DECLARATION & SUBMISSION ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-slate-200 mb-8 space-y-6">
+        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
           <div className="p-5 bg-indigo-50/60 rounded-2xl border border-indigo-100 space-y-3">
             <label className="flex items-start gap-3 cursor-pointer">
               <input
@@ -1283,12 +1267,12 @@ export default function NonTeachingAppraisal() {
               </span>
             </label>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 gap-3 text-xs text-slate-700 font-medium">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 gap-3 text-xs text-zinc-600 font-medium">
               <div>
-                <span className="font-bold text-slate-800">Date:</span> {formData.dateSubmitted}
+                <span className="font-bold text-zinc-700">Date:</span> {formData.dateSubmitted}
               </div>
               <div>
-                <span className="font-bold text-slate-800">Staff Signature:</span> {formData.name || "Signed Digitally"}
+                <span className="font-bold text-zinc-700">Staff Signature:</span> {formData.name || "Signed Digitally"}
               </div>
             </div>
           </div>
@@ -1300,7 +1284,7 @@ export default function NonTeachingAppraisal() {
                 type="button"
                 disabled={saving || submitting}
                 onClick={() => handleSave(false)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-zinc-100 hover:bg-zinc-200 text-slate-800 font-bold rounded-xl transition-all text-sm disabled:opacity-50"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold rounded-xl transition-all text-sm disabled:opacity-50"
               >
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                 <span>Save Draft</span>

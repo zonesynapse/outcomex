@@ -3,9 +3,10 @@ import { db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { 
   Calendar, Loader2, Save, Play, XCircle, Settings, Plus, Trash2, Edit2,
-  Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock
+  Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock, Table
 } from "lucide-react";
 import Layout from "../components/Layout";
+import { parseAppraisalDateTime } from "../utils/appraisalScore";
 
 const DEFAULT_CRITERIA = {
   part1: [
@@ -44,21 +45,29 @@ const defaultFields = [
   { id: "f_teachingElsewhere", title: "Teaching Elsewhere (Yrs)", description: "Experience years in other colleges.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_experience" },
   { id: "f_industrial", title: "Industrial Experience (Yrs)", description: "Experience years in corporate industry.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_experience" },
 
-  { id: "sec_profile_workload", title: "1.3 Weekly Workload Grid", description: "Hours assigned per week for Odd/Even semester theory and lab sessions.", type: "section_profile_workload", tabId: 1, tabName: "Profile & Workload", visible: true, evidenceRequired: false, evidenceMandatory: false },
-  { id: "f_oddTheory", title: "Odd Sem Theory Hours", description: "Odd semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_oddPractical", title: "Odd Practical/Project Hours", description: "Odd semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_oddTotal", title: "Odd Total Hours", description: "Odd semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenTheory", title: "Even Sem Theory Hours", description: "Even semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenPractical", title: "Even Practical/Project Hours", description: "Even semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenTotal", title: "Even Total Hours", description: "Even semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "sec_profile_workload", title: "1.3 Weekly Workload Grid", description: "Hours assigned per week for theory and lab sessions.", type: "section_profile_workload", tabId: 1, tabName: "Profile & Workload", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_workload_odd_title", title: "ODD SEMESTER WORKLOAD / WEEK (HRS)", description: "Group header title for Odd Semester workload card.", type: "text", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddTheory", title: "THEORY CLASSES", description: "Weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddPractical", title: "PRACTICAL CLASSES", description: "Weekly lab workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddSpecial", title: "C) SPECIAL CLASS (HRS)", description: "Special class workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddOther", title: "D) OTHER ACTIVITY (HRS)", description: "Other activity workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddTotal", title: "ODD TOTAL HOURS", description: "Odd semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+
+  { id: "f_workload_even_title", title: "EVEN SEMESTER WORKLOAD / WEEK (HRS)", description: "Group header title for Even Semester workload card.", type: "text", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenTheory", title: "EVEN SEM THEORY HOURS", description: "Even semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenPractical", title: "EVEN PRACTICAL/PROJECT HOURS", description: "Even semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenSpecial", title: "C) SPECIAL CLASS (HRS)", description: "Special class workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenOther", title: "D) OTHER ACTIVITY (HRS)", description: "Other activity workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenTotal", title: "EVEN TOTAL HOURS", description: "Even semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
 
   // Tab 2: Subjects & Results
   { id: "sec_subjects_results", title: "2.1 Subjects Handled & Exam Pass Targets", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_subjects_class", title: "Class", description: "Class / Year / Branch column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
   { id: "f_subjects_code", title: "Subject Code & Title", description: "Subject code and title column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_handled", title: "No. of Students Handled", description: "Handled student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_passed", title: "No. of Students Passed", description: "Passed student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_passPercent", title: "Pass Percentage (%)", description: "Pass percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_feedback", title: "Student Feedback Score (%)", description: "Feedback percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_appeared", title: "Appeared", description: "Appeared student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passed", title: "Passed", description: "Passed student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passPercent", title: "% Result", description: "Pass percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_feedback", title: "Feedback Rating", description: "Student feedback rating column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
 
   // Tab 3: Academic Development
   { id: "sec_academic_nptel", title: "3.1 NPTEL Certifications Completed", description: "Certification details and credits earned via SWAYAM/NPTEL portals.", type: "section_academic_nptel", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
@@ -167,6 +176,7 @@ export default function AppraisalSettings() {
   const [savingFormConfig, setSavingFormConfig] = useState(false);
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [editingField, setEditingField] = useState(null);
+  const [editingColumns, setEditingColumns] = useState([]);
 
   // --- Listen to Dynamic Fields Config ---
   useEffect(() => {
@@ -245,9 +255,9 @@ export default function AppraisalSettings() {
         return;
       }
 
-      const now = new Date().getTime();
-      const start = openTime ? new Date(openTime).getTime() : null;
-      const end = closeTime ? new Date(closeTime).getTime() : null;
+      const now = Date.now();
+      const start = parseAppraisalDateTime(openTime);
+      const end = parseAppraisalDateTime(closeTime);
 
       if (start && now < start) {
         setTimeStatus({ label: "Scheduled / Pending", color: "amber" });
@@ -286,7 +296,10 @@ export default function AppraisalSettings() {
 
   // --- Actions: Schedule Tab ---
   const handlePostAppraisalRequest = async () => {
-    if (openTime && closeTime && new Date(openTime) >= new Date(closeTime)) {
+    const startMs = parseAppraisalDateTime(openTime);
+    const endMs = parseAppraisalDateTime(closeTime);
+
+    if (startMs && endMs && startMs >= endMs) {
       showToast("Portal close date & time must be strictly after the open date & time.", "error");
       return;
     }
@@ -433,8 +446,9 @@ export default function AppraisalSettings() {
       6: "Relations & Targets",
       7: "Evidences & Disclosures"
     };
+    const newFieldId = `field_${Date.now()}`;
     setEditingField({
-      id: `field_${Date.now()}`,
+      id: newFieldId,
       title: "",
       description: "",
       type: "text",
@@ -445,6 +459,7 @@ export default function AppraisalSettings() {
       evidenceRequired: true,
       evidenceMandatory: false
     });
+    setEditingColumns([]);
     setFormModalOpen(true);
   };
 
@@ -456,16 +471,22 @@ export default function AppraisalSettings() {
       parentId: field.parentId || "",
       ...field 
     });
+    if (field.type === "section_custom_grid" || field.type?.startsWith("section_") || field.id?.startsWith("sec_")) {
+      const cols = customFields.filter(f => f.parentId === field.id);
+      setEditingColumns(cols.map(c => ({ ...c })));
+    } else {
+      setEditingColumns([]);
+    }
     setFormModalOpen(true);
   };
 
   const handleDeleteField = (fieldId) => {
-    if (fieldId.startsWith("sec_")) {
-      showToast("Built-in appraisal sections cannot be deleted, but you can hide them.", "error");
+    if (fieldId.startsWith("sec_") && !fieldId.startsWith("sec_custom_")) {
+      showToast("Built-in root sections cannot be deleted, but you can hide them or delete their sub-fields.", "error");
       return;
     }
-    if (!window.confirm("Are you sure you want to delete this form field? Faculty data for this field will be hidden.")) return;
-    const updated = customFields.filter(f => f.id !== fieldId);
+    if (!window.confirm("Are you sure you want to delete this field/column? Faculty data for this field will be removed.")) return;
+    const updated = customFields.filter(f => f.id !== fieldId && f.parentId !== fieldId);
     handleSaveFormConfig(updated);
   };
 
@@ -474,16 +495,62 @@ export default function AppraisalSettings() {
       showToast("Please enter a field title", "error");
       return;
     }
-    let updated;
-    const exists = customFields.some(f => f.id === editingField.id);
+
+    let updated = [...customFields];
+
+    // Check if main item exists
+    const exists = updated.some(f => f.id === editingField.id);
     if (exists) {
-      updated = customFields.map(f => f.id === editingField.id ? editingField : f);
+      updated = updated.map(f => f.id === editingField.id ? editingField : f);
     } else {
-      updated = [...customFields, editingField];
+      updated.push(editingField);
     }
+
+    // If dynamic table grid section, save columns
+    if (editingField.type === "section_custom_grid" || editingField.id?.startsWith("sec_custom_")) {
+      // Remove previous columns under this section
+      updated = updated.filter(f => f.parentId !== editingField.id);
+
+      // Add valid non-empty columns
+      const validCols = editingColumns
+        .filter(c => c.title && c.title.trim())
+        .map((c, idx) => ({
+          id: c.id || `f_col_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+          title: c.title.trim(),
+          type: c.type || "text",
+          parentId: editingField.id,
+          tabId: editingField.tabId || 7,
+          tabName: editingField.tabName || "Evidences & Disclosures",
+          visible: c.visible !== false,
+          evidenceRequired: c.evidenceRequired || false,
+          evidenceMandatory: c.evidenceMandatory || false,
+          description: c.description || `${c.title.trim()} column`
+        }));
+
+      updated = [...updated, ...validCols];
+    }
+
     handleSaveFormConfig(updated);
     setFormModalOpen(false);
     setEditingField(null);
+    setEditingColumns([]);
+  };
+
+  const isGridTableSection = (field) => {
+    if (!field) return false;
+    if (field.type === "section_custom_grid" || field.id?.startsWith("sec_custom_")) return true;
+    if (field.type?.startsWith("grid_")) return true;
+    const gridSectionIds = [
+      "sec_academic_nptel",
+      "sec_academic_journals",
+      "sec_academic_fdp",
+      "sec_academic_books",
+      "sec_subjects_results",
+      "sec_roles_department",
+      "sec_professional_memberships",
+      "sec_awards_honors"
+    ];
+    return gridSectionIds.includes(field.id);
   };
 
   const availableSectionsForTab = useMemo(() => {
@@ -979,7 +1046,7 @@ export default function AppraisalSettings() {
                                               className="px-2 py-1 bg-[#120c7a] hover:bg-[#100b6e] text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
                                               title={`Add a new field under ${field.title}`}
                                             >
-                                              <Plus size={11} /> Add Sub-Field
+                                              <Plus size={11} /> {isGridTableSection(field) ? "Add Column" : "Add Sub-Field"}
                                             </button>
                                           )}
                                           <button
@@ -989,7 +1056,7 @@ export default function AppraisalSettings() {
                                           >
                                             <Edit2 size={12} />
                                           </button>
-                                          {!isDefault ? (
+                                          {(!field.id.startsWith("sec_") || field.id.startsWith("sec_custom_")) && (
                                             <button
                                               onClick={() => handleDeleteField(field.id)}
                                               className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-colors cursor-pointer"
@@ -997,8 +1064,6 @@ export default function AppraisalSettings() {
                                             >
                                               <Trash2 size={12} />
                                             </button>
-                                          ) : (
-                                            !isSectionHeader && <span className="w-[28px] inline-block" />
                                           )}
                                         </div>
                                       </td>
@@ -1029,7 +1094,7 @@ export default function AppraisalSettings() {
               <div className="flex items-center gap-2">
                 <Settings size={20} className="text-yellow-400" />
                 <h3 className="font-extrabold text-sm uppercase tracking-wider">
-                  {editingField.id?.startsWith("sec_") 
+                  {(editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) 
                     ? "Edit Built-in Form Section" 
                     : editingField.id?.startsWith("f_")
                       ? "Edit Built-in Form Field"
@@ -1072,7 +1137,7 @@ export default function AppraisalSettings() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="font-bold text-zinc-500 uppercase tracking-wider block">Tab Category</label>
-                  {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
+                  {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
                     <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
                       <Lock size={13} className="text-zinc-400 flex-shrink-0" />
                       <span>
@@ -1120,12 +1185,16 @@ export default function AppraisalSettings() {
 
                 <div className="space-y-1.5">
                   <label className="font-bold text-zinc-500 uppercase tracking-wider block">Sub-Category / Parent Section</label>
-                  {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
+                  {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
                     <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
                       <Lock size={13} className="text-zinc-400 flex-shrink-0" />
                       <span>
                         {customFields.find(s => s.id === editingField.parentId)?.title || (editingField.id?.startsWith("sec_") ? "Root Section" : "Built-in Section")}
                       </span>
+                    </div>
+                  ) : editingField.type === "section_custom_grid" ? (
+                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-500 flex items-center gap-2 select-none">
+                      <span>Root Section (Top-Level Grid Table)</span>
                     </div>
                   ) : (
                     <select 
@@ -1146,15 +1215,38 @@ export default function AppraisalSettings() {
 
               <div className="space-y-1.5">
                 <label className="font-bold text-zinc-500 uppercase tracking-wider block">Input Type</label>
-                {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
+                {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
                   <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
                     <Lock size={13} className="text-zinc-400 flex-shrink-0" />
                     <span>Built-in {editingField.id?.startsWith("sec_") ? "Section" : "Field"}</span>
                   </div>
                 ) : (
                   <select 
-                    value={editingField.type} 
-                    onChange={(e) => setEditingField({ ...editingField, type: e.target.value })}
+                    value={editingField.type === "section_custom_grid" ? "table_grid" : editingField.type} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "table_grid") {
+                        const targetId = editingField.id?.startsWith("sec_custom_") ? editingField.id : `sec_custom_${Date.now()}`;
+                        setEditingField({
+                          ...editingField,
+                          type: "section_custom_grid",
+                          id: targetId,
+                          parentId: ""
+                        });
+                        if (editingColumns.length === 0) {
+                          setEditingColumns([
+                            { id: `f_col_${Date.now()}_1`, title: "Title / Particulars", type: "text", parentId: targetId, tabId: editingField.tabId || 7, tabName: editingField.tabName },
+                            { id: `f_col_${Date.now()}_2`, title: "Date / Duration", type: "date", parentId: targetId, tabId: editingField.tabId || 7, tabName: editingField.tabName }
+                          ]);
+                        }
+                      } else {
+                        setEditingField({
+                          ...editingField,
+                          type: val,
+                          id: editingField.id?.startsWith("sec_custom_") ? `field_${Date.now()}` : editingField.id
+                        });
+                      }
+                    }}
                     className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
                   >
                     <option value="text">Text Box</option>
@@ -1162,11 +1254,94 @@ export default function AppraisalSettings() {
                     <option value="number">Number Input</option>
                     <option value="date">Date Picker</option>
                     <option value="file_only">File Upload Only</option>
+                    <option value="table_grid">Dynamic Table / Grid Section</option>
                   </select>
                 )}
               </div>
 
-              {(editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_")) && (
+              {/* ═══ Dynamic Table Column / Field Manager Card ═══ */}
+              {(editingField.type === "section_custom_grid" || editingField.id?.startsWith("sec_custom_")) && (
+                <div className="space-y-3 p-3.5 bg-indigo-50/40 border border-indigo-150 rounded-2xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="font-extrabold text-indigo-950 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <Table size={14} className="text-indigo-600" /> Table Columns / Headers
+                      </label>
+                      <p className="text-[10px] text-indigo-800/80 font-semibold mt-0.5">Define each column name for this grid table (e.g. Course Title, Date, Score).</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newCol = {
+                          id: `f_col_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+                          title: "",
+                          type: "text",
+                          parentId: editingField.id,
+                          tabId: editingField.tabId || 7,
+                          tabName: editingField.tabName || "Evidences & Disclosures",
+                          visible: true
+                        };
+                        setEditingColumns([...editingColumns, newCol]);
+                      }}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                    >
+                      <Plus size={12} /> Add Table Column
+                    </button>
+                  </div>
+
+                  {editingColumns.length === 0 ? (
+                    <div className="p-3 bg-white border border-indigo-100 rounded-xl text-center text-indigo-900 text-[11px] font-medium shadow-xs">
+                      No columns defined yet. Click <strong className="font-bold text-indigo-700">+ Add Table Column</strong> above to set column names!
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {editingColumns.map((col, idx) => (
+                        <div key={col.id || idx} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-zinc-200 shadow-xs">
+                          <span className="text-[10px] font-black text-indigo-400 w-5 text-center">#{idx + 1}</span>
+                          <input
+                            type="text"
+                            placeholder="Column Name (e.g. Title, Date, Certificate)"
+                            value={col.title}
+                            onChange={(e) => {
+                              const updated = [...editingColumns];
+                              updated[idx].title = e.target.value;
+                              setEditingColumns(updated);
+                            }}
+                            className="flex-1 rounded-lg border border-zinc-200 p-2 font-semibold text-zinc-800 text-xs focus:outline-none focus:border-indigo-600 bg-white"
+                          />
+                          <select
+                            value={col.type || "text"}
+                            onChange={(e) => {
+                              const updated = [...editingColumns];
+                              updated[idx].type = e.target.value;
+                              setEditingColumns(updated);
+                            }}
+                            className="rounded-lg border border-zinc-200 p-2 font-semibold text-zinc-700 text-xs focus:outline-none focus:border-indigo-600 bg-white"
+                          >
+                            <option value="text">Text Box</option>
+                            <option value="textarea">Large Text Area</option>
+                            <option value="number">Number Input</option>
+                            <option value="date">Date Picker</option>
+                            <option value="file_only">File Upload Only</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingColumns(editingColumns.filter((_, i) => i !== idx));
+                            }}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-colors cursor-pointer"
+                            title="Remove Column"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) && (
                 <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 flex items-start gap-2.5">
                   <Lock size={14} className="text-indigo-600 mt-0.5 flex-shrink-0" />
                   <p className="text-[10px] text-indigo-950 font-bold leading-normal uppercase">

@@ -5,6 +5,7 @@ import { doc, getDoc, setDoc, onSnapshot, collection, getDocs } from "firebase/f
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { formatProgDisplay } from "../lib/utils";
 import { uploadBase64, userStoragePath, deleteByUrl } from "../utils/fileUpload";
+import { checkAppraisalPortalStatus } from "../utils/appraisalScore";
 import { 
   X, 
   Menu,
@@ -603,15 +604,7 @@ export default function Layout({ children, title }) {
         
         if (isFacultyOrHOD) {
           if (appraisalSchedule) {
-            const now = new Date().getTime();
-            const start = appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).getTime() : null;
-            const end = appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).getTime() : null;
-            const isActive = appraisalSchedule.isActive;
-            
-            let isOpen = isActive;
-            if (start && now < start) isOpen = false;
-            if (end && now > end) isOpen = false;
-            
+            const { isOpen } = checkAppraisalPortalStatus(appraisalSchedule);
             if (isOpen) {
               menuItems.push(item);
             }

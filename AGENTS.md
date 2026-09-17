@@ -1,5 +1,133 @@
 ## Summary of Changes
 
+### 441. Form Table Field Visibility & Glassmorphic Academic Year Badge Styling (`FacultyAppraisal.jsx`, `NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
+- **Goal**:
+  1. Fix table columns (e.g. `Exam Date`) continuing to render when marked `visible: false` (Hidden) in Form Builder.
+  2. Replace native browser disabled `<select>` controls for Academic Year with a glassmorphic pill badge to prevent native WebKit OS styling overrides from rendering a solid white unreadable box on Mac/Chrome/Safari.
+- **Fix**:
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx) & [`hr-portal/src/pages/FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/FacultyAppraisal.jsx):
+    - Wrapped all table `<th>` headers and `<td>` cells for Section 3.1 NPTEL (`f_nptel_...`), Section 3.2 FDP (`f_fdp_...`), Section 3.3 Journals (`f_journals_...`), and Section 2.1 Subjects (`f_subjects_...`) in `{isSectionVisible("...") && ...}` checks.
+  - In `FacultyAppraisal.jsx`, `NonTeachingAppraisal.jsx`, and `HODAppraisal.jsx` (both root and `hr-portal`):
+    - Replaced native disabled `<select>` with a glassmorphic pill badge containing a gold calendar icon and sharp white year text (`<div className="bg-white/15 backdrop-blur-md border border-white/25 rounded-xl px-3.5 py-1.5 text-xs font-black text-white">`).
+- **Result**: Hiding any table column in Appraisal Settings immediately removes it from live form tables, and Academic Year header badge renders with clean glassmorphic styling across all browsers. Both builds pass cleanly.
+
+### 440. TimetableCreation New-Save Missing on Revisit + Allocated Subjects 0 (`TimetableCreation.jsx`)
+- **Goal**: Fix "past data correct show aavudhu but ipo timetable save pana again show agala, allocated subject 0 agirudhu" — newly saved grid + subjects vanish on revisit.
+- **Fix**:
+  - In [`TimetableCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/TimetableCreation.jsx):
+    - Fallback scan is now deterministic best-match: scores candidates (exact key 4 / field match 2 / id fallback 1, +3 for non-empty `subjectAllocation`) so an empty duplicate doc can never shadow the doc holding the saved grid.
+    - Fixed `ayStartYear` to return the 3rd year token for full composite IDs (`…_2025-2029_2026-2027_…` → `2026`); previously it returned the batch-end year (`2029`), breaking AY matching.
+    - `subject_assignments` lookup now falls back to normalized field matching (prog/dept/batch-start/AY-start/sem, section-suffix stripped) instead of exact `usedKey` prefix only.
+    - `handleSave` mirrors the payload to the canonical `compositeKey` whenever `saveKey` differs, so the revisit (which checks the canonical key first) always hits the latest grid.
+- **Result**: Newly saved timetable + allocated subjects reload on revisit. Build passes cleanly in 7.64s with 0 errors.
+
+### 439. TimetableCreation Saved Grid Missing on Revisit (`TimetableCreation.jsx`)
+- **Goal**: Fix "save panitu again poi patha empty grid varudhu" — saved timetable must reload on revisit instead of showing empty / "No allocated timetable found".
+- **Fix**:
+  - In [`TimetableCreation.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/TimetableCreation.jsx):
+    - Added normalized fallback scan in `handleLoad` (programme/department/batch-start-year/AY-start-year/sem matching) so exact doc-key drifts (dots vs underscores, `25 Batch (2025-29)` vs `2025-2029`, `2025-26` vs `2025-2026`) still resolve the saved `timetable_allocations` doc.
+    - Switched `handleSave` from `setDoc(..., {merge:true})` to `updateDoc` (whole-`subjectAllocation` replace, `setDoc` fallback) so deleted day/period slots don't resurrect via deep-merge on revisit; syncs `allocatedTemplate` state post-save.
+    - Persisted last filters to `localStorage` on load/save, restore on mount (auth effect no longer clobbers them), and auto-load once when filters match the stored snapshot.
+- **Result**: Revisit reloads the exact saved grid. Build passes cleanly in 9.88s with 0 errors.
+
+### 438. Section 2.1 Sub-Field Visibility Checks, Custom Grid Columns & Input Placeholders (`FacultyAppraisal.jsx`, `hr-portal/src/pages/FacultyAppraisal.jsx`)
+- **Goal**: Ensure Section 2.1 (`sec_subjects_results`) in [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx) dynamically hides columns when marked `visible: false` in Form Builder, supports custom dynamic columns added under Section 2.1 (`renderCustomGridHeaders`, `renderCustomGridCells`), and renders placeholders for `Appeared` and `Passed` input cells.
+- **Fix**:
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx) & [`hr-portal/src/pages/FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/FacultyAppraisal.jsx):
+    - Added `isSectionVisible("f_subjects_...")` conditional wrappers around all Section 2.1 column `<th>` headers and `<td>` input cells across Odd Theory, Odd Practical, Even Theory, and Even Practical tables.
+    - Included `{renderCustomGridHeaders("sec_subjects_results")}` in `<thead>` and `{renderCustomGridCells(row, i, ..., "sec_subjects_results")}` in `<tbody>` so admin-added custom columns render automatically on the live form.
+    - Updated `knownBuiltInIds` in `getCustomGridColumnsForSection` to include `"f_subjects_class"` and `"f_subjects_appeared"` to avoid column duplication.
+    - Added missing input placeholders `placeholder="e.g. 60"` for Appeared and `placeholder="e.g. 58"` for Passed.
+- **Result**: Section 2.1 table columns dynamically honor visibility toggles, support custom columns, and display clean placeholders. Both builds pass cleanly in 2.27s (hr-portal) and 7.37s (root).
+
+
+### 437. Propagate HR Appraisal Module Updates to HR Portal Sub-Package (`hr-portal/src/pages/*`)
+- **Goal**: Synchronize all recent HR Appraisal Form Builder, Faculty Appraisal Form, Review Modal, HOD Appraisal, and Non-Teaching Appraisal updates from `src/pages/` to the standalone `hr-portal` package (`hr-portal/src/pages/`).
+- **Fix**:
+  - Synchronized all 5 core appraisal page files to `hr-portal/src/pages/`:
+    - [`hr-portal/src/pages/AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalSettings.jsx)
+    - [`hr-portal/src/pages/FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/FacultyAppraisal.jsx)
+    - [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx)
+    - [`hr-portal/src/pages/HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/HODAppraisal.jsx)
+    - [`hr-portal/src/pages/NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/NonTeachingAppraisal.jsx)
+  - Adapted layout imports and component wrappers from `Layout` to `HRLayout` (`import HRLayout from "../components/HRLayout"`).
+- **Result**: Both the main root application build and standalone `hr-portal` build pass cleanly with 0 errors (`hr-portal` build: 2.55s, root build: 6.56s).
+
+
+### 436. Form Builder vs Appraisal Form Section 2.1 Table Column Sync & Dynamic Headers (`AppraisalSettings.jsx`, `FacultyAppraisal.jsx`, `AppraisalReviews.jsx`)
+- **Goal**: Resolve discrepancy between Form Builder (`AppraisalSettings.jsx`) and Faculty Appraisal Form (`FacultyAppraisal.jsx`) for Section 2.1 `2.1 SUBJECTS HANDLED & EXAM PASS TARGETS` (`sec_subjects_results`), ensuring sub-field column definitions match table headers and header titles resolve dynamically via `getSectionTitle`.
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Synchronized `defaultFields` sub-fields under `sec_subjects_results` to include `f_subjects_class` ("Class") and align column field titles: `f_subjects_class` ("Class"), `f_subjects_code` ("Subject Code & Title"), `f_subjects_appeared` ("Appeared"), `f_subjects_passed` ("Passed"), `f_subjects_passPercent` ("% Result"), `f_subjects_feedback` ("Feedback Rating").
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx) & [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx):
+    - Replaced hardcoded static string headers (`<th>Class</th>`, `<th>Appeared</th>`, etc.) for Section 2.1 with dynamic header calls `{getSectionTitle("f_subjects_...", "Default Title")}`.
+- **Result**: Admin edits and header renaming for Section 2.1 columns in Appraisal Settings automatically reflect in real time on the live appraisal form and review modal. Build passes cleanly in 8.15s with 0 errors.
+
+
+### 435. Custom Dynamic Table UI & Header Alignment (`FacultyAppraisal.jsx`)
+- **Goal**: Align the visual styling and component layout of custom dynamic table sections (e.g. `SUMA`) on [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx) to match the exact design system of built-in tables (e.g., `3.1 NPTEL Certifications Completed`).
+- **Fix**:
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx):
+    - Moved the `+ Add Record` / `+ Add Row` button to the top-right header area of the card alongside evidence badges.
+    - Updated section title font styling (`font-extrabold text-xs text-slate-800 uppercase tracking-wider`) and instruction subtitle.
+    - Styled table column headers to use `Sl.No` with `bg-zinc-50 font-bold text-zinc-800 border border-zinc-200`.
+    - Updated cell file attachment buttons to match built-in `ATTACH` / `ATTACHED` pill button badges (`px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-lg text-[10px] font-bold`).
+    - Standardized row delete action buttons to red trash icon buttons (`text-rose-500 hover:text-rose-700 hover:bg-rose-50`).
+- **Result**: Custom dynamic tables render with 100% UI consistency matching built-in system tables. Build passes cleanly in 6.25s with 0 errors.
+
+
+### 434. Dynamic Custom Table Section Rendering Engine (`FacultyAppraisal.jsx`)
+- **Goal**: Render custom dynamic table grid sections (e.g. `SUMA` or any custom grid sections created in Appraisal Settings under any tab ID 1 to 7) as fully interactive, responsive grid tables on the Faculty Appraisal Request page [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx).
+- **Fix**:
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx):
+    - Added `updateCustomGridCell`, `addCustomGridRow`, and `removeCustomGridRow` state handlers to manage dynamic grid rows and cell values for custom table sections in `formData.customFields`.
+    - Updated `renderTabCustomFields(tId)` to query custom grid sections (`f.type === "section_custom_grid" || f.id.startsWith("sec_custom_")`) belonging to `tId`.
+    - Built dynamic table rendering engine that fetches column definitions (`col.parentId === sec.id`), renders custom header columns (`col.title`), per-cell inputs (Text, Textarea, Number, Date, File Upload Only), and interactive row addition (`+ Add Row`) and removal (`Trash2`).
+- **Result**: Custom dynamic table grid sections created in Appraisal Settings render instantly on the Faculty Appraisal form with working input rows and file attachments. Build passes cleanly in 6.30s with 0 errors.
+
+
+### 433. Fix `setEditingColumns` State Reference & Scoped `+ Add Column` Button Rendering (`AppraisalSettings.jsx`)
+- **Goal**:
+  1. Fix runtime console error `ReferenceError: Can't find variable: setEditingColumns`.
+  2. Ensure section row action button displays `+ Add Column` strictly for dynamic grid table sections, and `+ Add Sub-Field` for regular section headers (e.g. `1.1 Basic Profile Details`, `1.2 Teaching & Industrial Experience Details`, `1.3 Weekly Workload Grid`).
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Added missing `const [editingColumns, setEditingColumns] = useState([]);` state declaration.
+    - Added `isGridTableSection(field)` helper that identifies true dynamic grid table sections (`sec_custom_...`, `section_custom_grid`, `grid_*`, and built-in table section IDs) vs standard grouping sections.
+    - Updated section row action button label to `{isGridTableSection(field) ? "Add Column" : "Add Sub-Field"}`.
+- **Result**: Standard form section headers show `+ Add Sub-Field`, while actual table sections show `+ Add Column`. Build passes cleanly in 6.33s with 0 errors.
+
+
+### 432. Inline Table Columns / Headers Manager inside Dynamic Form Field Modal (`AppraisalSettings.jsx`)
+- **Goal**: Allow admins to define, name, edit, and reorder all table columns/headers directly inside the Create/Edit Field modal when creating or editing a `Dynamic Table / Grid Section`.
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Added `editingColumns` state to track table columns for dynamic grid sections inside the field modal.
+    - Rendered an interactive **Table Columns / Headers** manager card inside the modal when `Input Type` is `Dynamic Table / Grid Section`.
+    - Auto-seeds starter column inputs (`Title / Particulars`, `Date / Duration`) when selecting `Dynamic Table / Grid Section`.
+    - Included a `+ Add Table Column` button allowing admins to add as many custom columns as needed with individual column header names and input types (`Text Box`, `Large Text Area`, `Number Input`, `Date Picker`, `File Upload Only`).
+    - Updated `handleSaveFieldModal` to atomically create/update all configured column sub-fields under the target parent section ID.
+    - Updated section row action button in table view from `+ Add Sub-Field` to `+ Add Column` for dynamic table sections.
+- **Result**: Admins can easily add and name table columns directly inside the field creation modal. Build passes cleanly in 7.78s with 0 errors.
+
+
+### 431. Dynamic Table / Grid Section Input Type & Sub-Field Deletion Support (`AppraisalSettings.jsx`, `FacultyAppraisal.jsx`)
+- **Goal**:
+  1. Add `Dynamic Table / Grid Section` (`table_grid`) as an available option in the `Input Type` dropdown inside the Create/Edit Field modal on [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
+  2. Fix issue where selecting `Dynamic Table / Grid Section` incorrectly triggered `id.startsWith("sec_")` lock rules, turning the modal into "EDIT BUILT-IN FORM SECTION" and disabling inputs.
+  3. Enable deleting table column sub-fields (both built-in column fields like `Title of the Course`, `Start Date`, `End Date` and custom column sub-fields) as well as custom sections via a `Trash2` delete button in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).
+- **Fix**:
+  - In [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx):
+    - Added `<option value="table_grid">Dynamic Table / Grid Section</option>` in the `Input Type` select element.
+    - Fixed built-in check in modal logic to verify `(editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")`, ensuring custom grid sections (`sec_custom_...`) remain fully editable.
+    - Set `Sub-Category / Parent Section` to auto-display `Root Section (Top-Level Grid Table)` when `table_grid` is selected.
+    - Updated `handleDeleteField` logic to permit deleting sub-fields (`f_...` or `field_...`) and custom sections (`sec_custom_...`) while preserving core root sections (`sec_...`).
+    - Added red `Trash2` icon action button to table rows for all deletable sub-fields and custom sections.
+  - In [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx):
+    - Added dynamic custom grid rendering engine (`section_custom_grid`) with column headers, input rows, add row button, and evidence attachments.
+- **Result**: Admins can create dynamic table grid sections without triggering modal lockouts, and delete unwanted sub-fields or custom sections. Build passes cleanly in 7.66s with 0 errors.
+
+
 ### 430. Dynamic Table Grid Column Renaming & Custom Column Field Additions (`AppraisalSettings.jsx`, `FacultyAppraisal.jsx`)
 - **Goal**:
   1. Allow admins to rename/edit table column headers for dynamic grid sections (e.g. `Title of the Course`, `Start Date`, `Title of the Paper`, `SCI / SCOPUS / UGC`, `Dates`, etc.) in [`AppraisalSettings.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalSettings.jsx).

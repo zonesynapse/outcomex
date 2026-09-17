@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import Layout from "../components/Layout";
+import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 import {
   FileText,
   Save,
@@ -163,24 +164,11 @@ export default function NonTeachingAppraisal() {
           setAcademicYear(sched.academicYear);
         }
 
-        if (sched.isActive) {
-          const now = new Date().getTime();
-          const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
-          const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
-
-          let open = true;
-          if (start && now < start) open = false;
-          if (end && now > end) open = false;
-          setIsPortalOpen(open);
-        } else {
-          setIsPortalOpen(false);
-        }
+        const { isOpen } = checkAppraisalPortalStatus(sched);
+        setIsPortalOpen(isOpen);
       } else {
         setIsPortalOpen(true);
       }
-      setCheckingSchedule(false);
-    }, (err) => {
-      console.error("Error checking appraisal schedule:", err);
       setCheckingSchedule(false);
     });
     return () => unsub();
@@ -359,6 +347,8 @@ export default function NonTeachingAppraisal() {
 
   const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
   if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
+    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
+    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
       <Layout title="Non-Teaching Staff Appraisal Request">
         <div className="max-w-xl mx-auto py-16 px-4">
@@ -379,18 +369,18 @@ export default function NonTeachingAppraisal() {
                 <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear}</strong>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
                   </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
                   </strong>
                 </div>
               </div>

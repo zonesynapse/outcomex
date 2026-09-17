@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { evaluateAppraisal } from "../utils/appraisalScore";
+import evaluateAppraisal, { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 import { 
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2, 
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
@@ -50,9 +50,13 @@ export default function FacultyAppraisal() {
     workloadWeek: {
       oddTheory: "",
       oddPractical: "",
+      oddSpecial: "",
+      oddOther: "",
       oddTotal: "",
       evenTheory: "",
       evenPractical: "",
+      evenSpecial: "",
+      evenOther: "",
       evenTotal: ""
     },
 
@@ -160,21 +164,11 @@ export default function FacultyAppraisal() {
         const sched = snap.data();
         setAppraisalSchedule(sched);
         
-        if (sched.isActive) {
-          const now = new Date().getTime();
-          const start = sched.openTime ? new Date(sched.openTime).getTime() : null;
-          const end = sched.closeTime ? new Date(sched.closeTime).getTime() : null;
-          
-          let open = true;
-          if (start && now < start) open = false;
-          if (end && now > end) open = false;
-          setIsPortalOpen(open);
-          
-          if (sched.academicYear) {
-            setAcademicYear(sched.academicYear);
-          }
-        } else {
-          setIsPortalOpen(false);
+        const { isOpen } = checkAppraisalPortalStatus(sched);
+        setIsPortalOpen(isOpen);
+        
+        if (sched.academicYear) {
+          setAcademicYear(sched.academicYear);
         }
       } else {
         // If no config, default to open
@@ -257,6 +251,64 @@ export default function FacultyAppraisal() {
       const list = [...prev[field]];
       list[index] = { ...list[index], [key]: value };
       return { ...prev, [field]: list };
+    });
+  };
+
+  const updateCustomGridCell = (secId, rIdx, colId, value) => {
+    setFormData(prev => {
+      const customMap = prev.customFields || {};
+      const currentRows = Array.isArray(customMap[secId]) && customMap[secId].length > 0
+        ? [...customMap[secId]]
+        : [{ id: Date.now() }];
+      
+      currentRows[rIdx] = {
+        ...currentRows[rIdx],
+        [colId]: value
+      };
+
+      return {
+        ...prev,
+        customFields: {
+          ...customMap,
+          [secId]: currentRows
+        }
+      };
+    });
+  };
+
+  const addCustomGridRow = (secId) => {
+    setFormData(prev => {
+      const customMap = prev.customFields || {};
+      const currentRows = Array.isArray(customMap[secId]) ? [...customMap[secId]] : [];
+      currentRows.push({ id: Date.now() });
+
+      return {
+        ...prev,
+        customFields: {
+          ...customMap,
+          [secId]: currentRows
+        }
+      };
+    });
+  };
+
+  const removeCustomGridRow = (secId, rIdx) => {
+    setFormData(prev => {
+      const customMap = prev.customFields || {};
+      const currentRows = Array.isArray(customMap[secId]) ? [...customMap[secId]] : [];
+      if (currentRows.length <= 1) {
+        currentRows[0] = { id: Date.now() };
+      } else {
+        currentRows.splice(rIdx, 1);
+      }
+
+      return {
+        ...prev,
+        customFields: {
+          ...customMap,
+          [secId]: currentRows
+        }
+      };
     });
   };
 
@@ -520,6 +572,11 @@ export default function FacultyAppraisal() {
 
   const handleSave = async (isSubmit = false) => {
     if (!currentUser) return;
+    const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
+    if (!isPortalOpen && !isAdminOrHR) {
+      showToast("The self-appraisal submission portal is currently closed or has reached its deadline.", "error");
+      return;
+    }
     setSaving(true);
 
     if (isSubmit) {
@@ -610,7 +667,7 @@ export default function FacultyAppraisal() {
       "f_journals_title", "f_journals_date", "f_journals_journal", "f_journals_volIssue", "f_journals_index",
       "f_fdp_title", "f_fdp_dates", "f_fdp_days", "f_fdp_org", "f_fdp_report",
       "f_books_title", "f_books_publisher", "f_books_year",
-      "f_subjects_code", "f_subjects_handled", "f_subjects_passed", "f_subjects_passPercent", "f_subjects_feedback",
+      "f_subjects_class", "f_subjects_code", "f_subjects_appeared", "f_subjects_handled", "f_subjects_passed", "f_subjects_passPercent", "f_subjects_feedback",
       "f_roles_program", "f_roles_dates", "f_roles_agency",
       "f_memberships_society", "f_memberships_no",
       "f_awards_title", "f_awards_body", "f_awards_year"
@@ -687,7 +744,10 @@ export default function FacultyAppraisal() {
   }
 
   const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
-  if (!isPortalOpen && !existingAppraisal && !isAdminOrHR) {
+  const isDraftOrNew = !existingAppraisal || existingAppraisal.status === "Draft";
+  if (!isPortalOpen && isDraftOrNew && !isAdminOrHR) {
+    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
+    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
       <Layout title="Faculty Self Appraisal">
         <div className="max-w-xl mx-auto py-16 px-4">
@@ -708,18 +768,18 @@ export default function FacultyAppraisal() {
                 <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear}</strong>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.openTime ? new Date(appraisalSchedule.openTime).toLocaleString() : "Not scheduled"}
+                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
                   </strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
                   <strong className="text-slate-800">
-                    {appraisalSchedule.closeTime ? new Date(appraisalSchedule.closeTime).toLocaleString() : "Not scheduled"}
+                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
                   </strong>
                 </div>
               </div>
@@ -743,53 +803,184 @@ export default function FacultyAppraisal() {
   }
 
   const renderTabCustomFields = (tId) => {
+    const customGridSections = customFieldsConfig.filter(f => 
+      f.tabId === tId && 
+      f.visible !== false && 
+      (f.type === "section_custom_grid" || f.id.startsWith("sec_custom_"))
+    );
+
     const tabFields = customFieldsConfig.filter(f => 
       f.tabId === tId && 
       f.visible !== false && 
+      !f.parentId && 
+      !f.type?.startsWith("section_") && 
+      !f.id.startsWith("sec_") && 
       (f.id.startsWith("field_") || (f.id.startsWith("f_") && f.evidenceRequired))
     );
-    if (tabFields.length === 0) return null;
+
+    if (customGridSections.length === 0 && tabFields.length === 0) return null;
 
     return (
       <div className="mt-8 pt-8 border-t border-zinc-150 space-y-6">
         <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 mb-4">
-          <Award size={14} className="text-[#120c7a]" /> Additional Evidences & Disclosures
+          <Award size={14} className="text-[#120c7a]" /> Additional Custom Sections & Evidences
         </h4>
-        <div className="grid grid-cols-1 gap-6">
-          {tabFields.map((field) => {
-            const savedEntry = formData.customFields?.[field.id] || { value: "", fileUrl: "", fileName: "" };
-            const isUploading = uploadingMap[field.id];
 
-            const handleFieldTextChange = (val) => {
-              setFormData(prev => ({
-                ...prev,
-                customFields: {
-                  ...prev.customFields,
-                  [field.id]: {
-                    ...savedEntry,
-                    label: field.title,
-                    value: val
-                  }
-                }
-              }));
-            };
+        {/* ═══ Custom Dynamic Table Grid Sections ═══ */}
+        {customGridSections.map((sec) => {
+          const columns = customFieldsConfig.filter(col => col.parentId === sec.id && col.visible !== false);
+          const rowList = Array.isArray(formData.customFields?.[sec.id]) && formData.customFields[sec.id].length > 0
+            ? formData.customFields[sec.id]
+            : [{ id: Date.now() }];
 
-            const handleFileSelect = async (e) => {
-              const file = e.target.files[0];
-              if (!file) return;
+          return (
+            <div key={sec.id} className="bg-white border border-zinc-200 rounded-2xl p-6 space-y-4 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2">
+                <div>
+                  <h3 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider">{sec.title}</h3>
+                  {sec.description && (
+                    <p className="text-[10px] text-zinc-400 font-semibold mt-1 uppercase tracking-wider">{sec.description}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {sec.evidenceRequired && (
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                      sec.evidenceMandatory 
+                        ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans" 
+                        : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
+                    }`}>
+                      {sec.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
+                    </span>
+                  )}
+                  {!isReadOnly && columns.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => addCustomGridRow(sec.id)}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-[#120c7a] rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      <Plus size={11} /> + Add Record
+                    </button>
+                  )}
+                </div>
+              </div>
 
-              // Check size limit dynamically (default to 300KB if not specified)
-              const maxSizeKb = field.maxSizeKb ? parseInt(field.maxSizeKb) : 300;
-              if (file.size > maxSizeKb * 1024) {
-                showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of ${maxSizeKb} KB configured for this field.`, "error");
-                e.target.value = ""; // Reset input
-                return;
-              }
+              {columns.length === 0 ? (
+                <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl text-center text-zinc-500 text-xs font-semibold">
+                  No columns configured for this grid section. Add sub-fields/columns in Appraisal Settings.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse border border-zinc-200 text-xs">
+                    <thead>
+                      <tr className="bg-zinc-50 font-bold text-zinc-800">
+                        <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
+                        {columns.map(col => (
+                          <th key={col.id} className="border border-zinc-200 p-2 text-center font-semibold">
+                            {col.title}
+                          </th>
+                        ))}
+                        {!isReadOnly && (
+                          <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rowList.map((row, rIdx) => (
+                        <tr key={row.id || rIdx} className="hover:bg-zinc-50/50">
+                          <td className="border border-zinc-200 p-2 text-center font-bold text-zinc-600 text-xs">
+                            {rIdx + 1}
+                          </td>
+                          {columns.map(col => {
+                            const val = row[col.id] || "";
+                            return (
+                              <td key={col.id} className="border border-zinc-200 p-1.5">
+                                {col.type === "file_only" ? (
+                                  <div className="flex items-center justify-center">
+                                    {val ? (
+                                      <a
+                                        href={typeof val === "string" ? val : val.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] hover:bg-indigo-100 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all"
+                                      >
+                                        <Paperclip size={11} /> ATTACHED
+                                      </a>
+                                    ) : !isReadOnly ? (
+                                      <label className="px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] hover:bg-indigo-100 rounded-lg text-[10px] font-bold cursor-pointer flex items-center gap-1 transition-all">
+                                        <UploadCloud size={11} /> ATTACH
+                                        <input
+                                          type="file"
+                                          className="hidden"
+                                          onChange={async (e) => {
+                                            const file = e.target.files[0];
+                                            if (!file) return;
+                                            const storagePath = userStoragePath(currentUser.uid, "appraisal_evidences", `${col.id}_${file.name}`);
+                                            try {
+                                              const url = await uploadFile(storagePath, file, file.type);
+                                              updateCustomGridCell(sec.id, rIdx, col.id, url);
+                                              showToast("File uploaded!", "success");
+                                            } catch (err) {
+                                              showToast("Upload failed", "error");
+                                            }
+                                          }}
+                                        />
+                                      </label>
+                                    ) : (
+                                      <span className="text-zinc-400 text-[10px] italic">No file</span>
+                                    )}
+                                  </div>
+                                ) : col.type === "textarea" ? (
+                                  <textarea
+                                    value={val}
+                                    onChange={(e) => updateCustomGridCell(sec.id, rIdx, col.id, e.target.value)}
+                                    disabled={isReadOnly}
+                                    rows={1}
+                                    className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none bg-transparent"
+                                    placeholder="Enter details..."
+                                  />
+                                ) : (
+                                  <input
+                                    type={col.type === "number" ? "number" : col.type === "date" ? "date" : "text"}
+                                    value={val}
+                                    onChange={(e) => updateCustomGridCell(sec.id, rIdx, col.id, e.target.value)}
+                                    disabled={isReadOnly}
+                                    className="w-full border-0 p-1 text-xs text-center focus:ring-0 focus:outline-none bg-transparent"
+                                    placeholder={col.type === "date" ? "DD-MM-YYYY" : "Enter..."}
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                          {!isReadOnly && (
+                            <td className="border border-zinc-200 p-1 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeCustomGridRow(sec.id, rIdx)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="Remove Row"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
-              setUploadingMap(prev => ({ ...prev, [field.id]: true }));
-              try {
-                const storagePath = userStoragePath(currentUser.uid, "appraisal_evidences", `${field.id}_${file.name}`);
-                const downloadUrl = await uploadFile(storagePath, file, file.type);
+        {/* ═══ Standalone Custom Form Fields ═══ */}
+        {tabFields.length > 0 && (
+          <div className="grid grid-cols-1 gap-6">
+            {tabFields.map((field) => {
+              const savedEntry = formData.customFields?.[field.id] || { value: "", fileUrl: "", fileName: "" };
+              const isUploading = uploadingMap[field.id];
+
+              const handleFieldTextChange = (val) => {
                 setFormData(prev => ({
                   ...prev,
                   customFields: {
@@ -797,131 +988,160 @@ export default function FacultyAppraisal() {
                     [field.id]: {
                       ...savedEntry,
                       label: field.title,
-                      fileUrl: downloadUrl,
-                      fileName: file.name
+                      value: val
                     }
                   }
                 }));
-                showToast(`Uploaded evidence file for "${field.title}"!`, "success");
-              } catch (err) {
-                console.error("Error uploading evidence:", err);
-                showToast("File upload failed. Please try again.", "error");
-              }
-              setUploadingMap(prev => ({ ...prev, [field.id]: false }));
-            };
+              };
 
-            const handleRemoveFile = () => {
-              setFormData(prev => ({
-                ...prev,
-                customFields: {
-                  ...prev.customFields,
-                  [field.id]: {
-                    ...savedEntry,
-                    fileUrl: "",
-                    fileName: ""
-                  }
+              const handleFileSelect = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const maxSizeKb = field.maxSizeKb ? parseInt(field.maxSizeKb) : 300;
+                if (file.size > maxSizeKb * 1024) {
+                  showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of ${maxSizeKb} KB configured for this field.`, "error");
+                  e.target.value = "";
+                  return;
                 }
-              }));
-              showToast("Evidence attachment removed.", "success");
-            };
 
-            return (
-              <div key={field.id} className="bg-zinc-50 border border-zinc-150 p-6 rounded-2xl space-y-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-black text-slate-805 uppercase tracking-wider">{field.title}</label>
-                    {field.evidenceRequired && (
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                        field.evidenceMandatory 
-                          ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans" 
-                          : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
-                      }`}>
-                        {field.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
-                      </span>
+                setUploadingMap(prev => ({ ...prev, [field.id]: true }));
+                try {
+                  const storagePath = userStoragePath(currentUser.uid, "appraisal_evidences", `${field.id}_${file.name}`);
+                  const downloadUrl = await uploadFile(storagePath, file, file.type);
+                  setFormData(prev => ({
+                    ...prev,
+                    customFields: {
+                      ...prev.customFields,
+                      [field.id]: {
+                        ...savedEntry,
+                        label: field.title,
+                        fileUrl: downloadUrl,
+                        fileName: file.name
+                      }
+                    }
+                  }));
+                  showToast(`Uploaded evidence file for "${field.title}"!`, "success");
+                } catch (err) {
+                  console.error("Error uploading evidence:", err);
+                  showToast("File upload failed. Please try again.", "error");
+                }
+                setUploadingMap(prev => ({ ...prev, [field.id]: false }));
+              };
+
+              const handleRemoveFile = () => {
+                setFormData(prev => ({
+                  ...prev,
+                  customFields: {
+                    ...prev.customFields,
+                    [field.id]: {
+                      ...savedEntry,
+                      fileUrl: "",
+                      fileName: ""
+                    }
+                  }
+                }));
+                showToast("Evidence attachment removed.", "success");
+              };
+
+              return (
+                <div key={field.id} className="bg-zinc-50 border border-zinc-150 p-6 rounded-2xl space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-black text-slate-805 uppercase tracking-wider">{field.title}</label>
+                      {field.evidenceRequired && (
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                          field.evidenceMandatory 
+                            ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans" 
+                            : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
+                        }`}>
+                          {field.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
+                        </span>
+                      )}
+                    </div>
+                    {field.description && (
+                      <p className="text-[10px] text-zinc-400 font-semibold mt-1 uppercase leading-relaxed">{field.description}</p>
                     )}
                   </div>
-                  {field.description && (
-                    <p className="text-[10px] text-zinc-400 font-semibold mt-1 uppercase leading-relaxed">{field.description}</p>
+
+                  {field.type !== "file_only" && (
+                    <div>
+                      {field.type === "textarea" ? (
+                        <textarea
+                          value={savedEntry.value || ""}
+                          onChange={(e) => handleFieldTextChange(e.target.value)}
+                          disabled={isReadOnly}
+                          rows={4}
+                          className="w-full rounded-xl border border-zinc-200 p-3 text-xs bg-white focus:outline-none font-medium"
+                          placeholder="Type details here..."
+                        />
+                      ) : (
+                        <input
+                          type={field.type}
+                          value={savedEntry.value || ""}
+                          onChange={(e) => handleFieldTextChange(e.target.value)}
+                          disabled={isReadOnly}
+                          className="w-full rounded-xl border border-zinc-200 p-3 text-xs bg-white focus:outline-none font-medium"
+                          placeholder="Type answer here..."
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {field.evidenceRequired && (
+                    <div className="bg-white border border-zinc-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-[#120c7a]">
+                          <Paperclip size={18} />
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
+                          {savedEntry.fileUrl ? (
+                            <a 
+                              href={savedEntry.fileUrl} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
+                            >
+                              {savedEntry.fileName || "View Attachment"}
+                            </a>
+                          ) : (
+                            <span className="text-xs font-bold text-zinc-400 italic">No File Uploaded</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {!isReadOnly && (
+                        <div className="flex items-center gap-2">
+                          {savedEntry.fileUrl ? (
+                            <button
+                              type="button"
+                              onClick={handleRemoveFile}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Remove File
+                            </button>
+                          ) : (
+                            <label className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] border border-indigo-150 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5">
+                              {isUploading ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />}
+                              Upload Evidence
+                              <input 
+                                type="file" 
+                                onChange={handleFileSelect} 
+                                disabled={isUploading}
+                                className="hidden" 
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-
-                {field.type !== "file_only" && (
-                  <div>
-                    {field.type === "textarea" ? (
-                      <textarea
-                        value={savedEntry.value || ""}
-                        onChange={(e) => handleFieldTextChange(e.target.value)}
-                        disabled={isReadOnly}
-                        rows={4}
-                        className="w-full rounded-xl border border-zinc-200 p-3 text-xs bg-white focus:outline-none font-medium"
-                        placeholder="Type details here..."
-                      />
-                    ) : (
-                      <input
-                        type={field.type}
-                        value={savedEntry.value || ""}
-                        onChange={(e) => handleFieldTextChange(e.target.value)}
-                        disabled={isReadOnly}
-                        className="w-full rounded-xl border border-zinc-200 p-3 text-xs bg-white focus:outline-none font-medium"
-                        placeholder="Type answer here..."
-                      />
-                    )}
-                  </div>
-                )}
-
-                {field.evidenceRequired && (
-                  <div className="bg-white border border-zinc-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-[#120c7a]">
-                        <Paperclip size={18} />
-                      </div>
-                      <div>
-                        <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
-                        {savedEntry.fileUrl ? (
-                          <a 
-                            href={savedEntry.fileUrl} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
-                          >
-                            {savedEntry.fileName || "View Attachment"}
-                          </a>
-                        ) : (
-                          <span className="text-xs font-bold text-zinc-400 italic">No File Uploaded</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {!isReadOnly && (
-                      <div className="flex items-center gap-2">
-                        {savedEntry.fileUrl ? (
-                          <button
-                            type="button"
-                            onClick={handleRemoveFile}
-                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                          >
-                            Remove File
-                          </button>
-                        ) : (
-                          <label className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] border border-indigo-150 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5">
-                            {isUploading ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />}
-                            Upload Evidence
-                            <input 
-                              type="file" 
-                              onChange={handleFileSelect} 
-                              disabled={isUploading}
-                              className="hidden" 
-                            />
-                          </label>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -953,18 +1173,12 @@ export default function FacultyAppraisal() {
               <p className="text-indigo-200 text-xs md:text-sm">Submit your performance evaluation request for the academic session {academicYear}.</p>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-indigo-200 whitespace-nowrap">Academic Year:</span>
-              <select
-                value={academicYear}
-                onChange={(e) => setAcademicYear(e.target.value)}
-                disabled={true}
-                className="bg-white/10 border border-white/20 rounded-xl px-3 py-1.5 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-white/40"
-              >
-                <option value="2024-2025">2024-2025</option>
-                <option value="2025-2026">2025-2026</option>
-                <option value="2026-2027">2026-2027</option>
-              </select>
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/15 backdrop-blur-md border border-white/25 rounded-xl text-xs font-black text-white tracking-wide shadow-sm">
+                <Calendar size={13} className="text-amber-400" />
+                <span>{academicYear}</span>
+              </div>
             </div>
           </div>
 
@@ -1152,59 +1366,106 @@ export default function FacultyAppraisal() {
               )}
 
               {isSectionVisible("sec_profile_workload") && (
-                <div className="pt-4 border-t border-zinc-100">
-                  <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <div className="pt-4 border-t border-zinc-100 space-y-4">
+                  <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
                     <Calendar size={12} className="text-[#120c7a]" /> 
-                    {getSectionTitle("sec_profile_workload", "1.3 Weekly Workload Grid")}
+                    {getSectionTitle("sec_profile_workload", "1.3 WEEKLY WORKLOAD GRID")}
                   </div>
                   {getSectionDescription("sec_profile_workload") && (
-                    <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_profile_workload")}</p>
+                    <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_profile_workload")}</p>
                   )}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {isSectionVisible("f_oddTheory") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c7d] uppercase tracking-widest mb-1">{getSectionTitle("f_oddTheory", "Odd Sem Theory")}</label>
-                        {getSectionDescription("f_oddTheory") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_oddTheory")}</p>}
-                        <input type="number" value={formData.workloadWeek.oddTheory} onChange={(e) => handleNestedInputChange("workloadWeek", "oddTheory", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
+
+                  {/* ODD SEMESTER WORKLOAD CARD */}
+                  {isSectionVisible("f_workload_odd_title") && (
+                    <div className="bg-slate-50/60 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                        {getSectionTitle("f_workload_odd_title", "ODD SEMESTER WORKLOAD / WEEK (HRS)")}
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+                        {isSectionVisible("f_oddTheory") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_oddTheory", "THEORY CLASSES")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_oddTheory") || "Weekly theory workload."}</p>
+                            <input type="number" placeholder="e.g. 12" value={formData.workloadWeek.oddTheory} onChange={(e) => handleNestedInputChange("workloadWeek", "oddTheory", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_oddPractical") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_oddPractical", "PRACTICAL CLASSES")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_oddPractical") || "Weekly lab workload."}</p>
+                            <input type="number" placeholder="e.g. 6" value={formData.workloadWeek.oddPractical} onChange={(e) => handleNestedInputChange("workloadWeek", "oddPractical", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_oddSpecial") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_oddSpecial", "C) SPECIAL CLASS (HRS)")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_oddSpecial") || ""}</p>
+                            <input type="number" placeholder="e.g. 2" value={formData.workloadWeek.oddSpecial} onChange={(e) => handleNestedInputChange("workloadWeek", "oddSpecial", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_oddOther") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_oddOther", "D) OTHER ACTIVITY (HRS)")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_oddOther") || ""}</p>
+                            <input type="number" placeholder="e.g. 4" value={formData.workloadWeek.oddOther} onChange={(e) => handleNestedInputChange("workloadWeek", "oddOther", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_oddTotal") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_oddTotal", "ODD TOTAL HOURS")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_oddTotal") || "Odd semester total workload."}</p>
+                            <input type="number" placeholder="Total" value={formData.workloadWeek.oddTotal !== "" && formData.workloadWeek.oddTotal !== undefined ? formData.workloadWeek.oddTotal : ((Number(formData.workloadWeek.oddTheory) || 0) + (Number(formData.workloadWeek.oddPractical) || 0) + (Number(formData.workloadWeek.oddSpecial) || 0) + (Number(formData.workloadWeek.oddOther) || 0) || "")} onChange={(e) => handleNestedInputChange("workloadWeek", "oddTotal", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {isSectionVisible("f_oddPractical") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c7e] uppercase tracking-widest mb-1">{getSectionTitle("f_oddPractical", "Odd Practical/Project")}</label>
-                        {getSectionDescription("f_oddPractical") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_oddPractical")}</p>}
-                        <input type="number" value={formData.workloadWeek.oddPractical} onChange={(e) => handleNestedInputChange("workloadWeek", "oddPractical", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
+                    </div>
+                  )}
+
+                  {/* EVEN SEMESTER WORKLOAD CARD */}
+                  {isSectionVisible("f_workload_even_title") && (
+                    <div className="bg-slate-50/60 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                      <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                        {getSectionTitle("f_workload_even_title", "EVEN SEMESTER WORKLOAD / WEEK (HRS)")}
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+                        {isSectionVisible("f_evenTheory") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_evenTheory", "EVEN SEM THEORY HOURS")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_evenTheory") || "Even semester weekly theory workload."}</p>
+                            <input type="number" placeholder="e.g. 12" value={formData.workloadWeek.evenTheory} onChange={(e) => handleNestedInputChange("workloadWeek", "evenTheory", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_evenPractical") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_evenPractical", "EVEN PRACTICAL/PROJECT HOURS")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_evenPractical") || "Even semester weekly lab/project workload."}</p>
+                            <input type="number" placeholder="e.g. 6" value={formData.workloadWeek.evenPractical} onChange={(e) => handleNestedInputChange("workloadWeek", "evenPractical", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_evenSpecial") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_evenSpecial", "C) SPECIAL CLASS (HRS)")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_evenSpecial") || ""}</p>
+                            <input type="number" placeholder="e.g. 2" value={formData.workloadWeek.evenSpecial} onChange={(e) => handleNestedInputChange("workloadWeek", "evenSpecial", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_evenOther") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_evenOther", "D) OTHER ACTIVITY (HRS)")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_evenOther") || ""}</p>
+                            <input type="number" placeholder="e.g. 4" value={formData.workloadWeek.evenOther} onChange={(e) => handleNestedInputChange("workloadWeek", "evenOther", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
+                        {isSectionVisible("f_evenTotal") && (
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-700 uppercase tracking-wider mb-1">{getSectionTitle("f_evenTotal", "EVEN TOTAL HOURS")}</label>
+                            <p className="text-[9px] text-zinc-400 mb-1 font-medium min-h-[14px]">{getSectionDescription("f_evenTotal") || "Even semester total workload."}</p>
+                            <input type="number" placeholder="Total" value={formData.workloadWeek.evenTotal !== "" && formData.workloadWeek.evenTotal !== undefined ? formData.workloadWeek.evenTotal : ((Number(formData.workloadWeek.evenTheory) || 0) + (Number(formData.workloadWeek.evenPractical) || 0) + (Number(formData.workloadWeek.evenSpecial) || 0) + (Number(formData.workloadWeek.evenOther) || 0) || "")} onChange={(e) => handleNestedInputChange("workloadWeek", "evenTotal", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-xs font-semibold focus:outline-none" />
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {isSectionVisible("f_oddTotal") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c7f] uppercase tracking-widest mb-1">{getSectionTitle("f_oddTotal", "Odd Total Hrs")}</label>
-                        {getSectionDescription("f_oddTotal") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_oddTotal")}</p>}
-                        <input type="number" value={formData.workloadWeek.oddTotal} onChange={(e) => handleNestedInputChange("workloadWeek", "oddTotal", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
-                      </div>
-                    )}
-                    
-                    {isSectionVisible("f_evenTheory") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c80] uppercase tracking-widest mb-1">{getSectionTitle("f_evenTheory", "Even Sem Theory")}</label>
-                        {getSectionDescription("f_evenTheory") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_evenTheory")}</p>}
-                        <input type="number" value={formData.workloadWeek.evenTheory} onChange={(e) => handleNestedInputChange("workloadWeek", "evenTheory", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
-                      </div>
-                    )}
-                    {isSectionVisible("f_evenPractical") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c81] uppercase tracking-widest mb-1">{getSectionTitle("f_evenPractical", "Even Practical/Project")}</label>
-                        {getSectionDescription("f_evenPractical") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_evenPractical")}</p>}
-                        <input type="number" value={formData.workloadWeek.evenPractical} onChange={(e) => handleNestedInputChange("workloadWeek", "evenPractical", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
-                      </div>
-                    )}
-                    {isSectionVisible("f_evenTotal") && (
-                      <div>
-                        <label className="block text-[10px] font-black text-[#120c82] uppercase tracking-widest mb-1">{getSectionTitle("f_evenTotal", "Even Total Hrs")}</label>
-                        {getSectionDescription("f_evenTotal") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_evenTotal")}</p>}
-                        <input type="number" value={formData.workloadWeek.evenTotal} onChange={(e) => handleNestedInputChange("workloadWeek", "evenTotal", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold focus:outline-none" />
-                      </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
               {renderTabCustomFields(1)}
@@ -1216,14 +1477,19 @@ export default function FacultyAppraisal() {
             <div className="space-y-8 animate-fadeIn">
               {isSectionVisible("sec_subjects_results") && (
                 <>
-                  {/* ODD SEMESTER */}
+                  {/* SECTION 2.1 HEADER */}
                   <div>
-                    <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2 flex justify-between items-center">
-                      <span>{getSectionTitle("sec_subjects_results", "2.1 Subjects Handled & Pass % — ODD SEMESTER (Nov/Dec)")}</span>
+                    <div style={{ fontSize: "12px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-2 border-b border-slate-200 pb-2">
+                      {getSectionTitle("sec_subjects_results", "2.1 SUBJECTS HANDLED & EXAM PASS TARGETS")}
                     </div>
                     {getSectionDescription("sec_subjects_results") && (
                       <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_subjects_results")}</p>
                     )}
+                    
+                    {/* ODD SEMESTER */}
+                    <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
+                      ODD SEMESTER (Nov/Dec)
+                    </div>
                     
                     {/* Odd Sem Theory Table */}
                     <div className="mb-6">
@@ -1243,12 +1509,13 @@ export default function FacultyAppraisal() {
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
                               <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center w-36">Feedback Rating</th>
+                              {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                              {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                              {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
+                              {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
+                              {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
                               <th className="border border-zinc-200 p-2 text-center w-16">Action</th>
                             </tr>
@@ -1257,12 +1524,13 @@ export default function FacultyAppraisal() {
                             {formData.oddTheorySubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
                                 <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3501 Compiler Design" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("oddTheorySubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("oddTheorySubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 88%" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("oddTheorySubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 94.2%" /></td>
+                                {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>}
+                                {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3501 Compiler Design" /></td>}
+                                {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passed") && <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("oddTheorySubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 58" /></td>}
+                                {isSectionVisible("f_subjects_passPercent") && <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("oddTheorySubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 88%" /></td>}
+                                {isSectionVisible("f_subjects_feedback") && <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("oddTheorySubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 94.2%" /></td>}
+                                {renderCustomGridCells(row, i, "oddTheorySubjects", "sec_subjects_results")}
                                 {renderRowEvidenceCell("oddTheorySubjects", row, i, "sec_subjects_results")}
                                 <td className="border border-zinc-200 p-2 text-center">
                                   <button onClick={() => removeRow("oddTheorySubjects", i)} disabled={isReadOnly} className="text-rose-500 disabled:opacity-30"><Trash2 size={14} /></button>
@@ -1292,12 +1560,13 @@ export default function FacultyAppraisal() {
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
                               <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center w-36">Feedback Rating</th>
+                              {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                              {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                              {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
+                              {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
+                              {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
                               <th className="border border-zinc-200 p-2 text-center w-16">Action</th>
                             </tr>
@@ -1306,12 +1575,13 @@ export default function FacultyAppraisal() {
                             {formData.oddPracticalSubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
                                 <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Compiler Lab" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("oddPracticalSubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("oddPracticalSubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 100%" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("oddPracticalSubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 96.5%" /></td>
+                                {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>}
+                                {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Compiler Lab" /></td>}
+                                {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passed") && <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("oddPracticalSubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passPercent") && <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("oddPracticalSubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 100%" /></td>}
+                                {isSectionVisible("f_subjects_feedback") && <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("oddPracticalSubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 96.5%" /></td>}
+                                {renderCustomGridCells(row, i, "oddPracticalSubjects", "sec_subjects_results")}
                                 {renderRowEvidenceCell("oddPracticalSubjects", row, i, "sec_subjects_results")}
                                 <td className="border border-zinc-200 p-2 text-center">
                                   <button onClick={() => removeRow("oddPracticalSubjects", i)} disabled={isReadOnly} className="text-rose-500 disabled:opacity-30"><Trash2 size={14} /></button>
@@ -1326,8 +1596,8 @@ export default function FacultyAppraisal() {
 
                   {/* EVEN SEMESTER */}
                   <div>
-                    <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">
-                      10. Subjects Handled & Pass % — EVEN SEMESTER (April/May)
+                    <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
+                      EVEN SEMESTER (April/May)
                     </div>
 
                     {/* Even Sem Theory Table */}
@@ -1348,12 +1618,13 @@ export default function FacultyAppraisal() {
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
                               <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center w-36">Feedback Rating</th>
+                              {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                              {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                              {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
+                              {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
+                              {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
                               <th className="border border-zinc-200 p-2 text-center w-16">Action</th>
                             </tr>
@@ -1362,12 +1633,13 @@ export default function FacultyAppraisal() {
                             {formData.evenTheorySubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
                                 <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3601 Web Tech" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("evenTheorySubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("evenTheorySubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 92%" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("evenTheorySubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 93%" /></td>
+                                {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>}
+                                {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3601 Web Tech" /></td>}
+                                {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passed") && <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("evenTheorySubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 55" /></td>}
+                                {isSectionVisible("f_subjects_passPercent") && <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("evenTheorySubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 92%" /></td>}
+                                {isSectionVisible("f_subjects_feedback") && <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("evenTheorySubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 93%" /></td>}
+                                {renderCustomGridCells(row, i, "evenTheorySubjects", "sec_subjects_results")}
                                 {renderRowEvidenceCell("evenTheorySubjects", row, i, "sec_subjects_results")}
                                 <td className="border border-zinc-200 p-2 text-center">
                                   <button onClick={() => removeRow("evenTheorySubjects", i)} disabled={isReadOnly} className="text-rose-500 disabled:opacity-30"><Trash2 size={14} /></button>
@@ -1397,12 +1669,13 @@ export default function FacultyAppraisal() {
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
                               <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
-                              <th className="border border-zinc-200 p-2">Class</th>
-                              <th className="border border-zinc-200 p-2">Subject Code & Title</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Appeared</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">Passed</th>
-                              <th className="border border-zinc-200 p-2 text-center w-20">% Result</th>
-                              <th className="border border-zinc-200 p-2 text-center w-36">Feedback Rating</th>
+                              {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                              {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                              {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
+                              {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
+                              {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
                               <th className="border border-zinc-200 p-2 text-center w-16">Action</th>
                             </tr>
@@ -1411,12 +1684,13 @@ export default function FacultyAppraisal() {
                             {formData.evenPracticalSubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
                                 <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Web Tech Lab" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("evenPracticalSubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("evenPracticalSubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 100%" /></td>
-                                <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("evenPracticalSubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 95%" /></td>
+                                {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>}
+                                {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Web Tech Lab" /></td>}
+                                {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passed") && <td className="border border-zinc-200 p-1"><input type="number" value={row.passed} onChange={(e) => updateRow("evenPracticalSubjects", i, "passed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
+                                {isSectionVisible("f_subjects_passPercent") && <td className="border border-zinc-200 p-1"><input type="text" value={row.resultPercentage} onChange={(e) => updateRow("evenPracticalSubjects", i, "resultPercentage", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 100%" /></td>}
+                                {isSectionVisible("f_subjects_feedback") && <td className="border border-zinc-200 p-1"><input type="text" value={row.feedbackRating} onChange={(e) => updateRow("evenPracticalSubjects", i, "feedbackRating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 95%" /></td>}
+                                {renderCustomGridCells(row, i, "evenPracticalSubjects", "sec_subjects_results")}
                                 {renderRowEvidenceCell("evenPracticalSubjects", row, i, "sec_subjects_results")}
                                 <td className="border border-zinc-200 p-2 text-center">
                                   <button onClick={() => removeRow("evenPracticalSubjects", i)} disabled={isReadOnly} className="text-rose-500 disabled:opacity-30"><Trash2 size={14} /></button>
@@ -1431,7 +1705,7 @@ export default function FacultyAppraisal() {
 
                   {/* Attribution of Results */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 max-w-xl">
-                    <label className="block text-[10px] font-black text-[#120c7a] uppercase tracking-wider mb-2">11. To whom do you think these results can be attributed to?</label>
+                    <label className="block text-[10px] font-black text-[#120c7a] uppercase tracking-wider mb-2">To whom do you think these results can be attributed to?</label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {["Yourself", "Students", "Both", "Prevailing Circumstances"].map((attr) => (
                         <button
@@ -1482,13 +1756,13 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_nptel_title", "Title of the Course")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_startDate", "Start Date")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_endDate", "End Date")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_weeks", "Weeks")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_nptel_platform", "Platform")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_examDate", "Exam Date")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_certificate", "Certificate?")}</th>
+                          {isSectionVisible("f_nptel_title") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_nptel_title", "Title of the Course")}</th>}
+                          {isSectionVisible("f_nptel_startDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_startDate", "Start Date")}</th>}
+                          {isSectionVisible("f_nptel_endDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_endDate", "End Date")}</th>}
+                          {isSectionVisible("f_nptel_weeks") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_weeks", "Weeks")}</th>}
+                          {isSectionVisible("f_nptel_platform") && <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_nptel_platform", "Platform")}</th>}
+                          {isSectionVisible("f_nptel_examDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_examDate", "Exam Date")}</th>}
+                          {isSectionVisible("f_nptel_certificate") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_certificate", "Certificate?")}</th>}
                           {renderCustomGridHeaders("sec_academic_nptel")}
                           {renderRowEvidenceHeader("sec_academic_nptel")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
@@ -1498,18 +1772,18 @@ export default function FacultyAppraisal() {
                         {formData.onlineCourses.map((row, i) => (
                           <tr key={i}>
                             <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("onlineCourses", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.startDate} onChange={(e) => updateRow("onlineCourses", i, "startDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.endDate} onChange={(e) => updateRow("onlineCourses", i, "endDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="number" value={row.weeks} onChange={(e) => updateRow("onlineCourses", i, "weeks", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.platform} onChange={(e) => updateRow("onlineCourses", i, "platform", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" placeholder="e.g. Oct 2024" value={row.examDate} onChange={(e) => updateRow("onlineCourses", i, "examDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1">
+                            {isSectionVisible("f_nptel_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("onlineCourses", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" /></td>}
+                            {isSectionVisible("f_nptel_startDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.startDate} onChange={(e) => updateRow("onlineCourses", i, "startDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_endDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.endDate} onChange={(e) => updateRow("onlineCourses", i, "endDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_weeks") && <td className="border border-zinc-200 p-1"><input type="number" value={row.weeks} onChange={(e) => updateRow("onlineCourses", i, "weeks", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_platform") && <td className="border border-zinc-200 p-1"><input type="text" value={row.platform} onChange={(e) => updateRow("onlineCourses", i, "platform", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_examDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="e.g. Oct 2024" value={row.examDate} onChange={(e) => updateRow("onlineCourses", i, "examDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_certificate") && <td className="border border-zinc-200 p-1">
                               <select value={row.certificateReceived} onChange={(e) => updateRow("onlineCourses", i, "certificateReceived", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
                                 <option value="Yes">Yes</option>
                                 <option value="No">No</option>
                               </select>
-                            </td>
+                            </td>}
                             {renderCustomGridCells(row, i, "onlineCourses", "sec_academic_nptel")}
                             {renderRowEvidenceCell("onlineCourses", row, i, "sec_academic_nptel")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("onlineCourses", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
@@ -1549,11 +1823,11 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_title", "Title of the Paper")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_journals_date", "Date / Month / Year")}</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_journal", "Name of Journal / Conference")}</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_volIssue", "Vol. No, Issue No, Page No")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_journals_index", "SCI / SCOPUS / UGC")}</th>
+                          {isSectionVisible("f_journals_title") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_title", "Title of the Paper")}</th>}
+                          {isSectionVisible("f_journals_date") && <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_journals_date", "Date / Month / Year")}</th>}
+                          {isSectionVisible("f_journals_journal") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_journal", "Name of Journal / Conference")}</th>}
+                          {isSectionVisible("f_journals_volIssue") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_journals_volIssue", "Vol. No, Issue No, Page No")}</th>}
+                          {isSectionVisible("f_journals_index") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_journals_index", "SCI / SCOPUS / UGC")}</th>}
                           {renderCustomGridHeaders("sec_academic_journals")}
                           {renderRowEvidenceHeader("sec_academic_journals")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
@@ -1563,18 +1837,18 @@ export default function FacultyAppraisal() {
                         {formData.researchPapers.map((row, i) => (
                           <tr key={i}>
                             <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("researchPapers", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.dateMonthYear} onChange={(e) => updateRow("researchPapers", i, "dateMonthYear", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.journal} onChange={(e) => updateRow("researchPapers", i, "journal", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.volumeIssue} onChange={(e) => updateRow("researchPapers", i, "volumeIssue", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
-                            <td className="border border-zinc-200 p-1">
+                            {isSectionVisible("f_journals_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("researchPapers", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
+                            {isSectionVisible("f_journals_date") && <td className="border border-zinc-200 p-1"><input type="text" value={row.dateMonthYear} onChange={(e) => updateRow("researchPapers", i, "dateMonthYear", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_journals_journal") && <td className="border border-zinc-200 p-1"><input type="text" value={row.journal} onChange={(e) => updateRow("researchPapers", i, "journal", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
+                            {isSectionVisible("f_journals_volIssue") && <td className="border border-zinc-200 p-1"><input type="text" value={row.volumeIssue} onChange={(e) => updateRow("researchPapers", i, "volumeIssue", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
+                            {isSectionVisible("f_journals_index") && <td className="border border-zinc-200 p-1">
                               <select value={row.sciScopusUgc} onChange={(e) => updateRow("researchPapers", i, "sciScopusUgc", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
                                 <option value="SCI">SCI</option>
                                 <option value="SCOPUS">SCOPUS</option>
                                 <option value="UGC">UGC Indexed</option>
                                 <option value="Other">Other Non-indexed</option>
                               </select>
-                            </td>
+                            </td>}
                             {renderCustomGridCells(row, i, "researchPapers", "sec_academic_journals")}
                             {renderRowEvidenceCell("researchPapers", row, i, "sec_academic_journals")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("researchPapers", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
@@ -1610,11 +1884,11 @@ export default function FacultyAppraisal() {
                       <thead>
                         <tr className="bg-zinc-50 font-bold">
                           <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_title", "Title of Workshop / FDP / Special Program")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_dates", "Dates")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_fdp_days", "No. of Days")}</th>
-                          <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_org", "Organization")}</th>
-                          <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_report", "Submitted Report?")}</th>
+                          {isSectionVisible("f_fdp_title") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_title", "Title of Workshop / FDP / Special Program")}</th>}
+                          {isSectionVisible("f_fdp_dates") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_dates", "Dates")}</th>}
+                          {isSectionVisible("f_fdp_days") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_fdp_days", "No. of Days")}</th>}
+                          {isSectionVisible("f_fdp_org") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_fdp_org", "Organization")}</th>}
+                          {isSectionVisible("f_fdp_report") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_fdp_report", "Submitted Report?")}</th>}
                           {renderCustomGridHeaders("sec_academic_fdp")}
                           {renderRowEvidenceHeader("sec_academic_fdp")}
                           <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
@@ -1624,16 +1898,16 @@ export default function FacultyAppraisal() {
                         {formData.workshopsFDPs.map((row, i) => (
                           <tr key={i}>
                             <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("workshopsFDPs", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.dates} onChange={(e) => updateRow("workshopsFDPs", i, "dates", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="number" value={row.days} onChange={(e) => updateRow("workshopsFDPs", i, "days", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
-                            <td className="border border-zinc-200 p-1"><input type="text" value={row.organization} onChange={(e) => updateRow("workshopsFDPs", i, "organization", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
-                            <td className="border border-zinc-200 p-1">
+                            {isSectionVisible("f_fdp_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("workshopsFDPs", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
+                            {isSectionVisible("f_fdp_dates") && <td className="border border-zinc-200 p-1"><input type="text" value={row.dates} onChange={(e) => updateRow("workshopsFDPs", i, "dates", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_fdp_days") && <td className="border border-zinc-200 p-1"><input type="number" value={row.days} onChange={(e) => updateRow("workshopsFDPs", i, "days", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_fdp_org") && <td className="border border-zinc-200 p-1"><input type="text" value={row.organization} onChange={(e) => updateRow("workshopsFDPs", i, "organization", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
+                            {isSectionVisible("f_fdp_report") && <td className="border border-zinc-200 p-1">
                               <select value={row.reportSubmitted} onChange={(e) => updateRow("workshopsFDPs", i, "reportSubmitted", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
                                 <option value="Yes">Yes</option>
                                 <option value="No">No</option>
                               </select>
-                            </td>
+                            </td>}
                             {renderCustomGridCells(row, i, "workshopsFDPs", "sec_academic_fdp")}
                             {renderRowEvidenceCell("workshopsFDPs", row, i, "sec_academic_fdp")}
                             <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("workshopsFDPs", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>

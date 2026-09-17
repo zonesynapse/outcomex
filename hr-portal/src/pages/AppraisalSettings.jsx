@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { 
+import {
   Calendar, Loader2, Save, Play, XCircle, Settings, Plus, Trash2, Edit2,
-  Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock
+  Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock, Table
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
+import { parseAppraisalDateTime } from "../utils/appraisalScore";
 
 const DEFAULT_CRITERIA = {
   part1: [
@@ -44,30 +45,80 @@ const defaultFields = [
   { id: "f_teachingElsewhere", title: "Teaching Elsewhere (Yrs)", description: "Experience years in other colleges.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_experience" },
   { id: "f_industrial", title: "Industrial Experience (Yrs)", description: "Experience years in corporate industry.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_experience" },
 
-  { id: "sec_profile_workload", title: "1.3 Weekly Workload Grid", description: "Hours assigned per week for Odd/Even semester theory and lab sessions.", type: "section_profile_workload", tabId: 1, tabName: "Profile & Workload", visible: true, evidenceRequired: false, evidenceMandatory: false },
-  { id: "f_oddTheory", title: "Odd Sem Theory Hours", description: "Odd semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_oddPractical", title: "Odd Practical/Project Hours", description: "Odd semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_oddTotal", title: "Odd Total Hours", description: "Odd semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenTheory", title: "Even Sem Theory Hours", description: "Even semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenPractical", title: "Even Practical/Project Hours", description: "Even semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
-  { id: "f_evenTotal", title: "Even Total Hours", description: "Even semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "sec_profile_workload", title: "1.3 Weekly Workload Grid", description: "Hours assigned per week for theory and lab sessions.", type: "section_profile_workload", tabId: 1, tabName: "Profile & Workload", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_workload_odd_title", title: "ODD SEMESTER WORKLOAD / WEEK (HRS)", description: "Group header title for Odd Semester workload card.", type: "text", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddTheory", title: "THEORY CLASSES", description: "Weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddPractical", title: "PRACTICAL CLASSES", description: "Weekly lab workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddSpecial", title: "C) SPECIAL CLASS (HRS)", description: "Special class workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddOther", title: "D) OTHER ACTIVITY (HRS)", description: "Other activity workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_oddTotal", title: "ODD TOTAL HOURS", description: "Odd semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+
+  { id: "f_workload_even_title", title: "EVEN SEMESTER WORKLOAD / WEEK (HRS)", description: "Group header title for Even Semester workload card.", type: "text", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenTheory", title: "EVEN SEM THEORY HOURS", description: "Even semester weekly theory workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenPractical", title: "EVEN PRACTICAL/PROJECT HOURS", description: "Even semester weekly lab/project workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenSpecial", title: "C) SPECIAL CLASS (HRS)", description: "Special class workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenOther", title: "D) OTHER ACTIVITY (HRS)", description: "Other activity workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
+  { id: "f_evenTotal", title: "EVEN TOTAL HOURS", description: "Even semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
 
   // Tab 2: Subjects & Results
-  { id: "sec_subjects_results", title: "2.1 Subjects Handled & Exam Pass Targets", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "sec_subjects_results", title: "2.1 Subjects Handled & Pass Percentage", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_subjects_odd_theory_title", title: "THEORY : Quarterly Examination", description: "Title header for Table 1 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_odd_practical_title", title: "THEORY: Half Yearly Examination", description: "Title header for Table 2 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_even_theory_title", title: "THEORY: Annual Examination", description: "Title header for Table 3 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_even_practical_title", title: "PRACTICALS – Annual Examination", description: "Title header for Table 4 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_class", title: "Class", description: "Class / Year / Branch column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_code", title: "Subject", description: "Subject name column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_appeared", title: "Appeared", description: "Appeared student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passed", title: "Passed", description: "Passed student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_passPercent", title: "Pass Percentage", description: "Pass percentage column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_feedback", title: "Feedback Rating", description: "Student feedback rating column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
 
   // Tab 3: Academic Development
   { id: "sec_academic_nptel", title: "3.1 NPTEL Certifications Completed", description: "Certification details and credits earned via SWAYAM/NPTEL portals.", type: "section_academic_nptel", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_nptel_title", title: "Title of the Course", description: "Name/title of online course column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_startDate", title: "Start Date", description: "Course start date column", type: "date", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_endDate", title: "End Date", description: "Course end date column", type: "date", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_weeks", title: "Weeks", description: "Duration in weeks column", type: "number", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_platform", title: "Platform", description: "Platform name column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_examDate", title: "Exam Date", description: "Exam date column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+  { id: "f_nptel_certificate", title: "Certificate?", description: "Certificate received status column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_nptel" },
+
   { id: "sec_academic_fdp", title: "3.2 FDP / Seminars Organized & Attended", description: "List of faculty development programs, seminars, workshops participated.", type: "section_academic_fdp", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_fdp_title", title: "Title of Workshop / FDP / Special Program", description: "Program title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_dates", title: "Dates", description: "Event dates column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_days", title: "No. of Days", description: "Duration in days column", type: "number", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_org", title: "Organization", description: "Organizing institute column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+  { id: "f_fdp_report", title: "Submitted Report?", description: "Report status column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_fdp" },
+
   { id: "sec_academic_journals", title: "3.3 Journal Publications", description: "Details of research publications in indexed journals.", type: "section_academic_journals", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_journals_title", title: "Title of the Paper", description: "Paper title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_date", title: "Date / Month / Year", description: "Publication date column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_journal", title: "Name of Journal / Conference", description: "Journal name column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_volIssue", title: "Vol. No, Issue No, Page No", description: "Volume and page details column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+  { id: "f_journals_index", title: "SCI / SCOPUS / UGC", description: "Indexing category column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_journals" },
+
   { id: "sec_academic_books", title: "3.4 Book & Chapter Publications", description: "Chapters or books written and published with ISBN.", type: "section_academic_books", tabId: 3, tabName: "Academic Development", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_books_title", title: "Title of the Book / Chapter", description: "Book/chapter title column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
+  { id: "f_books_publisher", title: "Publisher Name & ISBN", description: "Publisher details column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
+  { id: "f_books_year", title: "Month & Year of Publication", description: "Publication year column", type: "text", tabId: 3, tabName: "Academic Development", visible: true, parentId: "sec_academic_books" },
 
   // Tab 4: Contributions
   { id: "sec_roles_department", title: "4.1 Department & College Level Roles", description: "Responsibilities held like Lab Coordinator, Placement Coordinator, etc.", type: "section_roles_department", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_roles_program", title: "Title of Workshop / Special Program Organized", description: "Organized program title column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+  { id: "f_roles_dates", title: "Dates & Duration", description: "Event duration column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+  { id: "f_roles_agency", title: "Sponsoring Agency & Grant", description: "Grant details column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_resultImprovementHOD", title: "Result Improvement & Maintenance (HOD)", description: "For HODs: Actions taken to maintain and improve results.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_deptAdministrationHOD", title: "Department Administration & Planning (HOD)", description: "For HODs: Contribution to department planning/admin.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
   { id: "f_otherRolesContribution", title: "Other Role / Contribution Description", description: "Other administrative roles or institutional contributions.", type: "textarea", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_roles_department" },
+
   { id: "sec_professional_memberships", title: "4.2 Professional Body Memberships", description: "Memberships in technical bodies like ISTE, IEEE, CSI, ACM, etc.", type: "section_professional_memberships", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_memberships_society", title: "Name of Professional Society / Body", description: "Society name column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_professional_memberships" },
+  { id: "f_memberships_no", title: "Membership No. & Grade", description: "Membership number column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_professional_memberships" },
+
   { id: "sec_awards_honors", title: "4.3 Awards & Recognitions", description: "Prizes, honors, and professional recognition received.", type: "section_awards_honors", tabId: 4, tabName: "Contributions", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_awards_title", title: "Name of Award / Recognition", description: "Award title column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
+  { id: "f_awards_body", title: "Awarding Body / Organization", description: "Issuing body column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
+  { id: "f_awards_year", title: "Year of Award", description: "Award year column", type: "text", tabId: 4, tabName: "Contributions", visible: true, parentId: "sec_awards_honors" },
 
   // Tab 5: Library & Leaves
   { id: "sec_library_usage", title: "5.1 Library Books & Journals Referenced", description: "Audit of resources, text books, and digital library systems utilized.", type: "section_library_usage", tabId: 5, tabName: "Library & Leaves", visible: true, evidenceRequired: false, evidenceMandatory: false },
@@ -129,6 +180,7 @@ export default function AppraisalSettings() {
   const [savingFormConfig, setSavingFormConfig] = useState(false);
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [editingField, setEditingField] = useState(null);
+  const [editingColumns, setEditingColumns] = useState([]);
 
   // --- Listen to Dynamic Fields Config ---
   useEffect(() => {
@@ -138,7 +190,7 @@ export default function AppraisalSettings() {
       if (snap.exists()) {
         fields = snap.data().fields || [];
       }
-      
+
       const existingIds = new Set(fields.map(f => f.id));
       const missingDefaults = defaultFields.filter(f => !existingIds.has(f.id));
       if (missingDefaults.length > 0) {
@@ -207,9 +259,9 @@ export default function AppraisalSettings() {
         return;
       }
 
-      const now = new Date().getTime();
-      const start = openTime ? new Date(openTime).getTime() : null;
-      const end = closeTime ? new Date(closeTime).getTime() : null;
+      const now = Date.now();
+      const start = parseAppraisalDateTime(openTime);
+      const end = parseAppraisalDateTime(closeTime);
 
       if (start && now < start) {
         setTimeStatus({ label: "Scheduled / Pending", color: "amber" });
@@ -248,7 +300,10 @@ export default function AppraisalSettings() {
 
   // --- Actions: Schedule Tab ---
   const handlePostAppraisalRequest = async () => {
-    if (openTime && closeTime && new Date(openTime) >= new Date(closeTime)) {
+    const startMs = parseAppraisalDateTime(openTime);
+    const endMs = parseAppraisalDateTime(closeTime);
+
+    if (startMs && endMs && startMs >= endMs) {
       showToast("Portal close date & time must be strictly after the open date & time.", "error");
       return;
     }
@@ -384,38 +439,58 @@ export default function AppraisalSettings() {
     setSavingFormConfig(false);
   };
 
-  const handleAddField = () => {
+  const handleAddField = (parentSection = null) => {
+    const tId = parentSection ? parentSection.tabId : 7;
+    const names = {
+      1: "Profile & Workload",
+      2: "Subjects & Results",
+      3: "Academic Development",
+      4: "Contributions",
+      5: "Library & Leaves",
+      6: "Relations & Targets",
+      7: "Evidences & Disclosures"
+    };
+    const newFieldId = `field_${Date.now()}`;
     setEditingField({
-      id: `field_${Date.now()}`,
+      id: newFieldId,
       title: "",
       description: "",
       type: "text",
-      tabId: 7,
-      tabName: "Evidences & Disclosures",
+      tabId: tId,
+      tabName: names[tId] || "Evidences & Disclosures",
+      parentId: parentSection ? parentSection.id : "",
       visible: true,
       evidenceRequired: true,
       evidenceMandatory: false
     });
+    setEditingColumns([]);
     setFormModalOpen(true);
   };
 
   const handleEditField = (field) => {
-    setEditingField({ 
-      tabId: 7,
-      tabName: "Evidences & Disclosures",
-      visible: true,
-      ...field 
+    setEditingField({
+      tabId: field.tabId || 7,
+      tabName: field.tabName || "Evidences & Disclosures",
+      visible: field.visible !== false,
+      parentId: field.parentId || "",
+      ...field
     });
+    if (field.type === "section_custom_grid" || field.type?.startsWith("section_") || field.id?.startsWith("sec_")) {
+      const cols = customFields.filter(f => f.parentId === field.id);
+      setEditingColumns(cols.map(c => ({ ...c })));
+    } else {
+      setEditingColumns([]);
+    }
     setFormModalOpen(true);
   };
 
   const handleDeleteField = (fieldId) => {
-    if (fieldId.startsWith("sec_")) {
-      showToast("Built-in appraisal sections cannot be deleted, but you can hide them.", "error");
+    if (fieldId.startsWith("sec_") && !fieldId.startsWith("sec_custom_")) {
+      showToast("Built-in root sections cannot be deleted, but you can hide them or delete their sub-fields.", "error");
       return;
     }
-    if (!window.confirm("Are you sure you want to delete this form field? Faculty data for this field will be hidden.")) return;
-    const updated = customFields.filter(f => f.id !== fieldId);
+    if (!window.confirm("Are you sure you want to delete this field/column? Faculty data for this field will be removed.")) return;
+    const updated = customFields.filter(f => f.id !== fieldId && f.parentId !== fieldId);
     handleSaveFormConfig(updated);
   };
 
@@ -424,17 +499,72 @@ export default function AppraisalSettings() {
       showToast("Please enter a field title", "error");
       return;
     }
-    let updated;
-    const exists = customFields.some(f => f.id === editingField.id);
+
+    let updated = [...customFields];
+
+    // Check if main item exists
+    const exists = updated.some(f => f.id === editingField.id);
     if (exists) {
-      updated = customFields.map(f => f.id === editingField.id ? editingField : f);
+      updated = updated.map(f => f.id === editingField.id ? editingField : f);
     } else {
-      updated = [...customFields, editingField];
+      updated.push(editingField);
     }
+
+    // If dynamic table grid section, save columns
+    if (editingField.type === "section_custom_grid" || editingField.id?.startsWith("sec_custom_")) {
+      // Remove previous columns under this section
+      updated = updated.filter(f => f.parentId !== editingField.id);
+
+      // Add valid non-empty columns
+      const validCols = editingColumns
+        .filter(c => c.title && c.title.trim())
+        .map((c, idx) => ({
+          id: c.id || `f_col_${Date.now()}_${idx}_${Math.random().toString(36).substr(2, 4)}`,
+          title: c.title.trim(),
+          type: c.type || "text",
+          parentId: editingField.id,
+          tabId: editingField.tabId || 7,
+          tabName: editingField.tabName || "Evidences & Disclosures",
+          visible: c.visible !== false,
+          evidenceRequired: c.evidenceRequired || false,
+          evidenceMandatory: c.evidenceMandatory || false,
+          description: c.description || `${c.title.trim()} column`
+        }));
+
+      updated = [...updated, ...validCols];
+    }
+
     handleSaveFormConfig(updated);
     setFormModalOpen(false);
     setEditingField(null);
+    setEditingColumns([]);
   };
+
+  const isGridTableSection = (field) => {
+    if (!field) return false;
+    if (field.type === "section_custom_grid" || field.id?.startsWith("sec_custom_")) return true;
+    if (field.type?.startsWith("grid_")) return true;
+    const gridSectionIds = [
+      "sec_academic_nptel",
+      "sec_academic_journals",
+      "sec_academic_fdp",
+      "sec_academic_books",
+      "sec_subjects_results",
+      "sec_roles_department",
+      "sec_professional_memberships",
+      "sec_awards_honors"
+    ];
+    return gridSectionIds.includes(field.id);
+  };
+
+  const availableSectionsForTab = useMemo(() => {
+    if (!editingField || !editingField.tabId) return [];
+    const tId = parseInt(editingField.tabId);
+    return customFields.filter(f =>
+      (f.tabId === tId) &&
+      (f.id.startsWith("sec_") || f.type?.startsWith("section_"))
+    );
+  }, [customFields, editingField?.tabId]);
 
   const groupedFields = useMemo(() => {
     const groups = {};
@@ -447,25 +577,52 @@ export default function AppraisalSettings() {
       { id: 6, name: "6. Relations & Targets" },
       { id: 7, name: "7. Evidences & Disclosures" }
     ];
-    
+
     tabsList.forEach(t => {
       groups[t.id] = {
         name: t.name,
         fields: []
       };
     });
-    
+
+    const tabBuckets = {};
     customFields.forEach(f => {
       const tId = f.tabId || 7;
+      if (!tabBuckets[tId]) tabBuckets[tId] = [];
+      tabBuckets[tId].push(f);
+    });
+
+    Object.keys(tabBuckets).forEach(tIdStr => {
+      const tId = parseInt(tIdStr);
+      const rawList = tabBuckets[tIdStr];
+
+      const sections = rawList.filter(f => f.id.startsWith("sec_") || f.type?.startsWith("section_"));
+      const assignedIds = new Set();
+      const ordered = [];
+
+      sections.forEach(sec => {
+        ordered.push(sec);
+        assignedIds.add(sec.id);
+
+        const children = rawList.filter(f => f.parentId === sec.id);
+        children.forEach(child => {
+          ordered.push(child);
+          assignedIds.add(child.id);
+        });
+      });
+
+      const unassigned = rawList.filter(f => !assignedIds.has(f.id));
+      unassigned.forEach(u => ordered.push(u));
+
       if (!groups[tId]) {
         groups[tId] = {
-          name: f.tabName || `Tab ${tId}`,
+          name: rawList[0]?.tabName || `Tab ${tId}`,
           fields: []
         };
       }
-      groups[tId].fields.push(f);
+      groups[tId].fields = ordered;
     });
-    
+
     return Object.entries(groups).sort(([a], [b]) => parseInt(a) - parseInt(b));
   }, [customFields]);
 
@@ -474,11 +631,10 @@ export default function AppraisalSettings() {
       {/* Toast Notification Alert */}
       {toast && (
         <div className="fixed bottom-5 right-5 z-50 animate-bounce">
-          <div className={`flex items-center gap-3 px-5 py-3 rounded-xl border shadow-lg text-xs font-bold ${
-            toast.type === "success" 
-              ? "bg-emerald-50 border-emerald-250 text-emerald-800" 
+          <div className={`flex items-center gap-3 px-5 py-3 rounded-xl border shadow-lg text-xs font-bold ${toast.type === "success"
+              ? "bg-emerald-50 border-emerald-250 text-emerald-800"
               : "bg-red-50 border-red-250 text-red-800"
-          }`}>
+            }`}>
             {toast.type === "success" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
             <span>{toast.message}</span>
           </div>
@@ -486,48 +642,45 @@ export default function AppraisalSettings() {
       )}
 
       <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-        
+
         {/* Banner Hero */}
         <div className="bg-gradient-to-br from-[#120c7a] via-[#1b11a4] to-indigo-950 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">
           <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 space-y-2">
             <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
-              <Sparkles size={12} className="text-indigo-600mber-400" /> HR Appraisal System
+              <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
             </div>
-            <h1 className="text-xl md:text-indigo-600xl font-bold font-serif">Appraisal Settings Control Panel</h1>
-            <p className="text-indigo-100 font-medium text-xs md:text-sm">Manage portal visibility schedule, submission windows, and dynamic performance validation criteria points.</p>
+            <h1 className="text-xl md:text-2xl font-bold font-serif">Appraisal Settings Control Panel</h1>
+            <p className="text-indigo-200 text-xs md:text-sm">Manage portal visibility schedule, submission windows, and dynamic performance validation criteria points.</p>
           </div>
         </div>
 
         {/* Setting Tabs */}
-        <div className="flex border-b border-slate-200 mb-8 overflow-x-auto gap-4 no-scrollbar">
+        <div className="flex border-b border-zinc-200 mb-8 overflow-x-auto gap-4 no-scrollbar">
           <button
             onClick={() => setActiveTab("schedule")}
-            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === "schedule"
-                ? "border-indigo-500 text-indigo-400"
-                : "border-transparent text-slate-600 hover:text-slate-800"
-            }`}
+            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === "schedule"
+                ? "border-[#120c7a] text-[#120c7a]"
+                : "border-transparent text-zinc-400 hover:text-zinc-700"
+              }`}
           >
             Portal Scheduling & Access
           </button>
           <button
             onClick={() => setActiveTab("criteria")}
-            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === "criteria"
-                ? "border-indigo-500 text-indigo-400"
-                : "border-transparent text-slate-600 hover:text-slate-800"
-            }`}
+            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === "criteria"
+                ? "border-[#120c7a] text-[#120c7a]"
+                : "border-transparent text-zinc-400 hover:text-zinc-700"
+              }`}
           >
             Performance Evaluation Criteria
           </button>
           <button
             onClick={() => setActiveTab("form")}
-            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === "form"
-                ? "border-indigo-500 text-indigo-400"
-                : "border-transparent text-slate-600 hover:text-slate-800"
-            }`}
+            className={`pb-3 px-4 text-xs font-black uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === "form"
+                ? "border-[#120c7a] text-[#120c7a]"
+                : "border-transparent text-zinc-400 hover:text-zinc-700"
+              }`}
           >
             Appraisal Form Fields Builder
           </button>
@@ -535,31 +688,31 @@ export default function AppraisalSettings() {
 
         {/* Loading Spinner */}
         {((activeTab === "schedule" && scheduleLoading) || (activeTab === "criteria" && criteriaLoading) || (activeTab === "form" && formConfigLoading)) ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-600">
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-zinc-400">
             <Loader2 className="animate-spin text-indigo-700" size={32} />
             <span className="text-xs font-bold uppercase tracking-wider">Loading settings details...</span>
           </div>
         ) : (
           <div className="animate-fadeIn">
-            
+
             {/* ═══ TAB 1: SCHEDULE & ACCESS CONTROL ═══ */}
             {activeTab === "schedule" && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                
+
                 <div className="md:col-span-2 space-y-6">
-                  <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm p-6 space-y-6">
-                    <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider pb-3 border-b border-slate-200 flex items-center gap-2">
+                  <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 space-y-6">
+                    <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider pb-3 border-b border-zinc-100 flex items-center gap-2">
                       <Calendar size={16} className="text-indigo-600" /> Portal Open & Close Window
                     </h2>
 
                     <div className="space-y-4 text-xs">
                       {/* Academic Year */}
                       <div className="space-y-1.5">
-                        <label className="block font-bold text-slate-600 uppercase tracking-wider">Active Academic Year</label>
+                        <label className="block font-bold text-zinc-500 uppercase tracking-wider">Active Academic Year</label>
                         <select
                           value={academicYear}
                           onChange={(e) => setAcademicYear(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                          className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                         >
                           <option value="2024-2025">2024-2025</option>
                           <option value="2025-2026">2025-2026</option>
@@ -570,27 +723,27 @@ export default function AppraisalSettings() {
                       {/* Timestamps */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
-                          <label className="block font-bold text-slate-600 uppercase tracking-wider">Open Date & Time</label>
+                          <label className="block font-bold text-zinc-500 uppercase tracking-wider">Open Date & Time</label>
                           <input
                             type="datetime-local"
                             value={openTime}
                             onChange={(e) => setOpenTime(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                            className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <label className="block font-bold text-slate-600 uppercase tracking-wider">Closing Deadline</label>
+                          <label className="block font-bold text-zinc-500 uppercase tracking-wider">Closing Deadline</label>
                           <input
                             type="datetime-local"
                             value={closeTime}
                             onChange={(e) => setCloseTime(e.target.value)}
-                            className="w-full rounded-xl border border-slate-200 p-3 font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
+                            className="w-full rounded-xl border border-zinc-200 p-3 font-semibold text-zinc-700 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 bg-white"
                           />
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex gap-4 pt-4 border-t border-slate-200">
+                    <div className="flex gap-4 pt-4 border-t border-zinc-100">
                       <button
                         onClick={handlePostAppraisalRequest}
                         disabled={savingSchedule}
@@ -613,33 +766,32 @@ export default function AppraisalSettings() {
 
                 {/* Live Status View */}
                 <div className="space-y-6">
-                  <div className="bg-slate-50 rounded-3xl border border-slate-200 p-6 space-y-5">
-                    <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest flex items-center gap-1.5">
-                      <Clock size={14} className="text-slate-600" /> Live Visibility Status
+                  <div className="bg-zinc-50 rounded-3xl border border-zinc-200 p-6 space-y-5">
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Clock size={14} className="text-zinc-500" /> Live Visibility Status
                     </h3>
                     <div className="space-y-4">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Portal State:</span>
-                        <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${
-                          timeStatus.color === "green" 
-                            ? "bg-emerald-50 border-emerald-250 text-emerald-800" 
+                        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Portal State:</span>
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${timeStatus.color === "green"
+                            ? "bg-emerald-50 border-emerald-250 text-emerald-800"
                             : timeStatus.color === "amber"
-                            ? "bg-indigo-600mber-50 border-amber-250 text-indigo-600mber-800"
-                            : "bg-red-50 border-red-250 text-red-800"
-                        }`}>
+                              ? "bg-amber-50 border-amber-250 text-amber-800"
+                              : "bg-red-50 border-red-250 text-red-800"
+                          }`}>
                           {timeStatus.label}
                         </span>
                       </div>
 
-                      <div className="glass-card rounded-2xl border border-slate-200 text-slate-900 p-4 shadow-sm text-indigo-600enter">
-                        <span className="block text-[9px] font-black text-slate-600 uppercase tracking-wider mb-1">Time Remaining / Status</span>
-                        <p className="text-sm font-black text-slate-900">{countdownText}</p>
+                      <div className="bg-white rounded-2xl border border-zinc-200 p-4 shadow-sm text-center">
+                        <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider mb-1">Time Remaining / Status</span>
+                        <p className="text-sm font-black text-slate-800">{countdownText}</p>
                       </div>
 
                       <div className="flex items-start gap-2 bg-indigo-50/30 border border-indigo-150 p-4 rounded-2xl text-[11px] text-slate-700 font-medium">
                         <ShieldAlert size={16} className="text-indigo-600 shrink-0 mt-0.5" />
                         <p>
-                          When state is **Active**, the Appraisal Request item automatically shows in the Faculty sidebar. 
+                          When state is **Active**, the Appraisal Request item automatically shows in the Faculty sidebar.
                           Outside dates or when deactivated, it disappears from sidebar and blocks access.
                         </p>
                       </div>
@@ -653,15 +805,15 @@ export default function AppraisalSettings() {
             {/* ═══ TAB 2: CRITERIA CONFIGURATION ═══ */}
             {activeTab === "criteria" && (
               <div className="space-y-8">
-                
+
                 {/* Part 1 Table */}
-                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/50">
                     <div>
-                      <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">
                         Part One Criteria Rules (Academic & Feedback Pass Targets)
                       </h2>
-                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">Define sliding scale performance validation marks for theory, practicals, and student feedback averages.</p>
+                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Define sliding scale performance validation marks for theory, practicals, and student feedback averages.</p>
                     </div>
                     <button
                       onClick={() => handleEditItem("part1", null)}
@@ -673,24 +825,24 @@ export default function AppraisalSettings() {
 
                   <table className="w-full border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                        <th className="p-4 w-12 text-indigo-600enter">S.No</th>
+                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
+                        <th className="p-4 w-12 text-center">S.No</th>
                         <th className="p-4">KRA</th>
                         <th className="p-4">Particulars Details</th>
-                        <th className="p-4 w-28 text-indigo-600enter">Max Marks</th>
+                        <th className="p-4 w-28 text-center">Max Marks</th>
                         <th className="p-4 w-32">Rule Slots</th>
-                        <th className="p-4 w-24 text-indigo-600enter">Actions</th>
+                        <th className="p-4 w-24 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-150">
                       {criteria.part1.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
-                          <td className="p-4 text-indigo-600enter font-bold text-slate-600">{item.sNo}</td>
+                        <tr key={item.id} className="hover:bg-zinc-50/30 transition-colors">
+                          <td className="p-4 text-center font-bold text-slate-500">{item.sNo}</td>
                           <td className="p-4 font-bold text-slate-700">{item.kra}</td>
                           <td className="p-4 font-medium text-zinc-650">{item.particulars}</td>
-                          <td className="p-4 text-indigo-600enter font-black text-indigo-700 text-sm">{item.maxMarks}</td>
+                          <td className="p-4 text-center font-black text-indigo-700 text-sm">{item.maxMarks}</td>
                           <td className="p-4">
-                            <span className="inline-block px-2.5 py-1 rounded bg-indigo-50 border border-indigo-100 text-indigo-400 font-bold text-[10px] uppercase">
+                            <span className="inline-block px-2.5 py-1 rounded bg-indigo-50 border border-indigo-100 text-[#120c7a] font-bold text-[10px] uppercase">
                               {item.rules?.length || 0} Slots Configured
                             </span>
                           </td>
@@ -698,7 +850,7 @@ export default function AppraisalSettings() {
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleEditItem("part1", item)}
-                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-xl transition-all cursor-pointer"
+                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-xl transition-all cursor-pointer"
                               >
                                 <Edit2 size={13} />
                               </button>
@@ -717,13 +869,13 @@ export default function AppraisalSettings() {
                 </div>
 
                 {/* Part 2 Table */}
-                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm overflow-hidden">
-                  <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                  <div className="px-6 py-5 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/50">
                     <div>
-                      <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">
                         Part Two Criteria Rules (Self & Department Contributions)
                       </h2>
-                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">Configure unit limits, targeted minimums, and weight per unit for academic growth and departmental work.</p>
+                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Configure unit limits, targeted minimums, and weight per unit for academic growth and departmental work.</p>
                     </div>
                     <button
                       onClick={() => handleEditItem("part2", null)}
@@ -735,30 +887,30 @@ export default function AppraisalSettings() {
 
                   <table className="w-full border-collapse text-left text-xs">
                     <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                        <th className="p-4 w-12 text-indigo-600enter">S.No</th>
+                      <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold">
+                        <th className="p-4 w-12 text-center">S.No</th>
                         <th className="p-4">KRA</th>
                         <th className="p-4">Particulars Details</th>
-                        <th className="p-4 w-28 text-indigo-600enter">Max Marks</th>
-                        <th className="p-4 w-24 text-indigo-600enter">Target</th>
-                        <th className="p-4 w-24 text-indigo-600enter">Points/Unit</th>
-                        <th className="p-4 w-24 text-indigo-600enter">Actions</th>
+                        <th className="p-4 w-28 text-center">Max Marks</th>
+                        <th className="p-4 w-24 text-center">Target</th>
+                        <th className="p-4 w-24 text-center">Points/Unit</th>
+                        <th className="p-4 w-24 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-150">
                       {criteria.part2.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
-                          <td className="p-4 text-indigo-600enter font-bold text-slate-600">{item.sNo}</td>
+                        <tr key={item.id} className="hover:bg-zinc-50/30 transition-colors">
+                          <td className="p-4 text-center font-bold text-slate-500">{item.sNo}</td>
                           <td className="p-4 font-bold text-slate-700">{item.kra}</td>
                           <td className="p-4 font-medium text-zinc-650">{item.particulars}</td>
-                          <td className="p-4 text-indigo-600enter font-black text-indigo-700 text-sm">{item.maxMarks}</td>
-                          <td className="p-4 text-indigo-600enter font-bold text-slate-700">{item.targetCount} units</td>
-                          <td className="p-4 text-indigo-600enter font-bold text-emerald-700">{item.marksPerUnit} pts</td>
+                          <td className="p-4 text-center font-black text-indigo-700 text-sm">{item.maxMarks}</td>
+                          <td className="p-4 text-center font-bold text-zinc-600">{item.targetCount} units</td>
+                          <td className="p-4 text-center font-bold text-emerald-700">{item.marksPerUnit} pts</td>
                           <td className="p-4">
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => handleEditItem("part2", item)}
-                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-xl transition-all cursor-pointer"
+                                className="p-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-xl transition-all cursor-pointer"
                               >
                                 <Edit2 size={13} />
                               </button>
@@ -782,13 +934,13 @@ export default function AppraisalSettings() {
             {/* ═══ TAB 3: DYNAMIC FORM FIELDS CONFIGURATION ═══ */}
             {activeTab === "form" && (
               <div className="space-y-6 animate-fadeIn">
-                <div className="glass-panel rounded-3xl border border-slate-200 shadow-2xl text-slate-900 shadow-sm p-6 space-y-4">
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
                       <h2 className="text-sm font-black text-slate-805 uppercase tracking-wider">
                         Dynamic Form Fields & Evidences Configurator
                       </h2>
-                      <p className="text-[10px] text-slate-600 font-medium mt-0.5">
+                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
                         Build custom fields/questions for the self-appraisal form. Set whether evidence files must be attached by the faculty.
                       </p>
                     </div>
@@ -801,97 +953,113 @@ export default function AppraisalSettings() {
                   </div>
 
                   {customFields.length === 0 ? (
-                    <div className="border border-dashed border-slate-200 rounded-2xl py-12 text-indigo-600enter text-slate-600 space-y-2">
+                    <div className="border border-dashed border-zinc-200 rounded-2xl py-12 text-center text-zinc-400 space-y-2">
                       <Settings className="mx-auto text-zinc-300" size={32} />
                       <p className="text-xs font-bold uppercase tracking-wider">No Custom Appraisal Fields Added Yet</p>
-                      <p className="text-[10px] text-slate-600 font-medium max-w-sm mx-auto">
+                      <p className="text-[10px] text-zinc-400 font-medium max-w-sm mx-auto">
                         Click the button above to add custom inputs/topics for faculty self appraisal documents.
                       </p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto border border-slate-200/60 rounded-2xl">
+                    <div className="overflow-x-auto border border-zinc-150 rounded-2xl">
                       <table className="w-full border-collapse text-left text-xs">
                         <thead>
-                          <tr className="bg-slate-50 border-b border-zinc-250 text-slate-600 font-bold">
+                          <tr className="bg-zinc-50 border-b border-zinc-250 text-zinc-500 font-bold">
                             <th className="p-4">Field Title / Label</th>
                             <th className="p-4">Description</th>
-                            <th className="p-4 w-24 text-indigo-600enter">Type</th>
-                            <th className="p-4 w-24 text-indigo-600enter">Status</th>
-                            <th className="p-4 w-28 text-indigo-600enter">Evidence Req.</th>
-                            <th className="p-4 w-24 text-indigo-600enter">Actions</th>
+                            <th className="p-4 w-24 text-center">Type</th>
+                            <th className="p-4 w-24 text-center">Status</th>
+                            <th className="p-4 w-28 text-center">Evidence Req.</th>
+                            <th className="p-4 w-24 text-center">Actions</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-zinc-100 font-semibold text-slate-800">
+                        <tbody className="divide-y divide-zinc-100 font-semibold text-zinc-700">
                           {groupedFields.map(([tabId, group]) => {
                             if (group.fields.length === 0) return null;
                             return (
                               <React.Fragment key={tabId}>
-                                <tr className="bg-slate-100/60 border-y border-slate-200">
-                                  <td colSpan={6} className="px-4 py-2 font-black text-slate-900 uppercase tracking-wider text-[10px]">
+                                <tr className="bg-slate-100/60 border-y border-zinc-200">
+                                  <td colSpan={6} className="px-4 py-2 font-black text-slate-800 uppercase tracking-wider text-[10px]">
                                     {group.name}
                                   </td>
                                 </tr>
                                 {group.fields.map((field) => {
                                   const isDefault = field.id.startsWith("sec_") || field.id.startsWith("f_");
+                                  const isSectionHeader = field.id.startsWith("sec_") || field.type?.startsWith("section_");
                                   const isSubField = !!field.parentId;
+                                  const parentSecTitle = isSubField ? customFields.find(p => p.id === field.parentId)?.title : null;
+
                                   return (
-                                    <tr key={field.id} className="hover:bg-slate-50/40">
+                                    <tr key={field.id} className={`hover:bg-zinc-50/40 ${isSectionHeader ? "bg-slate-50/50 border-t border-zinc-200" : ""}`}>
                                       <td className="p-4 space-y-1">
-                                        <div className="flex items-center gap-2" style={{ paddingLeft: isSubField ? "20px" : "0" }}>
-                                          {isSubField && <span className="text-slate-600 font-black mr-0.5">↳</span>}
-                                          <span className="font-bold text-slate-805">{field.title}</span>
-                                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
-                                            isDefault 
-                                              ? "bg-green-50 text-green-700 border border-green-150" 
-                                              : "bg-blue-50 text-blue-700 border border-blue-150"
-                                          }`}>
-                                            {isDefault ? (isSubField ? "Sub-Field" : "Default Section") : "Custom"}
+                                        <div className="flex items-center gap-2" style={{ paddingLeft: isSubField ? "24px" : "0" }}>
+                                          {isSubField && <span className="text-indigo-400 font-black mr-0.5 text-sm">↳</span>}
+                                          <span className={`font-bold ${isSectionHeader ? "text-slate-900 text-xs uppercase" : "text-slate-805"}`}>
+                                            {field.title}
                                           </span>
+                                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isDefault
+                                              ? (isSectionHeader ? "bg-purple-50 text-purple-700 border border-purple-150" : "bg-green-50 text-green-700 border border-green-150")
+                                              : (isSubField ? "bg-cyan-50 text-cyan-700 border border-cyan-150" : "bg-blue-50 text-blue-700 border border-blue-150")
+                                            }`}>
+                                            {isDefault ? (isSubField ? "Sub-Field" : "Default Section") : (isSubField ? "Custom Sub-Field" : "Custom")}
+                                          </span>
+                                          {isSubField && parentSecTitle && (
+                                            <span className="text-[9px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded border border-zinc-200">
+                                              under {parentSecTitle.length > 25 ? parentSecTitle.substring(0, 25) + "..." : parentSecTitle}
+                                            </span>
+                                          )}
                                         </div>
                                       </td>
                                       <td className="p-4 font-medium text-zinc-450">{field.description || "-"}</td>
-                                      <td className="p-4 text-indigo-600enter text-slate-600 font-mono text-[9px] uppercase">
+                                      <td className="p-4 text-center text-zinc-500 font-mono text-[9px] uppercase">
                                         {field.type.replace("section_", "grid ").replace("_", " ")}
                                       </td>
-                                      <td className="p-4 text-indigo-600enter">
-                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                          field.visible !== false 
-                                            ? "bg-emerald-50 text-emerald-700 border border-emerald-150" 
+                                      <td className="p-4 text-center">
+                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${field.visible !== false
+                                            ? "bg-emerald-50 text-emerald-700 border border-emerald-150"
                                             : "bg-rose-50 text-rose-700 border border-rose-150"
-                                        }`}>
+                                          }`}>
                                           {field.visible !== false ? "Visible" : "Hidden"}
                                         </span>
                                       </td>
-                                      <td className="p-4 text-indigo-600enter space-y-1">
+                                      <td className="p-4 text-center space-y-1">
                                         {field.evidenceRequired ? (
-                                          <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                            field.evidenceMandatory 
-                                              ? "bg-red-50 border border-red-100 text-red-700" 
+                                          <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${field.evidenceMandatory
+                                              ? "bg-red-50 border border-red-100 text-red-700"
                                               : "bg-indigo-50 border border-indigo-100 text-indigo-700"
-                                          }`}>
+                                            }`}>
                                             {field.evidenceMandatory ? "Mandatory" : "Optional"}
                                           </span>
                                         ) : (
-                                          <span className="text-slate-600 font-medium text-[9px]">-</span>
+                                          <span className="text-zinc-400 font-medium text-[9px]">-</span>
                                         )}
                                       </td>
                                       <td className="p-4">
                                         <div className="flex items-center justify-center gap-1.5">
+                                          {isSectionHeader && (
+                                            <button
+                                              onClick={() => handleAddField(field)}
+                                              className="px-2 py-1 bg-[#120c7a] hover:bg-[#100b6e] text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                                              title={`Add a new field under ${field.title}`}
+                                            >
+                                              <Plus size={11} /> {isGridTableSection(field) ? "Add Column" : "Add Sub-Field"}
+                                            </button>
+                                          )}
                                           <button
                                             onClick={() => handleEditField(field)}
-                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 rounded-lg transition-colors cursor-pointer"
+                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] rounded-lg transition-colors cursor-pointer"
+                                            title="Edit Field"
                                           >
                                             <Edit2 size={12} />
                                           </button>
-                                          {!isDefault ? (
+                                          {(!field.id.startsWith("sec_") || field.id.startsWith("sec_custom_")) && (
                                             <button
                                               onClick={() => handleDeleteField(field.id)}
                                               className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                              title="Delete Field"
                                             >
                                               <Trash2 size={12} />
                                             </button>
-                                          ) : (
-                                            <span className="w-[28px] inline-block" />
                                           )}
                                         </div>
                                       </td>
@@ -917,23 +1085,23 @@ export default function AppraisalSettings() {
       {/* ═══ Dynamic Form Field Add/Edit Modal ═══ */}
       {formModalOpen && editingField && (
         <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200 text-zinc-805">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-805">
             <div className="bg-[#120c7a] p-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings size={20} className="text-yellow-400" />
                 <h3 className="font-extrabold text-sm uppercase tracking-wider">
-                  {editingField.id?.startsWith("sec_") 
-                    ? "Edit Built-in Form Section" 
+                  {(editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_"))
+                    ? "Edit Built-in Form Section"
                     : editingField.id?.startsWith("f_")
                       ? "Edit Built-in Form Field"
-                      : customFields.some(f => f.id === editingField.id) 
-                        ? "Edit Custom Form Field" 
+                      : customFields.some(f => f.id === editingField.id)
+                        ? "Edit Custom Form Field"
                         : "Create Custom Form Field"
                   }
                 </h3>
               </div>
-              <button 
-                onClick={() => { setFormModalOpen(false); setEditingField(null); }} 
+              <button
+                onClick={() => { setFormModalOpen(false); setEditingField(null); }}
                 className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white"
               >
                 <X size={18} />
@@ -942,32 +1110,32 @@ export default function AppraisalSettings() {
 
             <div className="p-6 space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="font-bold text-slate-600 uppercase tracking-wider block">Field Title / Label</label>
-                <input 
-                  type="text" 
+                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Field Title / Label</label>
+                <input
+                  type="text"
                   value={editingField.title}
                   onChange={(e) => setEditingField({ ...editingField, title: e.target.value })}
-                  placeholder="e.g. NPTEL Course Certifications" 
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
+                  placeholder="e.g. NPTEL Course Certifications"
+                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="font-bold text-slate-600 uppercase tracking-wider block">Description / Instruction</label>
-                <textarea 
+                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Description / Instruction</label>
+                <textarea
                   value={editingField.description}
                   onChange={(e) => setEditingField({ ...editingField, description: e.target.value })}
-                  placeholder="e.g. Enter details and upload your completion certificate." 
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600 h-20"
+                  placeholder="e.g. Enter details and upload your completion certificate."
+                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600 h-20"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-600 uppercase tracking-wider block">Tab Category</label>
-                  {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
-                    <div className="w-full rounded-xl border border-slate-200/60 bg-slate-50 p-2.5 font-bold text-slate-600 flex items-center gap-2 cursor-not-allowed select-none">
-                      <Lock size={13} className="text-slate-600 flex-shrink-0" />
+                  <label className="font-bold text-zinc-500 uppercase tracking-wider block">Tab Category</label>
+                  {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
+                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
+                      <Lock size={13} className="text-zinc-400 flex-shrink-0" />
                       <span>
                         {
                           {
@@ -983,8 +1151,8 @@ export default function AppraisalSettings() {
                       </span>
                     </div>
                   ) : (
-                    <select 
-                      value={editingField.tabId || 7} 
+                    <select
+                      value={editingField.tabId || 7}
                       onChange={(e) => {
                         const tId = parseInt(e.target.value);
                         const names = {
@@ -996,9 +1164,9 @@ export default function AppraisalSettings() {
                           6: "Relations & Targets",
                           7: "Evidences & Disclosures"
                         };
-                        setEditingField({ ...editingField, tabId: tId, tabName: names[tId] });
+                        setEditingField({ ...editingField, tabId: tId, tabName: names[tId], parentId: "" });
                       }}
-                      className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
+                      className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
                     >
                       <option value="1">1. Profile & Workload</option>
                       <option value="2">2. Subjects & Results</option>
@@ -1012,29 +1180,164 @@ export default function AppraisalSettings() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-600 uppercase tracking-wider block">Input Type</label>
-                  {editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_") ? (
-                    <div className="w-full rounded-xl border border-slate-200/60 bg-slate-50 p-2.5 font-bold text-slate-600 flex items-center gap-2 cursor-not-allowed select-none">
-                      <Lock size={13} className="text-slate-600 flex-shrink-0" />
-                      <span>Built-in {editingField.id?.startsWith("sec_") ? "Section" : "Field"}</span>
+                  <label className="font-bold text-zinc-500 uppercase tracking-wider block">Sub-Category / Parent Section</label>
+                  {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
+                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
+                      <Lock size={13} className="text-zinc-400 flex-shrink-0" />
+                      <span>
+                        {customFields.find(s => s.id === editingField.parentId)?.title || (editingField.id?.startsWith("sec_") ? "Root Section" : "Built-in Section")}
+                      </span>
+                    </div>
+                  ) : editingField.type === "section_custom_grid" ? (
+                    <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-500 flex items-center gap-2 select-none">
+                      <span>Root Section (Top-Level Grid Table)</span>
                     </div>
                   ) : (
-                    <select 
-                      value={editingField.type} 
-                      onChange={(e) => setEditingField({ ...editingField, type: e.target.value })}
-                      className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
+                    <select
+                      value={editingField.parentId || ""}
+                      onChange={(e) => setEditingField({ ...editingField, parentId: e.target.value })}
+                      className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
                     >
-                      <option value="text">Text Box</option>
-                      <option value="textarea">Large Text Area</option>
-                      <option value="number">Number Input</option>
-                      <option value="date">Date Picker</option>
-                      <option value="file_only">File Upload Only</option>
+                      <option value="">-- Top-Level Field (No Sub-Section) --</option>
+                      {availableSectionsForTab.map((sec) => (
+                        <option key={sec.id} value={sec.id}>
+                          ↳ {sec.title}
+                        </option>
+                      ))}
                     </select>
                   )}
                 </div>
               </div>
 
-              {(editingField.id?.startsWith("sec_") || editingField.id?.startsWith("f_")) && (
+              <div className="space-y-1.5">
+                <label className="font-bold text-zinc-500 uppercase tracking-wider block">Input Type</label>
+                {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) ? (
+                  <div className="w-full rounded-xl border border-zinc-150 bg-zinc-50 p-2.5 font-bold text-zinc-400 flex items-center gap-2 cursor-not-allowed select-none">
+                    <Lock size={13} className="text-zinc-400 flex-shrink-0" />
+                    <span>Built-in {editingField.id?.startsWith("sec_") ? "Section" : "Field"}</span>
+                  </div>
+                ) : (
+                  <select
+                    value={editingField.type === "section_custom_grid" ? "table_grid" : editingField.type}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "table_grid") {
+                        const targetId = editingField.id?.startsWith("sec_custom_") ? editingField.id : `sec_custom_${Date.now()}`;
+                        setEditingField({
+                          ...editingField,
+                          type: "section_custom_grid",
+                          id: targetId,
+                          parentId: ""
+                        });
+                        if (editingColumns.length === 0) {
+                          setEditingColumns([
+                            { id: `f_col_${Date.now()}_1`, title: "Title / Particulars", type: "text", parentId: targetId, tabId: editingField.tabId || 7, tabName: editingField.tabName },
+                            { id: `f_col_${Date.now()}_2`, title: "Date / Duration", type: "date", parentId: targetId, tabId: editingField.tabId || 7, tabName: editingField.tabName }
+                          ]);
+                        }
+                      } else {
+                        setEditingField({
+                          ...editingField,
+                          type: val,
+                          id: editingField.id?.startsWith("sec_custom_") ? `field_${Date.now()}` : editingField.id
+                        });
+                      }
+                    }}
+                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none focus:border-indigo-600"
+                  >
+                    <option value="text">Text Box</option>
+                    <option value="textarea">Large Text Area</option>
+                    <option value="number">Number Input</option>
+                    <option value="date">Date Picker</option>
+                    <option value="file_only">File Upload Only</option>
+                    <option value="table_grid">Dynamic Table / Grid Section</option>
+                  </select>
+                )}
+              </div>
+
+              {/* ═══ Dynamic Table Column / Field Manager Card ═══ */}
+              {(editingField.type === "section_custom_grid" || editingField.id?.startsWith("sec_custom_")) && (
+                <div className="space-y-3 p-3.5 bg-indigo-50/40 border border-indigo-150 rounded-2xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="font-extrabold text-indigo-950 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <Table size={14} className="text-indigo-600" /> Table Columns / Headers
+                      </label>
+                      <p className="text-[10px] text-indigo-800/80 font-semibold mt-0.5">Define each column name for this grid table (e.g. Course Title, Date, Score).</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newCol = {
+                          id: `f_col_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+                          title: "",
+                          type: "text",
+                          parentId: editingField.id,
+                          tabId: editingField.tabId || 7,
+                          tabName: editingField.tabName || "Evidences & Disclosures",
+                          visible: true
+                        };
+                        setEditingColumns([...editingColumns, newCol]);
+                      }}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
+                    >
+                      <Plus size={12} /> Add Table Column
+                    </button>
+                  </div>
+
+                  {editingColumns.length === 0 ? (
+                    <div className="p-3 bg-white border border-indigo-100 rounded-xl text-center text-indigo-900 text-[11px] font-medium shadow-xs">
+                      No columns defined yet. Click <strong className="font-bold text-indigo-700">+ Add Table Column</strong> above to set column names!
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {editingColumns.map((col, idx) => (
+                        <div key={col.id || idx} className="flex items-center gap-2 bg-white p-2 rounded-xl border border-zinc-200 shadow-xs">
+                          <span className="text-[10px] font-black text-indigo-400 w-5 text-center">#{idx + 1}</span>
+                          <input
+                            type="text"
+                            placeholder="Column Name (e.g. Title, Date, Certificate)"
+                            value={col.title}
+                            onChange={(e) => {
+                              const updated = [...editingColumns];
+                              updated[idx].title = e.target.value;
+                              setEditingColumns(updated);
+                            }}
+                            className="flex-1 rounded-lg border border-zinc-200 p-2 font-semibold text-zinc-800 text-xs focus:outline-none focus:border-indigo-600 bg-white"
+                          />
+                          <select
+                            value={col.type || "text"}
+                            onChange={(e) => {
+                              const updated = [...editingColumns];
+                              updated[idx].type = e.target.value;
+                              setEditingColumns(updated);
+                            }}
+                            className="rounded-lg border border-zinc-200 p-2 font-semibold text-zinc-700 text-xs focus:outline-none focus:border-indigo-600 bg-white"
+                          >
+                            <option value="text">Text Box</option>
+                            <option value="textarea">Large Text Area</option>
+                            <option value="number">Number Input</option>
+                            <option value="date">Date Picker</option>
+                            <option value="file_only">File Upload Only</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingColumns(editingColumns.filter((_, i) => i !== idx));
+                            }}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg transition-colors cursor-pointer"
+                            title="Remove Column"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {((editingField.id?.startsWith("sec_") && !editingField.id?.startsWith("sec_custom_")) || editingField.id?.startsWith("f_")) && (
                 <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 flex items-start gap-2.5">
                   <Lock size={14} className="text-indigo-600 mt-0.5 flex-shrink-0" />
                   <p className="text-[10px] text-indigo-950 font-bold leading-normal uppercase">
@@ -1046,11 +1349,11 @@ export default function AppraisalSettings() {
               <div className="grid grid-cols-2 gap-4 pt-2">
                 <div className="space-y-4">
                   <label className="relative inline-flex items-center cursor-pointer gap-2 select-none">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       checked={editingField.visible !== false}
                       onChange={(e) => setEditingField({ ...editingField, visible: e.target.checked })}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="font-bold text-zinc-650 text-[10px] uppercase">Section Visible to Faculty?</span>
                   </label>
@@ -1058,11 +1361,11 @@ export default function AppraisalSettings() {
 
                 <div className="space-y-4">
                   <label className="relative inline-flex items-center cursor-pointer gap-2 select-none">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       checked={editingField.evidenceRequired}
                       onChange={(e) => setEditingField({ ...editingField, evidenceRequired: e.target.checked })}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
                     />
                     <span className="font-bold text-zinc-650 text-[10px] uppercase">Evidence Required?</span>
                   </label>
@@ -1070,18 +1373,18 @@ export default function AppraisalSettings() {
                   {editingField.evidenceRequired && (
                     <div className="space-y-4 mt-2 block">
                       <label className="relative inline-flex items-center cursor-pointer gap-2 select-none block">
-                        <input 
-                          type="checkbox" 
+                        <input
+                          type="checkbox"
                           checked={editingField.evidenceMandatory}
                           onChange={(e) => setEditingField({ ...editingField, evidenceMandatory: e.target.checked })}
-                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          className="rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500"
                         />
                         <span className="font-bold text-zinc-650 text-[10px] uppercase">Upload Mandatory?</span>
                       </label>
 
                       <div className="space-y-1">
-                        <label className="font-bold text-slate-600 uppercase tracking-wider block text-[10px]">Max File Size Limit (1 KB to 300 KB)</label>
-                        <input 
+                        <label className="font-bold text-zinc-500 uppercase tracking-wider block text-[10px]">Max File Size Limit (1 KB to 300 KB)</label>
+                        <input
                           type="number"
                           min="1"
                           max="300"
@@ -1097,9 +1400,9 @@ export default function AppraisalSettings() {
                             if (val > 300) val = 300;
                             setEditingField({ ...editingField, maxSizeKb: val });
                           }}
-                          className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white focus:outline-none"
+                          className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white focus:outline-none"
                         />
-                        <p className="text-[9px] text-slate-600 font-semibold uppercase mt-0.5">Configures the maximum allowed file size in kilobytes.</p>
+                        <p className="text-[9px] text-zinc-400 font-semibold uppercase mt-0.5">Configures the maximum allowed file size in kilobytes.</p>
                       </div>
                     </div>
                   )}
@@ -1107,7 +1410,7 @@ export default function AppraisalSettings() {
               </div>
             </div>
 
-            <div className="bg-slate-50 border-t border-slate-200/60 p-4 flex justify-end gap-3">
+            <div className="bg-zinc-50 border-t border-zinc-150 p-4 flex justify-end gap-3">
               <button
                 onClick={() => { setFormModalOpen(false); setEditingField(null); }}
                 className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-650 rounded-xl text-xs font-bold transition-all cursor-pointer"
@@ -1129,8 +1432,8 @@ export default function AppraisalSettings() {
       {/* Edit Modal Overlay */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-200 text-slate-800">
-            
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-200 text-zinc-800">
+
             <div className="bg-[#120c7a] p-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings size={20} className="text-yellow-400" />
@@ -1138,8 +1441,8 @@ export default function AppraisalSettings() {
                   {editingItem.particulars ? "Modify Performance Criterion" : "Add Performance Criterion"}
                 </h3>
               </div>
-              <button 
-                onClick={() => { setEditModalOpen(false); setEditingItem(null); }} 
+              <button
+                onClick={() => { setEditModalOpen(false); setEditingItem(null); }}
                 className="p-1 hover:bg-white/10 rounded-lg transition-colors cursor-pointer text-white"
               >
                 <X size={20} />
@@ -1147,57 +1450,57 @@ export default function AppraisalSettings() {
             </div>
 
             <div className="p-6 space-y-5 text-xs">
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="font-bold text-slate-600 uppercase tracking-wider">S.No Label</label>
+                  <label className="font-bold text-zinc-500 uppercase tracking-wider">S.No Label</label>
                   <input
                     type="text"
                     value={editingItem.sNo}
                     onChange={(e) => setEditingItem({ ...editingItem, sNo: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
+                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
                     placeholder="e.g. 1a or 3"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-bold text-slate-600 uppercase tracking-wider">Maximum Marks Cap</label>
+                  <label className="font-bold text-zinc-500 uppercase tracking-wider">Maximum Marks Cap</label>
                   <input
                     type="number"
                     value={editingItem.maxMarks}
                     onChange={(e) => setEditingItem({ ...editingItem, maxMarks: parseInt(e.target.value) || 0 })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
+                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="font-bold text-slate-600 uppercase tracking-wider">KRA (Category Heading)</label>
+                <label className="font-bold text-zinc-500 uppercase tracking-wider">KRA (Category Heading)</label>
                 <input
                   type="text"
                   value={editingItem.kra}
                   onChange={(e) => setEditingItem({ ...editingItem, kra: e.target.value })}
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600"
+                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600"
                   placeholder="e.g. Academic Performance or Contributions"
                 />
               </div>
 
               <div className="space-y-1">
-                <label className="font-bold text-slate-600 uppercase tracking-wider">Particulars Description</label>
+                <label className="font-bold text-zinc-500 uppercase tracking-wider">Particulars Description</label>
                 <textarea
                   value={editingItem.particulars}
                   onChange={(e) => setEditingItem({ ...editingItem, particulars: e.target.value })}
-                  className="w-full rounded-xl border border-slate-200 p-2.5 font-semibold text-slate-800 focus:outline-none focus:border-indigo-600 h-20"
+                  className="w-full rounded-xl border border-zinc-200 p-2.5 font-semibold text-zinc-700 focus:outline-none focus:border-indigo-600 h-20"
                   placeholder="Describe evaluation detail rules..."
                 />
               </div>
 
               {activePart === "part1" && (
                 <div className="space-y-1">
-                  <label className="font-bold text-slate-600 uppercase tracking-wider">Type Mapping</label>
+                  <label className="font-bold text-zinc-500 uppercase tracking-wider">Type Mapping</label>
                   <select
                     value={editingItem.type || "custom"}
                     onChange={(e) => setEditingItem({ ...editingItem, type: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white"
+                    className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white"
                   >
                     <option value="theory_pass">Theory Pass Percentage</option>
                     <option value="practical_pass">Practical Pass Percentage</option>
@@ -1209,12 +1512,12 @@ export default function AppraisalSettings() {
 
               {/* Conditional parameters based on Tab Part */}
               {activePart === "part1" ? (
-                <div className="space-y-4 pt-3 border-t border-slate-200">
+                <div className="space-y-4 pt-3 border-t border-zinc-100">
                   <div className="flex items-center justify-between">
-                    <span className="font-black text-slate-900 uppercase tracking-wide">Sliding Scale Performance Points</span>
+                    <span className="font-black text-slate-800 uppercase tracking-wide">Sliding Scale Performance Points</span>
                     <button
                       onClick={handleAddRule}
-                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-400 font-bold rounded-lg flex items-center gap-1 cursor-pointer"
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] font-bold rounded-lg flex items-center gap-1 cursor-pointer"
                     >
                       <Plus size={12} /> Add Slot
                     </button>
@@ -1222,35 +1525,35 @@ export default function AppraisalSettings() {
 
                   <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
                     {(editingItem.rules || []).map((rule, idx) => (
-                      <div key={idx} className="flex items-center gap-3 bg-slate-50 border border-slate-200/60 p-3 rounded-2xl">
+                      <div key={idx} className="flex items-center gap-3 bg-zinc-50 border border-zinc-150 p-3 rounded-2xl">
                         <div className="flex-1 grid grid-cols-3 gap-2">
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-slate-600 uppercase">Min %</span>
+                            <span className="text-[9px] font-black text-zinc-400 uppercase">Min %</span>
                             <input
                               type="number"
                               step="0.01"
                               value={rule.min}
                               onChange={(e) => handleEditPart1RuleChange(idx, "min", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
+                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
                             />
                           </div>
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-slate-600 uppercase">Max %</span>
+                            <span className="text-[9px] font-black text-zinc-400 uppercase">Max %</span>
                             <input
                               type="number"
                               step="0.01"
                               value={rule.max}
                               onChange={(e) => handleEditPart1RuleChange(idx, "max", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
+                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
                             />
                           </div>
                           <div className="space-y-0.5">
-                            <span className="text-[9px] font-black text-slate-600 uppercase">Allocated Marks</span>
+                            <span className="text-[9px] font-black text-zinc-400 uppercase">Allocated Marks</span>
                             <input
                               type="number"
                               value={rule.marks}
                               onChange={(e) => handleEditPart1RuleChange(idx, "marks", e.target.value)}
-                              className="w-full bg-white rounded-lg border border-slate-200 p-1.5 text-indigo-600enter font-bold"
+                              className="w-full bg-white rounded-lg border border-zinc-200 p-1.5 text-center font-bold"
                             />
                           </div>
                         </div>
@@ -1265,15 +1568,15 @@ export default function AppraisalSettings() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-4 pt-3 border-t border-slate-200">
-                  <span className="font-black text-slate-900 uppercase tracking-wide block">Part 2 Unit Calibration Settings</span>
+                <div className="space-y-4 pt-3 border-t border-zinc-100">
+                  <span className="font-black text-slate-800 uppercase tracking-wide block">Part 2 Unit Calibration Settings</span>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-1">
-                      <label className="font-bold text-slate-600 uppercase tracking-wider">Unit Mapping Code</label>
+                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Unit Mapping Code</label>
                       <select
                         value={editingItem.type}
                         onChange={(e) => setEditingItem({ ...editingItem, type: e.target.value })}
-                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold text-slate-800 bg-white"
+                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold text-zinc-700 bg-white"
                       >
                         <option value="online_courses">Online Courses (MOOC)</option>
                         <option value="publications">Research Papers</option>
@@ -1287,22 +1590,22 @@ export default function AppraisalSettings() {
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-slate-600 uppercase tracking-wider">Target Units Count</label>
+                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Target Units Count</label>
                       <input
                         type="number"
                         value={editingItem.targetCount}
                         onChange={(e) => setEditingItem({ ...editingItem, targetCount: parseInt(e.target.value) || 0 })}
-                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold"
+                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="font-bold text-slate-600 uppercase tracking-wider">Marks Allotment / Unit</label>
+                      <label className="font-bold text-zinc-500 uppercase tracking-wider">Marks Allotment / Unit</label>
                       <input
                         type="number"
                         step="0.5"
                         value={editingItem.marksPerUnit}
                         onChange={(e) => setEditingItem({ ...editingItem, marksPerUnit: parseFloat(e.target.value) || 0 })}
-                        className="w-full rounded-xl border border-slate-200 p-2.5 font-bold"
+                        className="w-full rounded-xl border border-zinc-200 p-2.5 font-bold"
                       />
                     </div>
                   </div>
@@ -1311,10 +1614,10 @@ export default function AppraisalSettings() {
 
             </div>
 
-            <div className="bg-slate-50 border-t border-slate-200/60 p-4 flex justify-end gap-3">
+            <div className="bg-zinc-50 border-t border-zinc-150 p-4 flex justify-end gap-3">
               <button
                 onClick={() => { setEditModalOpen(false); setEditingItem(null); }}
-                className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                className="px-4 py-2 bg-zinc-200 hover:bg-zinc-300 text-zinc-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 Cancel
               </button>

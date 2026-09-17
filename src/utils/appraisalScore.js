@@ -218,4 +218,74 @@ export function evaluateAppraisal(formData, criteria) {
   };
 }
 
+/**
+ * Parse any date input format into epoch milliseconds.
+ * Supports: ISO strings ("2026-09-16T12:45"), DD/MM/YYYY hh:mm AM/PM,
+ * YYYY-MM-DD, timestamps, and Firestore Timestamp objects.
+ */
+export const parseAppraisalDateTime = (val) => {
+  if (!val) return null;
+  if (typeof val?.toDate === "function") return val.toDate().getTime();
+  if (typeof val === "number") return val;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val.getTime();
+
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+
+    // Standard ISO/YYYY-MM-DD check
+    if (/^\d{4}[-\/]/.test(trimmed)) {
+      const dIso = new Date(trimmed);
+      if (!isNaN(dIso.getTime())) return dIso.getTime();
+    }
+
+    // Match DD/MM/YYYY, HH:MM AM/PM or DD-MM-YYYY, HH:MM AM/PM
+    const dmyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s*,\s*|\s+)?(\d{1,2})?:?(\d{2})?:?(\d{2})?\s*(AM|PM|am|pm)?$/);
+    if (dmyMatch) {
+      let [_, dayStr, monthStr, yearStr, hoursStr, minutesStr, secondsStr, ampm] = dmyMatch;
+      const day = parseInt(dayStr, 10);
+      const month = parseInt(monthStr, 10) - 1; // 0-indexed
+      const year = parseInt(yearStr, 10);
+      let hours = hoursStr ? parseInt(hoursStr, 10) : 0;
+      const minutes = minutesStr ? parseInt(minutesStr, 10) : 0;
+      const seconds = secondsStr ? parseInt(secondsStr, 10) : 0;
+
+      if (ampm) {
+        const isPM = ampm.toUpperCase() === "PM";
+        if (isPM && hours < 12) hours += 12;
+        if (!isPM && hours === 12) hours = 0;
+      }
+      const dParsed = new Date(year, month, day, hours, minutes, seconds);
+      if (!isNaN(dParsed.getTime())) return dParsed.getTime();
+    }
+
+    // Fallback standard Date parse
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+  return null;
+};
+
+/**
+ * Checks if the appraisal portal is currently open based on schedule object.
+ * Returns { isOpen: boolean, reason: 'deactivated' | 'not_started' | 'closed' | 'open' }
+ */
+export const checkAppraisalPortalStatus = (sched) => {
+  if (!sched) return { isOpen: true, reason: 'open' };
+  if (sched.isActive === false) return { isOpen: false, reason: 'deactivated' };
+
+  const now = Date.now();
+  const startMs = parseAppraisalDateTime(sched.openTime);
+  const endMs = parseAppraisalDateTime(sched.closeTime);
+
+  if (startMs && now < startMs) {
+    return { isOpen: false, reason: 'not_started' };
+  }
+  if (endMs && now > endMs) {
+    return { isOpen: false, reason: 'closed' };
+  }
+  return { isOpen: true, reason: 'open' };
+};
+
 export default evaluateAppraisal;
+
