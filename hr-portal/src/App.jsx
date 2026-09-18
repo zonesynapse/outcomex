@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 
 import Auth from "./pages/Auth";
 import FacultyAppraisal from "./pages/FacultyAppraisal";
+import TeacherAppraisal from "./pages/TeacherAppraisal";
 import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
@@ -53,7 +54,10 @@ function HomeRedirect() {
   if (r.includes("principal") || r.includes("hr") || r.includes("admin")) {
     return <Navigate to="/reviews" replace />;
   }
-  return <Navigate to="/appraisal" replace />;
+  if (r.includes("non-teaching") || r.includes("staff")) {
+    return <Navigate to="/non-teaching-appraisal" replace />;
+  }
+  return <Navigate to="/teacher-appraisal" replace />;
 }
 
 export default function App() {
@@ -76,6 +80,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <FacultyAppraisal />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/teacher-appraisal" 
+          element={
+            <ProtectedRoute>
+              <TeacherAppraisal />
             </ProtectedRoute>
           } 
         />

@@ -36,6 +36,12 @@ export default function AppraisalReviews() {
     return field ? field.visible !== false : true;
   };
 
+  const cleanText = (val) => {
+    if (!val) return "";
+    if (typeof val !== "string") return val;
+    return val.replace(/^"+|"+$/g, "").trim();
+  };
+
   const getSectionTitle = (id, defaultTitle) => {
     const field = customFieldsConfig.find(f => f.id === id);
     return field ? field.title : defaultTitle;
@@ -524,6 +530,15 @@ export default function AppraisalReviews() {
               </button>
 
               <div className="flex items-center gap-3">
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  selectedAppraisal.formType === "hod"
+                    ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
+                    : selectedAppraisal.formType === "non_teaching"
+                    ? "bg-teal-500/20 text-teal-700 border border-teal-500/30"
+                    : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
+                }`}>
+                  {selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : "Faculty Appraisal"}
+                </span>
                 <button
                   onClick={() => handlePrintPDF(selectedAppraisal)}
                   className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
@@ -548,23 +563,752 @@ export default function AppraisalReviews() {
               <div className="lg:col-span-2 space-y-8">
 
                 {/* Custom internal detail tabs */}
-                <div className="flex border-b border-zinc-100 overflow-x-auto gap-2 no-scrollbar mb-4">
-                  {appraisalTabs.map((subTab) => (
-                    <button
-                      key={subTab.id}
-                      onClick={() => setActiveDetailsTab(subTab.id)}
-                      className={`pb-3 px-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${activeDetailsTab === subTab.id
-                          ? "border-indigo-600 text-indigo-600"
-                          : "border-transparent text-zinc-500 hover:text-zinc-700"
-                        }`}
-                    >
-                      {subTab.name}
-                    </button>
-                  ))}
-                </div>
+                {(() => {
+                  const hodSubTabs = [
+                    { id: 1, name: "1. Profile & Info" },
+                    { id: 2, name: "2. KRA Performance (1-5)" },
+                    { id: 3, name: "3. Scores & Declaration" }
+                  ];
 
-                {/* Sub-Tab 1: Profile & Workload */}
-                {activeDetailsTab === 1 && (
+                  const nonTeachingSubTabs = [
+                    { id: 1, name: "1. Staff Profile & Experience" },
+                    { id: 2, name: "2. Roles & Leaves" },
+                    { id: 3, name: "3. Work Habits & Grievances" },
+                    { id: 4, name: "4. IIY & Admissions" }
+                  ];
+
+                  const currentSubTabs = selectedAppraisal?.formType === "hod"
+                    ? hodSubTabs
+                    : selectedAppraisal?.formType === "non_teaching"
+                    ? nonTeachingSubTabs
+                    : appraisalTabs;
+
+                  return (
+                    <div className="flex border-b border-zinc-100 overflow-x-auto gap-2 no-scrollbar mb-4">
+                      {currentSubTabs.map((subTab) => (
+                        <button
+                          key={subTab.id}
+                          onClick={() => setActiveDetailsTab(subTab.id)}
+                          className={`pb-3 px-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${activeDetailsTab === subTab.id
+                              ? "border-indigo-600 text-indigo-600"
+                              : "border-transparent text-zinc-500 hover:text-zinc-700"
+                            }`}
+                        >
+                          {subTab.name}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* ── HOD APPRAISAL FORM REVIEW VIEWS ── */}
+                {selectedAppraisal?.formType === "hod" && (
+                  <>
+                    {activeDetailsTab === 1 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            HOD Profile & Designation Details
+                          </span>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-xs">
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">HOD Name</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.hodName || selectedAppraisal.hodName || selectedAppraisal.facultyName}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Department</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.department || selectedAppraisal.department}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Designation</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.designation || selectedAppraisal.designation || "Head of Department"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Date of Joining</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.doj || selectedAppraisal.doj || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Qualification</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.qualification || selectedAppraisal.qualification || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Academic Session</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.academicYear}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeDetailsTab === 2 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="border-b border-zinc-150 pb-2 mb-4">
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Key Result Areas (KRA 1 to KRA 5) Performance Breakdown</h4>
+                          <p className="text-[10px] text-zinc-400 font-semibold uppercase">HOD Self Appraisal Scores, Parameters & Evidence Attachments</p>
+                        </div>
+
+                        {/* KRA I: Department Academic Improvement */}
+                        {(() => {
+                          const k1 = selectedAppraisal.formData?.kra1 || {};
+                          const k1Score = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
+                          const tierLabels = {
+                            "65_above": "Pass % Increased by 6.5% & above (30 Marks)",
+                            "50_64": "Pass % Increased by 5.0% - 6.4% (25 Marks)",
+                            "40_49": "Pass % Increased by 4.0% - 4.9% (20 Marks)",
+                            "30_39": "Pass % Increased by 3.0% - 3.9% (15 Marks)",
+                            "21_29": "Pass % Increased by 2.1% - 2.9% (10 Marks)",
+                            "below_20": "Pass % Increased by 2.0% & below (5 Marks)"
+                          };
+                          return (
+                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
+                                  KRA I: Department Academic Improvement
+                                </span>
+                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
+                                  Self Score: {k1Score} / 30 Marks
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                                  <span className="block text-[10px] font-black text-zinc-400 uppercase">Pass % Achieved</span>
+                                  <span className="font-bold text-slate-800">{k1.passPct ? `${k1.passPct}%` : "-"}</span>
+                                </div>
+                                <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                                  <span className="block text-[10px] font-black text-zinc-400 uppercase">Target Tier Selected</span>
+                                  <span className="font-bold text-slate-800">{tierLabels[k1.tier] || k1.tier || "-"}</span>
+                                </div>
+                              </div>
+                              {k1.remarks && (
+                                <div className="bg-white p-3 rounded-xl border border-zinc-200 text-xs text-slate-700">
+                                  <span className="block text-[10px] font-black text-zinc-400 uppercase mb-1">Remarks & Details</span>
+                                  <p className="font-medium">{k1.remarks}</p>
+                                </div>
+                              )}
+                              {k1.proof?.fileUrl && (
+                                <div className="flex items-center gap-2 pt-1">
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document:</span>
+                                  <a
+                                    href={k1.proof.fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs"
+                                  >
+                                    View Evidence ({k1.proof.fileName || "File"})
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* KRA II: Department Student Centric Activities */}
+                        {(() => {
+                          const k2 = selectedAppraisal.formData?.kra2 || {};
+                          const k2Score = selectedAppraisal.kraScores?.kra2 ?? 0;
+                          const k2SubItems = [
+                            { key: "coCurricular", label: "Co-Curricular Activities Organized" },
+                            { key: "ipkt", label: "Industrial / Practical Knowledge Training" },
+                            { key: "guestLectures", label: "Guest Lectures / Seminars Organized" },
+                            { key: "valueAdded", label: "Value Added Courses Conducted" },
+                            { key: "softSkillsPlacement", label: "Soft Skills & Placement Training" }
+                          ];
+                          return (
+                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
+                                  KRA II: Department Student Centric Activities
+                                </span>
+                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
+                                  Self Score: {k2Score} / 25 Marks
+                                </span>
+                              </div>
+                              <div className="space-y-3">
+                                {k2SubItems.map((item) => {
+                                  const sub = k2[item.key] || {};
+                                  return (
+                                    <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-bold text-slate-800">{item.label}</span>
+                                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                          sub.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
+                                        }`}>
+                                          {sub.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
+                                        </span>
+                                      </div>
+                                      {sub.remarks && (
+                                        <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
+                                          {cleanText(sub.remarks)}
+                                        </p>
+                                      )}
+                                      {sub.fileUrl && (
+                                        <div className="flex items-center gap-2 pt-0.5">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
+                                          <a
+                                            href={sub.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                          >
+                                            View Evidence ({sub.fileName || "File"})
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* KRA III: Faculty Enrichment Efforts */}
+                        {(() => {
+                          const k3 = selectedAppraisal.formData?.kra3 || {};
+                          const k3Score = selectedAppraisal.kraScores?.kra3 ?? 0;
+                          const k3SubItems = [
+                            { key: "fundingProposal", label: "Funding Proposals Submitted" },
+                            { key: "testingConsultancy", label: "Testing & Consultancy Works" },
+                            { key: "onlineCourse", label: "Online / MOOC Courses by Faculty" },
+                            { key: "publications", label: "Research Publications in Indexed Journals" }
+                          ];
+                          const k3TierLabels = {
+                            "100": "100% Target Met (5 Marks)",
+                            "80_99": "80% - 99% Target Met (2.5 Marks)",
+                            "below": "Below 80% Target (0 Marks)"
+                          };
+                          return (
+                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
+                                  KRA III: Faculty Enrichment Efforts for Department
+                                </span>
+                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
+                                  Self Score: {k3Score} / 20 Marks
+                                </span>
+                              </div>
+                              <div className="space-y-3">
+                                {k3SubItems.map((item) => {
+                                  const sub = k3[item.key] || {};
+                                  return (
+                                    <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-bold text-slate-800">{item.label}</span>
+                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                          {k3TierLabels[sub.tier] || sub.tier || "Target Below 80%"}
+                                        </span>
+                                      </div>
+                                      {sub.remarks && (
+                                        <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
+                                          {cleanText(sub.remarks)}
+                                        </p>
+                                      )}
+                                      {sub.fileUrl && (
+                                        <div className="flex items-center gap-2 pt-0.5">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
+                                          <a
+                                            href={sub.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                          >
+                                            View Evidence ({sub.fileName || "File"})
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* KRA IV: Significant Contribution towards Department / Personal Development */}
+                        {(() => {
+                          const k4 = selectedAppraisal.formData?.kra4 || [];
+                          const k4Score = selectedAppraisal.kraScores?.kra4 ?? 0;
+                          return (
+                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
+                                  KRA IV: Significant Contributions towards Department / Personal Development
+                                </span>
+                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
+                                  Self Score: {k4Score} / 5 Marks
+                                </span>
+                              </div>
+                              {Array.isArray(k4) && k4.length > 0 ? (
+                                <div className="space-y-3">
+                                  {k4.map((item, idx) => (
+                                    <div key={idx} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1">
+                                      <span className="font-bold text-slate-800 block text-xs">{idx + 1}. {item.title || "Contribution"}</span>
+                                      {item.description && (
+                                        <p className="text-zinc-600 font-medium text-[11px]">{cleanText(item.description)}</p>
+                                      )}
+                                      {item.fileUrl && (
+                                        <div className="flex items-center gap-2 pt-1">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
+                                          <a
+                                            href={item.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                          >
+                                            View Evidence ({item.fileName || "File"})
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-zinc-400 italic">No contributions specified.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* KRA V: Academic Excellence & Self Development (IIY) */}
+                        {(() => {
+                          const k5 = selectedAppraisal.formData?.kra5 || {};
+                          const k5Score = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
+                          const k5ResultTierLabels = {
+                            "90_above": "Pass % >= 90% (10 Marks)",
+                            "81_90": "Pass % 81% - 90% (8 Marks)",
+                            "71_80": "Pass % 71% - 80% (6 Marks)",
+                            "61_70": "Pass % 61% - 70% (4 Marks)",
+                            "51_60": "Pass % 51% - 60% (2 Marks)",
+                            "below_50": "Pass % < 50% (0 Marks)"
+                          };
+                          return (
+                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
+                                  KRA V: Academic Excellence and Self Development (IIY)
+                                </span>
+                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
+                                  Self Score: {k5Score} / 20 Marks
+                                </span>
+                              </div>
+
+                              <div className="space-y-3 text-xs">
+                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800">1. Academic Pass Result Target</span>
+                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                      {k5ResultTierLabels[k5.resultTier] || k5.resultTier || "Below 50%"}
+                                    </span>
+                                  </div>
+                                  {k5.resultRemarks && (
+                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
+                                      {cleanText(k5.resultRemarks)}
+                                    </p>
+                                  )}
+                                  {k5.resultProof?.fileUrl && (
+                                    <div className="flex items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Proof:</span>
+                                      <a
+                                        href={k5.resultProof.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                      >
+                                        View Evidence ({k5.resultProof.fileName || "File"})
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800">2. Online / MOOC Course Completion</span>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                      k5.onlineCourse?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
+                                    }`}>
+                                      {k5.onlineCourse?.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
+                                    </span>
+                                  </div>
+                                  {k5.onlineCourse?.remarks && (
+                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
+                                      {cleanText(k5.onlineCourse.remarks)}
+                                    </p>
+                                  )}
+                                  {k5.onlineCourse?.fileUrl && (
+                                    <div className="flex items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
+                                      <a
+                                        href={k5.onlineCourse.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                      >
+                                        View Evidence ({k5.onlineCourse.fileName || "File"})
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-slate-800">3. Research Paper Publication</span>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                      k5.publication?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
+                                    }`}>
+                                      {k5.publication?.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
+                                    </span>
+                                  </div>
+                                  {k5.publication?.remarks && (
+                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
+                                      {cleanText(k5.publication.remarks)}
+                                    </p>
+                                  )}
+                                  {k5.publication?.fileUrl && (
+                                    <div className="flex items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
+                                      <a
+                                        href={k5.publication.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                      >
+                                        View Evidence ({k5.publication.fileName || "File"})
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {activeDetailsTab === 3 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-gradient-to-br from-indigo-50 to-slate-50 p-6 rounded-2xl border border-indigo-100 space-y-4">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-indigo-100 pb-2">
+                            HOD Performance Score Summary
+                          </span>
+                          <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-indigo-100">
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 block">Total KRA Self Performance Score</span>
+                              <span className="text-[10px] text-zinc-400 font-medium">Cumulative score across KRA 1 to KRA 5 (Max 100 Marks)</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-2xl font-black text-[#120c7a]">{selectedAppraisal.totalScore || 0}</span>
+                              <span className="text-xs font-bold text-zinc-400"> / 100</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-emerald-50/60 p-5 rounded-2xl border border-emerald-100/80 space-y-2">
+                          <span className="text-xs font-black text-emerald-950 uppercase tracking-wider block border-b border-emerald-200/50 pb-2">
+                            Digital Declaration & Submission
+                          </span>
+                          <div className="flex items-center gap-2 text-xs text-emerald-900 font-bold pt-1">
+                            <CheckCircle2 size={16} className="text-emerald-600" />
+                            <span>Self Appraisal information & ratings digitally certified by HOD.</span>
+                          </div>
+                          {selectedAppraisal.declarationDate && (
+                            <span className="text-[10px] text-emerald-700 font-semibold block">
+                              Submitted Date: {new Date(selectedAppraisal.declarationDate).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* ── NON-TEACHING APPRAISAL FORM REVIEW VIEWS ── */}
+                {selectedAppraisal?.formType === "non_teaching" && (
+                  <>
+                    {activeDetailsTab === 1 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Staff Personal & Post Details
+                          </span>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-xs">
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Staff Name</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.name || selectedAppraisal.staffName || selectedAppraisal.facultyName}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Designation</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.designation || selectedAppraisal.designation}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Department</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.department || selectedAppraisal.department}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Date of Birth</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dob || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Age</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.age || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Academic Qualification</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.qualification || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ College</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ Present Post</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojPresentPost || "-"}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Academic Session</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.academicYear}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Experience Summary (Years)
+                          </span>
+                          <div className="grid grid-cols-3 gap-4 text-xs">
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience at CKCET</span>
+                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expCKCET || "0"} Yrs</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience Elsewhere</span>
+                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expOther || "0"} Yrs</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Industrial Experience</span>
+                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expIndustrial || "0"} Yrs</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeDetailsTab === 2 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Roles & Responsibilities Carried Out
+                          </span>
+                          <div className="bg-white p-4 rounded-xl border border-zinc-200 text-xs font-medium text-slate-700">
+                            {selectedAppraisal.formData?.rolesResponsibilities || <span className="italic text-zinc-400">No details specified.</span>}
+                          </div>
+                          {selectedAppraisal.formData?.rolesEvidenceUrl && (
+                            <div className="flex items-center gap-2 pt-1">
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document:</span>
+                              <a
+                                href={selectedAppraisal.formData.rolesEvidenceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs"
+                              >
+                                View Evidence ({selectedAppraisal.formData.rolesEvidenceName || "Attachment"})
+                              </a>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Punctuality & Discipline Habits
+                          </span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Reporting at Scheduled Time</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.reportScheduledTime || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Seeking Permission for Outside Work</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.seekPermissionOutside || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Applying Leave in Advance</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.applyLeaveAdvance || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Tendency to Consume Balance CL</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.consumeBalanceCL || "-"}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Leave Details Breakdown
+                          </span>
+                          <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-xs">
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">CL</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.cl || "0"}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">C.Off</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.coff || "0"}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">LLP</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.llp || "0"}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">OD Dept</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.odDept || "0"}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">OD Inst</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.odInst || "0"}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-zinc-200 text-center">
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase">OD Others</span>
+                              <span className="font-black text-slate-800">{selectedAppraisal.formData?.leaveDetails?.odOthers || "0"}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeDetailsTab === 3 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Work Habits, Relationships & Grievances
+                          </span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Grievances Resolution Status</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.happyWithGrievances || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Timely Accomplishment of Assignments</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.accomplishAssignmentInTime || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Potential Utilization</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.potentialUtilization || "-"}</span>
+                            </div>
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Self Assessment Placement</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.selfAssessmentPlacement || "-"}</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3 pt-2">
+                            <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block">Interpersonal Relationships Rating</span>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                              <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                                <span className="block text-[9px] font-black text-zinc-400 uppercase">With Students</span>
+                                <span className="font-bold text-slate-800">{selectedAppraisal.formData?.relStudents?.rating || "-"}</span>
+                                {selectedAppraisal.formData?.relStudents?.reason && (
+                                  <p className="text-[10px] text-zinc-500 mt-1">{selectedAppraisal.formData.relStudents.reason}</p>
+                                )}
+                              </div>
+                              <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                                <span className="block text-[9px] font-black text-zinc-400 uppercase">With Colleagues</span>
+                                <span className="font-bold text-slate-800">{selectedAppraisal.formData?.relColleagues?.rating || "-"}</span>
+                                {selectedAppraisal.formData?.relColleagues?.reason && (
+                                  <p className="text-[10px] text-zinc-500 mt-1">{selectedAppraisal.formData.relColleagues.reason}</p>
+                                )}
+                              </div>
+                              <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                                <span className="block text-[9px] font-black text-zinc-400 uppercase">With Superiors</span>
+                                <span className="font-bold text-slate-800">{selectedAppraisal.formData?.relSuperiors?.rating || "-"}</span>
+                                {selectedAppraisal.formData?.relSuperiors?.reason && (
+                                  <p className="text-[10px] text-zinc-500 mt-1">{selectedAppraisal.formData.relSuperiors.reason}</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeDetailsTab === 4 && (
+                      <div className="space-y-6 animate-fadeIn">
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Invest In Yourself (IIY) Courses Completed
+                          </span>
+                          {selectedAppraisal.formData?.iiyCourses && selectedAppraisal.formData.iiyCourses.length > 0 ? (
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+                              <table className="w-full text-xs text-left">
+                                <thead className="bg-zinc-50 text-zinc-700 font-bold border-b border-zinc-200">
+                                  <tr>
+                                    <th className="p-2.5">Course Title</th>
+                                    <th className="p-2.5">Platform</th>
+                                    <th className="p-2.5">Duration</th>
+                                    <th className="p-2.5">Certificate</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-100">
+                                  {selectedAppraisal.formData.iiyCourses.map((c, idx) => (
+                                    <tr key={idx} className="hover:bg-slate-50/50">
+                                      <td className="p-2.5 font-bold text-slate-800">{c.title || "-"}</td>
+                                      <td className="p-2.5 text-zinc-600">{c.platform || "-"}</td>
+                                      <td className="p-2.5 text-zinc-600">{c.startDate} - {c.endDate} ({c.weeks} wks)</td>
+                                      <td className="p-2.5 font-bold text-emerald-600">{c.certificateReceived || "Yes"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-zinc-400 italic">No IIY courses recorded.</p>
+                          )}
+
+                          {selectedAppraisal.formData?.iiyOutcome && (
+                            <div className="bg-white p-3 rounded-xl border border-zinc-200 text-xs mt-2">
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">IIY Skill Outcome</span>
+                              <p className="font-medium text-slate-700">{selectedAppraisal.formData.iiyOutcome}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
+                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
+                            Contributions Towards Admissions
+                          </span>
+                          {selectedAppraisal.formData?.admissionsContributed && selectedAppraisal.formData.admissionsContributed.length > 0 ? (
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+                              <table className="w-full text-xs text-left">
+                                <thead className="bg-zinc-50 text-zinc-700 font-bold border-b border-zinc-200">
+                                  <tr>
+                                    <th className="p-2.5">Team No / Area</th>
+                                    <th className="p-2.5">Count</th>
+                                    <th className="p-2.5">Team Leader</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-100">
+                                  {selectedAppraisal.formData.admissionsContributed.map((a, idx) => (
+                                    <tr key={idx} className="hover:bg-slate-50/50">
+                                      <td className="p-2.5 font-bold text-slate-800">{a.teamNoArea || "-"}</td>
+                                      <td className="p-2.5 text-zinc-600">{a.count || "0"}</td>
+                                      <td className="p-2.5 text-zinc-600">{a.teamLeader || "-"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-zinc-400 italic">No admissions recorded.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* ── FACULTY APPRAISAL FORM REVIEW VIEWS ── */}
+                {(selectedAppraisal?.formType === "faculty" || (!selectedAppraisal?.formType && selectedAppraisal?.formData)) && (
+                  <>
+                    {/* Sub-Tab 1: Profile & Workload */}
+                    {activeDetailsTab === 1 && (
                   <div className="space-y-6">
                     {isSectionVisible("sec_profile_details") && (
                       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
@@ -927,7 +1671,7 @@ export default function AppraisalReviews() {
                         {selectedAppraisal.formData?.onlineCoursesOutcome && (
                           <div className="bg-slate-50 border border-zinc-200 p-3 rounded-xl mt-2 text-xs">
                             <span className="font-bold block mb-1">Outcome/Achievements of Courses:</span>
-                            <p className="text-zinc-600 font-medium">"{selectedAppraisal.formData.onlineCoursesOutcome}"</p>
+                            <p className="text-zinc-600 font-medium">{selectedAppraisal.formData.onlineCoursesOutcome}</p>
                           </div>
                         )}
                       </div>
@@ -1167,7 +1911,7 @@ export default function AppraisalReviews() {
                                 <span className="block text-[9px] font-black text-zinc-400 uppercase">
                                   {getSectionTitle("f_resultImprovementHOD", "Result Improvement & Maintenance")}:
                                 </span>
-                                <p className="font-semibold text-slate-800">"{selectedAppraisal.formData.resultImprovementHOD}"</p>
+                                <p className="font-semibold text-slate-800">{selectedAppraisal.formData.resultImprovementHOD}</p>
                               </div>
                             )}
                             {isSectionVisible("f_deptAdministrationHOD") && selectedAppraisal.formData?.deptAdministrationHOD && (
@@ -1175,7 +1919,7 @@ export default function AppraisalReviews() {
                                 <span className="block text-[9px] font-black text-zinc-400 uppercase">
                                   {getSectionTitle("f_deptAdministrationHOD", "Department Administration & Planning")}:
                                 </span>
-                                <p className="font-semibold text-slate-800">"{selectedAppraisal.formData.deptAdministrationHOD}"</p>
+                                <p className="font-semibold text-slate-800">{selectedAppraisal.formData.deptAdministrationHOD}</p>
                               </div>
                             )}
                           </div>
@@ -1187,7 +1931,7 @@ export default function AppraisalReviews() {
                             <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
                               {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution")}:
                             </span>
-                            <p className="font-semibold text-slate-850">"{selectedAppraisal.formData.otherRolesContribution}"</p>
+                            <p className="font-semibold text-slate-850">{selectedAppraisal.formData.otherRolesContribution}</p>
                           </div>
                         )}
 
@@ -1372,28 +2116,28 @@ export default function AppraisalReviews() {
                             <div className="bg-zinc-50 border border-zinc-200/50 p-4 rounded-xl">
                               <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_relationStudents", "Students")}</span>
                               <span className="text-xs font-black text-[#120c7a]">{(selectedAppraisal.formData?.relationStudents || {}).rating || "Good"}</span>
-                              {(selectedAppraisal.formData?.relationStudents || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: "{(selectedAppraisal.formData?.relationStudents || {}).reason}"</p>}
+                              {(selectedAppraisal.formData?.relationStudents || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: {(selectedAppraisal.formData?.relationStudents || {}).reason}</p>}
                             </div>
                           )}
                           {isSectionVisible("f_relationColleagues") && (
                             <div className="bg-zinc-50 border border-zinc-200/50 p-4 rounded-xl">
                               <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_relationColleagues", "Colleagues")}</span>
                               <span className="text-xs font-black text-[#120c7a]">{(selectedAppraisal.formData?.relationColleagues || {}).rating || "Good"}</span>
-                              {(selectedAppraisal.formData?.relationColleagues || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: "{(selectedAppraisal.formData?.relationColleagues || {}).reason}"</p>}
+                              {(selectedAppraisal.formData?.relationColleagues || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: {(selectedAppraisal.formData?.relationColleagues || {}).reason}</p>}
                             </div>
                           )}
                           {isSectionVisible("f_relationSuperiors") && (
                             <div className="bg-zinc-50 border border-zinc-200/50 p-4 rounded-xl">
                               <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_relationSuperiors", "Superiors")}</span>
                               <span className="text-xs font-black text-[#120c7a]">{(selectedAppraisal.formData?.relationSuperiors || {}).rating || "Good"}</span>
-                              {(selectedAppraisal.formData?.relationSuperiors || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: "{(selectedAppraisal.formData?.relationSuperiors || {}).reason}"</p>}
+                              {(selectedAppraisal.formData?.relationSuperiors || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: {(selectedAppraisal.formData?.relationSuperiors || {}).reason}</p>}
                             </div>
                           )}
                           {isSectionVisible("f_relationDepartment") && (
                             <div className="bg-zinc-50 border border-zinc-200/50 p-4 rounded-xl">
                               <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_relationDepartment", "Department")}</span>
                               <span className="text-xs font-black text-[#120c7a]">{(selectedAppraisal.formData?.relationDepartment || {}).rating || "Good"}</span>
-                              {(selectedAppraisal.formData?.relationDepartment || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: "{(selectedAppraisal.formData?.relationDepartment || {}).reason}"</p>}
+                              {(selectedAppraisal.formData?.relationDepartment || {}).reason && <p className="text-[10px] text-zinc-500 mt-1">Reason: {(selectedAppraisal.formData?.relationDepartment || {}).reason}</p>}
                             </div>
                           )}
                         </div>
@@ -1410,7 +2154,7 @@ export default function AppraisalReviews() {
                             {getSectionDescription("f_targetsNextSemester") && (
                               <p className="text-[9px] text-zinc-400 font-semibold uppercase mb-1">{getSectionDescription("f_targetsNextSemester")}</p>
                             )}
-                            <p className="text-xs text-slate-700 font-medium bg-slate-50 p-3 rounded-xl border border-zinc-150">"{selectedAppraisal.formData?.targetsNextSemester || "N/A"}"</p>
+                            <p className="text-xs text-slate-700 font-medium bg-slate-50 p-3 rounded-xl border border-zinc-150">{selectedAppraisal.formData?.targetsNextSemester || "N/A"}</p>
                           </div>
                         )}
                         {isSectionVisible("f_targetsStrategy") && (
@@ -1421,7 +2165,7 @@ export default function AppraisalReviews() {
                             {getSectionDescription("f_targetsStrategy") && (
                               <p className="text-[9px] text-zinc-400 font-semibold uppercase mb-1">{getSectionDescription("f_targetsStrategy")}</p>
                             )}
-                            <p className="text-xs text-slate-700 font-medium bg-slate-50 p-3 rounded-xl border border-zinc-150">"{selectedAppraisal.formData?.targetsStrategy || "N/A"}"</p>
+                            <p className="text-xs text-slate-700 font-medium bg-slate-50 p-3 rounded-xl border border-zinc-150">{selectedAppraisal.formData?.targetsStrategy || "N/A"}</p>
                           </div>
                         )}
                       </div>
@@ -1497,6 +2241,8 @@ export default function AppraisalReviews() {
                       })}
                     </div>
                   </div>
+                )}
+                  </>
                 )}
 
                 {/* ── PERFORMANCE SCORE (CRITERIA EVALUATION) TABLE ── */}
@@ -1621,7 +2367,7 @@ export default function AppraisalReviews() {
                     </div>
                     <div>
                       <span className="block text-[9px] font-black text-blue-700 uppercase tracking-wider">Remarks:</span>
-                      <p className="text-xs text-blue-950 font-medium">"{selectedAppraisal.hodReview.comments}"</p>
+                      <p className="text-xs text-blue-950 font-medium">{selectedAppraisal.hodReview.comments}</p>
                     </div>
                     <div className="text-[10px] text-blue-500 italic">
                       - Recommended by {selectedAppraisal.hodReview.reviewedBy}

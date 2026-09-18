@@ -135,11 +135,11 @@ export default function NonTeachingAppraisal() {
             setUserProfile(data);
             setFormData((prev) => ({
               ...prev,
-              name: data.displayName || data.name || user.displayName || "",
-              designation: data.designation || "Technical / Lab Staff",
-              department: data.department || "",
-              dojCollege: data.doj || "",
-              qualification: data.qualification || ""
+              name: prev.name || data.displayName || data.name || user.displayName || "",
+              designation: prev.designation || data.designation || "Technical / Lab Staff",
+              department: prev.department || data.department || "",
+              dojCollege: prev.dojCollege || data.doj || "",
+              qualification: prev.qualification || data.qualification || ""
             }));
           }
         } catch (err) {
@@ -184,7 +184,26 @@ export default function NonTeachingAppraisal() {
         const data = snap.data();
         setExistingAppraisal(data);
         if (data.formData) {
-          setFormData((prev) => ({ ...prev, ...data.formData }));
+          setFormData((prev) => ({
+            ...prev,
+            ...data.formData,
+            leaveDetails: {
+              ...prev.leaveDetails,
+              ...(data.formData.leaveDetails || {})
+            },
+            relStudents: typeof data.formData.relStudents === 'object' ? {
+              ...prev.relStudents,
+              ...(data.formData.relStudents || {})
+            } : { rating: data.formData.relStudents || "Good", reason: "" },
+            relColleagues: typeof data.formData.relColleagues === 'object' ? {
+              ...prev.relColleagues,
+              ...(data.formData.relColleagues || {})
+            } : { rating: data.formData.relColleagues || "Good", reason: "" },
+            relSuperiors: typeof data.formData.relSuperiors === 'object' ? {
+              ...prev.relSuperiors,
+              ...(data.formData.relSuperiors || {})
+            } : { rating: data.formData.relSuperiors || "Good", reason: "" }
+          }));
         }
       } else {
         setExistingAppraisal(null);
@@ -454,7 +473,7 @@ export default function NonTeachingAppraisal() {
                 </div>
                 {existingAppraisal.hodReview?.comments && (
                   <p className="text-xs text-zinc-600 mt-1 italic">
-                    HOD Remarks: "{existingAppraisal.hodReview.comments}"
+                    HOD Remarks: {existingAppraisal.hodReview.comments}
                   </p>
                 )}
               </div>

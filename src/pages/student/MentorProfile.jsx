@@ -139,32 +139,32 @@ export default function MentorProfile() {
   const getRiskDetails = (level) => {
     const lvl = (level || 'green').toLowerCase();
     if (lvl === 'red') {
-      return { 
-        label: 'High Risk Alert', 
-        bg: 'bg-rose-50 border-rose-100 text-rose-700', 
-        badge: 'bg-rose-500 text-white', 
-        bar: 'bg-rose-500', 
-        desc: 'Requires immediate academic/personal attention and counseling support.', 
-        icon: AlertTriangle 
+      return {
+        label: 'High Risk Alert',
+        bg: 'bg-rose-50 border-rose-100 text-rose-700',
+        badge: 'bg-rose-500 text-white',
+        bar: 'bg-rose-500',
+        desc: 'Requires immediate academic/personal attention and counseling support.',
+        icon: AlertTriangle
       };
     }
     if (lvl === 'yellow') {
-      return { 
-        label: 'Moderate Risk Warning', 
-        bg: 'bg-amber-50 border-amber-100 text-amber-700', 
-        badge: 'bg-amber-500 text-white', 
-        bar: 'bg-amber-500', 
-        desc: 'Identified minor concerns. Action plan advised to maintain optimal progress.', 
-        icon: Shield 
+      return {
+        label: 'Moderate Risk Warning',
+        bg: 'bg-amber-50 border-amber-100 text-amber-700',
+        badge: 'bg-amber-500 text-white',
+        bar: 'bg-amber-500',
+        desc: 'Identified minor concerns. Action plan advised to maintain optimal progress.',
+        icon: Shield
       };
     }
-    return { 
-      label: 'Safe (Low Risk)', 
-      bg: 'bg-emerald-50 border-emerald-100 text-emerald-700', 
-      badge: 'bg-emerald-500 text-white', 
-      bar: 'bg-emerald-500', 
-      desc: 'Performing consistently and keeping pace with expectations. Good job!', 
-      icon: ShieldCheck 
+    return {
+      label: 'Safe (Low Risk)',
+      bg: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+      badge: 'bg-emerald-500 text-white',
+      bar: 'bg-emerald-500',
+      desc: 'Performing consistently and keeping pace with expectations. Good job!',
+      icon: ShieldCheck
     };
   };
 
@@ -194,12 +194,12 @@ export default function MentorProfile() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 md:px-8 py-6 space-y-8 font-sans">
-      
+
       {/* ═══ Mentor Info Banner Card ═══ */}
       <div className="relative overflow-hidden bg-gradient-to-tr from-[#120c7a] via-[#1a10a0] to-indigo-900 rounded-3xl p-6 md:p-8 text-white shadow-xl shadow-[#120c7a]/15 border border-[#120c7a]/20">
         {/* Glow effect */}
         <div className="absolute right-0 top-0 h-48 w-48 bg-white/5 rounded-full blur-2xl pointer-events-none" />
-        
+
         <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
           <div className="flex flex-col md:flex-row items-center gap-5 text-center md:text-left">
             <div className="w-20 h-20 bg-white/10 rounded-2xl flex items-center justify-center border border-white/20 shrink-0 shadow-lg backdrop-blur-sm">
@@ -208,7 +208,7 @@ export default function MentorProfile() {
             <div className="space-y-1">
               <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-300">Your Allocated Mentor</span>
               <h2 className="text-xl md:text-2xl font-black">{mentor ? mentor.name : 'No Mentor Assigned'}</h2>
-              
+
               <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 pt-1">
                 {mentorDetails?.email && (
                   <span className="inline-flex items-center gap-1 text-xs text-indigo-200 bg-white/5 px-2.5 py-1 rounded-lg">
@@ -231,7 +231,7 @@ export default function MentorProfile() {
           {mentor && (mentorDetails?.email || mentorDetails?.mobile) && (
             <div className="flex items-center gap-3 w-full md:w-auto">
               {mentorDetails?.email && (
-                <a 
+                <a
                   href={`mailto:${mentorDetails.email}`}
                   className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 bg-white text-[#120c7a] font-bold text-xs rounded-xl shadow-lg hover:bg-slate-50 transition-all"
                 >
@@ -240,7 +240,7 @@ export default function MentorProfile() {
                 </a>
               )}
               {mentorDetails?.mobile && (
-                <a 
+                <a
                   href={`tel:${mentorDetails.mobile}`}
                   className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/10 text-white font-bold text-xs rounded-xl hover:bg-white/15 transition-all border border-white/10"
                 >
@@ -255,14 +255,14 @@ export default function MentorProfile() {
 
       {/* ═══ Risk & Growth Index Dashboard Grid ═══ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
+
         {/* Risk Status Card */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8 flex flex-col justify-between">
           <div className="space-y-4">
             <h3 className="font-extrabold text-sm text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
               <HeartPulse className="h-4 w-4 text-[#120c7a]" /> Risk Assessment Status
             </h3>
-            
+
             {riskIndex ? (
               (() => {
                 const detail = getRiskDetails(riskIndex.riskLevel);
@@ -316,7 +316,7 @@ export default function MentorProfile() {
           <h3 className="font-extrabold text-sm text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
             <TrendingUp className="h-4 w-4 text-[#120c7a]" /> Student Growth Index (SGI)
           </h3>
-          
+
           {sgiData ? (
             <div className="space-y-6">
               <div className="flex items-center gap-4 bg-indigo-50/50 border border-indigo-100/50 rounded-2xl p-4">
@@ -344,9 +344,9 @@ export default function MentorProfile() {
                         <span className="font-bold text-slate-800">{val} / 100</span>
                       </div>
                       <div className="bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                        <div 
-                          className="h-full bg-gradient-to-r from-[#120c7a] to-violet-500 rounded-full" 
-                          style={{ width: `${Math.min(val, 100)}%` }} 
+                        <div
+                          className="h-full bg-gradient-to-r from-[#120c7a] to-violet-500 rounded-full"
+                          style={{ width: `${Math.min(val, 100)}%` }}
                         />
                       </div>
                     </div>
@@ -372,30 +372,29 @@ export default function MentorProfile() {
 
       {/* ═══ Meetings & Observations Timeline Row ═══ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
+
         {/* Recent Meetings */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-8">
           <h3 className="font-extrabold text-sm text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-6">
             <Calendar className="h-4 w-4 text-[#120c7a]" /> Recent Mentoring Sessions
           </h3>
-          
+
           {meetings.length > 0 ? (
             <div className="relative border-l-2 border-indigo-50 ml-3.5 pl-5 space-y-6">
               {meetings.slice(0, 5).map((m) => {
                 const isCompleted = m.status === 'completed';
                 const isCancelled = m.status === 'cancelled';
-                
+
                 return (
                   <div key={m.id} className="relative space-y-1.5">
                     {/* Bullet marker */}
-                    <div className={`absolute -left-[29px] top-1 h-4.5 w-4.5 rounded-full border-2 border-white flex items-center justify-center shadow-sm ${
-                      isCompleted ? 'bg-emerald-500' : isCancelled ? 'bg-red-500' : 'bg-blue-500'
-                    }`}>
+                    <div className={`absolute -left-[29px] top-1 h-4.5 w-4.5 rounded-full border-2 border-white flex items-center justify-center shadow-sm ${isCompleted ? 'bg-emerald-500' : isCancelled ? 'bg-red-500' : 'bg-blue-500'
+                      }`}>
                       {isCompleted ? <CheckCircle2 className="h-2.5 w-2.5 text-white" /> :
-                       isCancelled ? <X className="h-2.5 w-2.5 text-white" /> :
-                       <Clock className="h-2.5 w-2.5 text-white" />}
+                        isCancelled ? <X className="h-2.5 w-2.5 text-white" /> :
+                          <Clock className="h-2.5 w-2.5 text-white" />}
                     </div>
-                    
+
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                       <h4 className="font-bold text-sm text-slate-800">{m.topic || m.type || 'General Discussion'}</h4>
                       <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full w-fit">
@@ -434,16 +433,15 @@ export default function MentorProfile() {
           <h3 className="font-extrabold text-sm text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-6">
             <AlertTriangle className="h-4 w-4 text-[#120c7a]" /> Mentor Observations Log
           </h3>
-          
+
           {observations.length > 0 ? (
             <div className="relative border-l-2 border-indigo-50 ml-3 pl-5 space-y-6">
               {observations.slice(0, 5).map((o) => (
                 <div key={o.id} className="relative space-y-2">
                   {/* Bullet marker */}
-                  <div className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full border-2 border-white shadow-sm ${
-                    o.severity === 'red' ? 'bg-red-500' : o.severity === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'
-                  }`} />
-                  
+                  <div className={`absolute -left-[27px] top-1.5 h-3 w-3 rounded-full border-2 border-white shadow-sm ${o.severity === 'red' ? 'bg-red-500' : o.severity === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`} />
+
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-slate-800 capitalize">{o.category || 'Observation'}</span>

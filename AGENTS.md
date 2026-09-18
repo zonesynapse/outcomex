@@ -1,5 +1,47 @@
 ## Summary of Changes
 
+### 445. Removal of Unwanted Double Quotes Around Form Remarks & Answers (`AppraisalReviews.jsx`, `hr-portal/src/pages/AppraisalReviews.jsx`, `NonTeachingAppraisal.jsx`)
+- **Goal**: Remove unwanted literal double quotes (`"..."`) appearing before/around form remarks, outcome texts, target descriptions, and reviewer comments in appraisal review modals and form views.
+- **Fix**:
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) & [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx):
+    - Removed quote wrapping from JSX expressions across KRA II, KRA III, KRA V sub-parameter remarks (`sub.remarks`, `k5.resultRemarks`, `k5.onlineCourse.remarks`, `k5.publication.remarks`).
+    - Removed quote wrapping from HOD Portfolio Answers (`resultImprovementHOD`, `deptAdministrationHOD`, `otherRolesContribution`).
+    - Removed quote wrapping from relation reasons (`relationStudents`, `relationColleagues`, `relationSuperiors`, `relationDepartment`), semester target statements (`targetsNextSemester`, `targetsStrategy`), and HOD review comments.
+  - In [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx) & [`hr-portal/src/pages/NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/NonTeachingAppraisal.jsx):
+    - Removed quote wrapping around HOD Remarks.
+- **Result**: Form text and remarks render cleanly without artificial leading or trailing double quotes. Both root and HR-portal builds pass cleanly.
+
+### 444. Full Fidelity HOD Appraisal KRA 1-5 Parameter Rendering (`AppraisalReviews.jsx`, `hr-portal/src/pages/AppraisalReviews.jsx`)
+- **Goal**: Fix issue where HOD Appraisal details entered in [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx) were not displaying properly in [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) review modal due to placeholder mapping.
+- **Fix**:
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) & [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx):
+    - Replaced generic `.map` placeholder with custom sub-parameter rendering engines matching `HODAppraisal.jsx`:
+      - **KRA I (Academic Improvement)**: Target Tier (`65_above` to `below_20`), Pass % achieved, remarks & proof file link.
+      - **KRA II (Student Centric Activities)**: All 5 sub-parameters (Co-curricular, IPKT, Guest lectures, Value added, Soft skills) with Achieved/Not Achieved status badge, remarks & proof file links.
+      - **KRA III (Faculty Enrichment Efforts)**: All 4 sub-parameters (Funding proposals, Testing/Consultancy, Online courses, Publications) with Target Met tier badge, remarks & proof file links.
+      - **KRA IV (Significant Contributions)**: Array of contributions with title, description & proof file links.
+      - **KRA V (Academic Excellence & Self Development)**: Pass result target tier, Online course completion, Research paper publication with status badges, remarks & proof file links.
+- **Result**: Every single parameter, self-score, remark, and proof attachment entered in `HODAppraisal.jsx` now renders with 100% fidelity in `AppraisalReviews.jsx`. Both builds pass cleanly in 2.41s and 6.52s.
+
+### 443. Dynamic Form Type Specific Views in Review Modal (`AppraisalReviews.jsx`, `hr-portal/src/pages/AppraisalReviews.jsx`)
+- **Goal**: Fix issue where clicking the "Review" button in [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) displayed the hardcoded Faculty Appraisal sub-tabs for all appraisal requests regardless of whether the submitted request was an HOD Appraisal, Non-Teaching Appraisal, or Faculty Appraisal.
+- **Fix**:
+  - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) & [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx):
+    - Added form type pill badge in modal header (`HOD Appraisal`, `Non-Teaching Appraisal`, `Faculty Appraisal`).
+    - Dynamically populated `currentSubTabs` based on `selectedAppraisal.formType`:
+      - **HOD Appraisal**: Profile & Info, KRA Performance (1-5), Scores & Declaration.
+      - **Non-Teaching Appraisal**: Staff Profile & Experience, Roles & Leaves, Work Habits & Grievances, IIY & Admissions.
+      - **Faculty Appraisal**: Standard 7 Faculty Appraisal Sub-Tabs.
+    - Added dedicated tab rendering engines for HOD KRA ratings & evidence links, and Non-Teaching staff profile, punctuality, leaves breakdown, IIY courses, and admission contributions.
+- **Result**: Clicking "Review" on any appraisal request now opens the exact form layout filled by that staff member. Both builds pass cleanly.
+
+### 442. HOD Self-Appraisal Submission Status Update to HOD_Approved (`HODAppraisal.jsx`, `hr-portal/src/pages/HODAppraisal.jsx`)
+- **Goal**: When an HOD submits their self-appraisal form via "Submit to Principal", the appraisal status in Firestore must be set to `"HOD_Approved"` (Forwarded to Principal) so that on `AppraisalReviews.jsx` (and Principal / HR review dashboards) it appears under the **"HOD Approved"** filter tab instead of **"Submitted"**.
+- **Fix**:
+  - In [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx) & [`hr-portal/src/pages/HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/HODAppraisal.jsx):
+    - Updated `handleSave` submit logic payload: `status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft")`.
+- **Result**: Submitting the HOD self-appraisal form updates status to `"HOD_Approved"`, routing it immediately to the **HOD Approved** filter tab on `AppraisalReviews.jsx`. Both builds pass cleanly.
+
 ### 441. Form Table Field Visibility & Glassmorphic Academic Year Badge Styling (`FacultyAppraisal.jsx`, `NonTeachingAppraisal.jsx`, `HODAppraisal.jsx`)
 - **Goal**:
   1. Fix table columns (e.g. `Exam Date`) continuing to render when marked `visible: false` (Hidden) in Form Builder.

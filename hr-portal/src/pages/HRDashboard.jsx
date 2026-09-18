@@ -4,7 +4,7 @@ import { db, auth } from "../firebase";
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { 
   FileText, CheckCircle2, Settings2, Award, Clock, 
-  Users, ArrowUpRight, ShieldCheck, Sparkles, Building2, AlertCircle 
+  Users, ArrowUpRight, ShieldCheck, Sparkles, Building2, AlertCircle, GraduationCap 
 } from "lucide-react";
 
 export default function HRDashboard() {
@@ -12,6 +12,7 @@ export default function HRDashboard() {
   const [userProfile, setUserProfile] = useState(null);
   const [stats, setStats] = useState({
     facultyCount: 0,
+    teacherCount: 0,
     nonTeachingCount: 0,
     hodCount: 0,
     pendingReviews: 0,
@@ -45,18 +46,21 @@ export default function HRDashboard() {
     const fetchCounts = async () => {
       try {
         const facSnap = await getDocs(collection(db, "faculty_appraisals"));
+        const teacherSnap = await getDocs(collection(db, "teacher_appraisals"));
         const ntSnap = await getDocs(collection(db, "non_teaching_appraisals"));
         const hodSnap = await getDocs(collection(db, "hod_appraisals"));
 
         const facPending = facSnap.docs.filter(d => d.data().status === "Submitted").length;
+        const teacherPending = teacherSnap.docs.filter(d => d.data().status === "Submitted").length;
         const ntPending = ntSnap.docs.filter(d => d.data().status === "Submitted").length;
         const hodPending = hodSnap.docs.filter(d => d.data().status === "Submitted").length;
 
         setStats({
           facultyCount: facSnap.size,
+          teacherCount: teacherSnap.size,
           nonTeachingCount: ntSnap.size,
           hodCount: hodSnap.size,
-          pendingReviews: facPending + ntPending + hodPending
+          pendingReviews: facPending + teacherPending + ntPending + hodPending
         });
       } catch (e) {
         console.error("Error fetching stats:", e);
@@ -77,6 +81,16 @@ export default function HRDashboard() {
       countLabel: "Submissions",
       color: "from-blue-600 to-indigo-600",
       accent: "text-blue-400"
+    },
+    {
+      title: "Teacher Appraisal Request",
+      desc: "Self-Appraisal Form for Teaching Staff (CKSPE) covering workload, quarterly results, IIY & growth.",
+      path: "/teacher-appraisal",
+      icon: GraduationCap,
+      count: stats.teacherCount,
+      countLabel: "Submissions",
+      color: "from-cyan-600 to-blue-700",
+      accent: "text-cyan-400"
     },
     {
       title: "Non-Teaching Appraisal Request",
@@ -100,13 +114,13 @@ export default function HRDashboard() {
     },
     {
       title: "Appraisal Reviews & Approvals",
-      desc: "Review submitted faculty & non-teaching appraisal requests with live criteria score evaluation.",
+      desc: "Review submitted faculty, teacher & non-teaching appraisal requests with live criteria score evaluation.",
       path: "/reviews",
       icon: CheckCircle2,
       count: stats.pendingReviews,
       countLabel: "Pending Reviews",
       color: "from-amber-600 to-orange-600",
-      accent: "text-indigo-600mber-400"
+      accent: "text-amber-400"
     }
   ];
 

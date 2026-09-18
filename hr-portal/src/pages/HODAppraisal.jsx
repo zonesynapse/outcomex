@@ -92,11 +92,11 @@ export default function HODAppraisal() {
         if (snap.exists()) {
           const uData = snap.data();
           setUserProfile(uData);
-          setHodName(uData.displayName || uData.facultyName || uData.name || "");
-          setDepartment(uData.department || "");
-          setDoj(uData.dateOfJoining || uData.dojCollege || "");
-          setDesignation(uData.designation || "Head of the Department");
-          setQualification(uData.academicQualification || uData.qualification || "");
+          setHodName((prev) => prev || uData.displayName || uData.facultyName || uData.name || "");
+          setDepartment((prev) => prev || uData.department || "");
+          setDoj((prev) => prev || uData.dateOfJoining || uData.dojCollege || "");
+          setDesignation((prev) => prev || uData.designation || "Head of the Department");
+          setQualification((prev) => prev || uData.academicQualification || uData.qualification || "");
         }
       }
       setLoading(false);
@@ -136,11 +136,11 @@ export default function HODAppraisal() {
         setExistingAppraisal(data);
         if (data.formData) {
           const f = data.formData;
-          setHodName(f.hodName || "");
-          setDepartment(f.department || "");
-          setDoj(f.doj || "");
-          setDesignation(f.designation || "Head of the Department");
-          setQualification(f.qualification || "");
+          if (f.hodName) setHodName(f.hodName);
+          if (f.department) setDepartment(f.department);
+          if (f.doj) setDoj(f.doj);
+          if (f.designation) setDesignation(f.designation);
+          if (f.qualification) setQualification(f.qualification);
 
           if (f.kra1) {
             setKra1PassPct(f.kra1.passPct || "");
@@ -149,16 +149,44 @@ export default function HODAppraisal() {
             setKra1Proof(f.kra1.proof || { fileUrl: "", fileName: "" });
           }
 
-          if (f.kra2) setKra2Parameters(f.kra2);
-          if (f.kra3) setKra3Parameters(f.kra3);
-          if (f.kra4 && Array.isArray(f.kra4)) setKra4Contributions(f.kra4);
+          if (f.kra2) {
+            setKra2Parameters((prev) => {
+              const merged = { ...prev };
+              Object.keys(prev).forEach((key) => {
+                if (f.kra2[key]) {
+                  merged[key] = { ...prev[key], ...f.kra2[key] };
+                }
+              });
+              return merged;
+            });
+          }
+
+          if (f.kra3) {
+            setKra3Parameters((prev) => {
+              const merged = { ...prev };
+              Object.keys(prev).forEach((key) => {
+                if (f.kra3[key]) {
+                  merged[key] = { ...prev[key], ...f.kra3[key] };
+                }
+              });
+              return merged;
+            });
+          }
+
+          if (f.kra4 && Array.isArray(f.kra4) && f.kra4.length > 0) {
+            setKra4Contributions(f.kra4);
+          }
 
           if (f.kra5) {
             setKra5ResultTier(f.kra5.resultTier || "");
             setKra5ResultRemarks(f.kra5.resultRemarks || "");
             setKra5ResultProof(f.kra5.resultProof || { fileUrl: "", fileName: "" });
-            if (f.kra5.onlineCourse) setKra5OnlineCourse(f.kra5.onlineCourse);
-            if (f.kra5.publication) setKra5Publication(f.kra5.publication);
+            if (f.kra5.onlineCourse) {
+              setKra5OnlineCourse((prev) => ({ ...prev, ...f.kra5.onlineCourse }));
+            }
+            if (f.kra5.publication) {
+              setKra5Publication((prev) => ({ ...prev, ...f.kra5.publication }));
+            }
           }
           setDeclaration(data.declaration || false);
         }
@@ -290,7 +318,7 @@ export default function HODAppraisal() {
       qualification,
       academicYear,
       formType: "hod",
-      status: isSubmit ? "Submitted" : (existingAppraisal?.status || "Draft"),
+      status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
       totalScore,
       kraScores: {
         kra1: kra1Score,

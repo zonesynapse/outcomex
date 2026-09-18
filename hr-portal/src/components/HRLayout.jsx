@@ -6,7 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { 
   FileText, CheckCircle2, Settings2, LayoutDashboard, 
   User, LogOut, Menu, X, ChevronRight, Building2, 
-  ShieldCheck, Award, Bell
+  ShieldCheck, Award, Bell, GraduationCap
 } from "lucide-react";
 
 export default function HRLayout({ children }) {
@@ -79,9 +79,9 @@ export default function HRLayout({ children }) {
       { id: "appraisal-settings", label: "Appraisal Settings", path: "/settings", icon: Settings2 }
     ];
   } else {
-    // Default: Staff / Non-Teaching
+    // Default: Staff / Non-Teaching / Teacher
     navItems = [
-      { id: "faculty-appraisal", label: "Faculty Appraisal Request", path: "/appraisal", icon: FileText },
+      { id: "teacher-appraisal", label: "Teacher Appraisal Request", path: "/teacher-appraisal", icon: GraduationCap },
       { id: "non-teaching-appraisal", label: "Non-Teaching Appraisal Request", path: "/non-teaching-appraisal", icon: FileText }
     ];
   }

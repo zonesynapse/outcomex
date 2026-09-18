@@ -1,17 +1,15 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { db, auth } from "../firebase";
 import {
   doc,
   getDoc,
   setDoc,
-  collection,
-  onSnapshot,
-  query,
-  where
+  onSnapshot
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import HRLayout from "../components/HRLayout";
-import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
+import { checkAppraisalPortalStatus } from "../utils/appraisalScore";
+import { uploadFile, userStoragePath } from "../utils/fileUpload";
 import {
   FileText,
   Save,
@@ -30,7 +28,11 @@ import {
   Briefcase,
   HelpCircle,
   ChevronRight,
-  Loader2
+  Loader2,
+  Paperclip,
+  Check,
+  FileCheck,
+  Users
 } from "lucide-react";
 
 export default function NonTeachingAppraisal() {
@@ -43,37 +45,38 @@ export default function NonTeachingAppraisal() {
   const [isPortalOpen, setIsPortalOpen] = useState(true);
   const [checkingSchedule, setCheckingSchedule] = useState(true);
   const [existingAppraisal, setExistingAppraisal] = useState(null);
+  const [activeTab, setActiveTab] = useState(1);
+  const [uploadingRoleDoc, setUploadingRoleDoc] = useState(false);
 
   // Academic Year State
   const [academicYear, setAcademicYear] = useState("2024-2025");
 
-  // Form State
-  const [formData, setFormData] = useState({
-    // Staff Info (Q1-Q6)
+  // Initial Form Data strictly matching CKSPE Self-Appraisal Form for Staff Members (Images 1 & 2)
+  const initialFormData = {
+    // 1. Staff Profile & Experience (Q1-Q6)
     name: "",
     dob: "",
     age: "",
     designation: "",
     department: "",
-    dojCollege: "",
+    dojSchool: "",
     dojPresentPost: "",
     qualification: "",
-    expCKCET: "",
+    expCKSPE: "",
     expOther: "",
-    expIndustrial: "",
 
-    // Roles & Responsibilities (Q7)
+    // Q7. Roles & Responsibilities carried out during AY (Textarea + Attach file)
     rolesResponsibilities: "",
     rolesEvidenceUrl: "",
     rolesEvidenceName: "",
 
-    // Punctuality & Discipline (Q8-Q11)
-    reportScheduledTime: "Yes", // Yes | Most of the time | No
+    // 2. Punctuality & Attendance (Q8-Q11)
+    reportScheduledTime: "Yes.", // Yes. | Most of the time | No
     seekPermissionOutside: "Yes", // Yes | Most of the time | No
     applyLeaveAdvance: "Yes", // Yes | Most of the time | No
     consumeBalanceCL: "No", // Yes | If required | No
 
-    // Leave Details (Q12)
+    // Q12. Details of leave taken during Academic Year (June to May)
     leaveDetails: {
       cl: "0",
       coff: "0",
@@ -83,63 +86,63 @@ export default function NonTeachingAppraisal() {
       odOthers: "0"
     },
 
-    // Grievances & Relationships (Q13-Q19)
-    happyWithGrievances: "Yes", // Yes | No | Not Applicable
-    relStudents: { rating: "Good", reason: "" }, // Good | Fair | Unsatisfactory | Should be improved
+    // 3. Interpersonal Relationships & Work Habits (Q14-Q19)
+    relStudents: { rating: "Good", reason: "" }, // Good | Fair | Unsatisfactory | Should it be improved?
     relColleagues: { rating: "Good", reason: "" },
     relSuperiors: { rating: "Good", reason: "" },
+
     accomplishAssignmentInTime: "Yes", // Yes | With reminder | Depends on my interest
     potentialUtilization: "Properly Utilized", // Over Burdened | Properly Utilized | Under Utilized | Not utilized At all
     selfAssessmentPlacement: "At par", // Above | At par | Below
 
-    // Invest In Yourself & Admissions (Q20-Q22)
-    iiyCourses: [
-      {
-        title: "",
-        startDate: "",
-        endDate: "",
-        weeks: "",
-        platform: "",
-        examDate: "",
-        certificateReceived: "Yes"
-      }
+    // 4. Admissions & Additional Info (Q21-Q22)
+    // Q21. Admissions Contributed to Institutions
+    admissionsInstitutions: [
+      { area: "", count: "" }
     ],
-    iiyOutcome: "",
-    admissionsContributed: [
-      { teamNoArea: "", count: "", teamLeader: "" }
+
+    // Q21b. Admissions Contributed to Vijayadashami
+    admissionsVijayadashami: [
+      { area: "", count: "" }
     ],
+
+    // Q22. Any other relevant information
     otherInfo: "",
 
-    // Certification
+    // Digital Certification & Date
     certified: false,
-    dateSubmitted: new Date().toISOString().split("T")[0],
-    signatureUrl: ""
-  });
-
-  const [toast, setToast] = useState({ show: false, message: "", type: "success" });
-
-  const showToast = (message, type = "success") => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast({ show: false, message: "", type: "success" }), 4000);
+    dateSubmitted: new Date().toISOString().split("T")[0]
   };
 
-  // Auth & Profile Listener
+  const [formData, setFormData] = useState(initialFormData);
+
+  // User Auth Observer
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setCurrentUser(user);
+        const localStr = localStorage.getItem(`user_profile_${user.uid}`);
+        const localProf = localStr ? JSON.parse(localStr) : null;
         try {
-          const userDoc = await getDoc(doc(db, "users", user.uid));
-          if (userDoc.exists()) {
-            const data = userDoc.data();
+          const userSnap = await getDoc(doc(db, "users", user.uid));
+          if (userSnap.exists()) {
+            const data = userSnap.data();
             setUserProfile(data);
             setFormData((prev) => ({
               ...prev,
-              name: data.displayName || data.name || user.displayName || "",
-              designation: data.designation || "Technical / Lab Staff",
-              department: data.department || "",
-              dojCollege: data.doj || "",
-              qualification: data.qualification || ""
+              name: prev.name || data.displayName || data.name || user.displayName || "",
+              designation: prev.designation || data.designation || data.role || "",
+              department: prev.department || data.department || "",
+              dojSchool: prev.dojSchool || data.doj || "",
+              qualification: prev.qualification || data.qualification || ""
+            }));
+          } else if (localProf) {
+            setUserProfile(localProf);
+            setFormData((prev) => ({
+              ...prev,
+              name: prev.name || localProf.name || "",
+              designation: prev.designation || localProf.role || "",
+              department: prev.department || localProf.department || ""
             }));
           }
         } catch (err) {
@@ -147,14 +150,13 @@ export default function NonTeachingAppraisal() {
         }
       } else {
         setCurrentUser(null);
-        setUserProfile(null);
       }
       setLoading(false);
     });
     return () => unsubAuth();
   }, []);
 
-  // Fetch Appraisal Settings & Active Schedule
+  // Fetch Appraisal Schedule & Active Status
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "appraisal_config", "schedule"), (snap) => {
       if (snap.exists()) {
@@ -163,7 +165,6 @@ export default function NonTeachingAppraisal() {
         if (sched.academicYear) {
           setAcademicYear(sched.academicYear);
         }
-
         const { isOpen } = checkAppraisalPortalStatus(sched);
         setIsPortalOpen(isOpen);
       } else {
@@ -174,115 +175,105 @@ export default function NonTeachingAppraisal() {
     return () => unsub();
   }, []);
 
-  // Fetch Existing Appraisal Document for current user & academic year
+  // Fetch Existing Non-Teaching Appraisal Document
   useEffect(() => {
-    if (!currentUser || !academicYear) return;
-    const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_non_teaching`;
-
+    if (!currentUser) return;
+    const docId = `${currentUser.uid}_${academicYear}`;
     const unsub = onSnapshot(doc(db, "non_teaching_appraisals", docId), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setExistingAppraisal(data);
         if (data.formData) {
-          setFormData((prev) => ({ ...prev, ...data.formData }));
+          setFormData((prev) => ({
+            ...initialFormData,
+            ...data.formData,
+            leaveDetails: {
+              ...initialFormData.leaveDetails,
+              ...(data.formData.leaveDetails || {})
+            },
+            admissionsInstitutions: data.formData.admissionsInstitutions?.length
+              ? data.formData.admissionsInstitutions
+              : initialFormData.admissionsInstitutions,
+            admissionsVijayadashami: data.formData.admissionsVijayadashami?.length
+              ? data.formData.admissionsVijayadashami
+              : initialFormData.admissionsVijayadashami
+          }));
         }
-      } else {
-        setExistingAppraisal(null);
       }
     });
     return () => unsub();
   }, [currentUser, academicYear]);
 
-  // Calculate Age automatically from DOB
-  const handleDobChange = (dobVal) => {
-    let calculatedAge = "";
-    if (dobVal) {
-      const birthDate = new Date(dobVal);
-      const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const monthDiff = today.getMonth() - birthDate.getMonth();
-      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-        age--;
+  // Handlers
+  const handleTextChange = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleNestedChange = (parent, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      [parent]: {
+        ...prev[parent],
+        [field]: value
       }
-      calculatedAge = age > 0 ? String(age) : "";
+    }));
+  };
+
+  const handleArrayRowChange = (arrayKey, index, field, value) => {
+    setFormData((prev) => {
+      const list = [...(prev[arrayKey] || [])];
+      list[index] = { ...list[index], [field]: value };
+      return { ...prev, [arrayKey]: list };
+    });
+  };
+
+  const addArrayRow = (arrayKey, defaultObj) => {
+    setFormData((prev) => ({
+      ...prev,
+      [arrayKey]: [...(prev[arrayKey] || []), defaultObj]
+    }));
+  };
+
+  const removeArrayRow = (arrayKey, index) => {
+    setFormData((prev) => {
+      const list = [...(prev[arrayKey] || [])];
+      if (list.length <= 1) return prev;
+      list.splice(index, 1);
+      return { ...prev, [arrayKey]: list };
+    });
+  };
+
+  // Upload Evidence File for Q7 Roles & Responsibilities
+  const handleFileUpload = async (file) => {
+    if (!file || !currentUser) return;
+    setUploadingRoleDoc(true);
+    try {
+      const path = userStoragePath(currentUser.uid, `non_teaching_roles_${academicYear}_${file.name}`);
+      const fileUrl = await uploadFile(file, path);
+      setFormData((prev) => ({
+        ...prev,
+        rolesEvidenceUrl: fileUrl,
+        rolesEvidenceName: file.name
+      }));
+      alert("Roles & Responsibilities document attached successfully!");
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Failed to upload file: " + err.message);
+    } finally {
+      setUploadingRoleDoc(false);
     }
-    setFormData((prev) => ({ ...prev, dob: dobVal, age: calculatedAge }));
   };
 
-  // IIY Table Handlers
-  const addIiyCourse = () => {
-    setFormData((prev) => ({
-      ...prev,
-      iiyCourses: [
-        ...prev.iiyCourses,
-        {
-          title: "",
-          startDate: "",
-          endDate: "",
-          weeks: "",
-          platform: "",
-          examDate: "",
-          certificateReceived: "Yes"
-        }
-      ]
-    }));
-  };
-
-  const removeIiyCourse = (index) => {
-    setFormData((prev) => ({
-      ...prev,
-      iiyCourses: prev.iiyCourses.filter((_, i) => i !== index)
-    }));
-  };
-
-  const updateIiyCourse = (index, field, value) => {
-    setFormData((prev) => {
-      const updated = [...prev.iiyCourses];
-      updated[index] = { ...updated[index], [field]: value };
-      return { ...prev, iiyCourses: updated };
-    });
-  };
-
-  // Admissions Table Handlers
-  const addAdmission = () => {
-    setFormData((prev) => ({
-      ...prev,
-      admissionsContributed: [
-        ...prev.admissionsContributed,
-        { teamNoArea: "", count: "", teamLeader: "" }
-      ]
-    }));
-  };
-
-  const removeAdmission = (index) => {
-    setFormData((prev) => ({
-      ...prev,
-      admissionsContributed: prev.admissionsContributed.filter((_, i) => i !== index)
-    }));
-  };
-
-  const updateAdmission = (index, field, value) => {
-    setFormData((prev) => {
-      const updated = [...prev.admissionsContributed];
-      updated[index] = { ...updated[index], [field]: value };
-      return { ...prev, admissionsContributed: updated };
-    });
-  };
-
-  // Save / Submit Handler
+  // Save / Submit Handlers
   const handleSave = async (isSubmit = false) => {
     if (!currentUser) return;
     if (isSubmit) {
       if (!formData.name || !formData.department) {
-        showToast("Please fill in basic staff details.", "error");
-        return;
-      }
-      if (!formData.rolesResponsibilities.trim()) {
-        showToast("Please detail your Roles & Responsibilities carried out.", "error");
+        alert("Please fill in your Name and Department before submitting.");
         return;
       }
       if (!formData.certified) {
-        showToast("Please check the certification declaration before submitting.", "error");
+        alert("Please confirm the declaration check before submitting.");
         return;
       }
     }
@@ -291,1019 +282,924 @@ export default function NonTeachingAppraisal() {
     else setSaving(true);
 
     try {
-      const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_non_teaching`;
+      const docId = `${currentUser.uid}_${academicYear}`;
       const docRef = doc(db, "non_teaching_appraisals", docId);
 
-      const status = isSubmit ? "Submitted" : existingAppraisal?.status || "Draft";
-
       const payload = {
-        id: docId,
-        uid: currentUser.uid,
-        userEmail: currentUser.email || "",
-        staffName: formData.name || userProfile?.displayName || "",
-        department: formData.department || userProfile?.department || "",
-        designation: formData.designation || "Technical / Lab Staff",
-        academicYear,
+        docId,
         formType: "non_teaching",
-        status,
-        submittedAt: isSubmit ? new Date().toISOString() : existingAppraisal?.submittedAt || null,
-        updatedAt: new Date().toISOString(),
-        formData
+        staffId: currentUser.uid,
+        staffName: formData.name || userProfile?.name || currentUser.email,
+        staffEmail: currentUser.email,
+        department: formData.department || userProfile?.department || "General",
+        academicYear,
+        formData,
+        status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
+        submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
+        updatedAt: new Date().toISOString()
       };
 
       await setDoc(docRef, payload, { merge: true });
-
-      showToast(
-        isSubmit
-          ? "Non-Teaching Appraisal Request Submitted to HOD Successfully!"
-          : "Draft Saved Successfully!",
-        "success"
-      );
-    } catch (err) {
-      console.error("Error saving non-teaching appraisal:", err);
-      showToast("Failed to save appraisal request.", "error");
+      alert(isSubmit ? "Staff Appraisal Form submitted successfully!" : "Progress saved as draft.");
+    } catch (error) {
+      console.error("Save Non-Teaching Appraisal error:", error);
+      alert("Failed to save appraisal: " + error.message);
     } finally {
       setSaving(false);
       setSubmitting(false);
     }
   };
 
-  const isReadOnly =
-    (existingAppraisal?.status === "Submitted" ||
-      existingAppraisal?.status === "HOD_Approved" ||
-      existingAppraisal?.status === "Approved") &&
-    existingAppraisal?.status !== "Returned";
-
   if (loading || checkingSchedule) {
     return (
-      <HRLayout title="Non-Teaching Staff Appraisal Request">
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-          <Loader2 className="animate-spin text-indigo-700" size={40} />
-          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Checking appraisal window schedule...</span>
+      <HRLayout>
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          <Loader2 className="w-10 h-10 text-teal-600 animate-spin mb-4" />
+          <p className="text-sm font-semibold text-slate-600">Loading Staff Appraisal Request Form...</p>
         </div>
       </HRLayout>
     );
   }
 
-  const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
-  if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
-    const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
-    const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
-    return (
-      <HRLayout title="Non-Teaching Staff Appraisal Request">
-        <div className="max-w-xl mx-auto py-16 px-4">
-          <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
-            <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
-              <Calendar size={32} />
-            </div>
+  const status = existingAppraisal?.status || "Draft";
+  const isReadOnly = !isPortalOpen || status === "Approved" || status === "HOD_Approved" || status === "Submitted";
 
-            <div className="space-y-2">
-              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">Appraisal Portal is Closed</h2>
-              <p className="text-zinc-500 text-xs font-medium">
-                The non-teaching staff appraisal request submission portal is currently inactive or has reached its deadline.
+  const tabs = [
+    { id: 1, name: "1. Staff Profile & Experience", icon: User },
+    { id: 2, name: "2. Punctuality & Leaves", icon: Clock },
+    { id: 3, name: "3. Relationships & Work Habits", icon: Users },
+    { id: 4, name: "4. Admissions & Info", icon: Award }
+  ];
+
+  return (
+    <HRLayout>
+      <div className="space-y-6 max-w-6xl mx-auto pb-16">
+        {/* Header Title Banner */}
+        <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-slate-800">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="px-3 py-1 bg-teal-500/20 border border-teal-400/30 text-teal-300 rounded-full text-xs font-bold tracking-wider uppercase">
+                  CK SCHOOL OF PROGRESSIVE EDUCATION (CKSPE)
+                </span>
+                <div className="bg-white/15 backdrop-blur-md border border-white/25 rounded-xl px-3.5 py-1 text-xs font-black text-white flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Academic Session {academicYear}</span>
+                </div>
+              </div>
+
+              <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight font-heading">
+                Self-Appraisal Form for Staff Members
+              </h1>
+              <p className="text-slate-300 text-xs md:text-sm mt-1 max-w-2xl font-medium">
+                To be filled by each staff member. Questions are formulated to assess your views, decision making power, leave records, and institutional support.
               </p>
             </div>
 
-            {appraisalSchedule && (
-              <div className="bg-slate-50 border border-slate-150 p-5 rounded-2xl text-left text-xs space-y-3">
-                <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
-                  <strong className="text-slate-800">
-                    {openMs ? new Date(openMs).toLocaleString() : (appraisalSchedule.openTime || "Not scheduled")}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase">Deadline Time:</span>
-                  <strong className="text-slate-800">
-                    {closeMs ? new Date(closeMs).toLocaleString() : (appraisalSchedule.closeTime || "Not scheduled")}
-                  </strong>
-                </div>
-              </div>
-            )}
+            {/* Status & Actions Pill */}
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
+              <span className={`px-4 py-2 rounded-2xl text-xs font-extrabold uppercase tracking-wider border shadow-sm ${
+                status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
+                status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
+                status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+                "bg-slate-700/50 text-slate-300 border-slate-600/50"
+              }`}>
+                Status: {status.replace("_", " ")}
+              </span>
+
+              {!isReadOnly && (
+                <>
+                  <button
+                    onClick={() => handleSave(false)}
+                    disabled={saving}
+                    className="px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save Draft
+                  </button>
+
+                  <button
+                    onClick={() => handleSave(true)}
+                    disabled={submitting}
+                    className="px-5 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-teal-600/30 cursor-pointer disabled:opacity-50"
+                  >
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Submit to Principal
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      </HRLayout>
-    );
-  }
 
-  return (
-    <HRLayout title="Non-Teaching Staff Appraisal Request">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-
-        {/* Toast Alert */}
-        {toast.show && (
-          <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-5 py-3.5 rounded-xl text-white font-bold shadow-lg animate-slideIn ${toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
-            <CheckCircle2 size={18} />
-            <span>{toast.message}</span>
+        {/* Closed Portal Alert */}
+        {!isPortalOpen && (
+          <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-800 text-xs font-semibold">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
+            <span>The Appraisal Portal submission window is currently closed. Form is displayed in Read-Only mode.</span>
           </div>
         )}
 
-        {/* Top Header Banner */}
-        <div className="bg-gradient-to-tr from-[#120c7a] via-[#1a10a0] to-indigo-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">
-          <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black tracking-widest uppercase w-fit">
-                <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
-              </div>
-              <h1 className="text-lg md:text-xl font-bold font-serif">
-                SELF-APPRAISAL FORM FOR THE STAFF MEMBERS (Non-Teaching / Technical / Lab Staff)
-              </h1>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-indigo-200 whitespace-nowrap">Academic Session:</span>
-              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/15 backdrop-blur-md border border-white/25 rounded-xl text-xs font-black text-white tracking-wide shadow-sm">
-                <Calendar size={13} className="text-amber-400" />
-                <span>{academicYear}</span>
-              </div>
-            </div>
-          </div>
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200 overflow-x-auto gap-2 no-scrollbar bg-white p-2 rounded-2xl shadow-xs border border-slate-200/80">
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const isActive = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? "bg-teal-600 text-white shadow-md shadow-teal-600/20"
+                    : "text-slate-600 hover:text-teal-600 hover:bg-teal-50"
+                }`}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? "text-white" : "text-slate-500"}`} />
+                <span>{t.name}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Status Badge Banner */}
-        {existingAppraisal && (
-          <div className="mb-6 bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
-                  existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
-                }`}>
-                <FileText size={20} />
-              </div>
+        {/* ── TAB 1: STAFF PROFILE & EXPERIENCE (Q1-Q7) ── */}
+        {activeTab === 1 && (
+          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-8 shadow-xs">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
+                <User className="w-5 h-5 text-teal-600" /> 1. Staff Profile & Service Details
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">General personal information and service record.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Submission Status:</span>
-                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                      existingAppraisal.status === 'HOD_Approved' || existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
-                    }`}>
-                    {existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to HR' : existingAppraisal.status}
-                  </span>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">1. Name *</label>
+                <input
+                  type="text"
+                  disabled={isReadOnly}
+                  value={formData.name}
+                  onChange={(e) => handleTextChange("name", e.target.value)}
+                  placeholder="Enter full name"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">2. Date of Birth</label>
+                <input
+                  type="date"
+                  disabled={isReadOnly}
+                  value={formData.dob}
+                  onChange={(e) => handleTextChange("dob", e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Age (Yrs)</label>
+                <input
+                  type="number"
+                  disabled={isReadOnly}
+                  value={formData.age}
+                  onChange={(e) => handleTextChange("age", e.target.value)}
+                  placeholder="e.g. 32"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">3. Designation</label>
+                <input
+                  type="text"
+                  disabled={isReadOnly}
+                  value={formData.designation}
+                  onChange={(e) => handleTextChange("designation", e.target.value)}
+                  placeholder="e.g. Lab Assistant / Office Executive"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Department *</label>
+                <input
+                  type="text"
+                  disabled={isReadOnly}
+                  value={formData.department}
+                  onChange={(e) => handleTextChange("department", e.target.value)}
+                  placeholder="e.g. Administration / Computer Lab"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">4. Date of joining the School</label>
+                <input
+                  type="date"
+                  disabled={isReadOnly}
+                  value={formData.dojSchool}
+                  onChange={(e) => handleTextChange("dojSchool", e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Date of joining the Present Post</label>
+                <input
+                  type="date"
+                  disabled={isReadOnly}
+                  value={formData.dojPresentPost}
+                  onChange={(e) => handleTextChange("dojPresentPost", e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">5. Academic Qualification</label>
+                <input
+                  type="text"
+                  disabled={isReadOnly}
+                  value={formData.qualification}
+                  onChange={(e) => handleTextChange("qualification", e.target.value)}
+                  placeholder="e.g. B.Sc, BCA, Diploma"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                />
+              </div>
+            </div>
+
+            {/* Experience Section */}
+            <div className="pt-6 border-t border-slate-100">
+              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-4">6. Experience Details (in Years)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">a) At CKSPE</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    disabled={isReadOnly}
+                    value={formData.expCKSPE}
+                    onChange={(e) => handleTextChange("expCKSPE", e.target.value)}
+                    placeholder="e.g. 3.5"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                  />
                 </div>
-                {existingAppraisal.hodReview?.comments && (
-                  <p className="text-xs text-zinc-600 mt-1 italic">
-                    HOD Remarks: "{existingAppraisal.hodReview.comments}"
-                  </p>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">b) Other Institutions</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    disabled={isReadOnly}
+                    value={formData.expOther}
+                    onChange={(e) => handleTextChange("expOther", e.target.value)}
+                    placeholder="e.g. 2.0"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Q7: Roles and Responsibilities */}
+            <div className="pt-6 border-t border-slate-100 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  7. Explain the Roles and Responsibilities carried out during the Academic year with details?
+                </label>
+                <span className="text-[11px] text-slate-500 italic">(Attach the Details in a Separate Sheet if required)</span>
+              </div>
+
+              <textarea
+                rows="4"
+                disabled={isReadOnly}
+                value={formData.rolesResponsibilities}
+                onChange={(e) => handleTextChange("rolesResponsibilities", e.target.value)}
+                placeholder="Detail key duties, administrative tasks, lab maintenance, and daily responsibilities..."
+                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+              ></textarea>
+
+              {/* Evidence Attachment */}
+              <div className="flex items-center gap-3 pt-1">
+                {!isReadOnly && (
+                  <label className="px-3.5 py-2 bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer">
+                    {uploadingRoleDoc ? <Loader2 className="w-4 h-4 animate-spin text-teal-600" /> : <Paperclip className="w-4 h-4 text-teal-600" />}
+                    <span>{formData.rolesEvidenceUrl ? "Change Attachment Sheet" : "Attach Separate Sheet / Document"}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                    />
+                  </label>
+                )}
+
+                {formData.rolesEvidenceUrl && (
+                  <a
+                    href={formData.rolesEvidenceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-bold text-teal-700 hover:underline flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200"
+                  >
+                    <FileCheck className="w-4 h-4 text-teal-600" />
+                    <span>Attached: {formData.rolesEvidenceName || "View File"}</span>
+                  </a>
                 )}
               </div>
             </div>
-            {isReadOnly && (
-              <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
-                Submitted form is currently locked for review
-              </span>
-            )}
           </div>
         )}
 
-        {/* ═══ SECTION 1: GENERAL STAFF DETAILS (Q1-Q6) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <User size={18} />
-            </div>
-            <h2 className="text-base font-bold text-zinc-900">1. Staff Details (Questions 1 – 6)</h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">1. Staff Name *</label>
-              <input
-                type="text"
-                disabled={isReadOnly}
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                placeholder="Enter full name"
-              />
+        {/* ── TAB 2: PUNCTUALITY, DISCIPLINE & LEAVES (Q8-Q12) ── */}
+        {activeTab === 2 && (
+          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-10 shadow-xs">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
+                <Clock className="w-5 h-5 text-teal-600" /> 2. Punctuality, Work Habits & Leave Breakdown
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Questions 8 to 12: Reporting time, advance permissions, and leaves availed.</p>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">2. Date of Birth</label>
-              <input
-                type="date"
-                disabled={isReadOnly}
-                value={formData.dob}
-                onChange={(e) => handleDobChange(e.target.value)}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Age</label>
-              <input
-                type="text"
-                readOnly
-                value={formData.age}
-                className="w-full bg-zinc-100 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-bold text-zinc-700 outline-none"
-                placeholder="Auto-calculated"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">3. Designation</label>
-              <input
-                type="text"
-                disabled={isReadOnly}
-                value={formData.designation}
-                onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                placeholder="e.g. Lab Technician / Instructor / Superintendent"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Department *</label>
-              <input
-                type="text"
-                disabled={isReadOnly}
-                value={formData.department}
-                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                placeholder="e.g. CSE / ECE / Mechanical / Office"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">4. Date of Joining College</label>
-              <input
-                type="date"
-                disabled={isReadOnly}
-                value={formData.dojCollege}
-                onChange={(e) => setFormData({ ...formData, dojCollege: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Date of Joining Present Post</label>
-              <input
-                type="date"
-                disabled={isReadOnly}
-                value={formData.dojPresentPost}
-                onChange={(e) => setFormData({ ...formData, dojPresentPost: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">5. Academic Qualification</label>
-              <input
-                type="text"
-                disabled={isReadOnly}
-                value={formData.qualification}
-                onChange={(e) => setFormData({ ...formData, qualification: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                placeholder="e.g. B.Sc. / B.E. / Diploma / M.Sc."
-              />
-            </div>
-          </div>
-
-          {/* Q6: Experience */}
-          <div className="pt-2">
-            <label className="block text-xs font-bold text-zinc-700 mb-2">6. Experience (Years)</label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-50/70 p-4 rounded-2xl border border-zinc-100">
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-500 mb-1">a) At CKCET (Yrs)</label>
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.expCKCET}
-                  onChange={(e) => setFormData({ ...formData, expCKCET: e.target.value })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                  placeholder="e.g. 5"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-500 mb-1">b) Other Institutions (Yrs)</label>
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.expOther}
-                  onChange={(e) => setFormData({ ...formData, expOther: e.target.value })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                  placeholder="e.g. 2"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-zinc-500 mb-1">c) Industrial (Yrs)</label>
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.expIndustrial}
-                  onChange={(e) => setFormData({ ...formData, expIndustrial: e.target.value })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                  placeholder="e.g. 1"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ═══ SECTION 2: ROLES & RESPONSIBILITIES (Q7) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-4">
-          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <Briefcase size={18} />
-            </div>
-            <h2 className="text-base font-bold text-zinc-900">2. Roles & Responsibilities (Question 7)</h2>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-zinc-700 mb-2">
-              7. Explain the Roles and Responsibilities carried out during the Academic Year with details *
-            </label>
-            <textarea
-              rows={4}
-              disabled={isReadOnly}
-              value={formData.rolesResponsibilities}
-              onChange={(e) => setFormData({ ...formData, rolesResponsibilities: e.target.value })}
-              className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              placeholder="Describe your laboratory maintenance, register updates, student practical support, stock verification, and administrative duties..."
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-zinc-600 mb-1.5">Attach Additional Proof / Details Document URL (Optional)</label>
-            <input
-              type="text"
-              disabled={isReadOnly}
-              value={formData.rolesEvidenceUrl}
-              onChange={(e) => setFormData({ ...formData, rolesEvidenceUrl: e.target.value })}
-              className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              placeholder="https://drive.google.com/..."
-            />
-          </div>
-        </div>
-
-        {/* ═══ SECTION 3: PUNCTUALITY, DISCIPLINE & LEAVE DETAILS (Q8-Q12) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <Clock size={18} />
-            </div>
-            <h2 className="text-base font-bold text-zinc-900">3. Punctuality, Discipline & Leave (Questions 8 – 12)</h2>
-          </div>
-
-          <div className="space-y-4">
             {/* Q8 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
-              <span className="text-xs font-bold text-zinc-700">8. Do you report on the scheduled time?</span>
-              <div className="flex items-center gap-4">
-                {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+            <div>
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                8. Do you report on the scheduled time?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-lg">
+                {["Yes.", "Most of the time", "No"].map((opt) => (
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.reportScheduledTime === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q8"
+                      name="reportScheduledTime"
                       disabled={isReadOnly}
                       checked={formData.reportScheduledTime === opt}
-                      onChange={() => setFormData({ ...formData, reportScheduledTime: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("reportScheduledTime", opt)}
+                      className="text-teal-600 focus:ring-teal-500"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             {/* Q9 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
-              <span className="text-xs font-bold text-zinc-700">9. Do you seek permission while attending outside work during working hours?</span>
-              <div className="flex items-center gap-4">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                9. Do you seek permission while attending outside work during working hours?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-lg">
                 {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.seekPermissionOutside === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q9"
+                      name="seekPermissionOutside"
                       disabled={isReadOnly}
                       checked={formData.seekPermissionOutside === opt}
-                      onChange={() => setFormData({ ...formData, seekPermissionOutside: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("seekPermissionOutside", opt)}
+                      className="text-teal-600 focus:ring-teal-500"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             {/* Q10 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
-              <span className="text-xs font-bold text-zinc-700">10. Do you apply for leave in advance?</span>
-              <div className="flex items-center gap-4">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                10. Do you apply for leave in advance?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-lg">
                 {["Yes", "Most of the time", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.applyLeaveAdvance === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q10"
+                      name="applyLeaveAdvance"
                       disabled={isReadOnly}
                       checked={formData.applyLeaveAdvance === opt}
-                      onChange={() => setFormData({ ...formData, applyLeaveAdvance: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("applyLeaveAdvance", opt)}
+                      className="text-teal-600 focus:ring-teal-500"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             {/* Q11 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 gap-3">
-              <span className="text-xs font-bold text-zinc-700">11. Do you consume your balance CL in last month of academic session?</span>
-              <div className="flex items-center gap-4">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                11. Do you consume your balance CL in last month of academic session?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-lg">
                 {["Yes", "If required", "No"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.consumeBalanceCL === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q11"
+                      name="consumeBalanceCL"
                       disabled={isReadOnly}
                       checked={formData.consumeBalanceCL === opt}
-                      onChange={() => setFormData({ ...formData, consumeBalanceCL: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("consumeBalanceCL", opt)}
+                      className="text-teal-600 focus:ring-teal-500"
                     />
-                    {opt}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Q12: Details of leave taken */}
-          <div className="pt-2">
-            <label className="block text-xs font-bold text-zinc-700 mb-3">12. Details of leave taken during the Academic Year (July to June)</label>
-            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
-                    <th colSpan={3} className="p-3 text-center border-r border-zinc-200">No. of Leave availed</th>
-                    <th colSpan={3} className="p-3 text-center">No. of On Duty (OD) availed</th>
-                  </tr>
-                  <tr className="bg-zinc-50 text-zinc-600 font-bold border-b border-zinc-200 text-center">
-                    <th className="p-2.5 border-r border-zinc-200">CL</th>
-                    <th className="p-2.5 border-r border-zinc-200">C-OFF</th>
-                    <th className="p-2.5 border-r border-zinc-200">LLP / LOP</th>
-                    <th className="p-2.5 border-r border-zinc-200">Department</th>
-                    <th className="p-2.5 border-r border-zinc-200">Institution</th>
-                    <th className="p-2.5">Others</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="divide-x divide-zinc-200">
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.cl}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, cl: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.coff}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, coff: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.llp}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, llp: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.odDept}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odDept: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.odInst}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odInst: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="number"
-                        min="0"
-                        disabled={isReadOnly}
-                        value={formData.leaveDetails.odOthers}
-                        onChange={(e) => setFormData({ ...formData, leaveDetails: { ...formData.leaveDetails, odOthers: e.target.value } })}
-                        className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-                      />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {/* ═══ SECTION 4: GRIEVANCES & INTERPERSONAL RELATIONSHIPS (Q13-Q19) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <HelpCircle size={18} />
-            </div>
-            <h2 className="text-base font-bold text-zinc-900">4. Grievances & Relationships (Questions 13 – 19)</h2>
-          </div>
-
-          <div className="space-y-5">
-            {/* Q13 */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-zinc-700">13. Are you happy with the redressal of your grievances?</span>
-              <div className="flex items-center gap-4">
-                {["Yes", "No", "Not Applicable"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="q13"
-                      disabled={isReadOnly}
-                      checked={formData.happyWithGrievances === opt}
-                      onChange={() => setFormData({ ...formData, happyWithGrievances: opt })}
-                      className="accent-indigo-600"
-                    />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            {/* Q14: Relationship with Students */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-zinc-700">14. Relationship with the Students</span>
-                <div className="flex flex-wrap items-center gap-3">
-                  {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+            {/* Q12: Leave Details Table */}
+            <div className="pt-6 border-t border-slate-100">
+              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-4">
+                12. Details of leave taken during the Academic Year (June to May)
+              </h3>
+
+              <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200/80 space-y-6">
+                <div>
+                  <span className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-3">
+                    No. of Leave availed
+                  </span>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">CL (Casual Leave)</label>
                       <input
-                        type="radio"
-                        name="q14"
+                        type="number"
                         disabled={isReadOnly}
-                        checked={formData.relStudents.rating === opt}
-                        onChange={() => setFormData({ ...formData, relStudents: { ...formData.relStudents, rating: opt } })}
-                        className="accent-indigo-600"
+                        value={formData.leaveDetails?.cl || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "cl", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
                       />
-                      {opt}
-                    </label>
-                  ))}
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">C-OFF (Compensatory)</label>
+                      <input
+                        type="number"
+                        disabled={isReadOnly}
+                        value={formData.leaveDetails?.coff || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "coff", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">LLP (Loss of Pay)</label>
+                      <input
+                        type="number"
+                        disabled={isReadOnly}
+                        value={formData.leaveDetails?.llp || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "llp", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-slate-200">
+                  <span className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-3">
+                    No. of On Duty (OD) availed
+                  </span>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">Department OD</label>
+                      <input
+                        type="number"
+                        disabled={isReadOnly}
+                        value={formData.leaveDetails?.odDept || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "odDept", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">Institution OD</label>
+                      <input
+                        type="number"
+                        disabled={isReadOnly}
+                        value={formData.leaveDetails?.odInst || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "odInst", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1 text-center">Others OD</label>
+                      <input
+                        type="number"
+                        disabled={isReadOnly}
+                        value={formData.leaveDetails?.odOthers || "0"}
+                        onChange={(e) => handleNestedChange("leaveDetails", "odOthers", e.target.value)}
+                        placeholder="0"
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-center text-slate-900"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-              {formData.relStudents.rating === "Should be improved" && (
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.relStudents.reason}
-                  onChange={(e) => setFormData({ ...formData, relStudents: { ...formData.relStudents, reason: e.target.value } })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Specify reason for improvement..."
-                />
-              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 3: RELATIONSHIPS, WORK HABITS & UTILIZATION (Q14-Q19) ── */}
+        {activeTab === 3 && (
+          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-10 shadow-xs">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
+                <Users className="w-5 h-5 text-teal-600" /> 3. Interpersonal Relationships & Potential Assessment
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Questions 14 to 19: Ratings with students, colleagues, superiors, and work habit self-assessment.</p>
             </div>
 
-            {/* Q15: Relationship with Colleagues */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-zinc-700">15. Relationship with the Colleagues</span>
-                <div className="flex flex-wrap items-center gap-3">
-                  {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="q15"
-                        disabled={isReadOnly}
-                        checked={formData.relColleagues.rating === opt}
-                        onChange={() => setFormData({ ...formData, relColleagues: { ...formData.relColleagues, rating: opt } })}
-                        className="accent-indigo-600"
-                      />
-                      {opt}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              {formData.relColleagues.rating === "Should be improved" && (
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.relColleagues.reason}
-                  onChange={(e) => setFormData({ ...formData, relColleagues: { ...formData.relColleagues, reason: e.target.value } })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Specify reason for improvement..."
-                />
-              )}
-            </div>
+            {/* Helper for Q14, Q15, Q16 */}
+            {renderRelationField({
+              qNum: "14",
+              title: "Relationship with the Students",
+              stateObj: formData.relStudents,
+              isReadOnly,
+              onChange: (key, val) => handleNestedChange("relStudents", key, val)
+            })}
 
-            {/* Q16: Relationship with Superiors */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-xs font-bold text-zinc-700">16. Relationship with the Superiors</span>
-                <div className="flex flex-wrap items-center gap-3">
-                  {["Good", "Fair", "Unsatisfactory", "Should be improved"].map((opt) => (
-                    <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="q16"
-                        disabled={isReadOnly}
-                        checked={formData.relSuperiors.rating === opt}
-                        onChange={() => setFormData({ ...formData, relSuperiors: { ...formData.relSuperiors, rating: opt } })}
-                        className="accent-indigo-600"
-                      />
-                      {opt}
-                    </label>
-                  ))}
-                </div>
-              </div>
-              {formData.relSuperiors.rating === "Should be improved" && (
-                <input
-                  type="text"
-                  disabled={isReadOnly}
-                  value={formData.relSuperiors.reason}
-                  onChange={(e) => setFormData({ ...formData, relSuperiors: { ...formData.relSuperiors, reason: e.target.value } })}
-                  className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Specify reason for improvement..."
-                />
-              )}
-            </div>
+            {renderRelationField({
+              qNum: "15",
+              title: "Relationship with the Colleagues",
+              stateObj: formData.relColleagues,
+              isReadOnly,
+              onChange: (key, val) => handleNestedChange("relColleagues", key, val)
+            })}
+
+            {renderRelationField({
+              qNum: "16",
+              title: "Relationship with the Superiors",
+              stateObj: formData.relSuperiors,
+              isReadOnly,
+              onChange: (key, val) => handleNestedChange("relSuperiors", key, val)
+            })}
 
             {/* Q17 */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-zinc-700">17. Do you accomplish the given assignment in time?</span>
-              <div className="flex items-center gap-4">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                17. Do you accomplish the given assignment in time?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-xl">
                 {["Yes", "With reminder", "Depends on my interest"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.accomplishAssignmentInTime === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q17"
+                      name="accomplishAssignmentInTime"
                       disabled={isReadOnly}
                       checked={formData.accomplishAssignmentInTime === opt}
-                      onChange={() => setFormData({ ...formData, accomplishAssignmentInTime: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("accomplishAssignmentInTime", opt)}
+                      className="text-teal-600"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             {/* Q18 */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-zinc-700">18. How do you feel about your potential utilization by Department / Institution?</span>
-              <div className="flex flex-wrap items-center gap-3">
-                {["Over Burdened", "Properly Utilized", "Under Utilized", "Not utilized At all"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                18. How do you feel about your potential utilization by the Department / Institution?
+              </label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  "Over Burdened",
+                  "Properly Utilized",
+                  "Under Utilized",
+                  "Not utilized At all"
+                ].map((opt) => (
+                  <label
+                    key={opt}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.potentialUtilization === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q18"
+                      name="potentialUtilization"
                       disabled={isReadOnly}
                       checked={formData.potentialUtilization === opt}
-                      onChange={() => setFormData({ ...formData, potentialUtilization: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("potentialUtilization", opt)}
+                      className="text-teal-600"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             {/* Q19 */}
-            <div className="p-4 bg-zinc-50/70 rounded-2xl border border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-zinc-700">19. From the above assessment, where would you put yourself?</span>
-              <div className="flex items-center gap-4">
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                19. From the above assessment, where would you put yourself?
+              </label>
+              <div className="grid grid-cols-3 gap-4 max-w-lg">
                 {["Above", "At par", "Below"].map((opt) => (
-                  <label key={opt} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer">
+                  <label
+                    key={opt}
+                    className={`flex items-center justify-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      formData.selfAssessmentPlacement === opt
+                        ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="q19"
+                      name="selfAssessmentPlacement"
                       disabled={isReadOnly}
                       checked={formData.selfAssessmentPlacement === opt}
-                      onChange={() => setFormData({ ...formData, selfAssessmentPlacement: opt })}
-                      className="accent-indigo-600"
+                      onChange={() => handleTextChange("selfAssessmentPlacement", opt)}
+                      className="text-teal-600"
                     />
-                    {opt}
+                    <span>{opt}</span>
                   </label>
                 ))}
               </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* ═══ SECTION 5: INVEST IN YOURSELF & ADMISSIONS (Q20-Q22) ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-zinc-100 pb-4">
-            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
-              <Award size={18} />
-            </div>
-            <h2 className="text-base font-bold text-zinc-900">5. Invest In Yourself & Admissions (Questions 20 – 22)</h2>
-          </div>
-
-          {/* Q20: IIY Courses Table */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-zinc-700">
-                20. INVEST IN YOURSELF (IIY) – Details of Online Courses / Training Completed
-              </label>
-              {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={addIiyCourse}
-                  className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all"
-                >
-                  <Plus size={14} /> Add Course
-                </button>
-              )}
+        {/* ── TAB 4: ADMISSIONS & ADDITIONAL INFO (Q21-Q22) ── */}
+        {activeTab === 4 && (
+          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-10 shadow-xs">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
+                <Award className="w-5 h-5 text-teal-600" /> 4. Admissions Contribution & Additional Details
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Questions 21 to 22: Admission counts, Vijayadashami contributions, and general remarks.</p>
             </div>
 
-            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
-                    <th className="p-3 w-12 text-center">#</th>
-                    <th className="p-3">Title of Course</th>
-                    <th className="p-3 w-32">Start Date</th>
-                    <th className="p-3 w-32">End Date</th>
-                    <th className="p-3 w-20 text-center">Weeks</th>
-                    <th className="p-3 w-32">Platform</th>
-                    <th className="p-3 w-32">Exam Date</th>
-                    <th className="p-3 w-28 text-center">Certificate (Y/N)</th>
-                    {!isReadOnly && <th className="p-3 w-12 text-center">Action</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200">
-                  {formData.iiyCourses.map((c, idx) => (
-                    <tr key={idx} className="hover:bg-zinc-50/50">
-                      <td className="p-2 text-center font-bold text-zinc-500">{idx + 1}</td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          disabled={isReadOnly}
-                          value={c.title}
-                          onChange={(e) => updateIiyCourse(idx, "title", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="e.g. NPTEL Lab Safety"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="date"
-                          disabled={isReadOnly}
-                          value={c.startDate}
-                          onChange={(e) => updateIiyCourse(idx, "startDate", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="date"
-                          disabled={isReadOnly}
-                          value={c.endDate}
-                          onChange={(e) => updateIiyCourse(idx, "endDate", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="number"
-                          min="1"
-                          disabled={isReadOnly}
-                          value={c.weeks}
-                          onChange={(e) => updateIiyCourse(idx, "weeks", e.target.value)}
-                          className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="4"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          disabled={isReadOnly}
-                          value={c.platform}
-                          onChange={(e) => updateIiyCourse(idx, "platform", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="e.g. NPTEL / Coursera"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="date"
-                          disabled={isReadOnly}
-                          value={c.examDate}
-                          onChange={(e) => updateIiyCourse(idx, "examDate", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </td>
-                      <td className="p-2 text-center">
-                        <select
-                          disabled={isReadOnly}
-                          value={c.certificateReceived}
-                          onChange={(e) => updateIiyCourse(idx, "certificateReceived", e.target.value)}
-                          className="bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                        >
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
-                        </select>
-                      </td>
-                      {!isReadOnly && (
-                        <td className="p-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => removeIiyCourse(idx)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </td>
-                      )}
+            {/* Q21: Admissions to Institutions */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  21. No of admission contributed to the Institutions for the AY
+                </h3>
+                {!isReadOnly && (
+                  <button
+                    onClick={() => addArrayRow("admissionsInstitutions", { area: "", count: "" })}
+                    className="px-3 py-1 bg-teal-50 text-teal-800 hover:bg-teal-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Row
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
+                    <tr>
+                      <th className="p-3 text-center w-12">Sl.No</th>
+                      <th className="p-3">Area / Region</th>
+                      <th className="p-3 text-center w-48">No of Admission Contributed</th>
+                      {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-semibold">
+                    {formData.admissionsInstitutions.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/50">
+                        <td className="p-2 text-center text-slate-500">{idx + 1}</td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            disabled={isReadOnly}
+                            value={row.area}
+                            onChange={(e) => handleArrayRowChange("admissionsInstitutions", idx, "area", e.target.value)}
+                            placeholder="e.g. Cuddalore / Local Area"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            disabled={isReadOnly}
+                            value={row.count}
+                            onChange={(e) => handleArrayRowChange("admissionsInstitutions", idx, "count", e.target.value)}
+                            placeholder="Count"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center text-teal-800"
+                          />
+                        </td>
+                        {!isReadOnly && (
+                          <td className="p-2 text-center">
+                            <button
+                              onClick={() => removeArrayRow("admissionsInstitutions", idx)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <div className="pt-2">
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Specify the Outcome and Achievements of IIY</label>
+            {/* Q21b: Admissions to Vijayadashami */}
+            <div className="pt-6 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  21b. No of admission contributed to Vijayadashami for the AY
+                </h3>
+                {!isReadOnly && (
+                  <button
+                    onClick={() => addArrayRow("admissionsVijayadashami", { area: "", count: "" })}
+                    className="px-3 py-1 bg-teal-50 text-teal-800 hover:bg-teal-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Row
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
+                    <tr>
+                      <th className="p-3 text-center w-12">Sl.No</th>
+                      <th className="p-3">Area / Region</th>
+                      <th className="p-3 text-center w-48">No of Admission Contributed</th>
+                      {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-semibold">
+                    {formData.admissionsVijayadashami.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/50">
+                        <td className="p-2 text-center text-slate-500">{idx + 1}</td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            disabled={isReadOnly}
+                            value={row.area}
+                            onChange={(e) => handleArrayRowChange("admissionsVijayadashami", idx, "area", e.target.value)}
+                            placeholder="e.g. Nursery / Primary Admissions"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            disabled={isReadOnly}
+                            value={row.count}
+                            onChange={(e) => handleArrayRowChange("admissionsVijayadashami", idx, "count", e.target.value)}
+                            placeholder="Count"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-black text-center text-teal-800"
+                          />
+                        </td>
+                        {!isReadOnly && (
+                          <td className="p-2 text-center">
+                            <button
+                              onClick={() => removeArrayRow("admissionsVijayadashami", idx)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Q22 */}
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                22. Any other relevant information not covered above.
+              </label>
               <textarea
-                rows={2}
+                rows="4"
                 disabled={isReadOnly}
-                value={formData.iiyOutcome}
-                onChange={(e) => setFormData({ ...formData, iiyOutcome: e.target.value })}
-                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-3.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="Mention practical skills acquired, certifications earned, or laboratory improvements implemented..."
-              />
+                value={formData.otherInfo}
+                onChange={(e) => handleTextChange("otherInfo", e.target.value)}
+                placeholder="Specify any additional achievements, special efforts, or institutional suggestions..."
+                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+              ></textarea>
             </div>
-          </div>
 
-          {/* Q21: Admissions Table */}
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-zinc-700">
-                21. No of admission contributed to the Institutions for the AY
+            {/* Declaration Checkbox & Dates */}
+            <div className="pt-6 border-t border-slate-200 bg-slate-50/60 p-6 rounded-2xl border border-slate-200/80 space-y-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={isReadOnly}
+                  checked={formData.certified}
+                  onChange={(e) => handleTextChange("certified", e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-teal-600 focus:ring-teal-500 w-4 h-4"
+                />
+                <span className="text-xs font-semibold text-slate-800 leading-relaxed">
+                  I certify that the details given above are correct to the best of my knowledge and belief.
+                </span>
               </label>
-              {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={addAdmission}
-                  className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all"
-                >
-                  <Plus size={14} /> Add Entry
-                </button>
-              )}
-            </div>
 
-            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
-                    <th className="p-3 w-12 text-center">#</th>
-                    <th className="p-3">Team No & Area</th>
-                    <th className="p-3 w-40 text-center">No of Admissions Contributed</th>
-                    <th className="p-3">Name of the Team Leader</th>
-                    {!isReadOnly && <th className="p-3 w-12 text-center">Action</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200">
-                  {formData.admissionsContributed.map((adm, idx) => (
-                    <tr key={idx} className="hover:bg-zinc-50/50">
-                      <td className="p-2 text-center font-bold text-zinc-500">{idx + 1}</td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          disabled={isReadOnly}
-                          value={adm.teamNoArea}
-                          onChange={(e) => updateAdmission(idx, "teamNoArea", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="Team 3 - Cuddalore"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="number"
-                          min="0"
-                          disabled={isReadOnly}
-                          value={adm.count}
-                          onChange={(e) => updateAdmission(idx, "count", e.target.value)}
-                          className="w-full text-center bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="2"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          disabled={isReadOnly}
-                          value={adm.teamLeader}
-                          onChange={(e) => updateAdmission(idx, "teamLeader", e.target.value)}
-                          className="w-full bg-zinc-50 border border-zinc-200 rounded-lg p-2 text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="Prof. Name / HOD"
-                        />
-                      </td>
-                      {!isReadOnly && (
-                        <td className="p-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => removeAdmission(idx)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Q22: Other Info */}
-          <div className="pt-2">
-            <label className="block text-xs font-bold text-zinc-700 mb-1.5">
-              22. Any other relevant information not covered above
-            </label>
-            <textarea
-              rows={3}
-              disabled={isReadOnly}
-              value={formData.otherInfo}
-              onChange={(e) => setFormData({ ...formData, otherInfo: e.target.value })}
-              className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="Any additional responsibilities, achievements, or contributions..."
-            />
-          </div>
-        </div>
-
-        {/* ═══ SECTION 6: DECLARATION & SUBMISSION ═══ */}
-        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-zinc-100 mb-8 space-y-6">
-          <div className="p-5 bg-indigo-50/60 rounded-2xl border border-indigo-100 space-y-3">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                disabled={isReadOnly}
-                checked={formData.certified}
-                onChange={(e) => setFormData({ ...formData, certified: e.target.checked })}
-                className="mt-0.5 w-4 h-4 accent-indigo-600 rounded"
-              />
-              <span className="text-xs font-bold text-indigo-950 leading-relaxed">
-                I certify that the details given above are correct to the best of my knowledge and belief.
-              </span>
-            </label>
-
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 gap-3 text-xs text-zinc-600 font-medium">
-              <div>
-                <span className="font-bold text-zinc-700">Date:</span> {formData.dateSubmitted}
-              </div>
-              <div>
-                <span className="font-bold text-zinc-700">Staff Signature:</span> {formData.name || "Signed Digitally"}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2 text-xs text-slate-600 font-medium">
+                <div>
+                  <span className="font-bold text-slate-800">Date of Declaration: </span>
+                  <input
+                    type="date"
+                    disabled={isReadOnly}
+                    value={formData.dateSubmitted}
+                    onChange={(e) => handleTextChange("dateSubmitted", e.target.value)}
+                    className="ml-2 px-3 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-900"
+                  />
+                </div>
+                <div className="text-right italic font-serif text-slate-700">
+                  Signature of the Staff Member: <span className="font-bold underline">{formData.name || "________________"}</span>
+                </div>
               </div>
             </div>
           </div>
-
-          {/* Buttons */}
-          {!isReadOnly && (
-            <div className="flex flex-col sm:flex-row items-center justify-end gap-4 pt-2">
-              <button
-                type="button"
-                disabled={saving || submitting}
-                onClick={() => handleSave(false)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold rounded-xl transition-all text-sm disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                <span>Save Draft</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={saving || submitting}
-                onClick={() => handleSave(true)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all text-sm disabled:opacity-50"
-              >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                <span>Submit to HOD</span>
-              </button>
-            </div>
-          )}
-        </div>
-
+        )}
       </div>
     </HRLayout>
+  );
+}
+
+// Helper component to render Q14, Q15, Q16 relationship fields
+function renderRelationField({ qNum, title, stateObj = {}, isReadOnly, onChange }) {
+  const options = [
+    "Good",
+    "Fair",
+    "Unsatisfactory",
+    "Should it be improved?"
+  ];
+
+  return (
+    <div className="pt-4 border-t border-slate-100 first:border-0 first:pt-0">
+      <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+        {qNum}. {title}
+      </label>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+        {options.map((opt) => (
+          <label
+            key={opt}
+            className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+              stateObj.rating === opt
+                ? "bg-teal-50 border-teal-300 text-teal-950 shadow-xs"
+                : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            <input
+              type="radio"
+              name={`relation_${qNum}`}
+              disabled={isReadOnly}
+              checked={stateObj.rating === opt}
+              onChange={() => onChange("rating", opt)}
+              className="text-teal-600 focus:ring-teal-500"
+            />
+            <span>{opt}</span>
+          </label>
+        ))}
+      </div>
+
+      {stateObj.rating === "Should it be improved?" && (
+        <textarea
+          rows="2"
+          disabled={isReadOnly}
+          value={stateObj.reason || ""}
+          onChange={(e) => onChange("reason", e.target.value)}
+          placeholder="Specify the reason or feedback for improvement..."
+          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all disabled:opacity-60"
+        ></textarea>
+      )}
+    </div>
   );
 }

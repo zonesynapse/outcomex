@@ -3,8 +3,8 @@ import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import evaluateAppraisal, { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
-import {
-  User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
+import { 
+  User, Calendar, Briefcase, BookOpen, Award, CheckCircle2, 
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
   ChevronLeft, Sparkles, HeartHandshake, Eye, Check, Loader2, RefreshCw, Users, Library,
   UploadCloud, Paperclip, Edit2, X
@@ -63,18 +63,16 @@ export default function FacultyAppraisal() {
     // Subjects & Results (Odd Semester)
     oddTheorySubjects: [{ class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" }],
     oddPracticalSubjects: [{ class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" }],
-
+    
     // Subjects & Results (Even Semester)
     evenTheorySubjects: [{ class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" }],
     evenPracticalSubjects: [{ class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" }],
-
+    
     resultAttribution: "Both", // Yourself, Students, Both, Prevailing Circumstances
     professionalMembership: [{ name: "", type: "Life Member", membershipNo: "" }],
     awardsHonors: [{ awardName: "", organization: "", year: "", level: "Institutional" }],
 
     // Invest In Yourself
-    iiyClasses: [{ topic: "", numClasses: "", dateSharing: "", rating: "" }],
-    iiyOutcome: "",
     onlineCourses: [{ title: "", startDate: "", endDate: "", weeks: "", platform: "", examDate: "", certificateReceived: "Yes" }],
     onlineCoursesOutcome: "",
     researchPapers: [{ title: "", dateMonthYear: "", journal: "", volumeIssue: "", issnIsbn: "", sciScopusUgc: "UGC" }],
@@ -91,7 +89,7 @@ export default function FacultyAppraisal() {
     resultImprovementHOD: "", // HOD only
     deptAdministrationHOD: "", // HOD only
     otherRolesContribution: "",
-    admissionContribution: [{ category: "Institution AY 2024-25", teamNoArea: "", countContributed: "", teamLeaderName: "" }],
+    admissionContribution: [{ teamNoArea: "", countContributed: "", teamLeaderName: "" }],
 
     // Library, Leaves & Grievances
     libraryUsage: "",
@@ -108,20 +106,20 @@ export default function FacultyAppraisal() {
     },
     consumeClLastMonth: "No", // Yes / If required / No
     happyGrievanceMechanism: "Yes", // Yes / No / Not Applicable
-
+    
     // Interpersonal Relations
     relationStudents: { rating: "Good", reason: "" },
     relationColleagues: { rating: "Good", reason: "" },
     relationSuperiors: { rating: "Good", reason: "" },
     relationDepartment: { rating: "Good", reason: "" },
     potentialUtilized: "Properly Utilized", // Over Burdened / Properly Utilized / Under Utilized / Not utilized at all
-
+    
     // Future Targets & Suggestions
     targetsNextSemester: "",
     targetsStrategy: "",
     difficultiesOnCampus: "",
     selfPlacementGrading: "At par", // Above, At par, Below
-
+    
     // Self Analysis
     selfAnalysisStrengths: ["", "", "", ""],
     selfAnalysisWeaknesses: ["", "", "", ""],
@@ -144,7 +142,7 @@ export default function FacultyAppraisal() {
         if (userSnap.exists()) {
           const profile = userSnap.data();
           setUserProfile(profile);
-
+          
           setFormData(prev => ({
             ...prev,
             name: profile.displayName || profile.facultyName || "",
@@ -165,10 +163,10 @@ export default function FacultyAppraisal() {
       if (snap.exists()) {
         const sched = snap.data();
         setAppraisalSchedule(sched);
-
+        
         const { isOpen } = checkAppraisalPortalStatus(sched);
         setIsPortalOpen(isOpen);
-
+        
         if (sched.academicYear) {
           setAcademicYear(sched.academicYear);
         }
@@ -219,26 +217,10 @@ export default function FacultyAppraisal() {
         const data = snap.data();
         setExistingAppraisal(data);
         const savedForm = data.formData || data;
-        setFormData(prev => ({
-          ...prev,
+        setFormData({
           ...savedForm,
-          workloadWeek: {
-            oddTheory: "",
-            oddPractical: "",
-            oddSpecial: "",
-            oddOther: "",
-            oddTotal: "",
-            evenTheory: "",
-            evenPractical: "",
-            evenSpecial: "",
-            evenOther: "",
-            evenTotal: "",
-            ...(savedForm.workloadWeek || {})
-          },
-          iiyClasses: savedForm.iiyClasses || [{ topic: "", numClasses: "", dateSharing: "", rating: "" }],
-          iiyOutcome: savedForm.iiyOutcome || "",
           customFields: savedForm.customFields || {}
-        }));
+        });
       } else {
         setExistingAppraisal(null);
       }
@@ -278,7 +260,7 @@ export default function FacultyAppraisal() {
       const currentRows = Array.isArray(customMap[secId]) && customMap[secId].length > 0
         ? [...customMap[secId]]
         : [{ id: Date.now() }];
-
+      
       currentRows[rIdx] = {
         ...currentRows[rIdx],
         [colId]: value
@@ -346,31 +328,13 @@ export default function FacultyAppraisal() {
   };
 
   const handleNestedInputChange = (parent, field, value) => {
-    setFormData(prev => {
-      const updatedParent = {
+    setFormData(prev => ({
+      ...prev,
+      [parent]: {
         ...prev[parent],
         [field]: value
-      };
-      if (parent === "workloadWeek") {
-        if (field.startsWith("odd")) {
-          const t = parseInt(field === "oddTheory" ? value : updatedParent.oddTheory) || 0;
-          const p = parseInt(field === "oddPractical" ? value : updatedParent.oddPractical) || 0;
-          const s = parseInt(field === "oddSpecial" ? value : updatedParent.oddSpecial) || 0;
-          const o = parseInt(field === "oddOther" ? value : updatedParent.oddOther) || 0;
-          updatedParent.oddTotal = String(t + p + s + o);
-        } else if (field.startsWith("even")) {
-          const t = parseInt(field === "evenTheory" ? value : updatedParent.evenTheory) || 0;
-          const p = parseInt(field === "evenPractical" ? value : updatedParent.evenPractical) || 0;
-          const s = parseInt(field === "evenSpecial" ? value : updatedParent.evenSpecial) || 0;
-          const o = parseInt(field === "evenOther" ? value : updatedParent.evenOther) || 0;
-          updatedParent.evenTotal = String(t + p + s + o);
-        }
       }
-      return {
-        ...prev,
-        [parent]: updatedParent
-      };
-    });
+    }));
   };
 
   const isSectionEvidenceRequired = (secId) => {
@@ -442,19 +406,19 @@ export default function FacultyAppraisal() {
       <td className="border border-zinc-200 p-1.5 text-center min-w-[120px]">
         {row.fileUrl ? (
           <div className="flex items-center justify-center gap-1.5">
-            <a
-              href={row.fileUrl}
-              target="_blank"
-              rel="noreferrer"
+            <a 
+              href={row.fileUrl} 
+              target="_blank" 
+              rel="noreferrer" 
               className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded truncate max-w-[80px]"
               title={row.fileName || "View Proof"}
             >
               Proof
             </a>
             {!isReadOnly && (
-              <button
+              <button 
                 type="button"
-                onClick={() => handleRemoveRowFile(listKey, index)}
+                onClick={() => handleRemoveRowFile(listKey, index)} 
                 className="text-rose-500 hover:text-rose-700"
               >
                 <X size={10} />
@@ -468,18 +432,18 @@ export default function FacultyAppraisal() {
           </div>
         ) : !isReadOnly ? (
           <div className="flex justify-center">
-            <label
-              htmlFor={`file_${listKey}_${index}`}
+            <label 
+              htmlFor={`file_${listKey}_${index}`} 
               className="cursor-pointer text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded uppercase hover:bg-indigo-100 transition-all flex items-center gap-0.5"
             >
               <UploadCloud size={9} />
               <span>Attach</span>
             </label>
-            <input
-              type="file"
-              id={`file_${listKey}_${index}`}
-              className="hidden"
-              onChange={(e) => handleRowFileSelect(e, listKey, index, sectionId)}
+            <input 
+              type="file" 
+              id={`file_${listKey}_${index}`} 
+              className="hidden" 
+              onChange={(e) => handleRowFileSelect(e, listKey, index, sectionId)} 
             />
           </div>
         ) : (
@@ -651,13 +615,13 @@ export default function FacultyAppraisal() {
       principalReview: existingAppraisal?.principalReview || null,
       autoScore: scoreResult
         ? {
-          total: scoreResult.grandTotal,
-          maxTotal: scoreResult.grandMax,
-          part1Total: scoreResult.part1Total,
-          part2Total: scoreResult.part2Total,
-          computedAt: new Date().toISOString(),
-          breakdown: scoreResult,
-        }
+            total: scoreResult.grandTotal,
+            maxTotal: scoreResult.grandMax,
+            part1Total: scoreResult.part1Total,
+            part2Total: scoreResult.part2Total,
+            computedAt: new Date().toISOString(),
+            breakdown: scoreResult,
+          }
         : (existingAppraisal?.autoScore || null),
     };
 
@@ -708,10 +672,10 @@ export default function FacultyAppraisal() {
       "f_memberships_society", "f_memberships_no",
       "f_awards_title", "f_awards_body", "f_awards_year"
     ]);
-
-    return customFieldsConfig.filter(f =>
-      f.parentId === secId &&
-      f.visible !== false &&
+    
+    return customFieldsConfig.filter(f => 
+      f.parentId === secId && 
+      f.visible !== false && 
       !knownBuiltInIds.has(f.id)
     );
   };
@@ -791,7 +755,7 @@ export default function FacultyAppraisal() {
             <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
               <Calendar size={32} />
             </div>
-
+            
             <div className="space-y-2">
               <h2 className="text-xl font-black text-slate-805 uppercase tracking-wide">Appraisal Portal is Closed</h2>
               <p className="text-zinc-500 text-xs font-medium">
@@ -839,18 +803,18 @@ export default function FacultyAppraisal() {
   }
 
   const renderTabCustomFields = (tId) => {
-    const customGridSections = customFieldsConfig.filter(f =>
-      f.tabId === tId &&
-      f.visible !== false &&
+    const customGridSections = customFieldsConfig.filter(f => 
+      f.tabId === tId && 
+      f.visible !== false && 
       (f.type === "section_custom_grid" || f.id.startsWith("sec_custom_"))
     );
 
-    const tabFields = customFieldsConfig.filter(f =>
-      f.tabId === tId &&
-      f.visible !== false &&
-      !f.parentId &&
-      !f.type?.startsWith("section_") &&
-      !f.id.startsWith("sec_") &&
+    const tabFields = customFieldsConfig.filter(f => 
+      f.tabId === tId && 
+      f.visible !== false && 
+      !f.parentId && 
+      !f.type?.startsWith("section_") && 
+      !f.id.startsWith("sec_") && 
       (f.id.startsWith("field_") || (f.id.startsWith("f_") && f.evidenceRequired))
     );
 
@@ -880,10 +844,11 @@ export default function FacultyAppraisal() {
                 </div>
                 <div className="flex items-center gap-2">
                   {sec.evidenceRequired && (
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${sec.evidenceMandatory
-                      ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans"
-                      : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
-                      }`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                      sec.evidenceMandatory 
+                        ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans" 
+                        : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
+                    }`}>
                       {sec.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
                     </span>
                   )}
@@ -1085,10 +1050,11 @@ export default function FacultyAppraisal() {
                     <div className="flex items-center gap-2">
                       <label className="text-xs font-black text-slate-805 uppercase tracking-wider">{field.title}</label>
                       {field.evidenceRequired && (
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${field.evidenceMandatory
-                          ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans"
-                          : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
-                          }`}>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                          field.evidenceMandatory 
+                            ? "bg-red-50 border border-red-150 text-red-700 animate-pulse font-sans" 
+                            : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
+                        }`}>
                           {field.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
                         </span>
                       )}
@@ -1131,9 +1097,9 @@ export default function FacultyAppraisal() {
                         <div>
                           <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
                           {savedEntry.fileUrl ? (
-                            <a
-                              href={savedEntry.fileUrl}
-                              target="_blank"
+                            <a 
+                              href={savedEntry.fileUrl} 
+                              target="_blank" 
                               rel="noreferrer"
                               className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
                             >
@@ -1159,11 +1125,11 @@ export default function FacultyAppraisal() {
                             <label className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-[#120c7a] border border-indigo-150 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5">
                               {isUploading ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />}
                               Upload Evidence
-                              <input
-                                type="file"
-                                onChange={handleFileSelect}
+                              <input 
+                                type="file" 
+                                onChange={handleFileSelect} 
                                 disabled={isUploading}
-                                className="hidden"
+                                className="hidden" 
                               />
                             </label>
                           )}
@@ -1186,7 +1152,7 @@ export default function FacultyAppraisal() {
   return (
     <HRLayout title="Faculty Self Appraisal Form">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-
+        
         {/* Toast Alert */}
         {toast.show && (
           <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-5 py-3.5 rounded-xl text-white font-bold shadow-lg animate-slideIn ${toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
@@ -1206,7 +1172,7 @@ export default function FacultyAppraisal() {
               <h1 className="text-lg md:text-xl font-bold font-serif">Faculty Appraisal Request Form</h1>
               <p className="text-indigo-200 text-xs md:text-sm">Submit your performance evaluation request for the academic session {academicYear}.</p>
             </div>
-
+            
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-indigo-200 whitespace-nowrap">Academic Year:</span>
               <div className="flex items-center gap-2 px-3.5 py-1.5 bg-white/15 backdrop-blur-md border border-white/25 rounded-xl text-xs font-black text-white tracking-wide shadow-sm">
@@ -1221,12 +1187,13 @@ export default function FacultyAppraisal() {
             <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between gap-4 text-xs font-bold w-full">
               <div className="flex items-center gap-4">
                 <span>Status:</span>
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${existingAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  existingAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
                   existingAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" :
-                    existingAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" :
-                      existingAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-300 border border-rose-500/30" :
-                        "bg-zinc-500/20 text-zinc-300 border border-zinc-500/30"
-                  }`}>
+                  existingAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" :
+                  existingAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-300 border border-rose-500/30" :
+                  "bg-zinc-500/20 text-zinc-300 border border-zinc-500/30"
+                }`}>
                   {existingAppraisal.status.replace("_", " ")}
                 </span>
 
@@ -1269,10 +1236,11 @@ export default function FacultyAppraisal() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`pb-4 px-4 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${activeTab === tab.id
-                ? "border-[#120c7a] text-[#120c7a]"
-                : "border-transparent text-zinc-500 hover:text-zinc-700"
-                }`}
+              className={`pb-4 px-4 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${
+                activeTab === tab.id
+                  ? "border-[#120c7a] text-[#120c7a]"
+                  : "border-transparent text-zinc-500 hover:text-zinc-700"
+              }`}
             >
               {tab.name}
             </button>
@@ -1281,14 +1249,14 @@ export default function FacultyAppraisal() {
 
         {/* Form Container */}
         <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 md:p-8 mb-6">
-
+          
           {/* TAB 1: PROFILE & WORKLOAD */}
           {activeTab === 1 && (
             <div className="space-y-6 animate-fadeIn">
               {isSectionVisible("sec_profile_details") && (
                 <div>
                   <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <User size={12} className="text-[#120c7a]" />
+                    <User size={12} className="text-[#120c7a]" /> 
                     {getSectionTitle("sec_profile_details", "1.1 Basic Profile Details")}
                   </div>
                   {getSectionDescription("sec_profile_details") && (
@@ -1365,7 +1333,7 @@ export default function FacultyAppraisal() {
               {isSectionVisible("sec_profile_experience") && (
                 <div className="pt-4 border-t border-zinc-100">
                   <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <Briefcase size={12} className="text-[#120c7a]" />
+                    <Briefcase size={12} className="text-[#120c7a]" /> 
                     {getSectionTitle("sec_profile_experience", "1.2 Teaching & Industrial Experience Details")}
                   </div>
                   {getSectionDescription("sec_profile_experience") && (
@@ -1400,7 +1368,7 @@ export default function FacultyAppraisal() {
               {isSectionVisible("sec_profile_workload") && (
                 <div className="pt-4 border-t border-zinc-100 space-y-4">
                   <div style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <Calendar size={12} className="text-[#120c7a]" />
+                    <Calendar size={12} className="text-[#120c7a]" /> 
                     {getSectionTitle("sec_profile_workload", "1.3 WEEKLY WORKLOAD GRID")}
                   </div>
                   {getSectionDescription("sec_profile_workload") && (
@@ -1512,23 +1480,21 @@ export default function FacultyAppraisal() {
                   {/* SECTION 2.1 HEADER */}
                   <div>
                     <div style={{ fontSize: "12px" }} className="font-extrabold text-slate-800 uppercase tracking-wider mb-2 border-b border-slate-200 pb-2">
-                      {getSectionTitle("sec_subjects_results", "2.1 SUBJECTS HANDLED & PASS PERCENTAGE")}
+                      {getSectionTitle("sec_subjects_results", "2.1 SUBJECTS HANDLED & EXAM PASS TARGETS")}
                     </div>
                     {getSectionDescription("sec_subjects_results") && (
                       <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_subjects_results")}</p>
                     )}
-
+                    
                     {/* ODD SEMESTER */}
-                    {/* <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
+                    <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
                       ODD SEMESTER (Nov/Dec)
-                    </div> */}
-
+                    </div>
+                    
                     {/* Odd Sem Theory Table */}
                     <div className="mb-6">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-black text-zinc-600 underline">
-                          {getSectionTitle("f_subjects_odd_theory_title", "THEORY : Quarterly Examination")}
-                        </span>
+                        <span className="text-xs font-black text-zinc-600 underline">THEORY Subjects</span>
                         {!isReadOnly && (
                           <button
                             onClick={() => addRow("oddTheorySubjects", { class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" })}
@@ -1542,12 +1508,12 @@ export default function FacultyAppraisal() {
                         <table className="w-full border-collapse border border-zinc-200 text-xs">
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
+                              <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
                               {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
-                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
                               {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
                               {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
-                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
                               {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
                               {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
@@ -1557,7 +1523,7 @@ export default function FacultyAppraisal() {
                           <tbody>
                             {formData.oddTheorySubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
-                                <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                                <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                                 {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>}
                                 {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3501 Compiler Design" /></td>}
                                 {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
@@ -1579,9 +1545,7 @@ export default function FacultyAppraisal() {
                     {/* Odd Sem Practical Table */}
                     <div className="mb-6">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-black text-zinc-600 underline">
-                          {getSectionTitle("f_subjects_odd_practical_title", "THEORY: Half Yearly Examination")}
-                        </span>
+                        <span className="text-xs font-black text-zinc-600 underline">PRACTICAL / PROJECT Subjects</span>
                         {!isReadOnly && (
                           <button
                             onClick={() => addRow("oddPracticalSubjects", { class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" })}
@@ -1595,12 +1559,12 @@ export default function FacultyAppraisal() {
                         <table className="w-full border-collapse border border-zinc-200 text-xs">
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
+                              <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
                               {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
-                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
                               {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
                               {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
-                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
                               {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
                               {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
@@ -1610,7 +1574,7 @@ export default function FacultyAppraisal() {
                           <tbody>
                             {formData.oddPracticalSubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
-                                <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                                <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                                 {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("oddPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. III Year CSE" /></td>}
                                 {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("oddPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Compiler Lab" /></td>}
                                 {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("oddPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
@@ -1632,16 +1596,14 @@ export default function FacultyAppraisal() {
 
                   {/* EVEN SEMESTER */}
                   <div>
-                    {/* <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
+                    <div className="text-xs font-black text-indigo-900 bg-indigo-50/60 border border-indigo-100 rounded-lg px-3 py-1.5 mb-4 uppercase tracking-wider">
                       EVEN SEMESTER (April/May)
-                    </div> */}
+                    </div>
 
                     {/* Even Sem Theory Table */}
                     <div className="mb-6">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-black text-zinc-600 underline">
-                          {getSectionTitle("f_subjects_even_theory_title", "THEORY: Annual Examination")}
-                        </span>
+                        <span className="text-xs font-black text-zinc-600 underline">THEORY Subjects</span>
                         {!isReadOnly && (
                           <button
                             onClick={() => addRow("evenTheorySubjects", { class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" })}
@@ -1655,12 +1617,12 @@ export default function FacultyAppraisal() {
                         <table className="w-full border-collapse border border-zinc-200 text-xs">
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
+                              <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
                               {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
-                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
                               {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
                               {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
-                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
                               {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
                               {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
@@ -1670,7 +1632,7 @@ export default function FacultyAppraisal() {
                           <tbody>
                             {formData.evenTheorySubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
-                                <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                                <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                                 {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenTheorySubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>}
                                 {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenTheorySubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. CS3601 Web Tech" /></td>}
                                 {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenTheorySubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
@@ -1692,9 +1654,7 @@ export default function FacultyAppraisal() {
                     {/* Even Sem Practical Table */}
                     <div className="mb-6">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-black text-zinc-600 underline">
-                          {getSectionTitle("f_subjects_even_practical_title", "PRACTICALS – Annual Examination")}
-                        </span>
+                        <span className="text-xs font-black text-zinc-600 underline">PRACTICAL / PROJECT Subjects</span>
                         {!isReadOnly && (
                           <button
                             onClick={() => addRow("evenPracticalSubjects", { class: "", subjectCodeTitle: "", appeared: "", passed: "", resultPercentage: "", feedbackRating: "" })}
@@ -1708,12 +1668,12 @@ export default function FacultyAppraisal() {
                         <table className="w-full border-collapse border border-zinc-200 text-xs">
                           <thead>
                             <tr className="bg-zinc-50 font-bold">
-                              <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
+                              <th className="border border-zinc-200 p-2 text-center w-12">S.No</th>
                               {isSectionVisible("f_subjects_class") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>}
-                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>}
+                              {isSectionVisible("f_subjects_code") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
                               {isSectionVisible("f_subjects_appeared") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
                               {isSectionVisible("f_subjects_passed") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passed", "Passed")}</th>}
-                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>}
+                              {isSectionVisible("f_subjects_passPercent") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_subjects_passPercent", "% Result")}</th>}
                               {isSectionVisible("f_subjects_feedback") && <th className="border border-zinc-200 p-2 text-center w-36">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>}
                               {renderCustomGridHeaders("sec_subjects_results")}
                               {renderRowEvidenceHeader("sec_subjects_results")}
@@ -1723,7 +1683,7 @@ export default function FacultyAppraisal() {
                           <tbody>
                             {formData.evenPracticalSubjects.map((row, i) => (
                               <tr key={i} className="hover:bg-zinc-50/50">
-                                <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                                <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                                 {isSectionVisible("f_subjects_class") && <td className="border border-zinc-200 p-1"><input type="text" value={row.class} onChange={(e) => updateRow("evenPracticalSubjects", i, "class", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. IV Year CSE" /></td>}
                                 {isSectionVisible("f_subjects_code") && <td className="border border-zinc-200 p-1"><input type="text" value={row.subjectCodeTitle} onChange={(e) => updateRow("evenPracticalSubjects", i, "subjectCodeTitle", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs focus:ring-0 focus:outline-none" placeholder="e.g. Web Tech Lab" /></td>}
                                 {isSectionVisible("f_subjects_appeared") && <td className="border border-zinc-200 p-1"><input type="number" value={row.appeared} onChange={(e) => updateRow("evenPracticalSubjects", i, "appeared", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-xs text-center focus:ring-0" placeholder="e.g. 60" /></td>}
@@ -1753,8 +1713,9 @@ export default function FacultyAppraisal() {
                           type="button"
                           disabled={isReadOnly}
                           onClick={() => handleInputChange("resultAttribution", attr)}
-                          className={`px-3 py-2 rounded-xl text-xs font-bold border text-center transition-all ${formData.resultAttribution === attr ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
-                            }`}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold border text-center transition-all ${
+                            formData.resultAttribution === attr ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
+                          }`}
                         >
                           {attr}
                         </button>
@@ -1770,119 +1731,70 @@ export default function FacultyAppraisal() {
           {/* TAB 3: ACADEMIC DEVELOPMENT */}
           {activeTab === 3 && (
             <div className="space-y-8 animate-fadeIn">
-
-              {/* 14. INVEST IN YOURSELF - A) Knowledge Sharing Sessions */}
+              
+              {/* Online Courses */}
               {isSectionVisible("sec_academic_nptel") && (
-                <div className="space-y-6">
-                  <div>
-                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
-                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
-                        14. INVEST IN YOURSELF — A) Details of No. of Classes Handled / Knowledge Sharing Sessions
-                      </span>
-                      {!isReadOnly && (
-                        <button
-                          onClick={() => addRow("iiyClasses", { topic: "", numClasses: "", dateSharing: "", rating: "" })}
-                          className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] rounded font-bold"
-                        >
-                          + Add Session
-                        </button>
-                      )}
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse border border-zinc-200 text-xs">
-                        <thead>
-                          <tr className="bg-zinc-50 font-bold">
-                            <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                            <th className="border border-zinc-200 p-2">Topic</th>
-                            <th className="border border-zinc-200 p-2 text-center w-32">Number of Classes</th>
-                            <th className="border border-zinc-200 p-2 text-center w-48">Date of Knowledge Sharing Sessions</th>
-                            <th className="border border-zinc-200 p-2 text-center w-48">Teachers Rating (1-10) about the session</th>
-                            <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(formData.iiyClasses || []).map((row, i) => (
-                            <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                              <td className="border border-zinc-200 p-1"><input type="text" value={row.topic} onChange={(e) => updateRow("iiyClasses", i, "topic", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" placeholder="e.g. Advanced AI Prompting" /></td>
-                              <td className="border border-zinc-200 p-1"><input type="number" value={row.numClasses} onChange={(e) => updateRow("iiyClasses", i, "numClasses", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0 focus:outline-none" placeholder="e.g. 5" /></td>
-                              <td className="border border-zinc-200 p-1"><input type="text" value={row.dateSharing} onChange={(e) => updateRow("iiyClasses", i, "dateSharing", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0 focus:outline-none" placeholder="e.g. 15-Oct-2024" /></td>
-                              <td className="border border-zinc-200 p-1"><input type="number" min="1" max="10" value={row.rating} onChange={(e) => updateRow("iiyClasses", i, "rating", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center font-bold text-indigo-700 focus:ring-0 focus:outline-none" placeholder="1 - 10" /></td>
-                              <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("iiyClasses", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="mt-3">
-                      <label className="block text-[10px] font-black text-zinc-600 uppercase tracking-wider mb-1 font-serif">* Specify the Outcome and achievements of IIY.</label>
-                      <textarea value={formData.iiyOutcome} onChange={(e) => handleInputChange("iiyOutcome", e.target.value)} disabled={isReadOnly} rows={2} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold" placeholder="Summarize outcomes, skills acquired, and achievements from IIY sessions..." />
-                    </div>
-                  </div>
-
-                  {/* Online Courses */}
-                  <div>
-                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
-                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
-                        {getSectionTitle("sec_academic_nptel", "3.1 Invest in Yourself — Details of Online Courses / NPTEL Completed")}
-                      </span>
-                      {!isReadOnly && (
-                        <button
-                          onClick={() => addRow("onlineCourses", { title: "", startDate: "", endDate: "", weeks: "", platform: "", examDate: "", certificateReceived: "Yes" })}
-                          className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] rounded font-bold"
-                        >
-                          + Add Course
-                        </button>
-                      )}
-                    </div>
-                    {getSectionDescription("sec_academic_nptel") && (
-                      <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_academic_nptel")}</p>
+                <div>
+                  <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                    <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                      {getSectionTitle("sec_academic_nptel", "3.1 Invest in Yourself — A) Details of Online Courses Completed")}
+                    </span>
+                    {!isReadOnly && (
+                      <button
+                        onClick={() => addRow("onlineCourses", { title: "", startDate: "", endDate: "", weeks: "", platform: "", examDate: "", certificateReceived: "Yes" })}
+                        className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] rounded font-bold"
+                      >
+                        + Add Course
+                      </button>
                     )}
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse border border-zinc-200 text-xs">
-                        <thead>
-                          <tr className="bg-zinc-50 font-bold">
-                            <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                            {isSectionVisible("f_nptel_title") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_nptel_title", "Title of the Course")}</th>}
-                            {isSectionVisible("f_nptel_startDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_startDate", "Start Date")}</th>}
-                            {isSectionVisible("f_nptel_endDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_endDate", "End Date")}</th>}
-                            {isSectionVisible("f_nptel_weeks") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_weeks", "Weeks")}</th>}
-                            {isSectionVisible("f_nptel_platform") && <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_nptel_platform", "Platform")}</th>}
-                            {isSectionVisible("f_nptel_examDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_examDate", "Exam Date")}</th>}
-                            {isSectionVisible("f_nptel_certificate") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_certificate", "Certificate?")}</th>}
-                            {renderCustomGridHeaders("sec_academic_nptel")}
-                            {renderRowEvidenceHeader("sec_academic_nptel")}
-                            <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
+                  </div>
+                  {getSectionDescription("sec_academic_nptel") && (
+                    <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_academic_nptel")}</p>
+                  )}
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-zinc-200 text-xs">
+                      <thead>
+                        <tr className="bg-zinc-50 font-bold">
+                          <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
+                          {isSectionVisible("f_nptel_title") && <th className="border border-zinc-200 p-2">{getSectionTitle("f_nptel_title", "Title of the Course")}</th>}
+                          {isSectionVisible("f_nptel_startDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_startDate", "Start Date")}</th>}
+                          {isSectionVisible("f_nptel_endDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_endDate", "End Date")}</th>}
+                          {isSectionVisible("f_nptel_weeks") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_weeks", "Weeks")}</th>}
+                          {isSectionVisible("f_nptel_platform") && <th className="border border-zinc-200 p-2 text-center w-28">{getSectionTitle("f_nptel_platform", "Platform")}</th>}
+                          {isSectionVisible("f_nptel_examDate") && <th className="border border-zinc-200 p-2 text-center w-24">{getSectionTitle("f_nptel_examDate", "Exam Date")}</th>}
+                          {isSectionVisible("f_nptel_certificate") && <th className="border border-zinc-200 p-2 text-center w-20">{getSectionTitle("f_nptel_certificate", "Certificate?")}</th>}
+                          {renderCustomGridHeaders("sec_academic_nptel")}
+                          {renderRowEvidenceHeader("sec_academic_nptel")}
+                          <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formData.onlineCourses.map((row, i) => (
+                          <tr key={i}>
+                            <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
+                            {isSectionVisible("f_nptel_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("onlineCourses", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" /></td>}
+                            {isSectionVisible("f_nptel_startDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.startDate} onChange={(e) => updateRow("onlineCourses", i, "startDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_endDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.endDate} onChange={(e) => updateRow("onlineCourses", i, "endDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_weeks") && <td className="border border-zinc-200 p-1"><input type="number" value={row.weeks} onChange={(e) => updateRow("onlineCourses", i, "weeks", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_platform") && <td className="border border-zinc-200 p-1"><input type="text" value={row.platform} onChange={(e) => updateRow("onlineCourses", i, "platform", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_examDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="e.g. Oct 2024" value={row.examDate} onChange={(e) => updateRow("onlineCourses", i, "examDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
+                            {isSectionVisible("f_nptel_certificate") && <td className="border border-zinc-200 p-1">
+                              <select value={row.certificateReceived} onChange={(e) => updateRow("onlineCourses", i, "certificateReceived", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                              </select>
+                            </td>}
+                            {renderCustomGridCells(row, i, "onlineCourses", "sec_academic_nptel")}
+                            {renderRowEvidenceCell("onlineCourses", row, i, "sec_academic_nptel")}
+                            <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("onlineCourses", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {formData.onlineCourses.map((row, i) => (
-                            <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                              {isSectionVisible("f_nptel_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("onlineCourses", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" /></td>}
-                              {isSectionVisible("f_nptel_startDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.startDate} onChange={(e) => updateRow("onlineCourses", i, "startDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
-                              {isSectionVisible("f_nptel_endDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="DD-MM-YYYY" value={row.endDate} onChange={(e) => updateRow("onlineCourses", i, "endDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
-                              {isSectionVisible("f_nptel_weeks") && <td className="border border-zinc-200 p-1"><input type="number" value={row.weeks} onChange={(e) => updateRow("onlineCourses", i, "weeks", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
-                              {isSectionVisible("f_nptel_platform") && <td className="border border-zinc-200 p-1"><input type="text" value={row.platform} onChange={(e) => updateRow("onlineCourses", i, "platform", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
-                              {isSectionVisible("f_nptel_examDate") && <td className="border border-zinc-200 p-1"><input type="text" placeholder="e.g. Oct 2024" value={row.examDate} onChange={(e) => updateRow("onlineCourses", i, "examDate", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
-                              {isSectionVisible("f_nptel_certificate") && <td className="border border-zinc-200 p-1">
-                                <select value={row.certificateReceived} onChange={(e) => updateRow("onlineCourses", i, "certificateReceived", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
-                                  <option value="Yes">Yes</option>
-                                  <option value="No">No</option>
-                                </select>
-                              </td>}
-                              {renderCustomGridCells(row, i, "onlineCourses", "sec_academic_nptel")}
-                              {renderRowEvidenceCell("onlineCourses", row, i, "sec_academic_nptel")}
-                              <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("onlineCourses", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="mt-3">
-                      <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1 font-serif">* Specify the Outcome and achievements of 13.A</label>
-                      <textarea value={formData.onlineCoursesOutcome} onChange={(e) => handleInputChange("onlineCoursesOutcome", e.target.value)} disabled={isReadOnly} rows={2} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold" placeholder="Summarize what outcome/knowledge was gained from these completed courses..." />
-                    </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1 font-serif">* Specify the Outcome and achievements of 13.A</label>
+                    <textarea value={formData.onlineCoursesOutcome} onChange={(e) => handleInputChange("onlineCoursesOutcome", e.target.value)} disabled={isReadOnly} rows={2} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold" placeholder="Summarize what outcome/knowledge was gained from these completed courses..." />
                   </div>
                 </div>
               )}
@@ -1924,7 +1836,7 @@ export default function FacultyAppraisal() {
                       <tbody>
                         {formData.researchPapers.map((row, i) => (
                           <tr key={i}>
-                            <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                            <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                             {isSectionVisible("f_journals_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("researchPapers", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
                             {isSectionVisible("f_journals_date") && <td className="border border-zinc-200 p-1"><input type="text" value={row.dateMonthYear} onChange={(e) => updateRow("researchPapers", i, "dateMonthYear", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
                             {isSectionVisible("f_journals_journal") && <td className="border border-zinc-200 p-1"><input type="text" value={row.journal} onChange={(e) => updateRow("researchPapers", i, "journal", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
@@ -1985,7 +1897,7 @@ export default function FacultyAppraisal() {
                       <tbody>
                         {formData.workshopsFDPs.map((row, i) => (
                           <tr key={i}>
-                            <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                            <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                             {isSectionVisible("f_fdp_title") && <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("workshopsFDPs", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>}
                             {isSectionVisible("f_fdp_dates") && <td className="border border-zinc-200 p-1"><input type="text" value={row.dates} onChange={(e) => updateRow("workshopsFDPs", i, "dates", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
                             {isSectionVisible("f_fdp_days") && <td className="border border-zinc-200 p-1"><input type="number" value={row.days} onChange={(e) => updateRow("workshopsFDPs", i, "days", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>}
@@ -2021,7 +1933,7 @@ export default function FacultyAppraisal() {
                     />
                     <label htmlFor="improvingQualification" style={{ fontSize: "11px" }} className="font-extrabold text-zinc-700 uppercase tracking-wider">Higher Studies / PhD Upgrade</label>
                   </div>
-
+                  
                   {formData.improvingQualification && (
                     <div>
                       <div className="flex justify-between items-center mb-2">
@@ -2053,7 +1965,7 @@ export default function FacultyAppraisal() {
                           <tbody>
                             {formData.improvingDetails.map((row, i) => (
                               <tr key={i}>
-                                <td className="border border-zinc-200 p-1.5 text-center font-bold">{i + 1}</td>
+                                <td className="border border-zinc-200 p-1.5 text-center font-bold">{i+1}</td>
                                 <td className="border border-zinc-200 p-1"><input type="text" value={row.degreeRegistered} onChange={(e) => updateRow("improvingDetails", i, "degreeRegistered", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. Ph.D" /></td>
                                 <td className="border border-zinc-200 p-1"><input type="text" value={row.specialization} onChange={(e) => updateRow("improvingDetails", i, "specialization", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. AI / ML" /></td>
                                 <td className="border border-zinc-200 p-1"><input type="text" value={row.university} onChange={(e) => updateRow("improvingDetails", i, "university", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. Anna University" /></td>
@@ -2084,7 +1996,7 @@ export default function FacultyAppraisal() {
           {/* TAB 4: INSTITUTIONAL ROLES */}
           {activeTab === 4 && (
             <div className="space-y-8 animate-fadeIn">
-
+              
               {/* Roles Held & Organizing Programs */}
               {isSectionVisible("sec_roles_department") && (
                 <>
@@ -2123,7 +2035,7 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.organizingPrograms.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.title} onChange={(e) => updateRow("organizingPrograms", i, "title", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.period} onChange={(e) => updateRow("organizingPrograms", i, "period", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.resourcePersonDetails} onChange={(e) => updateRow("organizingPrograms", i, "resourcePersonDetails", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
@@ -2169,7 +2081,7 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.fundingProposals.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                               <td className="border border-zinc-200 p-1">
                                 <select value={row.role} onChange={(e) => updateRow("fundingProposals", i, "role", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0">
                                   <option value="PI">PI</option>
@@ -2219,7 +2131,7 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.involvementPlacement.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.description} onChange={(e) => updateRow("involvementPlacement", i, "description", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.role} onChange={(e) => updateRow("involvementPlacement", i, "role", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.outcome} onChange={(e) => updateRow("involvementPlacement", i, "outcome", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
@@ -2266,7 +2178,7 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.accreditationContributions.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.role} onChange={(e) => updateRow("accreditationContributions", i, "role", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.description} onChange={(e) => updateRow("accreditationContributions", i, "description", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.outcome} onChange={(e) => updateRow("accreditationContributions", i, "outcome", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
@@ -2307,7 +2219,7 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.rdContributions.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.role} onChange={(e) => updateRow("rdContributions", i, "role", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.description} onChange={(e) => updateRow("rdContributions", i, "description", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.outcome} onChange={(e) => updateRow("rdContributions", i, "outcome", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" /></td>
@@ -2365,13 +2277,13 @@ export default function FacultyAppraisal() {
                   {/* Admission Contributed */}
                   <div>
                     <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
-                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">15. Details of Admission Contributed to Institution / Vijayadashami (AY 2024-25)</span>
+                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">Number of admissions contributed to the Institutions for AY 2024-25</span>
                       {!isReadOnly && (
                         <button
-                          onClick={() => addRow("admissionContribution", { category: "Institution AY 2024-25", teamNoArea: "", countContributed: "", teamLeaderName: "" })}
+                          onClick={() => addRow("admissionContribution", { teamNoArea: "", countContributed: "", teamLeaderName: "" })}
                           className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] rounded font-bold"
                         >
-                          + Add Admission Entry
+                          + Add Team
                         </button>
                       )}
                     </div>
@@ -2380,9 +2292,8 @@ export default function FacultyAppraisal() {
                         <thead>
                           <tr className="bg-zinc-50 font-bold">
                             <th className="border border-zinc-200 p-2 text-center w-12">Sl.No</th>
-                            <th className="border border-zinc-200 p-2 text-center w-48">Admission Category</th>
-                            <th className="border border-zinc-200 p-2">Area / Team No</th>
-                            <th className="border border-zinc-200 p-2 text-center w-40">No of Admissions Contributed</th>
+                            <th className="border border-zinc-200 p-2">Team No & Area</th>
+                            <th className="border border-zinc-200 p-2 text-center w-40">No of Admissions contributed</th>
                             <th className="border border-zinc-200 p-2">Name of the Team Leader</th>
                             {renderRowEvidenceHeader("sec_roles_department")}
                             <th className="border border-zinc-200 p-2 text-center w-12">Action</th>
@@ -2391,15 +2302,9 @@ export default function FacultyAppraisal() {
                         <tbody>
                           {formData.admissionContribution.map((row, i) => (
                             <tr key={i}>
-                              <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                              <td className="border border-zinc-200 p-1">
-                                <select value={row.category || "Institution AY 2024-25"} onChange={(e) => updateRow("admissionContribution", i, "category", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center font-semibold text-slate-700 focus:ring-0 focus:outline-none bg-white">
-                                  <option value="Institution AY 2024-25">Institution (Regular)</option>
-                                  <option value="Vijayadashami">Vijayadashami</option>
-                                </select>
-                              </td>
-                              <td className="border border-zinc-200 p-1"><input type="text" value={row.teamNoArea} onChange={(e) => updateRow("admissionContribution", i, "teamNoArea", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. Cuddalore / Team 4" /></td>
-                              <td className="border border-zinc-200 p-1"><input type="number" value={row.countContributed} onChange={(e) => updateRow("admissionContribution", i, "countContributed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center font-bold text-indigo-900" placeholder="e.g. 3" /></td>
+                              <td className="border border-zinc-200 p-2 text-center font-bold">{i+1}</td>
+                              <td className="border border-zinc-200 p-1"><input type="text" value={row.teamNoArea} onChange={(e) => updateRow("admissionContribution", i, "teamNoArea", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. Team 4 - Neyveli" /></td>
+                              <td className="border border-zinc-200 p-1"><input type="number" value={row.countContributed} onChange={(e) => updateRow("admissionContribution", i, "countContributed", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center font-bold" placeholder="e.g. 3" /></td>
                               <td className="border border-zinc-200 p-1"><input type="text" value={row.teamLeaderName} onChange={(e) => updateRow("admissionContribution", i, "teamLeaderName", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1" placeholder="e.g. Prof. Kumar S" /></td>
                               {renderRowEvidenceCell("admissionContribution", row, i, "sec_roles_department")}
                               <td className="border border-zinc-200 p-2 text-center"><button onClick={() => removeRow("admissionContribution", i)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button></td>
@@ -2441,7 +2346,7 @@ export default function FacultyAppraisal() {
                           <option value="Annual Member">Annual Member</option>
                         </select>
                         <input type="text" placeholder="No." value={row.membershipNo} onChange={(e) => updateRow("professionalMembership", idx, "membershipNo", e.target.value)} disabled={isReadOnly} className="w-1/4 border-0 p-1 text-xs focus:ring-0 focus:outline-none" />
-
+                        
                         {isSectionEvidenceRequired("sec_professional_memberships") && (
                           <div className="flex-shrink-0 min-w-[80px] flex justify-center">
                             {row.fileUrl ? (
@@ -2463,7 +2368,7 @@ export default function FacultyAppraisal() {
                             )}
                           </div>
                         )}
-
+                        
                         <button onClick={() => removeRow("professionalMembership", idx)} disabled={isReadOnly} className="text-rose-500"><Trash2 size={12} /></button>
                       </div>
                     ))}
@@ -2507,7 +2412,7 @@ export default function FacultyAppraisal() {
                       <tbody>
                         {formData.awardsHonors?.map((row, idx) => (
                           <tr key={idx}>
-                            <td className="border border-zinc-200 p-2 text-center font-bold">{idx + 1}</td>
+                            <td className="border border-zinc-200 p-2 text-center font-bold">{idx+1}</td>
                             <td className="border border-zinc-200 p-1"><input type="text" value={row.awardName} onChange={(e) => updateRow("awardsHonors", idx, "awardName", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" placeholder="e.g. Best Teacher Award" /></td>
                             <td className="border border-zinc-200 p-1"><input type="text" value={row.organization} onChange={(e) => updateRow("awardsHonors", idx, "organization", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 focus:ring-0 focus:outline-none" placeholder="e.g. ISTE Chapter" /></td>
                             <td className="border border-zinc-200 p-1"><input type="text" value={row.year} onChange={(e) => updateRow("awardsHonors", idx, "year", e.target.value)} disabled={isReadOnly} className="w-full border-0 p-1 text-center focus:ring-0 focus:outline-none" placeholder="e.g. 2024" /></td>
@@ -2536,18 +2441,18 @@ export default function FacultyAppraisal() {
           {/* TAB 5: LIBRARY, LEAVES & GRIEVANCES */}
           {activeTab === 5 && (
             <div className="space-y-8 animate-fadeIn">
-
+              
               {/* Library Usage */}
               {isSectionVisible("sec_library_usage") && (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
                   <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block border-b border-zinc-200 pb-1 uppercase tracking-wider flex items-center gap-1.5">
-                    <Library size={12} />
+                    <Library size={12} /> 
                     {getSectionTitle("sec_library_usage", "5.1 Library Books & Journals Referenced")}
                   </span>
                   {getSectionDescription("sec_library_usage") && (
                     <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_library_usage")}</p>
                   )}
-
+                  
                   {isSectionVisible("f_libraryUsage") && (
                     <div>
                       <label className="block text-[10px] font-black text-zinc-500 uppercase mb-1">
@@ -2575,8 +2480,9 @@ export default function FacultyAppraisal() {
                             type="button"
                             disabled={isReadOnly}
                             onClick={() => handleInputChange("libraryPurpose", p)}
-                            className={`px-3 py-2.5 rounded-xl text-xs font-bold border text-center transition-all ${formData.libraryPurpose === p ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
-                              }`}
+                            className={`px-3 py-2.5 rounded-xl text-xs font-bold border text-center transition-all ${
+                              formData.libraryPurpose === p ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
+                            }`}
                           >
                             {p}
                           </button>
@@ -2730,7 +2636,7 @@ export default function FacultyAppraisal() {
           {/* TAB 6: RELATIONS & TARGETS */}
           {activeTab === 6 && (
             <div className="space-y-8 animate-fadeIn">
-
+              
               {/* Relations Rating Table */}
               {isSectionVisible("sec_interpersonal_relations") && (
                 <>
@@ -2758,8 +2664,9 @@ export default function FacultyAppraisal() {
                                 type="button"
                                 disabled={isReadOnly}
                                 onClick={() => handleNestedInputChange("relationStudents", "rating", r)}
-                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${formData.relationStudents.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
-                                  }`}
+                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${
+                                  formData.relationStudents.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
+                                }`}
                               >
                                 {r}
                               </button>
@@ -2787,8 +2694,9 @@ export default function FacultyAppraisal() {
                                 type="button"
                                 disabled={isReadOnly}
                                 onClick={() => handleNestedInputChange("relationColleagues", "rating", r)}
-                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${formData.relationColleagues.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
-                                  }`}
+                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${
+                                  formData.relationColleagues.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
+                                }`}
                               >
                                 {r}
                               </button>
@@ -2816,8 +2724,9 @@ export default function FacultyAppraisal() {
                                 type="button"
                                 disabled={isReadOnly}
                                 onClick={() => handleNestedInputChange("relationSuperiors", "rating", r)}
-                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${formData.relationSuperiors.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
-                                  }`}
+                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${
+                                  formData.relationSuperiors.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
+                                }`}
                               >
                                 {r}
                               </button>
@@ -2845,8 +2754,9 @@ export default function FacultyAppraisal() {
                                 type="button"
                                 disabled={isReadOnly}
                                 onClick={() => handleNestedInputChange("relationDepartment", "rating", r)}
-                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${formData.relationDepartment.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
-                                  }`}
+                                className={`px-2.5 py-1 text-[10px] rounded font-bold border ${
+                                  formData.relationDepartment.rating === r ? "bg-[#120c7a] text-white border-[#120c7a]" : "bg-white border-zinc-200 text-zinc-600"
+                                }`}
                               >
                                 {r}
                               </button>
@@ -2870,8 +2780,9 @@ export default function FacultyAppraisal() {
                           type="button"
                           disabled={isReadOnly}
                           onClick={() => handleInputChange("potentialUtilized", v)}
-                          className={`px-3 py-2.5 rounded-xl text-xs font-bold border text-center transition-all ${formData.potentialUtilized === v ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
-                            }`}
+                          className={`px-3 py-2.5 rounded-xl text-xs font-bold border text-center transition-all ${
+                            formData.potentialUtilized === v ? "bg-[#120c7a] border-[#120c7a] text-white" : "bg-white border-zinc-200 text-zinc-600"
+                          }`}
                         >
                           {v}
                         </button>
@@ -2956,7 +2867,7 @@ export default function FacultyAppraisal() {
                           <input
                             key={idx}
                             type="text"
-                            placeholder={`Strength ${idx + 1}`}
+                            placeholder={`Strength ${idx+1}`}
                             value={str}
                             onChange={(e) => updateListVal("selfAnalysisStrengths", idx, e.target.value)}
                             disabled={isReadOnly}
@@ -2978,7 +2889,7 @@ export default function FacultyAppraisal() {
                           <input
                             key={idx}
                             type="text"
-                            placeholder={`Weakness ${idx + 1}`}
+                            placeholder={`Weakness ${idx+1}`}
                             value={weak}
                             onChange={(e) => updateListVal("selfAnalysisWeaknesses", idx, e.target.value)}
                             disabled={isReadOnly}
@@ -3080,10 +2991,11 @@ export default function FacultyAppraisal() {
                         <div className="flex items-center gap-2">
                           <label className="text-xs font-black text-slate-805 uppercase tracking-wider">{field.title}</label>
                           {field.evidenceRequired && (
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${field.evidenceMandatory
-                              ? "bg-red-55 border border-red-150 text-red-700 animate-pulse font-sans"
-                              : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
-                              }`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                              field.evidenceMandatory 
+                                ? "bg-red-55 border border-red-150 text-red-700 animate-pulse font-sans" 
+                                : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
+                            }`}>
                               {field.evidenceMandatory ? "Mandatory Evidence" : "Evidence Welcome"}
                             </span>
                           )}
@@ -3126,9 +3038,9 @@ export default function FacultyAppraisal() {
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
                               {savedEntry.fileUrl ? (
-                                <a
-                                  href={savedEntry.fileUrl}
-                                  target="_blank"
+                                <a 
+                                  href={savedEntry.fileUrl} 
+                                  target="_blank" 
                                   rel="noreferrer"
                                   className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
                                 >
@@ -3219,11 +3131,11 @@ export default function FacultyAppraisal() {
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 Save Draft
               </button>
-
+              
               <button
                 onClick={() => {
-                  if (confirm(isEditingSubmitted
-                    ? "Are you sure you want to resubmit this self appraisal with your new edits?"
+                  if (confirm(isEditingSubmitted 
+                    ? "Are you sure you want to resubmit this self appraisal with your new edits?" 
                     : "Are you sure you want to finalize and submit this self appraisal? You will not be able to make changes until reviewed."
                   )) {
                     handleSave(true);
