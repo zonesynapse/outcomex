@@ -1,6 +1,31 @@
 ## Summary of Changes
 
-### 445. Removal of Unwanted Double Quotes Around Form Remarks & Answers (`AppraisalReviews.jsx`, `hr-portal/src/pages/AppraisalReviews.jsx`, `NonTeachingAppraisal.jsx`)
+### 447. Dedicated HR Portal User Management Module (`hr-portal/src/pages/UserManagement.jsx`, `HRLayout.jsx`, `App.jsx`)
+- **Goal**: Create a full-featured **User Management** page inside `hr-portal` (matching [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx)) restricted to Principal and HR users.
+- **Fix**:
+  - Created [`hr-portal/src/pages/UserManagement.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/UserManagement.jsx) featuring:
+    - Real-time Firestore sync with `users` collection.
+    - Role management with "+ Add Role" inline creator and live per-user `<select>` role dropdown.
+    - Designation management with "+ Add Designation" modal (incorporating [`useDesignations.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/hooks/useDesignations.js)), inline designation deletion, and per-user live `<select>` designation dropdown.
+    - Full user approval, access revocation modal (with Emp ID confirmation & reason), and pending request rejection modal.
+    - Live search (filtering by name, email, Emp ID, department, designation) and 20-item pagination.
+    - Strict role authorization ensuring only Principal / HR / Admin users can view the page.
+  - Updated [`hr-portal/src/components/HRLayout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/components/HRLayout.jsx) to include a **User Management** navigation link under HR Services for Principal/HR roles.
+  - Registered `/users` and `/user-management` routes in [`hr-portal/src/App.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/App.jsx).
+- **Result**: Principal and HR users can seamlessly manage staff user accounts, roles, designations, approvals, and revocations within the HR Portal. Both root and `hr-portal` builds pass cleanly in 3.50s and 7.65s.
+- **Goal**: Move static designation options (`Assistant Professor`, `Associate Professor`, `Professor`) from the Login/Register page into a dynamic Firestore-backed **Designations Master Management** section in [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx), adding a dedicated **"+ Add Designation"** button matching the "+ Add Role" functionality, and dynamically displaying all active designations in the Register tab's Designation dropdown on [`Auth.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Auth.jsx).
+- **Fix**:
+  - Created [`useDesignations.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/hooks/useDesignations.js) hook that subscribes to Firestore `designations` collection with automatic initial seeding of static defaults (`Assistant Professor`, `Associate Professor`, `Professor`) and provides `addDesignation` and `removeDesignation` methods.
+  - In [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx):
+    - Added an interactive **"+ Add Designation"** header button right next to "+ Add Role" which opens a dedicated **Designation Management Modal**.
+    - In the modal, Admins can add new designations and delete any designation with an inline red `Delete` button (with real-time Firestore sync).
+    - Converted static text in the **Designation** table column into an interactive `<select>` dropdown (matching Programme, Department, and Role columns) allowing Admins to directly update any user's designation.
+    - Added `handleDesignationChange` handler that persists designation updates to Firestore `users` collection in real time.
+  - In [`firestore.rules`](file:///Users/ckcollege/Downloads/OBE/outcomex/firestore.rules):
+    - Added `match /designations/{designation} { allow read: if true; allow write: if isApproved(); }` rule so unauthenticated users on the Registration Page (`Auth.jsx`) can read newly added designations in real time.
+  - In [`Auth.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Auth.jsx):
+    - Subscribed to `useDesignations()` and dynamically mapped `designations` array inside the Register form's `<select>` dropdown.
+- **Result**: Admins can add and delete designations via "+ Add Designation" modal, change any user's designation directly using the interactive Designation dropdown in User Management, and all newly created designations (such as "suma") show up dynamically on the Registration page dropdown in real time. Build passes cleanly with 0 errors in 6.35s.
 - **Goal**: Remove unwanted literal double quotes (`"..."`) appearing before/around form remarks, outcome texts, target descriptions, and reviewer comments in appraisal review modals and form views.
 - **Fix**:
   - In [`AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx) & [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx):

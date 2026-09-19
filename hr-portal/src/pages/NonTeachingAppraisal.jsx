@@ -111,6 +111,7 @@ export default function NonTeachingAppraisal() {
 
     // Digital Certification & Date
     certified: false,
+    declarationDate: new Date().toISOString().split("T")[0],
     dateSubmitted: new Date().toISOString().split("T")[0]
   };
 
@@ -272,6 +273,11 @@ export default function NonTeachingAppraisal() {
         alert("Please fill in your Name and Department before submitting.");
         return;
       }
+      const decDate = formData.declarationDate || formData.dateSubmitted || new Date().toISOString().split("T")[0];
+      if (!decDate) {
+        alert("Please select the Date of Declaration before submitting.");
+        return;
+      }
       if (!formData.certified) {
         alert("Please confirm the declaration check before submitting.");
         return;
@@ -285,6 +291,8 @@ export default function NonTeachingAppraisal() {
       const docId = `${currentUser.uid}_${academicYear}`;
       const docRef = doc(db, "non_teaching_appraisals", docId);
 
+      const userInst = userProfile?.institution || formData.institution || "CKSPK (Matric)";
+
       const payload = {
         docId,
         formType: "non_teaching",
@@ -292,15 +300,19 @@ export default function NonTeachingAppraisal() {
         staffName: formData.name || userProfile?.name || currentUser.email,
         staffEmail: currentUser.email,
         department: formData.department || userProfile?.department || "General",
+        institution: userInst,
         academicYear,
-        formData,
+        formData: {
+          ...formData,
+          institution: userInst
+        },
         status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
         submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
         updatedAt: new Date().toISOString()
       };
 
       await setDoc(docRef, payload, { merge: true });
-      alert(isSubmit ? "Staff Appraisal Form submitted successfully!" : "Progress saved as draft.");
+      alert(isSubmit ? "Staff Appraisal Form submitted successfully! Forwarded to your Institution Principal for review." : "Progress saved as draft.");
     } catch (error) {
       console.error("Save Non-Teaching Appraisal error:", error);
       alert("Failed to save appraisal: " + error.message);
@@ -1136,8 +1148,11 @@ export default function NonTeachingAppraisal() {
                   <input
                     type="date"
                     disabled={isReadOnly}
-                    value={formData.dateSubmitted}
-                    onChange={(e) => handleTextChange("dateSubmitted", e.target.value)}
+                    value={formData.declarationDate || formData.dateSubmitted || ""}
+                    onChange={(e) => {
+                      handleTextChange("declarationDate", e.target.value);
+                      handleTextChange("dateSubmitted", e.target.value);
+                    }}
                     className="ml-2 px-3 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-900"
                   />
                 </div>

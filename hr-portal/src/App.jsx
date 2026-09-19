@@ -11,6 +11,7 @@ import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
+import UserManagement from "./pages/UserManagement";
 
 function ProtectedRoute({ children }) {
   const [user, setUser] = useState(null);
@@ -125,6 +126,24 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AppraisalSettings />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/users" 
+          element={
+            <ProtectedRoute>
+              <UserManagement />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/user-management" 
+          element={
+            <ProtectedRoute>
+              <UserManagement />
             </ProtectedRoute>
           } 
         />

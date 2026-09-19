@@ -286,7 +286,7 @@ export default function TeacherAppraisal() {
     setFormData(prev => {
       const list = [...(prev[arrayKey] || [])];
       list[index] = { ...list[index], [field]: value };
-      
+
       // Auto compute pass % for exam tables
       if (["appeared", "passed"].includes(field)) {
         const app = parseFloat(field === "appeared" ? value : list[index].appeared) || 0;
@@ -346,7 +346,7 @@ export default function TeacherAppraisal() {
     try {
       const docId = `${currentUser.uid}_${academicYear}`;
       const docRef = doc(db, "teacher_appraisals", docId);
-      
+
       // Computed Total Workload
       const updatedFormData = {
         ...formData,
@@ -408,7 +408,7 @@ export default function TeacherAppraisal() {
         {/* Header Title Banner */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-slate-800">
           <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
-          
+
           <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div>
               <div className="flex items-center gap-2 mb-2">
@@ -431,12 +431,11 @@ export default function TeacherAppraisal() {
 
             {/* Status & Actions Pill */}
             <div className="flex flex-wrap items-center gap-3 shrink-0">
-              <span className={`px-4 py-2 rounded-2xl text-xs font-extrabold uppercase tracking-wider border shadow-sm ${
-                status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
+              <span className={`px-4 py-2 rounded-2xl text-xs font-extrabold uppercase tracking-wider border shadow-sm ${status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
                 status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
-                status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                "bg-slate-700/50 text-slate-300 border-slate-600/50"
-              }`}>
+                  status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+                    "bg-slate-700/50 text-slate-300 border-slate-600/50"
+                }`}>
                 Status: {status.replace("_", " ")}
               </span>
 
@@ -482,11 +481,10 @@ export default function TeacherAppraisal() {
               <button
                 key={t.id}
                 onClick={() => setActiveTab(t.id)}
-                className={`flex items-center gap-2 px-4 py-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                  isActive
-                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                    : "text-slate-600 hover:text-indigo-600 hover:bg-indigo-50"
-                }`}
+                className={`flex items-center gap-2 px-4 py-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${isActive
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                  : "text-slate-600 hover:text-indigo-600 hover:bg-indigo-50"
+                  }`}
               >
                 <Icon className={`w-4 h-4 ${isActive ? "text-white" : "text-slate-500"}`} />
                 <span>{t.name}</span>
@@ -507,7 +505,7 @@ export default function TeacherAppraisal() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">1. Name of Faculty *</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">1. Name of Teacher *</label>
                 <input
                   type="text"
                   disabled={isReadOnly}
@@ -781,11 +779,10 @@ export default function TeacherAppraisal() {
                 ].map(opt => (
                   <label
                     key={opt.key}
-                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                      formData.resultsAttributedTo?.[opt.key]
-                        ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                    }`}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.resultsAttributedTo?.[opt.key]
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
                   >
                     <input
                       type="checkbox"
@@ -1368,11 +1365,10 @@ export default function TeacherAppraisal() {
                 ].map(r => (
                   <label
                     key={r.value}
-                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                      formData.deptRating === r.value
-                        ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                    }`}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.deptRating === r.value
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
                   >
                     <input
                       type="radio"
@@ -1410,11 +1406,10 @@ export default function TeacherAppraisal() {
                 ].map(u => (
                   <label
                     key={u}
-                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                      formData.potentialUtilization === u
-                        ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                    }`}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.potentialUtilization === u
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
                   >
                     <input
                       type="radio"
@@ -1485,11 +1480,10 @@ export default function TeacherAppraisal() {
                 {["Above", "At par", "Below"].map(p => (
                   <label
                     key={p}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                      formData.selfAssessmentPlacement === p
-                        ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                    }`}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.selfAssessmentPlacement === p
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
                   >
                     <input
                       type="radio"

@@ -16,6 +16,7 @@ import { auth, db } from "../firebase";
 import { Loader2, AlertCircle, CheckCircle2, ChevronDown, Eye, EyeOff, GraduationCap } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
+import { useDesignations } from "../hooks/useDesignations";
 
 import { formatProgDisplay, formatProgrammeKey, sanitizeKey, parseStudentDocId } from "../lib/utils";
 
@@ -92,6 +93,7 @@ export default function Auth() {
   
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches, batchStatus } = useBatches(durations);
+  const { designations } = useDesignations();
 
   const activeStudentBatches = useMemo(() => {
     if (!studentProgramme) return [];
@@ -737,9 +739,11 @@ export default function Auth() {
                 required
               >
                 <option value="">Select Designation</option>
-                <option value="Assistant Professor">Assistant Professor</option>
-                <option value="Associate Professor">Associate Professor</option>
-                <option value="Professor">Professor</option>
+                {designations.map((desig) => (
+                  <option key={desig} value={desig}>
+                    {desig}
+                  </option>
+                ))}
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
               <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Designation</span>

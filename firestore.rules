@@ -52,6 +52,11 @@ service cloud.firestore {
       allow write: if isApproved() && isMasterAdmin();
     }
 
+    match /designations/{designation} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
     match /programme_durations/{programme} {
       allow read: if true;
       allow write: if isApproved() && isMasterAdmin();

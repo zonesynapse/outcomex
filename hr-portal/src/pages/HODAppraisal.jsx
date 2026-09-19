@@ -5,7 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, Sparkles,
-  UploadCloud, Paperclip, Check, Loader2, RefreshCw, Layers, Target, TrendingUp
+  UploadCloud, Paperclip, Loader2, RefreshCw, Target, TrendingUp
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
@@ -33,45 +33,50 @@ export default function HODAppraisal() {
   const [designation, setDesignation] = useState("Head of the Department");
   const [qualification, setQualification] = useState("");
 
-  // KRA I: Department Academic Improvement (30 Marks)
+  // ==========================================
+  // KRA I: ACADEMIC IMPROVEMENT (30 Marks)
+  // Target: Overall Exam Pass Percentage = 80%
+  // ==========================================
   const [kra1PassPct, setKra1PassPct] = useState("");
-  const [kra1Tier, setKra1Tier] = useState(""); // "65_above", "50_64", "40_49", "30_39", "21_29", "below_20"
+  const [kra1Tier, setKra1Tier] = useState(""); // "80_above", "60_79", "40_59", "30_39", "21_29", "below_20"
   const [kra1Remarks, setKra1Remarks] = useState("");
   const [kra1Proof, setKra1Proof] = useState({ fileUrl: "", fileName: "" });
 
-  // KRA II: Department Student Centric Activities (25 Marks total, 5 sub-parameters @ 5 marks each)
+  // ==========================================
+  // KRA II: STUDENT CENTRIC ACTIVITIES (25 Marks)
+  // 1. Min 60% participation in Co-curricular
+  // 2. Soft Skill / Career guidance / Govt Exam / Life Skill / Olympiad
+  // ==========================================
   const [kra2Parameters, setKra2Parameters] = useState({
     coCurricular: { achieved: false, remarks: "", fileUrl: "", fileName: "" },
-    ipkt: { achieved: false, remarks: "", fileUrl: "", fileName: "" },
-    guestLectures: { achieved: false, remarks: "", fileUrl: "", fileName: "" },
-    valueAdded: { achieved: false, remarks: "", fileUrl: "", fileName: "" },
-    softSkillsPlacement: { achieved: false, remarks: "", fileUrl: "", fileName: "" }
+    softSkillsSpecial: { achieved: false, remarks: "", fileUrl: "", fileName: "" }
   });
 
-  // KRA III: Faculty Enrichment Efforts for Department (20 Marks total, 4 sub-parameters @ 5 max marks each: 100% -> 5, 80-99% -> 2.5, Below -> 0)
-  const [kra3Parameters, setKra3Parameters] = useState({
-    fundingProposal: { tier: "below", remarks: "", fileUrl: "", fileName: "" },
-    testingConsultancy: { tier: "below", remarks: "", fileUrl: "", fileName: "" },
-    onlineCourse: { tier: "below", remarks: "", fileUrl: "", fileName: "" },
-    publications: { tier: "below", remarks: "", fileUrl: "", fileName: "" }
-  });
+  // ==========================================
+  // KRA III: TEACHERS ENRICHMENT EFFORTS - IIY (20 Marks)
+  // Knowledge Sharing Sessions conducted per week + 1 learned topic presented with good ratings
+  // ==========================================
+  const [kra3Achieved, setKra3Achieved] = useState(false);
+  const [kra3Remarks, setKra3Remarks] = useState("");
+  const [kra3Proof, setKra3Proof] = useState({ fileUrl: "", fileName: "" });
 
-  // KRA IV: Significant Contribution towards Department / Personal Development (5 Marks, 2.5 per contribution)
+  // ==========================================
+  // KRA IV: Significant Contribution towards Department / Personal Development (5 Marks)
+  // Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards (2.5 per contribution)
+  // ==========================================
   const [kra4Contributions, setKra4Contributions] = useState([
     { title: "", description: "", fileUrl: "", fileName: "" }
   ]);
 
-  // KRA V: Academic Excellence and Self Development (IIY) (20 Marks total)
-  // 1. Result (10 Marks): 90_above -> 10, 81_90 -> 8, 71_80 -> 6, 61_70 -> 4, 51_60 -> 2, below_50 -> 0
-  const [kra5ResultTier, setKra5ResultTier] = useState("");
-  const [kra5ResultRemarks, setKra5ResultRemarks] = useState("");
-  const [kra5ResultProof, setKra5ResultProof] = useState({ fileUrl: "", fileName: "" });
-
-  // 2. Online Course (5 Marks): achieved -> 5
-  const [kra5OnlineCourse, setKra5OnlineCourse] = useState({ achieved: false, remarks: "", fileUrl: "", fileName: "" });
-
-  // 3. Research Publication (5 Marks): achieved -> 5
-  const [kra5Publication, setKra5Publication] = useState({ achieved: false, remarks: "", fileUrl: "", fileName: "" });
+  // ==========================================
+  // KRA V: Academic Excellence (20 Marks)
+  // Theory Pass % - 95%, Practical Pass % - 90%
+  // ==========================================
+  const [kra5TheoryPassPct, setKra5TheoryPassPct] = useState("");
+  const [kra5PracticalPassPct, setKra5PracticalPassPct] = useState("");
+  const [kra5Tier, setKra5Tier] = useState(""); // "90_above", "81_90", "71_80", "61_70", "51_60", "below_50"
+  const [kra5Remarks, setKra5Remarks] = useState("");
+  const [kra5Proof, setKra5Proof] = useState({ fileUrl: "", fileName: "" });
 
   // Declaration & Toast
   const [declaration, setDeclaration] = useState(false);
@@ -114,7 +119,6 @@ export default function HODAppraisal() {
         if (sched.academicYear) {
           setAcademicYear(sched.academicYear);
         }
-
         const { isOpen } = checkAppraisalPortalStatus(sched);
         setIsPortalOpen(isOpen);
       } else {
@@ -142,6 +146,7 @@ export default function HODAppraisal() {
           if (f.designation) setDesignation(f.designation);
           if (f.qualification) setQualification(f.qualification);
 
+          // KRA 1
           if (f.kra1) {
             setKra1PassPct(f.kra1.passPct || "");
             setKra1Tier(f.kra1.tier || "");
@@ -149,45 +154,35 @@ export default function HODAppraisal() {
             setKra1Proof(f.kra1.proof || { fileUrl: "", fileName: "" });
           }
 
+          // KRA 2
           if (f.kra2) {
-            setKra2Parameters((prev) => {
-              const merged = { ...prev };
-              Object.keys(prev).forEach((key) => {
-                if (f.kra2[key]) {
-                  merged[key] = { ...prev[key], ...f.kra2[key] };
-                }
-              });
-              return merged;
-            });
+            setKra2Parameters((prev) => ({
+              coCurricular: { ...prev.coCurricular, ...f.kra2.coCurricular },
+              softSkillsSpecial: { ...prev.softSkillsSpecial, ...f.kra2.softSkillsSpecial }
+            }));
           }
 
+          // KRA 3
           if (f.kra3) {
-            setKra3Parameters((prev) => {
-              const merged = { ...prev };
-              Object.keys(prev).forEach((key) => {
-                if (f.kra3[key]) {
-                  merged[key] = { ...prev[key], ...f.kra3[key] };
-                }
-              });
-              return merged;
-            });
+            setKra3Achieved(!!f.kra3.achieved);
+            setKra3Remarks(f.kra3.remarks || "");
+            setKra3Proof(f.kra3.proof || { fileUrl: "", fileName: "" });
           }
 
+          // KRA 4
           if (f.kra4 && Array.isArray(f.kra4) && f.kra4.length > 0) {
             setKra4Contributions(f.kra4);
           }
 
+          // KRA 5
           if (f.kra5) {
-            setKra5ResultTier(f.kra5.resultTier || "");
-            setKra5ResultRemarks(f.kra5.resultRemarks || "");
-            setKra5ResultProof(f.kra5.resultProof || { fileUrl: "", fileName: "" });
-            if (f.kra5.onlineCourse) {
-              setKra5OnlineCourse((prev) => ({ ...prev, ...f.kra5.onlineCourse }));
-            }
-            if (f.kra5.publication) {
-              setKra5Publication((prev) => ({ ...prev, ...f.kra5.publication }));
-            }
+            setKra5TheoryPassPct(f.kra5.theoryPassPct || "");
+            setKra5PracticalPassPct(f.kra5.practicalPassPct || "");
+            setKra5Tier(f.kra5.tier || f.kra5.resultTier || "");
+            setKra5Remarks(f.kra5.remarks || f.kra5.resultRemarks || "");
+            setKra5Proof(f.kra5.proof || f.kra5.resultProof || { fileUrl: "", fileName: "" });
           }
+
           setDeclaration(data.declaration || false);
         }
       } else {
@@ -197,69 +192,71 @@ export default function HODAppraisal() {
     return () => unsub();
   }, [currentUser, academicYear]);
 
-  // Scores Calculations
+  // ==========================================
+  // SCORES CALCULATIONS
+  // ==========================================
+
   // KRA I: Pass Pct Tier Score (Max 30)
   const kra1Score = useMemo(() => {
-    if (kra1Tier === "65_above") return 30;
-    if (kra1Tier === "50_64") return 25;
-    if (kra1Tier === "40_49") return 20;
+    if (kra1Tier === "80_above") return 30;
+    if (kra1Tier === "60_79") return 25;
+    if (kra1Tier === "40_59") return 20;
     if (kra1Tier === "30_39") return 12;
     if (kra1Tier === "21_29") return 8;
     if (kra1Tier === "below_20") return 0;
-    // Auto-calculate from pass % if tier not explicitly clicked
+
+    // Auto-tier calculation from percentage if tier not manually selected
     const p = parseFloat(kra1PassPct);
     if (isNaN(p)) return 0;
-    if (p >= 65) return 30;
-    if (p >= 50) return 25;
+    if (p >= 80) return 30;
+    if (p >= 60) return 25;
     if (p >= 40) return 20;
     if (p >= 30) return 12;
     if (p >= 21) return 8;
     return 0;
   }, [kra1Tier, kra1PassPct]);
 
-  // KRA II: Student Centric Activities (Max 25)
+  // KRA II: Student Centric Activities (Max 25 Marks, 12.5 per parameter achieved)
   const kra2Score = useMemo(() => {
     let s = 0;
-    Object.values(kra2Parameters).forEach(p => {
-      if (p.achieved) s += 5;
-    });
+    if (kra2Parameters.coCurricular?.achieved) s += 12.5;
+    if (kra2Parameters.softSkillsSpecial?.achieved) s += 12.5;
     return s;
   }, [kra2Parameters]);
 
-  // KRA III: Faculty Enrichment Efforts (Max 20)
+  // KRA III: Teacher Enrichment Efforts IIY (Max 20 Marks)
   const kra3Score = useMemo(() => {
-    let s = 0;
-    Object.values(kra3Parameters).forEach(p => {
-      if (p.tier === "100") s += 5;
-      else if (p.tier === "80-99") s += 2.5;
-    });
-    return s;
-  }, [kra3Parameters]);
+    return kra3Achieved ? 20 : 0;
+  }, [kra3Achieved]);
 
-  // KRA IV: Contributions (Max 5)
+  // KRA IV: Significant Contributions (Max 5 Marks, 2.5 per contribution)
   const kra4Score = useMemo(() => {
     const validCount = kra4Contributions.filter(c => c.title && c.title.trim() !== "").length;
     return Math.min(validCount * 2.5, 5);
   }, [kra4Contributions]);
 
-  // KRA V: Academic Excellence & IIY (Max 20)
+  // KRA V: Academic Excellence (Max 20 Marks)
   const kra5Score = useMemo(() => {
-    let s = 0;
-    // Result score (Max 10)
-    if (kra5ResultTier === "90_above") s += 10;
-    else if (kra5ResultTier === "81_90") s += 8;
-    else if (kra5ResultTier === "71_80") s += 6;
-    else if (kra5ResultTier === "61_70") s += 4;
-    else if (kra5ResultTier === "51_60") s += 2;
-    else if (kra5ResultTier === "below_50") s += 0;
+    if (kra5Tier === "90_above") return 20;
+    if (kra5Tier === "81_90") return 10;
+    if (kra5Tier === "71_80") return 8;
+    if (kra5Tier === "61_70") return 6;
+    if (kra5Tier === "51_60") return 4;
+    if (kra5Tier === "below_50") return 0;
 
-    // Online course (5)
-    if (kra5OnlineCourse.achieved) s += 5;
-    // Publication (5)
-    if (kra5Publication.achieved) s += 5;
+    // Auto-calculate from average of Theory & Practical if tier not clicked
+    const t = parseFloat(kra5TheoryPassPct);
+    const p = parseFloat(kra5PracticalPassPct);
+    const avg = !isNaN(t) && !isNaN(p) ? (t + p) / 2 : !isNaN(t) ? t : !isNaN(p) ? p : NaN;
 
-    return s;
-  }, [kra5ResultTier, kra5OnlineCourse, kra5Publication]);
+    if (isNaN(avg)) return 0;
+    if (avg >= 90) return 20;
+    if (avg >= 81) return 10;
+    if (avg >= 71) return 8;
+    if (avg >= 61) return 6;
+    if (avg >= 51) return 4;
+    return 0;
+  }, [kra5Tier, kra5TheoryPassPct, kra5PracticalPassPct]);
 
   // Overall Total Score (Max 100)
   const totalScore = useMemo(() => {
@@ -308,11 +305,14 @@ export default function HODAppraisal() {
     const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_hod`;
     const docRef = doc(db, "hod_appraisals", docId);
 
+    const userInst = userProfile?.institution || "CKSPK (Matric)";
+
     const payload = {
       uid: currentUser.uid,
       hodEmail: currentUser.email,
       hodName,
       department,
+      institution: userInst,
       doj,
       designation,
       qualification,
@@ -341,15 +341,20 @@ export default function HODAppraisal() {
           proof: kra1Proof
         },
         kra2: kra2Parameters,
-        kra3: kra3Parameters,
+        kra3: {
+          achieved: kra3Achieved,
+          score: kra3Score,
+          remarks: kra3Remarks,
+          proof: kra3Proof
+        },
         kra4: kra4Contributions,
         kra5: {
-          resultTier: kra5ResultTier,
-          resultRemarks: kra5ResultRemarks,
-          resultProof: kra5ResultProof,
-          onlineCourse: kra5OnlineCourse,
-          publication: kra5Publication,
-          score: kra5Score
+          theoryPassPct: kra5TheoryPassPct,
+          practicalPassPct: kra5PracticalPassPct,
+          tier: kra5Tier,
+          score: kra5Score,
+          remarks: kra5Remarks,
+          proof: kra5Proof
         }
       },
       declaration,
@@ -359,7 +364,7 @@ export default function HODAppraisal() {
 
     try {
       await setDoc(docRef, payload, { merge: true });
-      showToast(isSubmit ? "HOD Appraisal submitted successfully to Principal!" : "Draft saved successfully.", "success");
+      showToast(isSubmit ? "HOD Self-Appraisal submitted successfully to Principal!" : "Draft saved successfully.", "success");
       setIsEditingSubmitted(false);
     } catch (err) {
       console.error("Save error:", err);
@@ -380,7 +385,7 @@ export default function HODAppraisal() {
     );
   }
 
-  const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin";
+  const isAdminOrHR = userProfile?.role === "HR" || userProfile?.role === "Admin" || userProfile?.role === "Principal / HR";
   if (!isPortalOpen && (!existingAppraisal || existingAppraisal.status === "Draft") && !isAdminOrHR) {
     const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
     const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
@@ -404,7 +409,7 @@ export default function HODAppraisal() {
                 <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2025-2026"}</strong>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2024-2025"}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Open Time:</span>
@@ -475,22 +480,20 @@ export default function HODAppraisal() {
         {existingAppraisal && (
           <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-                existingAppraisal.status === 'Submitted' ? 'bg-amber-100 text-amber-700' :
-                existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
-              }`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'bg-amber-100 text-amber-700' :
+                  existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
+                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
+                }`}>
                 <FileText size={20} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Status:</span>
-                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                    existingAppraisal.status === 'Submitted' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                    existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
-                  }`}>
-                    {existingAppraisal.status === 'Submitted' ? 'Pending Principal Review' : existingAppraisal.status}
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
+                      existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
+                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
+                    }`}>
+                    {existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to Principal (HOD Approved)' : existingAppraisal.status}
                   </span>
                 </div>
                 {existingAppraisal.submittedAt && (
@@ -521,7 +524,7 @@ export default function HODAppraisal() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
             <div>
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Name of the HoD</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Name of the Coordinator</label>
               <input
                 type="text"
                 value={hodName}
@@ -581,25 +584,28 @@ export default function HODAppraisal() {
           </div>
         </div>
 
-        {/* KRA I: Department Academic Improvement */}
+        {/* ========================================================================= */}
+        {/* KRA I: ACADEMIC IMPROVEMENT: Academic Performance in Examinations (30 Marks) */}
+        {/* Target: Overall Exam Pass Percentage = 80% */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">I</span>
               <div>
-                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Department Academic Improvement</h3>
-                <p className="text-[10px] text-zinc-400 font-semibold">Department Performance in Anna University Examination (Target: Overall Pass % = 65%)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">ACADEMIC IMPROVEMENT: Academic Performance in Examinations</h3>
+                <p className="text-[10px] text-zinc-500 font-semibold">Parameter / Target: Overall Exam Pass Percentage = 80%</p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 30 Marks</span>
-              <span className="block text-xs font-black text-indigo-700">Score: {kra1Score} / 30</span>
+            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 30 Marks</span>
+              <span className="text-xs font-black text-indigo-700">Score: {kra1Score} / 30</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Overall Dept Pass Percentage (%)</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Overall Exam Pass Percentage (%)</label>
               <input
                 type="number"
                 min="0"
@@ -611,32 +617,31 @@ export default function HODAppraisal() {
                   setKra1Tier("");
                 }}
                 disabled={isReadOnly}
-                placeholder="e.g. 72.5"
+                placeholder="e.g. 82.5"
                 className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Performance Metric Tier</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Metrics / Performance Tier</label>
               <div className="grid grid-cols-2 gap-1.5">
                 {[
-                  { tier: "65_above", label: "≥ 65% (30 Marks)" },
-                  { tier: "50_64", label: "50 - 64% (25 Marks)" },
-                  { tier: "40_49", label: "40 - 49% (20 Marks)" },
-                  { tier: "30_39", label: "30 - 39% (12 Marks)" },
-                  { tier: "21_29", label: "21 - 29% (8 Marks)" },
-                  { tier: "below_20", label: "< 20% (0 Marks)" }
+                  { tier: "80_above", label: "80% & Above (30 Marks)", score: 30 },
+                  { tier: "60_79", label: "60 - 79% (25 Marks)", score: 25 },
+                  { tier: "40_59", label: "40 - 59% (20 Marks)", score: 20 },
+                  { tier: "30_39", label: "30 - 39% (12 Marks)", score: 12 },
+                  { tier: "21_29", label: "21 - 29% (8 Marks)", score: 8 },
+                  { tier: "below_20", label: "Below 20% (0 Marks)", score: 0 }
                 ].map((item) => (
                   <button
                     key={item.tier}
                     type="button"
                     disabled={isReadOnly}
                     onClick={() => setKra1Tier(item.tier)}
-                    className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${
-                      kra1Tier === item.tier || (kra1Score > 0 && item.tier === (kra1Score === 30 ? "65_above" : kra1Score === 25 ? "50_64" : kra1Score === 20 ? "40_49" : kra1Score === 12 ? "30_39" : kra1Score === 8 ? "21_29" : "below_20"))
+                    className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${kra1Tier === item.tier || (kra1Score === item.score && !kra1Tier)
                         ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
                         : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
-                    }`}
+                      }`}
                   >
                     {item.label}
                   </button>
@@ -645,13 +650,13 @@ export default function HODAppraisal() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Remarks / Remarks on Exam Performance</label>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Remarks / Details of Exam Results</label>
               <textarea
                 rows={2}
                 value={kra1Remarks}
                 onChange={(e) => setKra1Remarks(e.target.value)}
                 disabled={isReadOnly}
-                placeholder="Details of Anna University results, pass count, top performers..."
+                placeholder="Details of examination pass percentage, semester summary, top achievers..."
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
               />
             </div>
@@ -684,36 +689,49 @@ export default function HODAppraisal() {
           </div>
         </div>
 
-        {/* KRA II: Department Student Centric Activities */}
+        {/* ========================================================================= */}
+        {/* KRA II: STUDENT CENTRIC ACTIVITIES (25 Marks) */}
+        {/* Students participation in Co-curricular activities & Organizing Student Centered Special Programs */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">II</span>
               <div>
-                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Department Student Centric Activities</h3>
-                <p className="text-[10px] text-zinc-400 font-semibold">Organizing Student Centered Special Programs & Co-curricular Participation (5 Marks each parameter)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">STUDENT CENTRIC ACTIVITIES</h3>
+                <p className="text-[10px] text-zinc-500 font-semibold">
+                  Students participation in Co-curricular activities & Organizing Student Centered Special Programs (Supported with necessary documents along with outcome)
+                </p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 25 Marks</span>
-              <span className="block text-xs font-black text-indigo-700">Score: {kra2Score} / 25</span>
+            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 25 Marks</span>
+              <span className="text-xs font-black text-indigo-700">Score: {kra2Score} / 25</span>
             </div>
           </div>
 
           <div className="space-y-4 text-xs">
             {[
-              { key: "coCurricular", label: "1. Ensured Minimum of 60% Student's Participation in Co-curricular Activities (Student Innovation Club) and Remarkable Achievements" },
-              { key: "ipkt", label: "2. Industrial Practical Knowledge Training (IPKT) (2/Semester per Class)" },
-              { key: "guestLectures", label: "3. Industrial Oriented Guest Lecture – 3 /Semester" },
-              { key: "valueAdded", label: "4. Conduction of Value Added Course (min. of 4 days duration) – 1/Year" },
-              { key: "softSkillsPlacement", label: "5. Soft Skill Training / Career guidance / GATE awareness / Life Skill Program / Placement Special Efforts" }
+              {
+                key: "coCurricular",
+                title: "1. Co-curricular Participation Target",
+                targetText: "Ensured Minimum of 60% Student's Participation in Co-curricular Activities if any"
+              },
+              {
+                key: "softSkillsSpecial",
+                title: "2. Student Special Training & Development Programs",
+                targetText: "Soft Skill Training / Career guidance/ Govt Exam awareness / Life Skill Program / Olympiad as per the Schedule & Target"
+              }
             ].map((param) => {
               const currentData = kra2Parameters[param.key] || { achieved: false, remarks: "", fileUrl: "", fileName: "" };
               return (
                 <div key={param.key} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="font-bold text-slate-800 text-xs">{param.label}</span>
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-slate-900 text-xs block">{param.title}</span>
+                      <p className="text-[11px] text-zinc-600 font-medium mt-0.5">{param.targetText}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
                         disabled={isReadOnly}
@@ -721,13 +739,12 @@ export default function HODAppraisal() {
                           ...prev,
                           [param.key]: { ...prev[param.key], achieved: true }
                         }))}
-                        className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${
-                          currentData.achieved
+                        className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${currentData.achieved
                             ? "bg-emerald-600 text-white shadow-sm"
                             : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                        }`}
+                          }`}
                       >
-                        100% Target Achieved (5 Marks)
+                        100% Target Achieved (12.5 Marks)
                       </button>
                       <button
                         type="button"
@@ -736,11 +753,10 @@ export default function HODAppraisal() {
                           ...prev,
                           [param.key]: { ...prev[param.key], achieved: false }
                         }))}
-                        className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${
-                          !currentData.achieved
+                        className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${!currentData.achieved
                             ? "bg-zinc-700 text-white shadow-sm"
                             : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                        }`}
+                          }`}
                       >
                         Below Target (0 Marks)
                       </button>
@@ -757,7 +773,7 @@ export default function HODAppraisal() {
                           setKra2Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], remarks: val } }));
                         }}
                         disabled={isReadOnly}
-                        placeholder="Details of programs conducted / outcome..."
+                        placeholder="Details of participation %, programs conducted, and outcomes..."
                         className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                       />
                     </div>
@@ -776,7 +792,7 @@ export default function HODAppraisal() {
                         !isReadOnly && (
                           <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                             <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
+                            <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof File"}</span>
                             <input
                               type="file"
                               className="hidden"
@@ -795,118 +811,117 @@ export default function HODAppraisal() {
           </div>
         </div>
 
-        {/* KRA III: Faculty Enrichment Efforts for Department */}
+        {/* ========================================================================= */}
+        {/* KRA III: TEACHERS ENRICHMENT EFFORTS: Invest in Yourself (IIY) (20 Marks) */}
+        {/* Parameter / Target: Knowledge Sharing Sessions conducted per week and presented at least 1 learned topic */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">III</span>
               <div>
-                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Faculty Enrichment Efforts for Department</h3>
-                <p className="text-[10px] text-zinc-400 font-semibold">Developing Ambience for R&D Activities & Invest in Yourself (100% Target: 5 Marks | 80-99%: 2.5 Marks)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">TEACHERS ENRICHMENT EFFORTS: Invest in Yourself (IIY)</h3>
+                <p className="text-[10px] text-zinc-500 font-semibold">
+                  Parameter / Target: Knowledge Sharing Sessions conducted per week and have presented atleast 1 learned topic to the teachers and ensure good ratings
+                </p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 20 Marks</span>
-              <span className="block text-xs font-black text-indigo-700">Score: {kra3Score} / 20</span>
+            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 20 Marks</span>
+              <span className="text-xs font-black text-indigo-700">Score: {kra3Score} / 20</span>
             </div>
           </div>
 
-          <div className="space-y-4 text-xs">
-            {[
-              { key: "fundingProposal", label: "1. Submission of Major funding proposal – 1 per Year" },
-              { key: "testingConsultancy", label: "2. Revenue generation through Testing & Consultancy / Other sources – as per Target" },
-              { key: "onlineCourse", label: "3. Online Course – 1 per faculty / Semester" },
-              { key: "publications", label: "4. Publications of Research Papers in reputed Journal / International Conference - 2 per faculty / Semester" }
-            ].map((param) => {
-              const currentData = kra3Parameters[param.key] || { tier: "below", remarks: "", fileUrl: "", fileName: "" };
-              return (
-                <div key={param.key} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <span className="font-bold text-slate-800 text-xs">{param.label}</span>
-                    <div className="flex items-center gap-1.5">
-                      {[
-                        { tier: "100", label: "100% Target (5 Marks)" },
-                        { tier: "80-99", label: "80 – 99% (2.5 Marks)" },
-                        { tier: "below", label: "Below (0 Marks)" }
-                      ].map((t) => (
-                        <button
-                          key={t.tier}
-                          type="button"
-                          disabled={isReadOnly}
-                          onClick={() => setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], tier: t.tier } }))}
-                          className={`px-2.5 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                            currentData.tier === t.tier
-                              ? "bg-[#120c7a] text-white shadow-sm"
-                              : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+          <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-4 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <span className="font-bold text-slate-900 text-xs">Invest in Yourself (IIY) Target Achievement</span>
+                <p className="text-[11px] text-zinc-600 font-medium mt-0.5">Achieving 100% target in parameter gives 20 Marks. Below target gives Nil (0 Marks).</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isReadOnly}
+                  onClick={() => setKra3Achieved(true)}
+                  className={`px-3.5 py-2 rounded-xl font-bold text-xs transition-all ${kra3Achieved
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                    }`}
+                >
+                  Achieving 100% Target (20 Marks)
+                </button>
+                <button
+                  type="button"
+                  disabled={isReadOnly}
+                  onClick={() => setKra3Achieved(false)}
+                  className={`px-3.5 py-2 rounded-xl font-bold text-xs transition-all ${!kra3Achieved
+                      ? "bg-zinc-700 text-white shadow-sm"
+                      : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                    }`}
+                >
+                  Below Target - Nil (0 Marks)
+                </button>
+              </div>
+            </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="sm:col-span-2">
-                      <input
-                        type="text"
-                        value={currentData.remarks || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], remarks: val } }));
-                        }}
-                        disabled={isReadOnly}
-                        placeholder="Details of proposals / revenue / courses completed..."
-                        className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
-                      />
-                    </div>
-                    <div>
-                      {currentData.fileUrl ? (
-                        <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                          <Paperclip size={12} />
-                          <a href={currentData.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{currentData.fileName || "Proof"}</a>
-                          {!isReadOnly && (
-                            <button type="button" onClick={() => setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: "", fileName: "" } }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        !isReadOnly && (
-                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                            <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra3_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
-                            <input
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], `kra3_${param.key}`, (url, name) => {
-                                setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: url, fileName: name } }));
-                              })}
-                            />
-                          </label>
-                        )
-                      )}
-                    </div>
-                  </div>
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Remarks / Details of IIY Presentations & Ratings</label>
+              <textarea
+                rows={2}
+                value={kra3Remarks}
+                onChange={(e) => setKra3Remarks(e.target.value)}
+                disabled={isReadOnly}
+                placeholder="Topic presented, date of session, number of faculty participants, ratings received..."
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
+              />
+            </div>
+
+            <div className="flex items-center gap-3">
+              {kra3Proof.fileUrl ? (
+                <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700">
+                  <Paperclip size={14} />
+                  <a href={kra3Proof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-xs">{kra3Proof.fileName || "View Attachment"}</a>
+                  {!isReadOnly && (
+                    <button type="button" onClick={() => setKra3Proof({ fileUrl: "", fileName: "" })} className="text-rose-500 hover:text-rose-700 ml-1">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                 </div>
-              );
-            })}
+              ) : (
+                !isReadOnly && (
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-xs rounded-xl cursor-pointer transition-all">
+                    <UploadCloud size={14} />
+                    <span>{uploadingMap["kra3"] ? "Uploading..." : "Attach IIY Proof (PPT / Rating Sheet)"}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra3", (url, name) => setKra3Proof({ fileUrl: url, fileName: name }))}
+                    />
+                  </label>
+                )
+              )}
+            </div>
           </div>
         </div>
 
-        {/* KRA IV: Significant Contribution towards Department / Personal Development */}
+        {/* ========================================================================= */}
+        {/* KRA IV: Significant Contribution towards Department / Personal Development (5 Marks) */}
+        {/* Parameter / Target: Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">IV</span>
               <div>
                 <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Significant Contribution towards Department / Personal Development</h3>
-                <p className="text-[10px] text-zinc-400 font-semibold">CoE / MoU / Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards (2.5 Marks for each contribution, Max 5 Marks)</p>
+                <p className="text-[10px] text-zinc-500 font-semibold">
+                  Book, Chapter Publication / Interaction with outside world / Foreign visit for academic interactions / Special Awards, if any (2.5 Marks for each Contribution, Max 5 Marks)
+                </p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 5 Marks</span>
-              <span className="block text-xs font-black text-indigo-700">Score: {kra4Score} / 5</span>
+            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 5 Marks</span>
+              <span className="text-xs font-black text-indigo-700">Score: {kra4Score} / 5</span>
             </div>
           </div>
 
@@ -914,7 +929,7 @@ export default function HODAppraisal() {
             {kra4Contributions.map((contrib, idx) => (
               <div key={idx} className="bg-slate-50 border border-slate-200/70 p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-slate-800">Contribution #{idx + 1}</span>
+                  <span className="text-xs font-bold text-slate-900">Contribution #{idx + 1}</span>
                   {!isReadOnly && kra4Contributions.length > 1 && (
                     <button
                       type="button"
@@ -937,7 +952,7 @@ export default function HODAppraisal() {
                         setKra4Contributions(prev => prev.map((c, i) => i === idx ? { ...c, title: val } : c));
                       }}
                       disabled={isReadOnly}
-                      placeholder="e.g. Signed MoU with TechCorp / Published Book Chapter"
+                      placeholder="e.g. Book Chapter / Outside World Interaction / Special Award"
                       className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                     />
                   </div>
@@ -952,7 +967,7 @@ export default function HODAppraisal() {
                         setKra4Contributions(prev => prev.map((c, i) => i === idx ? { ...c, description: val } : c));
                       }}
                       disabled={isReadOnly}
-                      placeholder="Scope, dates, outcomes achieved..."
+                      placeholder="Scope, publisher, awarding body, date..."
                       className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
                     />
                   </div>
@@ -1000,251 +1015,151 @@ export default function HODAppraisal() {
           </div>
         </div>
 
-        {/* KRA V: Academic Excellence and Self Development (IIY) */}
+        {/* ========================================================================= */}
+        {/* KRA V: Academic Excellence (20 Marks) */}
+        {/* Public/Annual Examination Result (Theory Subject Pass % - 95% | Practical Subject Pass % - 90%) */}
+        {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">V</span>
               <div>
-                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Academic Excellence and Self Development (IIY)</h3>
-                <p className="text-[10px] text-zinc-400 font-semibold">Anna University Subject Exam Pass % (Max 10 Marks) + Online Course (5 Marks) + Research Publication (5 Marks)</p>
+                <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Academic Excellence</h3>
+                <p className="text-[10px] text-zinc-500 font-semibold">
+                  Public / Annual Examination Result (Theory Subject Pass % Target - 95% | Practical Subject Pass % Target - 90%)
+                </p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase">Weightage: 20 Marks</span>
-              <span className="block text-xs font-black text-indigo-700">Score: {kra5Score} / 20</span>
+            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 20 Marks</span>
+              <span className="text-xs font-black text-indigo-700">Score: {kra5Score} / 20</span>
             </div>
           </div>
 
-          <div className="space-y-4 text-xs">
-            {/* Sub-item 1: Exam Result */}
-            <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
-              <span className="font-bold text-slate-800 text-xs block">1. Anna University Examination Result (Theory Pass % Target: 95% | Analytical Pass % Target: 90%)</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Theory Subject Pass % (Target: 95%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={kra5TheoryPassPct}
+                onChange={(e) => {
+                  setKra5TheoryPassPct(e.target.value);
+                  setKra5Tier("");
+                }}
+                disabled={isReadOnly}
+                placeholder="e.g. 96.0"
+                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Practical Subject Pass % (Target: 90%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={kra5PracticalPassPct}
+                onChange={(e) => {
+                  setKra5PracticalPassPct(e.target.value);
+                  setKra5Tier("");
+                }}
+                disabled={isReadOnly}
+                placeholder="e.g. 92.5"
+                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Metrics / Performance Tier</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {[
-                  { tier: "90_above", label: "≥ 90% (10 Marks)" },
-                  { tier: "81_90", label: "81 - 90% (8 Marks)" },
-                  { tier: "71_80", label: "71 - 80% (6 Marks)" },
-                  { tier: "61_70", label: "61 - 70% (4 Marks)" },
-                  { tier: "51_60", label: "51 - 60% (2 Marks)" },
-                  { tier: "below_50", label: "< 50% (0 Marks)" }
+                  { tier: "90_above", label: "90% & Above (20 Marks)", score: 20 },
+                  { tier: "81_90", label: "81 - 90% (10 Marks)", score: 10 },
+                  { tier: "71_80", label: "71 - 80% (8 Marks)", score: 8 },
+                  { tier: "61_70", label: "61 - 70% (6 Marks)", score: 6 },
+                  { tier: "51_60", label: "51 - 60% (4 Marks)", score: 4 },
+                  { tier: "below_50", label: "Below 50% (0 Marks)", score: 0 }
                 ].map((item) => (
                   <button
                     key={item.tier}
                     type="button"
                     disabled={isReadOnly}
-                    onClick={() => setKra5ResultTier(item.tier)}
-                    className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${
-                      kra5ResultTier === item.tier
+                    onClick={() => setKra5Tier(item.tier)}
+                    className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${kra5Tier === item.tier || (kra5Score === item.score && !kra5Tier)
                         ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
-                        : "bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100"
-                    }`}
+                        : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
+                      }`}
                   >
                     {item.label}
                   </button>
                 ))}
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <input
-                    type="text"
-                    value={kra5ResultRemarks}
-                    onChange={(e) => setKra5ResultRemarks(e.target.value)}
-                    disabled={isReadOnly}
-                    placeholder="Subject code, course name, theory & analytical pass percentage details..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
-                  />
-                </div>
-                <div>
-                  {kra5ResultProof.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5ResultProof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5ResultProof.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5ResultProof({ fileUrl: "", fileName: "" })} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_result"] ? "Uploading..." : "Attach Result Sheet"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_result", (url, name) => setKra5ResultProof({ fileUrl: url, fileName: name }))}
-                        />
-                      </label>
-                    )
-                  )}
-                </div>
-              </div>
             </div>
 
-            {/* Sub-item 2: Online Course */}
-            <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="font-bold text-slate-800 text-xs">2. Online Course – 1 per Semester</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isReadOnly}
-                    onClick={() => setKra5OnlineCourse(prev => ({ ...prev, achieved: true }))}
-                    className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      kra5OnlineCourse.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                    }`}
-                  >
-                    100% Target Achieved (5 Marks)
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isReadOnly}
-                    onClick={() => setKra5OnlineCourse(prev => ({ ...prev, achieved: false }))}
-                    className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      !kra5OnlineCourse.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                    }`}
-                  >
-                    Below (0 Marks)
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <input
-                    type="text"
-                    value={kra5OnlineCourse.remarks || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setKra5OnlineCourse(prev => ({ ...prev, remarks: val }));
-                    }}
-                    disabled={isReadOnly}
-                    placeholder="Course name, NPTEL/Coursera details, score..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
-                  />
-                </div>
-                <div>
-                  {kra5OnlineCourse.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5OnlineCourse.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5OnlineCourse.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5OnlineCourse(prev => ({ ...prev, fileUrl: "", fileName: "" }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_course"] ? "Uploading..." : "Attach Certificate"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_course", (url, name) => setKra5OnlineCourse(prev => ({ ...prev, fileUrl: url, fileName: name })))}
-                        />
-                      </label>
-                    )
-                  )}
-                </div>
-              </div>
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Remarks / Examination Performance Summary</label>
+              <textarea
+                rows={2}
+                value={kra5Remarks}
+                onChange={(e) => setKra5Remarks(e.target.value)}
+                disabled={isReadOnly}
+                placeholder="Details of theory & practical subject results, pass count, top marks..."
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
+              />
             </div>
 
-            {/* Sub-item 3: Research Publication */}
-            <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="font-bold text-slate-800 text-xs">3. Publication of Research Paper in reputed Journal / International Conference – 1 per Semester</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={isReadOnly}
-                    onClick={() => setKra5Publication(prev => ({ ...prev, achieved: true }))}
-                    className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      kra5Publication.achieved ? "bg-emerald-600 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                    }`}
-                  >
-                    100% Target Achieved (5 Marks)
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isReadOnly}
-                    onClick={() => setKra5Publication(prev => ({ ...prev, achieved: false }))}
-                    className={`px-3 py-1 rounded-xl font-bold text-[10px] transition-all ${
-                      !kra5Publication.achieved ? "bg-zinc-700 text-white shadow-sm" : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
-                    }`}
-                  >
-                    Below (0 Marks)
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <input
-                    type="text"
-                    value={kra5Publication.remarks || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setKra5Publication(prev => ({ ...prev, remarks: val }));
-                    }}
-                    disabled={isReadOnly}
-                    placeholder="Paper title, journal name, Scopus/WOS indexing, volume/page..."
-                    className="w-full px-3 py-1.5 rounded-xl border border-zinc-200 font-medium text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-100"
-                  />
-                </div>
-                <div>
-                  {kra5Publication.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5Publication.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5Publication.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5Publication(prev => ({ ...prev, fileUrl: "", fileName: "" }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_pub"] ? "Uploading..." : "Attach Paper Copy"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_pub", (url, name) => setKra5Publication(prev => ({ ...prev, fileUrl: url, fileName: name })))}
-                        />
-                      </label>
-                    )
+            <div className="md:col-span-2 flex items-center gap-3">
+              {kra5Proof.fileUrl ? (
+                <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700">
+                  <Paperclip size={14} />
+                  <a href={kra5Proof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-xs">{kra5Proof.fileName || "View Attachment"}</a>
+                  {!isReadOnly && (
+                    <button type="button" onClick={() => setKra5Proof({ fileUrl: "", fileName: "" })} className="text-rose-500 hover:text-rose-700 ml-1">
+                      <Trash2 size={12} />
+                    </button>
                   )}
                 </div>
-              </div>
+              ) : (
+                !isReadOnly && (
+                  <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl cursor-pointer transition-all">
+                    <UploadCloud size={14} />
+                    <span>{uploadingMap["kra5"] ? "Uploading..." : "Attach Result Sheet (PDF / Image)"}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5", (url, name) => setKra5Proof({ fileUrl: url, fileName: name }))}
+                    />
+                  </label>
+                )
+              )}
             </div>
           </div>
         </div>
 
-        {/* Declaration & Action Buttons */}
-        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-6">
-          <div className="flex items-start gap-3 bg-amber-50/60 border border-amber-200/80 p-4 rounded-2xl">
+        {/* Digital Declaration & Submission Bar */}
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="flex items-start gap-3 bg-indigo-50/60 border border-indigo-150 p-4 rounded-2xl">
             <input
               type="checkbox"
-              id="hod_declaration"
+              id="hod-declaration"
               checked={declaration}
               onChange={(e) => setDeclaration(e.target.checked)}
               disabled={isReadOnly}
-              className="mt-0.5 w-4 h-4 rounded text-[#120c7a] focus:ring-indigo-500 cursor-pointer"
+              className="mt-1 w-4 h-4 text-indigo-600 rounded border-zinc-300 focus:ring-indigo-500"
             />
-            <label htmlFor="hod_declaration" className="text-xs text-amber-950 font-medium leading-relaxed cursor-pointer select-none">
-              I hereby declare that the particulars furnished above in my HOD Performance Appraisal for the Academic Year <strong>{academicYear}</strong> are true, correct, and complete to the best of my knowledge and belief.
+            <label htmlFor="hod-declaration" className="text-xs text-slate-800 font-medium leading-relaxed cursor-pointer">
+              <strong className="font-bold block text-slate-900 mb-0.5 uppercase tracking-wide text-[10px]">Digital Declaration</strong>
+              I hereby declare that the performance particulars, exam pass percentages, and evidence attachments submitted in this HOD Self-Appraisal form are accurate and complete to the best of my knowledge.
             </label>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-zinc-150">
-            <div className="text-xs font-extrabold text-slate-800">
-              Signature of the Head of the Department: <span className="text-[#120c7a] underline ml-1">{hodName || "Digital Signature"}</span>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+            <div className="text-xs font-bold text-slate-700">
+              Computed Total Score: <span className="text-amber-600 font-black text-base">{totalScore}</span> / 100 Marks
             </div>
 
             <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -1252,21 +1167,21 @@ export default function HODAppraisal() {
                 <>
                   <button
                     type="button"
-                    onClick={() => handleSave(false)}
                     disabled={saving}
-                    className="flex-1 sm:flex-none px-5 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
+                    onClick={() => handleSave(false)}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-zinc-100 hover:bg-zinc-200 text-slate-800 font-bold rounded-xl text-xs transition-all border border-zinc-200 disabled:opacity-50 cursor-pointer"
                   >
-                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     <span>Save Draft</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => handleSave(true)}
                     disabled={saving}
-                    className="flex-1 sm:flex-none px-6 py-2.5 bg-gradient-to-r from-[#120c7a] to-indigo-800 hover:from-indigo-900 hover:to-indigo-950 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+                    onClick={() => handleSave(true)}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 cursor-pointer border-0"
                   >
-                    {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                     <span>Submit to Principal</span>
                   </button>
                 </>

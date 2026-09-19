@@ -1,18 +1,20 @@
 import { useState } from "react";
 import { auth, db } from "../firebase";
-import { 
-  createUserWithEmailAndPassword, 
+import {
+  createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   updateProfile
 } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { 
-  User, Mail, Lock, IdCard, Building2, UserCheck, 
-  ArrowRight, ShieldCheck, Sparkles, AlertCircle, Loader2 
+import {
+  User, Mail, Lock, IdCard, Building2, UserCheck,
+  ArrowRight, ShieldCheck, Sparkles, AlertCircle, Loader2
 } from "lucide-react";
+import { useDepartments } from "../hooks/useDepartments";
 
 export default function Auth() {
+  const { departments } = useDepartments();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +28,8 @@ export default function Auth() {
     password: "",
     confirmPassword: "",
     institution: "CKSPK (Matric)",
-    role: "Staff / Non-Teaching"
+    role: "Staff / Non-Teaching",
+    department: ""
   });
 
   const handleChange = (e) => {
@@ -48,8 +51,8 @@ export default function Auth() {
     setLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(
-        auth, 
-        formData.email.trim(), 
+        auth,
+        formData.email.trim(),
         formData.password
       );
       const user = userCredential.user;
@@ -60,7 +63,8 @@ export default function Auth() {
         empId: formData.empId.trim().toUpperCase(),
         email: formData.email.trim().toLowerCase(),
         institution: formData.institution,
-        role: formData.role
+        role: formData.role,
+        department: formData.department
       };
 
       // Always save to local storage fallback
@@ -151,22 +155,20 @@ export default function Auth() {
             <button
               type="button"
               onClick={() => { setIsLogin(true); setError(""); }}
-              className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                isLogin 
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+              className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all duration-200 cursor-pointer ${isLogin
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-              }`}
+                }`}
             >
               Sign In
             </button>
             <button
               type="button"
               onClick={() => { setIsLogin(false); setError(""); }}
-              className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                !isLogin 
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" 
+              className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all duration-200 cursor-pointer ${!isLogin
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
-              }`}
+                }`}
             >
               Register
             </button>
@@ -271,6 +273,26 @@ export default function Auth() {
                     <option value="Principal / HR">Principal / HR</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Department Dropdown */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
+                  Department
+                </label>
+                <select
+                  name="department"
+                  value={formData.department}
+                  onChange={handleChange}
+                  className="w-full bg-white border border-slate-300 px-3 py-2.5 rounded-xl text-slate-900 text-sm outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15 font-medium"
+                >
+                  <option value="">-- Select Department --</option>
+                  {departments.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Teacher / Staff Name */}
@@ -392,7 +414,7 @@ export default function Auth() {
 
         {/* Footer info */}
         <p className="text-center text-xs font-medium text-slate-500 mt-6">
-          © {new Date().getFullYear()} CK Group of Institutions HR Portal • Powered by Firebase
+          © {new Date().getFullYear()} CK Group of Institutions HR Portal • Powered by OutcomeX
         </p>
       </div>
     </div>

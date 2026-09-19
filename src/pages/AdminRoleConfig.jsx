@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, updateDoc, deleteDoc, getDoc, setDoc, getDocs, query, where } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search } from "lucide-react";
+import { CheckCircle2, XCircle, Shield, UserCheck, UserX, Trash2, AlertTriangle, AlertCircle, Check, Plus, X, Search, Briefcase } from "lucide-react";
 import Layout from "../components/Layout";
 import { formatProgDisplay, isMasterOrAdmin } from "../lib/utils";
 import { useDepartments } from "../hooks/useDepartments";
+import { useDesignations } from "../hooks/useDesignations";
 
 export default function AdminRoleConfig() {
   const [users, setUsers] = useState([]);
@@ -36,6 +37,11 @@ export default function AdminRoleConfig() {
   const [availableRoles, setAvailableRoles] = useState([]);
   const [newRoleInput, setNewRoleInput] = useState("");
   const [isAddingRole, setIsAddingRole] = useState(false);
+
+  // Designation management
+  const { designations, addDesignation, removeDesignation } = useDesignations();
+  const [newDesignationInput, setNewDesignationInput] = useState("");
+  const [isDesignationModalOpen, setIsDesignationModalOpen] = useState(false);
 
   const [rolePermissions, setRolePermissions] = useState({});
   const [savingPermissions, setSavingPermissions] = useState(false);
@@ -337,6 +343,23 @@ export default function AdminRoleConfig() {
     }
   };
 
+  const handleAddDesignationSubmit = async () => {
+    if (!newDesignationInput.trim()) {
+      showNotification("Please enter a designation name.");
+      return;
+    }
+    const res = await addDesignation(newDesignationInput);
+    showNotification(res.message);
+    if (res.success) {
+      setNewDesignationInput("");
+    }
+  };
+
+  const handleRemoveDesignationSubmit = async (desigName) => {
+    const res = await removeDesignation(desigName);
+    showNotification(res.message);
+  };
+
   const handleRoleChange = async (uid, newRole) => {
     try {
       await updateDoc(doc(db, "users", uid), { role: newRole });
@@ -344,6 +367,16 @@ export default function AdminRoleConfig() {
     } catch (error) {
       console.error("Error updating role:", error);
       showNotification("Failed to update role.");
+    }
+  };
+
+  const handleDesignationChange = async (uid, newDesignation) => {
+    try {
+      await updateDoc(doc(db, "users", uid), { designation: newDesignation });
+      showNotification(`Designation updated to ${newDesignation}`);
+    } catch (error) {
+      console.error("Error updating designation:", error);
+      showNotification("Failed to update designation.");
     }
   };
 
@@ -614,6 +647,13 @@ export default function AdminRoleConfig() {
               </button>
             )}
 
+            <button
+              onClick={() => setIsDesignationModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:border-[#120c7a] hover:text-[#120c7a] transition-all shadow-sm"
+            >
+              <Plus size={18} /> Add Designation
+            </button>
+
             <div className="flex bg-zinc-100 p-1 rounded-xl border border-zinc-200">
               <button
                 onClick={() => setActiveTab("users")}
@@ -668,7 +708,18 @@ export default function AdminRoleConfig() {
                             <div className="text-xs text-zinc-500">{user.facultyId}</div>
                           </td>
                           <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{user.email}</td>
-                          <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap font-medium">{user.designation || 'N/A'}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <select
+                              value={user.designation || ""}
+                              onChange={(e) => handleDesignationChange(user.uid, e.target.value)}
+                              className="w-full text-sm p-1 border border-zinc-200 rounded-lg outline-none bg-white"
+                            >
+                              <option value="">Select Designation</option>
+                              {designations.map(desig => (
+                                <option key={desig} value={desig}>{desig}</option>
+                              ))}
+                            </select>
+                          </td>
                           <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
                             <select
                               value={user.programme || ""}
@@ -950,6 +1001,91 @@ export default function AdminRoleConfig() {
                   className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   <UserX size={16} /> Confirm Revoke
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Designation Management Modal */}
+        {isDesignationModalOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              <div className="bg-[#120c7a] p-5 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Briefcase size={20} />
+                  <div>
+                    <h3 className="text-base font-bold">Designation Management</h3>
+                    <p className="text-xs text-blue-200">Add new designations or delete existing ones</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsDesignationModalOpen(false)}
+                  className="p-1 hover:bg-white/10 rounded-lg text-white/80 hover:text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+                {/* Add Designation Input Bar */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                    Add New Designation
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newDesignationInput}
+                      onChange={(e) => setNewDesignationInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddDesignationSubmit()}
+                      placeholder="Enter designation name (e.g. Senior Lecturer)..."
+                      className="flex-1 px-3.5 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-medium outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleAddDesignationSubmit}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-[#120c7a] hover:bg-blue-900 text-white rounded-xl text-sm font-bold transition-all shadow-sm shrink-0"
+                    >
+                      <Plus size={16} /> Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Existing Designations List with Delete Option */}
+                <div>
+                  <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">
+                    Active Designations ({designations.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {designations.map((desig) => (
+                      <div
+                        key={desig}
+                        className="flex items-center justify-between p-3 bg-zinc-50 border border-zinc-200/80 rounded-xl hover:border-zinc-300 transition-all"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-2 h-2 rounded-full bg-[#120c7a] shrink-0" />
+                          <span className="font-semibold text-sm text-zinc-800 truncate">{desig}</span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveDesignationSubmit(desig)}
+                          title={`Delete designation "${desig}"`}
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200/60 transition-all shrink-0"
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 bg-zinc-50 border-t border-zinc-100 flex justify-end">
+                <button
+                  onClick={() => setIsDesignationModalOpen(false)}
+                  className="px-5 py-2 text-sm font-bold text-zinc-700 bg-white border border-zinc-200 rounded-xl hover:bg-zinc-100 transition-colors shadow-sm"
+                >
+                  Done
                 </button>
               </div>
             </div>

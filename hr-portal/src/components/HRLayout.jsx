@@ -6,7 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { 
   FileText, CheckCircle2, Settings2, LayoutDashboard, 
   User, LogOut, Menu, X, ChevronRight, Building2, 
-  ShieldCheck, Award, Bell, GraduationCap
+  ShieldCheck, Award, Bell, GraduationCap, Users
 } from "lucide-react";
 
 export default function HRLayout({ children }) {
@@ -71,11 +71,13 @@ export default function HRLayout({ children }) {
   let navItems = [];
   if (isCoordinator) {
     navItems = [
-      { id: "coordinator-appraisal", label: "Coordinator Appraisal Request", path: "/coordinator-appraisal", icon: Award }
+      { id: "coordinator-appraisal", label: "Coordinator Appraisal Request", path: "/coordinator-appraisal", icon: Award },
+      { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 }
     ];
   } else if (isPrincipalHR) {
     navItems = [
       { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 },
+      { id: "user-management", label: "User Management", path: "/users", icon: Users },
       { id: "appraisal-settings", label: "Appraisal Settings", path: "/settings", icon: Settings2 }
     ];
   } else {
