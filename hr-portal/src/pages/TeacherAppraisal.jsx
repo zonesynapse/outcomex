@@ -32,7 +32,9 @@ import {
   Loader2,
   GraduationCap,
   Target,
-  FileCheck
+  FileCheck,
+  Users,
+  HeartHandshake
 } from "lucide-react";
 
 export default function TeacherAppraisal() {
@@ -132,10 +134,44 @@ export default function TeacherAppraisal() {
       { role: "", description: "", outcome: "" }
     ],
 
+    // G) Department Administration / Planning / Monitoring & Evaluation (HoDs only)
+    hodDeptAdmin: "",
+
     // G) Result Improvement of Dept / Ambience / Lab (HoDs only)
     hodResultImprovement: "",
 
-    // 4. Department Rating, Targets & Self Analysis (Q25-Q30)
+    // H) Specify your Role / Contribution, if any other than the above
+    otherRoleContribution: "",
+
+    // 15. Admissions Contributed to Institutions
+    admissionsInstitution: [
+      { area: "", count: "" }
+    ],
+
+    // 15. Admissions Contributed to Vijayadashami
+    admissionsVijayadashami: [
+      { area: "", count: "" }
+    ],
+
+    // 17-20. Work Habits & Leave Details
+    accomplishAssignment: "Yes", // Yes | with reminder | Depends on my interest
+    applyLeaveAdvance: "Yes", // Yes | Most of the time | No
+    leaveDetails: {
+      cl: "0",
+      coff: "0",
+      llp: "0",
+      odPublicExam: "0",
+      odOthers: "0",
+      odInst: "0"
+    },
+    consumeBalanceCL: "No", // Yes | If required | No
+
+    // 22-24. Interpersonal Relationships
+    relStudents: { rating: "Good", reason: "" }, // Good | Fair | Unsatisfactory | Should be improved
+    relColleagues: { rating: "Good", reason: "" },
+    relSuperiors: { rating: "Good", reason: "" },
+
+    // 5. Department Rating, Targets & Self Analysis (Q25-Q30)
     // Q25: Department Rating
     deptRating: "Good", // Good | Fair | Unsatisfactory | Should be improved
     deptRatingReason: "",
@@ -239,16 +275,25 @@ export default function TeacherAppraisal() {
             ...initialFormData,
             ...data.formData,
             // Ensure array fields default to at least one row
-            resultsQuarterly: data.formData.resultsQuarterly?.length ? data.formData.resultsQuarterly : initialFormData.resultsQuarterly,
-            resultsHalfYearly: data.formData.resultsHalfYearly?.length ? data.formData.resultsHalfYearly : initialFormData.resultsHalfYearly,
-            resultsAnnualTheory: data.formData.resultsAnnualTheory?.length ? data.formData.resultsAnnualTheory : initialFormData.resultsAnnualTheory,
-            resultsAnnualPractical: data.formData.resultsAnnualPractical?.length ? data.formData.resultsAnnualPractical : initialFormData.resultsAnnualPractical,
-            iiyClasses: data.formData.iiyClasses?.length ? data.formData.iiyClasses : initialFormData.iiyClasses,
-            workshops: data.formData.workshops?.length ? data.formData.workshops : initialFormData.workshops,
-            qualificationDetails: data.formData.qualificationDetails?.length ? data.formData.qualificationDetails : initialFormData.qualificationDetails,
-            deptInvolvement: data.formData.deptInvolvement?.length ? data.formData.deptInvolvement : initialFormData.deptInvolvement,
-            otherContributions: data.formData.otherContributions?.length ? data.formData.otherContributions : initialFormData.otherContributions,
-            selfAnalysis: data.formData.selfAnalysis?.length ? data.formData.selfAnalysis : initialFormData.selfAnalysis
+            resultsQuarterly: Array.isArray(data.formData.resultsQuarterly) && data.formData.resultsQuarterly.length ? data.formData.resultsQuarterly : initialFormData.resultsQuarterly,
+            resultsHalfYearly: Array.isArray(data.formData.resultsHalfYearly) && data.formData.resultsHalfYearly.length ? data.formData.resultsHalfYearly : initialFormData.resultsHalfYearly,
+            resultsAnnualTheory: Array.isArray(data.formData.resultsAnnualTheory) && data.formData.resultsAnnualTheory.length ? data.formData.resultsAnnualTheory : initialFormData.resultsAnnualTheory,
+            resultsAnnualPractical: Array.isArray(data.formData.resultsAnnualPractical) && data.formData.resultsAnnualPractical.length ? data.formData.resultsAnnualPractical : initialFormData.resultsAnnualPractical,
+            iiyClasses: Array.isArray(data.formData.iiyClasses) && data.formData.iiyClasses.length ? data.formData.iiyClasses : initialFormData.iiyClasses,
+            workshops: Array.isArray(data.formData.workshops) && data.formData.workshops.length ? data.formData.workshops : initialFormData.workshops,
+            qualificationDetails: Array.isArray(data.formData.qualificationDetails) && data.formData.qualificationDetails.length ? data.formData.qualificationDetails : initialFormData.qualificationDetails,
+            deptInvolvement: Array.isArray(data.formData.deptInvolvement) && data.formData.deptInvolvement.length ? data.formData.deptInvolvement : initialFormData.deptInvolvement,
+            otherContributions: Array.isArray(data.formData.otherContributions) && data.formData.otherContributions.length ? data.formData.otherContributions : initialFormData.otherContributions,
+            admissionsInstitution: Array.isArray(data.formData.admissionsInstitution) && data.formData.admissionsInstitution.length ? data.formData.admissionsInstitution : initialFormData.admissionsInstitution,
+            admissionsVijayadashami: Array.isArray(data.formData.admissionsVijayadashami) && data.formData.admissionsVijayadashami.length ? data.formData.admissionsVijayadashami : initialFormData.admissionsVijayadashami,
+            leaveDetails: {
+              ...initialFormData.leaveDetails,
+              ...(data.formData.leaveDetails || {})
+            },
+            relStudents: data.formData.relStudents || initialFormData.relStudents,
+            relColleagues: data.formData.relColleagues || initialFormData.relColleagues,
+            relSuperiors: data.formData.relSuperiors || initialFormData.relSuperiors,
+            selfAnalysis: Array.isArray(data.formData.selfAnalysis) && data.formData.selfAnalysis.length ? data.formData.selfAnalysis : initialFormData.selfAnalysis
           }));
         }
       }
@@ -284,7 +329,7 @@ export default function TeacherAppraisal() {
   // Dynamic Array Helpers
   const handleArrayRowChange = (arrayKey, index, field, value) => {
     setFormData(prev => {
-      const list = [...(prev[arrayKey] || [])];
+      const list = [...(prev[arrayKey] || initialFormData[arrayKey] || [])];
       list[index] = { ...list[index], [field]: value };
 
       // Auto compute pass % for exam tables
@@ -304,13 +349,13 @@ export default function TeacherAppraisal() {
   const addArrayRow = (arrayKey, defaultObj) => {
     setFormData(prev => ({
       ...prev,
-      [arrayKey]: [...(prev[arrayKey] || []), defaultObj]
+      [arrayKey]: [...(prev[arrayKey] || initialFormData[arrayKey] || []), defaultObj]
     }));
   };
 
   const removeArrayRow = (arrayKey, index) => {
     setFormData(prev => {
-      const list = [...(prev[arrayKey] || [])];
+      const list = [...(prev[arrayKey] || initialFormData[arrayKey] || [])];
       if (list.length <= 1) return prev; // keep at least 1 row
       list.splice(index, 1);
       return { ...prev, [arrayKey]: list };
@@ -398,8 +443,9 @@ export default function TeacherAppraisal() {
   const tabs = [
     { id: 1, name: "1. Staff Profile & Experience", icon: User },
     { id: 2, name: "2. Workload & Academic Results", icon: BookOpen },
-    { id: 3, name: "3. Invest In Yourself & Growth", icon: GraduationCap },
-    { id: 4, name: "4. Rating, Targets & Self Analysis", icon: Target }
+    { id: 3, name: "3. Invest In Yourself & Admissions", icon: GraduationCap },
+    { id: 4, name: "4. Work Habits, Leaves & Relationships", icon: Users },
+    { id: 5, name: "5. Rating, Targets & Self Analysis", icon: Target }
   ];
 
   return (
@@ -564,7 +610,7 @@ export default function TeacherAppraisal() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">4. Date of Joining College</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">4. Date of Joining School</label>
                 <input
                   type="date"
                   disabled={isReadOnly}
@@ -838,7 +884,7 @@ export default function TeacherAppraisal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-semibold">
-                    {formData.iiyClasses.map((row, idx) => (
+                    {(formData.iiyClasses || []).map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                         <td className="p-2">
@@ -944,7 +990,7 @@ export default function TeacherAppraisal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-semibold">
-                    {formData.workshops.map((row, idx) => (
+                    {(formData.workshops || []).map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                         <td className="p-2">
@@ -1074,7 +1120,7 @@ export default function TeacherAppraisal() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 font-semibold">
-                      {formData.qualificationDetails.map((row, idx) => (
+                      {(formData.qualificationDetails || []).map((row, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/50">
                           <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                           <td className="p-2">
@@ -1185,7 +1231,7 @@ export default function TeacherAppraisal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-semibold">
-                    {formData.deptInvolvement.map((row, idx) => (
+                    {(formData.deptInvolvement || []).map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                         <td className="p-2">
@@ -1274,7 +1320,7 @@ export default function TeacherAppraisal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-semibold">
-                    {formData.otherContributions.map((row, idx) => (
+                    {(formData.otherContributions || []).map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                         <td className="p-2">
@@ -1324,25 +1370,439 @@ export default function TeacherAppraisal() {
               </div>
             </div>
 
-            {/* G) Result Improvement for HoDs */}
+            {/* G) HoD Department Administration & Result Improvement */}
+            <div className="pt-6 border-t border-slate-100 space-y-4">
+              <div>
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                  G) Department Administration / Planning / Monitoring & Evaluation (Applicable to HoDs only)
+                </label>
+                <textarea
+                  rows="3"
+                  disabled={isReadOnly}
+                  value={formData.hodDeptAdmin}
+                  onChange={e => handleTextChange("hodDeptAdmin", e.target.value)}
+                  placeholder="Specify administrative, planning, monitoring and evaluation details..."
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
+                ></textarea>
+              </div>
+
+              <div>
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                  Result Improvement of the Department, Department Ambience, Laboratory Development and Maintenance (Applicable to HoDs only)
+                </label>
+                <textarea
+                  rows="3"
+                  disabled={isReadOnly}
+                  value={formData.hodResultImprovement}
+                  onChange={e => handleTextChange("hodResultImprovement", e.target.value)}
+                  placeholder="Specify details for departmental result improvement, lab upkeep, and maintenance..."
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
+                ></textarea>
+              </div>
+            </div>
+
+            {/* H) Additional Role / Contribution */}
             <div className="pt-6 border-t border-slate-100">
               <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
-                G) Result Improvement of the Department, Department Ambience, Laboratory Development and Maintenance (Applicable to HoDs only)
+                H) Specify your Role / Contribution, if any other than the above
               </label>
               <textarea
                 rows="3"
                 disabled={isReadOnly}
-                value={formData.hodResultImprovement}
-                onChange={e => handleTextChange("hodResultImprovement", e.target.value)}
-                placeholder="Specify details for departmental result improvement, lab upkeep, and maintenance..."
+                value={formData.otherRoleContribution}
+                onChange={e => handleTextChange("otherRoleContribution", e.target.value)}
+                placeholder="Detail any other special roles, responsibilities or contributions..."
                 className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
               ></textarea>
+            </div>
+
+            {/* 15. Admissions Contributed to Institution */}
+            <div className="pt-6 border-t border-slate-100 space-y-6">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                    15. No of admission contributed to the Institution for the AY {academicYear}
+                  </h3>
+                  {!isReadOnly && (
+                    <button
+                      onClick={() => addArrayRow("admissionsInstitution", { area: "", count: "" })}
+                      className="px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Row
+                    </button>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
+                      <tr>
+                        <th className="p-3 text-center w-12">Sl.No</th>
+                        <th className="p-3">Area</th>
+                        <th className="p-3 text-center w-48">No of Admission Contributed</th>
+                        {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-semibold">
+                      {(formData.admissionsInstitution || []).map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50">
+                          <td className="p-2 text-center text-slate-500">{idx + 1}</td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              disabled={isReadOnly}
+                              value={row.area}
+                              onChange={e => handleArrayRowChange("admissionsInstitution", idx, "area", e.target.value)}
+                              placeholder="e.g. Cuddalore / Local Area"
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              disabled={isReadOnly}
+                              value={row.count}
+                              onChange={e => handleArrayRowChange("admissionsInstitution", idx, "count", e.target.value)}
+                              placeholder="e.g. 5"
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-center"
+                            />
+                          </td>
+                          {!isReadOnly && (
+                            <td className="p-2 text-center">
+                              <button
+                                onClick={() => removeArrayRow("admissionsInstitution", idx)}
+                                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Admissions Contributed to Vijayadashami */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                    15. No of admission contributed to Vijayadashami for the AY {academicYear}
+                  </h3>
+                  {!isReadOnly && (
+                    <button
+                      onClick={() => addArrayRow("admissionsVijayadashami", { area: "", count: "" })}
+                      className="px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Row
+                    </button>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
+                      <tr>
+                        <th className="p-3 text-center w-12">Sl.No</th>
+                        <th className="p-3">Area</th>
+                        <th className="p-3 text-center w-48">No of Admission Contributed</th>
+                        {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 font-semibold">
+                      {(formData.admissionsVijayadashami || []).map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50">
+                          <td className="p-2 text-center text-slate-500">{idx + 1}</td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              disabled={isReadOnly}
+                              value={row.area}
+                              onChange={e => handleArrayRowChange("admissionsVijayadashami", idx, "area", e.target.value)}
+                              placeholder="e.g. Pre-KG / Primary"
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              disabled={isReadOnly}
+                              value={row.count}
+                              onChange={e => handleArrayRowChange("admissionsVijayadashami", idx, "count", e.target.value)}
+                              placeholder="e.g. 3"
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-center"
+                            />
+                          </td>
+                          {!isReadOnly && (
+                            <td className="p-2 text-center">
+                              <button
+                                onClick={() => removeArrayRow("admissionsVijayadashami", idx)}
+                                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* ── TAB 4: RATING, TARGETS & SELF ANALYSIS ── */}
+        {/* ── TAB 4: WORK HABITS, LEAVES & RELATIONSHIPS ── */}
         {activeTab === 4 && (
+          <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-10 shadow-xs">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-600" /> Work Habits, Leaves & Interpersonal Relationships
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5 font-medium">Questions 17 to 24: Punctuality, leave utilization, and relationships with stakeholders.</p>
+            </div>
+
+            {/* Q17: Accomplish assignment in time */}
+            <div>
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                17. Do you accomplish the given assignment in time?
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { value: "Yes", label: "Yes" },
+                  { value: "with reminder", label: "with reminder" },
+                  { value: "Depends on my interest", label: "Depends on my interest" }
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.accomplishAssignment === opt.value
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
+                  >
+                    <input
+                      type="radio"
+                      name="accomplishAssignment"
+                      disabled={isReadOnly}
+                      checked={formData.accomplishAssignment === opt.value}
+                      onChange={() => handleTextChange("accomplishAssignment", opt.value)}
+                      className="text-indigo-600"
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Q18: Apply for leave in advance */}
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                18. Do you apply for leave in advance?
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { value: "Yes", label: "Yes" },
+                  { value: "Most of the time", label: "Most of the time" },
+                  { value: "No", label: "No" }
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.applyLeaveAdvance === opt.value
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
+                  >
+                    <input
+                      type="radio"
+                      name="applyLeaveAdvance"
+                      disabled={isReadOnly}
+                      checked={formData.applyLeaveAdvance === opt.value}
+                      onChange={() => handleTextChange("applyLeaveAdvance", opt.value)}
+                      className="text-indigo-600"
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Q19: Details of leave taken */}
+            <div className="pt-6 border-t border-slate-100">
+              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                19. Details of leave taken during the Academic Year (June to May):
+              </h3>
+
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-xs text-center">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
+                    <tr>
+                      <th colSpan="3" className="p-3 border-r border-slate-200 bg-indigo-50/50 text-indigo-900">No. of Leave availed</th>
+                      <th colSpan="3" className="p-3 bg-slate-100 text-slate-900">No. of On Duty availed</th>
+                    </tr>
+                    <tr className="bg-slate-100/80 border-t border-slate-200">
+                      <th className="p-2 border-r border-slate-200 w-24">CL</th>
+                      <th className="p-2 border-r border-slate-200 w-24">C-Off</th>
+                      <th className="p-2 border-r border-slate-200 w-24">LLP</th>
+                      <th className="p-2 border-r border-slate-200">Related to Public Examination</th>
+                      <th className="p-2 border-r border-slate-200 w-28">Others</th>
+                      <th className="p-2 w-28">Institution</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-bold">
+                    <tr>
+                      <td className="p-2 border-r border-slate-200">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.cl || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "cl", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                      <td className="p-2 border-r border-slate-200">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.coff || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "coff", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                      <td className="p-2 border-r border-slate-200">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.llp || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "llp", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                      <td className="p-2 border-r border-slate-200">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.odPublicExam || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "odPublicExam", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                      <td className="p-2 border-r border-slate-200">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.odOthers || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "odOthers", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="number"
+                          disabled={isReadOnly}
+                          value={formData.leaveDetails?.odInst || ""}
+                          onChange={e => handleNestedChange("leaveDetails", "odInst", e.target.value)}
+                          placeholder="0"
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-center"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Q20: Consume balance CL in last month */}
+            <div className="pt-6 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-3">
+                20. Do you consume your balance CL in last month of academic session?
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { value: "Yes", label: "Yes" },
+                  { value: "If required", label: "If required" },
+                  { value: "No", label: "No" }
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData.consumeBalanceCL === opt.value
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-900 shadow-xs"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
+                  >
+                    <input
+                      type="radio"
+                      name="consumeBalanceCL"
+                      disabled={isReadOnly}
+                      checked={formData.consumeBalanceCL === opt.value}
+                      onChange={() => handleTextChange("consumeBalanceCL", opt.value)}
+                      className="text-indigo-600"
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Q22, Q23, Q24: Interpersonal Relationships */}
+            <div className="pt-6 border-t border-slate-100 space-y-6">
+              {[
+                { key: "relStudents", qNum: "22", title: "Relationship with the Students" },
+                { key: "relColleagues", qNum: "23", title: "Relationship with the Colleagues" },
+                { key: "relSuperiors", qNum: "24", title: "Relationship with the Superiors" }
+              ].map(rel => (
+                <div key={rel.key} className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-3">
+                  <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                    {rel.qNum}. {rel.title}
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[
+                      { value: "Good", label: "Good" },
+                      { value: "Fair", label: "Fair" },
+                      { value: "Unsatisfactory", label: "Unsatisfactory" },
+                      { value: "Should be improved", label: "Should be improved" }
+                    ].map(r => (
+                      <label
+                        key={r.value}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${formData[rel.key]?.rating === r.value
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <input
+                          type="radio"
+                          name={rel.key}
+                          disabled={isReadOnly}
+                          checked={formData[rel.key]?.rating === r.value}
+                          onChange={() => handleNestedChange(rel.key, "rating", r.value)}
+                          className="text-indigo-600"
+                        />
+                        <span>{r.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    disabled={isReadOnly}
+                    value={formData[rel.key]?.reason || ""}
+                    onChange={e => handleNestedChange(rel.key, "reason", e.target.value)}
+                    placeholder="Specify reason if unsatisfactory or should be improved..."
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 5: RATING, TARGETS & SELF ANALYSIS ── */}
+        {activeTab === 5 && (
           <div className="bg-white rounded-3xl border border-slate-200/80 p-6 md:p-8 space-y-10 shadow-xs">
             <div className="border-b border-slate-100 pb-4">
               <h2 className="text-lg font-bold text-slate-900 font-heading flex items-center gap-2">
@@ -1526,7 +1986,7 @@ export default function TeacherAppraisal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-semibold">
-                    {formData.selfAnalysis.map((row, idx) => (
+                    {(formData.selfAnalysis || []).map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                         <td className="p-2">
@@ -1666,7 +2126,7 @@ function renderExamTableSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-semibold">
-            {list.map((row, idx) => (
+            {(list || []).map((row, idx) => (
               <tr key={idx} className="hover:bg-slate-50/50">
                 <td className="p-2 text-center text-slate-500">{idx + 1}</td>
                 <td className="p-2">
