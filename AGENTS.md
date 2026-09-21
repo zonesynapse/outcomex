@@ -1,5 +1,23 @@
 ## Summary of Changes
 
+### 449. Restrict Mark Entry Button Display to Officially Allocated & Released Question Papers (`FacultyDashboard.jsx`)
+- **Goal**: Ensure the **Mark Entry** button appears ONLY on the specific question paper set that displays the green `Allocated & Released (date)` badge (i.e. the official paper allocated by Exam Cell whose exam date/time has been reached), rather than on all approved or non-allocated set papers (e.g. Set 2).
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added `isOfficiallyReleasedForMarkEntry` helper (`qp.allocated && qp.allocatedTo && isExamTimeReached(...)`).
+    - Updated **Mark Entry** button visibility check in both question paper list cards and question paper preview modal header to use `isOfficiallyReleasedForMarkEntry(qp)` instead of general `isAllocatedAndReleasedStatus(qp)`.
+- **Result**: Non-allocated sets (e.g. Set 2) or papers without the `Allocated & Released (date)` badge no longer show the **Mark Entry** button, preventing incorrect mark entries. Build passes cleanly in 6.17s.
+
+### 448. Normalized Common Subject Code Matching in Faculty Question Papers (`FacultyDashboard.jsx`)
+- **Goal**: Fix issue where common subject question papers (e.g. `GE 3751` vs `GE3751`) were not appearing for all faculty assigned to that subject under "My Question Papers" due to whitespace/formatting mismatch during subject code matching.
+- **Fix**:
+  - In [`FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx):
+    - Added `normCode` helper (`replace(/[^a-z0-9]/g, '')`) when building `myAssignedCodes` set and resolving `qpSubject` for incoming question papers.
+    - Updated `isAssignedToMe` check in `pending` question papers filter to compare normalized subject codes.
+    - Updated `isAwaitingHODReview` and `isApprovedOrAllocated` status evaluation so common subject papers assigned to the faculty display properly across draft, forwarded, approved, and allocated states.
+    - Updated subject code normalization in `qpSetterTaskCards` (`generatedSets` filter and `matchingGroup` lookups) to ensure tasks and generated set counts match regardless of spaces or dashes in course codes.
+- **Result**: Common subject question papers saved as `GE 3751` or `GE3751` now match seamlessly and display for all faculty handling the subject. Build passes cleanly in 7.28s.
+
 ### 447. Dedicated HR Portal User Management Module (`hr-portal/src/pages/UserManagement.jsx`, `HRLayout.jsx`, `App.jsx`)
 - **Goal**: Create a full-featured **User Management** page inside `hr-portal` (matching [`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx)) restricted to Principal and HR users.
 - **Fix**:

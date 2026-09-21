@@ -12,6 +12,26 @@ import Layout from "../components/Layout";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
+const NON_TEACHING_EVALUATION_CATEGORIES = [
+  { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
+  { id: 2, text: "Responds positively to any instruction, guidance, correction and discipline given by Superiors" },
+  { id: 3, text: "Cooperation towards organizing programs in the department/Institute" },
+  { id: 4, text: "Attendance, Discipline, Punctuality and Completion of work on schedule" },
+  { id: 5, text: "Maintenance of Files / Records / Ambiance of the Department / Laboratory" },
+  { id: 6, text: "Ability and willingness to take up additional load in times of requirements" },
+  { id: 7, text: "Contribution towards admission" },
+  { id: 8, text: "IIY / Improve knowledge (Theory & Hands on Training) on all aspects of the job to perform satisfactorily" },
+  { id: 9, text: "The ability and ease in expressing ideas, opinions and information clearly and accurately" },
+  { id: 10, text: "Special efforts taken / Contributions for the development of the Institution / Department" }
+];
+
+const calculateNonTeachingGrade = (totalMarks) => {
+  if (totalMarks > 89) return "A";
+  if (totalMarks >= 70) return "B";
+  if (totalMarks >= 50) return "C";
+  return "D";
+};
+
 export default function AppraisalReviews() {
   const location = useLocation();
   const [currentUser, setCurrentUser] = useState(null);
@@ -30,6 +50,17 @@ export default function AppraisalReviews() {
   });
   const [selectedAppraisal, setSelectedAppraisal] = useState(null);
   const [activeDetailsTab, setActiveDetailsTab] = useState(1);
+
+  // Scoring states (Parity with HODDashboard review modal)
+  const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
+
+  // Non-teaching evaluation states
+  const [nonTeachingEvalMarks, setNonTeachingEvalMarks] = useState({
+    1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 10, 7: 10, 8: 10, 9: 10, 10: 10
+  });
+  const [nonTeachingSpecificComment, setNonTeachingSpecificComment] = useState("");
+  const [nonTeachingRecommendation, setNonTeachingRecommendation] = useState("His / Her contribution to be appreciated and recommended");
+  const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
 
   const isSectionVisible = (id) => {
     const field = customFieldsConfig.find(f => f.id === id);
@@ -283,6 +314,33 @@ export default function AppraisalReviews() {
     setSelectedAppraisal(app);
     setActiveDetailsTab(1);
 
+    // Initialize HOD faculty criteria scores map
+    const initialHodScores = {};
+    if (app.hodReview?.hodScores) {
+      Object.assign(initialHodScores, app.hodReview.hodScores);
+    } else if (app.autoScore?.breakdown) {
+      const bd = app.autoScore.breakdown;
+      const allRows = [...(bd.part1Rows || []), ...(bd.part2Rows || [])];
+      allRows.forEach((r) => {
+        initialHodScores[r.id] = r.scored ?? 0;
+      });
+    }
+    setHodFacultyScoresMap(initialHodScores);
+
+    // Initialize non-teaching performance evaluation rating states
+    const existingEval = app.performanceEvaluation;
+    if (existingEval?.marks) {
+      setNonTeachingEvalMarks(existingEval.marks);
+      setNonTeachingSpecificComment(existingEval.specificComments || app.hodReview?.comments || "");
+      setNonTeachingRecommendation(existingEval.recommendation || "His / Her contribution to be appreciated and recommended");
+      setNonTeachingIncrementGrade(existingEval.incrementGrade || "A");
+    } else {
+      setNonTeachingEvalMarks({ 1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 10, 7: 10, 8: 10, 9: 10, 10: 10 });
+      setNonTeachingSpecificComment(app.hodReview?.comments || "");
+      setNonTeachingRecommendation("His / Her contribution to be appreciated and recommended");
+      setNonTeachingIncrementGrade("A");
+    }
+
     if (userRole === "HOD") {
       setComments(app.hodReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || "Good");
@@ -302,7 +360,17 @@ export default function AppraisalReviews() {
 
   const handleReviewAction = async (newStatus) => {
     if (!selectedAppraisal) return;
+    const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
+
     setActioning(true);
+
+    let totalScore = 0;
+    let derivedGrade = evaluationGrade;
+
+    if (isNonTeaching) {
+      totalScore = Object.values(nonTeachingEvalMarks).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      derivedGrade = calculateNonTeachingGrade(totalScore);
+    }
 
     const updatePayload = {
       status: newStatus,
@@ -311,24 +379,59 @@ export default function AppraisalReviews() {
 
     if (userRole === "HOD") {
       updatePayload.hodReview = {
-        comments: comments || "Reviewed by HOD",
-        grade: evaluationGrade,
-        reviewedBy: currentUser.email,
+        comments: isNonTeaching
+          ? (nonTeachingSpecificComment.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : ""))
+          : (comments.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : "")),
+        grade: isNonTeaching ? derivedGrade : evaluationGrade,
+        reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       };
     } else if (userRole === "Principal" || userRole === "Admin") {
       updatePayload.principalReview = {
         comments: comments || "Approved by Principal",
-        grade: evaluationGrade,
+        grade: isNonTeaching ? derivedGrade : evaluationGrade,
         finalRating: finalRating !== "" ? finalRating : (selectedAppraisal.principalReview?.finalRating ?? ""),
         checkboxes: principalCheckboxes,
-        reviewedBy: currentUser.email,
+        reviewedBy: currentUser?.email || "",
+        reviewedAt: new Date().toISOString()
+      };
+      if (selectedAppraisal.hodReview) {
+        updatePayload.hodReview = selectedAppraisal.hodReview;
+      }
+    }
+
+    if (!isNonTeaching && selectedAppraisal.autoScore?.breakdown) {
+      const bd = selectedAppraisal.autoScore.breakdown;
+      const p1 = bd.part1Rows || [];
+      const p2 = bd.part2Rows || [];
+      const p1HodT = p1.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+      const p2HodT = p2.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+      const gHodT = p1HodT + p2HodT;
+
+      if (!updatePayload.hodReview) {
+        updatePayload.hodReview = selectedAppraisal.hodReview || {};
+      }
+      updatePayload.hodReview.hodScores = hodFacultyScoresMap;
+      updatePayload.hodReview.hodPart1Total = p1HodT;
+      updatePayload.hodReview.hodPart2Total = p2HodT;
+      updatePayload.hodReview.hodTotalScore = gHodT;
+    }
+
+    if (isNonTeaching) {
+      updatePayload.performanceEvaluation = {
+        marks: nonTeachingEvalMarks,
+        totalMarks: totalScore,
+        gradeSecured: derivedGrade,
+        specificComments: nonTeachingSpecificComment.trim(),
+        recommendation: nonTeachingRecommendation,
+        incrementGrade: nonTeachingIncrementGrade,
+        reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       };
     }
 
     try {
-      const targetColl = selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast(`Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
       setSelectedAppraisal(null);
@@ -343,25 +446,42 @@ export default function AppraisalReviews() {
     if (!selectedAppraisal || !correctionComments.trim()) return;
     setActioning(true);
 
+    const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
+
     const updatePayload = {
       status: "Returned",
       updatedAt: new Date().toISOString(),
       hodReview: userRole === "HOD" ? {
         comments: correctionComments,
-        reviewedBy: currentUser.email,
+        reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       } : selectedAppraisal.hodReview,
-      principalReview: userRole === "Principal" ? {
+      principalReview: (userRole === "Principal" || userRole === "Admin") ? {
         comments: correctionComments,
-        reviewedBy: currentUser.email,
+        reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       } : selectedAppraisal.principalReview
     };
 
+    if (isNonTeaching) {
+      const totalScore = Object.values(nonTeachingEvalMarks).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      const derivedGrade = calculateNonTeachingGrade(totalScore);
+      updatePayload.performanceEvaluation = {
+        marks: nonTeachingEvalMarks,
+        totalMarks: totalScore,
+        gradeSecured: derivedGrade,
+        specificComments: nonTeachingSpecificComment.trim(),
+        recommendation: nonTeachingRecommendation,
+        incrementGrade: nonTeachingIncrementGrade,
+        reviewedBy: currentUser?.email || "",
+        reviewedAt: new Date().toISOString()
+      };
+    }
+
     try {
-      const targetColl = selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : "faculty_appraisals";
+      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
-      showToast("Appraisal returned to faculty for correction.", "success");
+      showToast("Appraisal returned to staff for correction.", "success");
       setCorrectionModalOpen(false);
       setCorrectionComments("");
       setSelectedAppraisal(null);
@@ -2250,11 +2370,19 @@ export default function AppraisalReviews() {
                   <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs">
                     <div className="bg-indigo-50/70 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
                       <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
-                      {selectedAppraisal.hodReview?.hodTotalScore !== undefined && (
-                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                          HOD Score: {selectedAppraisal.hodReview.hodTotalScore} / {selectedAppraisal.autoScore.maxTotal || 100}
-                        </span>
-                      )}
+                      {(() => {
+                        const bd = selectedAppraisal.autoScore.breakdown;
+                        const p1 = bd.part1Rows || [];
+                        const p2 = bd.part2Rows || [];
+                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+                        const gHodT = sumHod(p1) + sumHod(p2);
+                        const gM = selectedAppraisal.autoScore.maxTotal || (p1.length ? p1.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0) + (p2.length ? p2.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0);
+                        return (
+                          <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                            HOD Score: {gHodT} / {gM}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <table className="w-full border-collapse text-xs">
                       <thead>
@@ -2270,31 +2398,53 @@ export default function AppraisalReviews() {
                         const bd = selectedAppraisal.autoScore.breakdown;
                         const p1 = bd.part1Rows || [];
                         const p2 = bd.part2Rows || [];
-                        const hodMap = selectedAppraisal.hodReview?.hodScores || {};
                         const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodMap[r.id] ?? r.scored) || 0), 0);
+                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
 
                         const p1T = selectedAppraisal.autoScore.part1Total ?? sum(p1, "scored");
                         const p1M = p1.length ? sum(p1, "maxMarks") : 0;
-                        const p1HodT = selectedAppraisal.hodReview?.hodPart1Total ?? sumHod(p1);
+                        const p1HodT = sumHod(p1);
 
                         const p2T = selectedAppraisal.autoScore.part2Total ?? sum(p2, "scored");
                         const p2M = p2.length ? sum(p2, "maxMarks") : 0;
-                        const p2HodT = selectedAppraisal.hodReview?.hodPart2Total ?? sumHod(p2);
+                        const p2HodT = sumHod(p2);
 
                         const gT = selectedAppraisal.autoScore.total ?? p1T + p2T;
                         const gM = selectedAppraisal.autoScore.maxTotal ?? p1M + p2M;
-                        const gHodT = selectedAppraisal.hodReview?.hodTotalScore ?? (p1HodT + p2HodT);
+                        const gHodT = p1HodT + p2HodT;
+
+                        const isEditable = selectedAppraisal.status !== "Approved";
 
                         const rowEls = (rows) => rows.map((r) => {
-                          const hodVal = hodMap[r.id] ?? r.scored;
+                          const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
                           return (
                             <tr key={r.id} className="hover:bg-slate-50/50">
                               <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
                               <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
                               <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
                               <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
-                              <td className="p-2.5 text-center font-black text-emerald-700">{hodVal}</td>
+                              <td className="p-2.5 text-center font-black">
+                                {isEditable ? (
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    max={r.maxMarks}
+                                    value={hodVal === undefined || hodVal === null ? "" : hodVal}
+                                    onChange={(e) => {
+                                      const inputVal = e.target.value;
+                                      const parsed = inputVal === "" ? "" : Math.min(Number(r.maxMarks), Math.max(0, Number(inputVal)));
+                                      setHodFacultyScoresMap((prev) => ({
+                                        ...prev,
+                                        [r.id]: parsed
+                                      }));
+                                    }}
+                                    className="w-16 text-center font-black text-emerald-900 bg-white border-2 border-emerald-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 focus:outline-none"
+                                  />
+                                ) : (
+                                  <span className="text-emerald-700 font-bold">{hodVal}</span>
+                                )}
+                              </td>
                             </tr>
                           );
                         });
@@ -2343,6 +2493,157 @@ export default function AppraisalReviews() {
                         );
                       })()}
                     </table>
+                  </div>
+                )}
+
+                {/* ── NON-TEACHING PERFORMANCE EVALUATION SHEET (RATING & MARKS) ── */}
+                {(selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals") && (
+                  <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs p-5 space-y-6">
+                    <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-1.5">
+                          <Star size={14} className="text-[#120c7a]" /> PERFORMANCE EVALUATION SHEET (Review Rating)
+                        </h4>
+                        <p className="text-[11px] text-indigo-700 font-medium mt-0.5">
+                          Select mark for each category (10, 9, 8, 6, 5, 4, 2). Total Marks out of 100.
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="block text-[9px] font-black text-indigo-400 uppercase tracking-widest">Calculated Grade</span>
+                        <span className={`text-xl font-black ${
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'text-emerald-600' :
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'text-blue-600' :
+                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'text-amber-600' : 'text-rose-600'
+                        }`}>
+                          Grade {calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0))}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 10 Categories Rating Table */}
+                    <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-zinc-100 text-zinc-700 font-bold border-b border-zinc-200">
+                            <th className="p-3 w-12 text-center border-r border-zinc-200">S. No</th>
+                            <th className="p-3 border-r border-zinc-200">CATEGORY</th>
+                            <th className="p-3 text-center w-72">Marks (10, 9, 8, 6, 5, 4, 2)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-200">
+                          {NON_TEACHING_EVALUATION_CATEGORIES.map((cat) => {
+                            const currentScore = Number(nonTeachingEvalMarks[cat.id]) || 10;
+                            return (
+                              <tr key={cat.id} className="hover:bg-zinc-50/50">
+                                <td className="p-3 text-center font-bold text-zinc-500 border-r border-zinc-200">{cat.id}</td>
+                                <td className="p-3 font-semibold text-zinc-800 border-r border-zinc-200">{cat.text}</td>
+                                <td className="p-2 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    {[10, 9, 8, 6, 5, 4, 2].map((mVal) => (
+                                      <button
+                                        key={mVal}
+                                        type="button"
+                                        disabled={selectedAppraisal.status === "Approved"}
+                                        onClick={() => setNonTeachingEvalMarks({ ...nonTeachingEvalMarks, [cat.id]: mVal })}
+                                        className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                          currentScore === mVal
+                                            ? "bg-indigo-600 text-white shadow-md scale-105"
+                                            : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
+                                        } disabled:opacity-75`}
+                                      >
+                                        {mVal}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-indigo-50/80 font-bold border-t border-indigo-200">
+                            <td colSpan={2} className="p-3 text-right text-indigo-950 font-bold text-xs uppercase tracking-wider">
+                              Total Marks (100)
+                            </td>
+                            <td className="p-3 text-center text-indigo-700 font-black text-sm">
+                              {Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)} / 100
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Specific Comments & Recommendations */}
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1.5">Any other specific comment:</label>
+                        <textarea
+                          rows={3}
+                          disabled={selectedAppraisal.status === "Approved"}
+                          value={nonTeachingSpecificComment}
+                          onChange={(e) => setNonTeachingSpecificComment(e.target.value)}
+                          className="w-full rounded-2xl border border-zinc-200 p-3 text-xs font-medium focus:ring-2 focus:ring-indigo-500 bg-white outline-none"
+                          placeholder="Enter evaluation remarks or improvement suggestions..."
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommendation</label>
+                          <select
+                            disabled={selectedAppraisal.status === "Approved"}
+                            value={nonTeachingRecommendation}
+                            onChange={(e) => setNonTeachingRecommendation(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="His / Her contribution to be appreciated and recommended">His / Her contribution to be appreciated and recommended</option>
+                            <option value="Satisfactory performance">Satisfactory performance</option>
+                            <option value="Potential underutilized">Potential underutilized</option>
+                            <option value="Counseling is required">Counseling is required</option>
+                            <option value="Performance improvement is desired">Performance improvement is desired</option>
+                            <option value="To be warned">To be warned</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommend for Suitable Increment Under Grade</label>
+                          <select
+                            disabled={selectedAppraisal.status === "Approved"}
+                            value={nonTeachingIncrementGrade}
+                            onChange={(e) => setNonTeachingIncrementGrade(e.target.value)}
+                            className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="A">Grade A (Above 89)</option>
+                            <option value="B">Grade B (70 – 88)</option>
+                            <option value="C">Grade C (50 – 69)</option>
+                            <option value="D">Grade D (&lt; 50)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Grade Scale Summary */}
+                      <div className="border border-zinc-200 rounded-2xl overflow-hidden text-xs bg-zinc-50/60 p-4 space-y-2">
+                        <span className="block font-bold text-zinc-700 uppercase tracking-wider text-[10px]">Evaluation Grade Scale Summary</span>
+                        <div className="grid grid-cols-4 gap-2 text-center font-bold">
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>Above 89</span>
+                            <span className="block text-xs font-black">Grade A</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>70 – 88</span>
+                            <span className="block text-xs font-black">Grade B</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>50 – 69</span>
+                            <span className="block text-xs font-black">Grade C</span>
+                          </div>
+                          <div className={`p-2 rounded-xl border ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'D' ? 'bg-rose-100 border-rose-300 text-rose-800' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                            <span>&lt; 50</span>
+                            <span className="block text-xs font-black">Grade D</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

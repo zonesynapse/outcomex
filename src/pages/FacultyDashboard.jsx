@@ -268,6 +268,15 @@ export default function FacultyDashboard() {
     return now.getTime() >= examStartDateTime.getTime();
   }, []);
 
+  const isOfficiallyReleasedForMarkEntry = useCallback((qp) => {
+    if (!qp || !qp.allocated || !qp.allocatedTo) return false;
+    return isExamTimeReached(
+      qp.allocatedTo.examDate,
+      qp.allocatedTo.startTime,
+      qp.allocatedTo.session
+    );
+  }, [isExamTimeReached]);
+
   const [timetableData, setTimetableData] = useState({});
   const [loadingTimetable, setLoadingTimetable] = useState(false);
   const [academicEvents, setAcademicEvents] = useState({});
@@ -879,9 +888,11 @@ export default function FacultyDashboard() {
           }
         });
 
+        const normCode = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
         const myAssignedCodes = new Set(
           (visibleGroups || [])
-            .flatMap(g => (g.codes || []).map(c => String(c).trim().toLowerCase()))
+            .flatMap(g => (g.codes || []).map(c => normCode(c)))
             .filter(Boolean)
         );
 
@@ -895,24 +906,25 @@ export default function FacultyDashboard() {
 
             const isOwnedByMe = createdBy === currentUid;
             const parsedQpSubj = parseSubjectField(qp.subject);
-            const qpSubject = String(parsedQpSubj.code || qp.subject_code || '').trim().toLowerCase();
+            const rawQpCode = parsedQpSubj.code || qp.subject_code || qp.subject || '';
+            const qpSubject = normCode(rawQpCode);
             const isAssignedToMe = myAssignedCodes.size > 0 && Boolean(qpSubject) && myAssignedCodes.has(qpSubject);
 
             // 1. My Drafts: owned by me OR (no created_by AND subject is assigned to me)
             const isMyDraft = status === "draft" && (isOwnedByMe || (!createdBy && isAssignedToMe));
 
-            // 2. Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me)
-            const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy));
+            // 2. Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me OR (isAssignedToMe AND forwardedBy))
+            const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy) || isAssignedToMe);
 
             // 3. Sent back for recorrection: status recorrected AND (forwarded to me OR created by me OR forwarded by me)
             const isSentBackForRecorrection = status === "recorrected" && (forwardedTo === currentUid || isOwnedByMe || forwardedBy === currentUid);
 
             // 4. Approved or Allocated papers
             // Owned by me or forwarded by me: show any approved/allocated status
-            // NOT owned by me (common setter paper): ONLY show if strictly "Allocated & Released"
+            // NOT owned by me (common setter paper): show if assigned to me and approved/allocated/released
             const isApprovedOrAllocated = (isOwnedByMe || forwardedBy === currentUid)
               ? isApprovedOrAllocatedStatus(status)
-              : (isAssignedToMe && isAllocatedAndReleasedStatus(qp));
+              : (isAssignedToMe && (isApprovedOrAllocatedStatus(status) || isAllocatedAndReleasedStatus(qp)));
 
             return isMyDraft || isAwaitingHODReview || isSentBackForRecorrection || isApprovedOrAllocated;
           })
@@ -1454,13 +1466,17 @@ export default function FacultyDashboard() {
         // Match against both old (rawCode) and canonical (canonicalCode) to catch all saved QPs.
         const generatedSets = (baseQps || []).filter(qp => {
           const parsedQp = parseSubjectField(qp.subject);
-          const qpCode = String(parsedQp.code || qp.subject_code || '').trim().toUpperCase();
+          const rawQpCode = parsedQp.code || qp.subject_code || qp.subject || '';
+          const qpCodeNorm = String(rawQpCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const rawCodeNorm = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const canonicalCodeNorm = String(canonicalCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
           const isMyPaper = qp.created_by === currentUid || !qp.created_by;
           if (!isMyPaper) return false;
-          if (canonicalCode) {
-            if (qpCode !== rawCode && qpCode !== canonicalCode) return false;
+          if (canonicalCodeNorm) {
+            if (qpCodeNorm !== rawCodeNorm && qpCodeNorm !== canonicalCodeNorm) return false;
           } else {
-            if (qpCode !== rawCode) return false;
+            if (qpCodeNorm !== rawCodeNorm) return false;
           }
           const isWrittenTest = isWrittenTestQp(qp);
           return isWrittenTest;
@@ -1496,11 +1512,13 @@ export default function FacultyDashboard() {
             normBatch(task.batch).includes(normBatch(g.batch))) &&
           String(g.semester) === String(task.semester) &&
           (g.codes || []).some(c => {
-            const cNorm = String(c).trim().toUpperCase();
-            if (canonicalCode) {
-              return cNorm === rawCode || cNorm === canonicalCode;
+            const cNorm = String(c).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const rawCodeNorm = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const canonicalCodeNorm = String(canonicalCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (canonicalCodeNorm) {
+              return cNorm === rawCodeNorm || cNorm === canonicalCodeNorm;
             }
-            return cNorm === rawCode;
+            return cNorm === rawCodeNorm;
           })
         );
         const excelFirstDept = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments[0] : null;
@@ -2991,7 +3009,7 @@ export default function FacultyDashboard() {
                         )}
                       </div>
                       <div className="shrink-0 flex items-center gap-1.5">
-                        {isAllocatedAndReleasedStatus(qp) && (
+                        {isOfficiallyReleasedForMarkEntry(qp) && (
                           <button
                             onClick={() => navigate('/markk', { state: { qp: buildMarkEntryPayload(qp) } })}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm active:scale-95"
@@ -3061,7 +3079,7 @@ export default function FacultyDashboard() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {isAllocatedAndReleasedStatus(selectedQP) && (
+                {isOfficiallyReleasedForMarkEntry(selectedQP) && (
                   <button
                     onClick={() => { setShowQPModal(false); navigate('/markk', { state: { qp: buildMarkEntryPayload(selectedQP) } }); }}
                     className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
