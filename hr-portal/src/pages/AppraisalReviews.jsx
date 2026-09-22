@@ -263,8 +263,12 @@ export default function AppraisalReviews() {
           setUserRole(r);
           setUserDept(uData.department || "");
           setUserInstitution(uData.institution || "");
-          if (!location.state?.statusFilter && (r === "HOD" || r === "Coordinator" || r.toLowerCase().includes("coordinator"))) {
-            setStatusFilter("Submitted");
+          if (!location.state?.statusFilter) {
+            if (r === "Coordinator" || r.toLowerCase().includes("coordinator")) {
+              setStatusFilter("Submitted");
+            } else if (r === "HOD" || r.toLowerCase().includes("hod") || r === "Principal" || r === "Admin") {
+              setStatusFilter("HOD_Approved");
+            }
           }
         }
       }
@@ -364,6 +368,12 @@ export default function AppraisalReviews() {
     const depMatch = (isHODRole || isCoordinatorRole)
       ? (app.department || "").toLowerCase() === (userDept || "").toLowerCase()
       : (deptFilter === "All" || app.department === deptFilter);
+
+    // Coordinator review workflow segregation:
+    // "Submitted" appraisals are pending Coordinator review; hide from HOD/Principal until Coordinator evaluates and forwards.
+    if (!isCoordinatorRole && app.status === "Submitted") {
+      return false;
+    }
 
     const statusMatch = statusFilter === "All" || app.status === statusFilter;
 
@@ -1073,16 +1083,37 @@ export default function AppraisalReviews() {
                                     </span>
                                   </div>
 
-                                  <div className="grid grid-cols-2 gap-3 pt-1">
-                                    <div className="bg-slate-50 p-2.5 rounded-lg border border-zinc-150">
-                                      <span className="block text-[10px] font-bold text-zinc-400 uppercase">Theory Pass % (Target: 95%)</span>
-                                      <span className="font-bold text-slate-800">{k5.theoryPassPct ? `${k5.theoryPassPct}%` : "-"}</span>
+                                  {Array.isArray(k5.subjectResults) && k5.subjectResults.length > 0 ? (
+                                    <div className="space-y-2 pt-1">
+                                      {k5.subjectResults.map((sub, idx) => (
+                                        <div key={idx} className="grid grid-cols-2 gap-3 bg-slate-50 p-2.5 rounded-lg border border-zinc-150">
+                                          <div>
+                                            <span className="block text-[10px] font-bold text-zinc-400 uppercase">
+                                              {k5.subjectResults.length > 1 ? `Theory Pass % (#${idx + 1})` : "Theory Pass % (Target: 95%)"}
+                                            </span>
+                                            <span className="font-bold text-slate-800">{sub.theoryPassPct ? `${sub.theoryPassPct}%` : "-"}</span>
+                                          </div>
+                                          <div>
+                                            <span className="block text-[10px] font-bold text-zinc-400 uppercase">
+                                              {k5.subjectResults.length > 1 ? `Practical Pass % (#${idx + 1})` : "Practical Pass % (Target: 90%)"}
+                                            </span>
+                                            <span className="font-bold text-slate-800">{sub.practicalPassPct ? `${sub.practicalPassPct}%` : "-"}</span>
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
-                                    <div className="bg-slate-50 p-2.5 rounded-lg border border-zinc-150">
-                                      <span className="block text-[10px] font-bold text-zinc-400 uppercase">Practical Pass % (Target: 90%)</span>
-                                      <span className="font-bold text-slate-800">{k5.practicalPassPct ? `${k5.practicalPassPct}%` : "-"}</span>
+                                  ) : (
+                                    <div className="grid grid-cols-2 gap-3 pt-1">
+                                      <div className="bg-slate-50 p-2.5 rounded-lg border border-zinc-150">
+                                        <span className="block text-[10px] font-bold text-zinc-400 uppercase">Theory Pass % (Target: 95%)</span>
+                                        <span className="font-bold text-slate-800">{k5.theoryPassPct ? `${k5.theoryPassPct}%` : "-"}</span>
+                                      </div>
+                                      <div className="bg-slate-50 p-2.5 rounded-lg border border-zinc-150">
+                                        <span className="block text-[10px] font-bold text-zinc-400 uppercase">Practical Pass % (Target: 90%)</span>
+                                        <span className="font-bold text-slate-800">{k5.practicalPassPct ? `${k5.practicalPassPct}%` : "-"}</span>
+                                      </div>
                                     </div>
-                                  </div>
+                                  )}
 
                                   {(k5.remarks || k5.resultRemarks) && (
                                     <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">

@@ -10,20 +10,16 @@ import { parseAppraisalDateTime } from "../utils/appraisalScore";
 
 const DEFAULT_CRITERIA = {
   part1: [
-    { id: "p1_s1", sNo: 1, kra: "Pass Percentage", particulars: "Practicals/ Projects Handled", maxMarks: 5, type: "practical_pass", rules: [{ min: 95, max: 100, rating: 1, marks: 5 }, { min: 0, max: 94.99, rating: 0, marks: 0 }] },
-    { id: "p1_s2", sNo: 2, kra: "Pass Percentage", particulars: "Theory Subjects Handled", maxMarks: 40, type: "theory_pass", rules: [{ min: 91, max: 100, rating: 5, marks: 40 }, { min: 81, max: 90.99, rating: 4, marks: 32 }, { min: 71, max: 80.99, rating: 3, marks: 24 }, { min: 61, max: 70.99, rating: 2, marks: 16 }, { min: 51, max: 60.99, rating: 1, marks: 8 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] },
-    { id: "p1_s3", sNo: 3, kra: "Students Feedback", particulars: "Based on the evaluation of feedback received from the students", maxMarks: 5, type: "student_feedback", rules: [{ min: 91, max: 100, rating: 5, marks: 5 }, { min: 81, max: 90.99, rating: 4, marks: 4 }, { min: 71, max: 80.99, rating: 3, marks: 3 }, { min: 61, max: 70.99, rating: 2, marks: 2 }, { min: 51, max: 60.99, rating: 1, marks: 1 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] }
+    { id: "p1_s1", sNo: 1, kra: "Pass Percentage", particulars: "Practicals Handled", maxMarks: 5, type: "practical_pass", rules: [{ min: 95, max: 100, rating: 1, marks: 5 }, { min: 0, max: 94.99, rating: 0, marks: 0 }] },
+    { id: "p1_s2", sNo: 2, kra: "Pass Percentage", particulars: "Theory Subjects Handled", maxMarks: 45, type: "theory_pass", rules: [{ min: 91, max: 100, rating: 5, marks: 45 }, { min: 81, max: 90.99, rating: 4, marks: 36 }, { min: 71, max: 80.99, rating: 3, marks: 27 }, { min: 61, max: 70.99, rating: 2, marks: 18 }, { min: 51, max: 60.99, rating: 1, marks: 9 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] }
   ],
   part2: [
-    { id: "p2_1a", sNo: "1a", kra: "Investing in Yourself", particulars: "Completion of Online Courses with its Outcome (Two course)", maxMarks: 5, type: "online_courses", targetCount: 2, marksPerUnit: 2.5 },
-    { id: "p2_1b", sNo: "1b", kra: "Investing in Yourself", particulars: "Publication of Research Papers/Patents in reputed Journal/ International Conference (One Paper)", maxMarks: 5, type: "publications", targetCount: 1, marksPerUnit: 5 },
-    { id: "p2_1c", sNo: "1c", kra: "Investing in Yourself", particulars: "Participation in Workshops, Conferences, FDP's, STTP's, Seminars and Special Programs, if any (Two Workshop)", maxMarks: 5, type: "workshops", targetCount: 2, marksPerUnit: 2.5 },
-    { id: "p2_1d", sNo: "1d", kra: "Investing in Yourself", particulars: "Improvements in Qualification (Ph.D) / Interaction with Outside World (One program)", maxMarks: 5, type: "qualification_upgrade", targetCount: 1, marksPerUnit: 5 },
-    { id: "p2_2a", sNo: "2a", kra: "Contribution for the Development of the Department / Institution", particulars: "Organizing Workshops / Conferences / Seminars / Guest Lectures / Symposium / Special Programs, if any (Two program)", maxMarks: 5, type: "organizing_events", targetCount: 2, marksPerUnit: 2.5 },
-    { id: "p2_2b", sNo: "2b", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Submission of Funding Proposal / Testing and Consultancy (One Proposal / Testing / Consultancy)", maxMarks: 5, type: "funding_proposals", targetCount: 1, marksPerUnit: 5 },
-    { id: "p2_2c", sNo: "2c", kra: "Contribution for the Development of the Department / Institution", particulars: "Involvement in Placement Activities / Department Development / Student Welfare / Mentoring / Counseling / Special efforts, if any", maxMarks: 5, type: "placement_mentoring", targetCount: 1, marksPerUnit: 5 },
-    { id: "p2_2d", sNo: "2d", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards ISO / NAAC / NBA / Lab Development / R&D / EDC / SIC / Alumni / IIPC / Sports / NSS / Special efforts as a Class Advisor / Academic Coordinator / Faculty", maxMarks: 5, type: "accreditation_rd", targetCount: 1, marksPerUnit: 5 },
-    { id: "p2_2f", sNo: "2f", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Admission (Minimum of 5 admission)", maxMarks: 10, type: "admissions", targetCount: 5, marksPerUnit: 2 }
+    { id: "p2_1a", sNo: "1a", kra: "Investing in Yourself", particulars: "Completion of Knowledge Sharing Sessions with its Outcome", maxMarks: 10, type: "knowledge_sharing", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_1c", sNo: "1c", kra: "Investing in Yourself", particulars: "Participation in Workshops, Conferences, Seminars and Special Programs, if any (Two Workshop)", maxMarks: 5, type: "workshops", targetCount: 2, marksPerUnit: 2.5 },
+    { id: "p2_1d", sNo: "1d", kra: "Investing in Yourself", particulars: "Improvements in Qualification/Interaction with Outside World (One program)", maxMarks: 10, type: "qualification_outside_world", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_2c", sNo: "2c", kra: "Contribution for the Development of the Department / Institution", particulars: "Involvement in Department Development / Student Welfare / Mentoring / Counseling / Special efforts, if any", maxMarks: 10, type: "dept_student_welfare", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_2d", sNo: "2d", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Alumni / Sports / NSS / Special efforts as a Class Teacher / Teacher", maxMarks: 5, type: "alumni_sports_nss_class_teacher", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2f", sNo: "2f", kra: "Contribution for the Development of the Department / Institution", particulars: "Contibution towards Admission (Minimum of 5 admission)", maxMarks: 10, type: "admissions", targetCount: 5, marksPerUnit: 2 }
   ]
 };
 
@@ -237,7 +233,13 @@ export default function AppraisalSettings() {
     const docRef = doc(db, "appraisal_config", "criteria");
     const unsub = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
-        setCriteria(snap.data());
+        const data = snap.data();
+        if (data.criteriaVersion !== "2026_v2") {
+          // Overwrite old criteria in Firestore with new Image 1 & 2 criteria
+          setDoc(docRef, DEFAULT_CRITERIA).then(() => setCriteria(DEFAULT_CRITERIA));
+        } else {
+          setCriteria(data);
+        }
       } else {
         // Seed default values
         setDoc(docRef, DEFAULT_CRITERIA).then(() => setCriteria(DEFAULT_CRITERIA));

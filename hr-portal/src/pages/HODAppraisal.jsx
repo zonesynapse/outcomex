@@ -72,11 +72,32 @@ export default function HODAppraisal() {
   // KRA V: Academic Excellence (20 Marks)
   // Theory Pass % - 95%, Practical Pass % - 90%
   // ==========================================
-  const [kra5TheoryPassPct, setKra5TheoryPassPct] = useState("");
-  const [kra5PracticalPassPct, setKra5PracticalPassPct] = useState("");
+  const [kra5SubjectResults, setKra5SubjectResults] = useState([
+    { theoryPassPct: "", practicalPassPct: "" }
+  ]);
   const [kra5Tier, setKra5Tier] = useState(""); // "90_above", "81_90", "71_80", "61_70", "51_60", "below_50"
   const [kra5Remarks, setKra5Remarks] = useState("");
   const [kra5Proof, setKra5Proof] = useState({ fileUrl: "", fileName: "" });
+
+  const handleKra5SubjectChange = (index, field, value) => {
+    setKra5SubjectResults(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+    setKra5Tier("");
+  };
+
+  const addKra5SubjectResult = () => {
+    setKra5SubjectResults(prev => [...prev, { theoryPassPct: "", practicalPassPct: "" }]);
+    setKra5Tier("");
+  };
+
+  const removeKra5SubjectResult = (index) => {
+    if (kra5SubjectResults.length <= 1) return;
+    setKra5SubjectResults(prev => prev.filter((_, i) => i !== index));
+    setKra5Tier("");
+  };
 
   // Declaration & Toast
   const [declaration, setDeclaration] = useState(false);
@@ -176,8 +197,18 @@ export default function HODAppraisal() {
 
           // KRA 5
           if (f.kra5) {
-            setKra5TheoryPassPct(f.kra5.theoryPassPct || "");
-            setKra5PracticalPassPct(f.kra5.practicalPassPct || "");
+            if (Array.isArray(f.kra5.subjectResults) && f.kra5.subjectResults.length > 0) {
+              setKra5SubjectResults(f.kra5.subjectResults);
+            } else if (f.kra5.theoryPassPct || f.kra5.practicalPassPct) {
+              setKra5SubjectResults([
+                {
+                  theoryPassPct: f.kra5.theoryPassPct || "",
+                  practicalPassPct: f.kra5.practicalPassPct || ""
+                }
+              ]);
+            } else {
+              setKra5SubjectResults([{ theoryPassPct: "", practicalPassPct: "" }]);
+            }
             setKra5Tier(f.kra5.tier || f.kra5.resultTier || "");
             setKra5Remarks(f.kra5.remarks || f.kra5.resultRemarks || "");
             setKra5Proof(f.kra5.proof || f.kra5.resultProof || { fileUrl: "", fileName: "" });
@@ -236,6 +267,25 @@ export default function HODAppraisal() {
   }, [kra4Contributions]);
 
   // KRA V: Academic Excellence (Max 20 Marks)
+  const kra5AvgPassPct = useMemo(() => {
+    let totalPct = 0;
+    let count = 0;
+    kra5SubjectResults.forEach((item) => {
+      const t = parseFloat(item.theoryPassPct);
+      const p = parseFloat(item.practicalPassPct);
+      if (!isNaN(t)) {
+        totalPct += t;
+        count++;
+      }
+      if (!isNaN(p)) {
+        totalPct += p;
+        count++;
+      }
+    });
+    if (count === 0) return NaN;
+    return totalPct / count;
+  }, [kra5SubjectResults]);
+
   const kra5Score = useMemo(() => {
     if (kra5Tier === "90_above") return 20;
     if (kra5Tier === "81_90") return 10;
@@ -244,19 +294,14 @@ export default function HODAppraisal() {
     if (kra5Tier === "51_60") return 4;
     if (kra5Tier === "below_50") return 0;
 
-    // Auto-calculate from average of Theory & Practical if tier not clicked
-    const t = parseFloat(kra5TheoryPassPct);
-    const p = parseFloat(kra5PracticalPassPct);
-    const avg = !isNaN(t) && !isNaN(p) ? (t + p) / 2 : !isNaN(t) ? t : !isNaN(p) ? p : NaN;
-
-    if (isNaN(avg)) return 0;
-    if (avg >= 90) return 20;
-    if (avg >= 81) return 10;
-    if (avg >= 71) return 8;
-    if (avg >= 61) return 6;
-    if (avg >= 51) return 4;
+    if (isNaN(kra5AvgPassPct)) return 0;
+    if (kra5AvgPassPct >= 90) return 20;
+    if (kra5AvgPassPct >= 81) return 10;
+    if (kra5AvgPassPct >= 71) return 8;
+    if (kra5AvgPassPct >= 61) return 6;
+    if (kra5AvgPassPct >= 51) return 4;
     return 0;
-  }, [kra5Tier, kra5TheoryPassPct, kra5PracticalPassPct]);
+  }, [kra5Tier, kra5AvgPassPct]);
 
   // Overall Total Score (Max 100)
   const totalScore = useMemo(() => {
@@ -349,8 +394,9 @@ export default function HODAppraisal() {
         },
         kra4: kra4Contributions,
         kra5: {
-          theoryPassPct: kra5TheoryPassPct,
-          practicalPassPct: kra5PracticalPassPct,
+          subjectResults: kra5SubjectResults,
+          theoryPassPct: kra5SubjectResults[0]?.theoryPassPct || "",
+          practicalPassPct: kra5SubjectResults[0]?.practicalPassPct || "",
           tier: kra5Tier,
           score: kra5Score,
           remarks: kra5Remarks,
@@ -481,8 +527,8 @@ export default function HODAppraisal() {
           <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'bg-amber-100 text-amber-700' :
-                  existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
-                    existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
+                existingAppraisal.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' :
+                  existingAppraisal.status === 'Returned' ? 'bg-rose-100 text-rose-700' : 'bg-zinc-100 text-zinc-700'
                 }`}>
                 <FileText size={20} />
               </div>
@@ -490,8 +536,8 @@ export default function HODAppraisal() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">Status:</span>
                   <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
-                      existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
-                        existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
+                    existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
+                      existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
                     }`}>
                     {existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to Principal (HOD Approved)' : existingAppraisal.status}
                   </span>
@@ -519,7 +565,7 @@ export default function HODAppraisal() {
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex items-center gap-2 border-b border-zinc-150 pb-3">
             <User className="text-[#120c7a]" size={18} />
-            <h2 className="text-sm font-black text-slate-850 uppercase tracking-wider">General Information of HoD</h2>
+            <h2 className="text-sm font-black text-slate-850 uppercase tracking-wider">General Information of Coordinator</h2>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
@@ -639,8 +685,8 @@ export default function HODAppraisal() {
                     disabled={isReadOnly}
                     onClick={() => setKra1Tier(item.tier)}
                     className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${kra1Tier === item.tier || (kra1Score === item.score && !kra1Tier)
-                        ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
-                        : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
+                      ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
+                      : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
                       }`}
                   >
                     {item.label}
@@ -740,8 +786,8 @@ export default function HODAppraisal() {
                           [param.key]: { ...prev[param.key], achieved: true }
                         }))}
                         className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${currentData.achieved
-                            ? "bg-emerald-600 text-white shadow-sm"
-                            : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                           }`}
                       >
                         100% Target Achieved (12.5 Marks)
@@ -754,8 +800,8 @@ export default function HODAppraisal() {
                           [param.key]: { ...prev[param.key], achieved: false }
                         }))}
                         className={`px-3 py-1.5 rounded-xl font-bold text-[10px] transition-all ${!currentData.achieved
-                            ? "bg-zinc-700 text-white shadow-sm"
-                            : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                          ? "bg-zinc-700 text-white shadow-sm"
+                          : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                           }`}
                       >
                         Below Target (0 Marks)
@@ -844,8 +890,8 @@ export default function HODAppraisal() {
                   disabled={isReadOnly}
                   onClick={() => setKra3Achieved(true)}
                   className={`px-3.5 py-2 rounded-xl font-bold text-xs transition-all ${kra3Achieved
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                 >
                   Achieving 100% Target (20 Marks)
@@ -855,8 +901,8 @@ export default function HODAppraisal() {
                   disabled={isReadOnly}
                   onClick={() => setKra3Achieved(false)}
                   className={`px-3.5 py-2 rounded-xl font-bold text-xs transition-all ${!kra3Achieved
-                      ? "bg-zinc-700 text-white shadow-sm"
-                      : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
+                    ? "bg-zinc-700 text-white shadow-sm"
+                    : "bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-100"
                     }`}
                 >
                   Below Target - Nil (0 Marks)
@@ -1020,8 +1066,8 @@ export default function HODAppraisal() {
         {/* Public/Annual Examination Result (Theory Subject Pass % - 95% | Practical Subject Pass % - 90%) */}
         {/* ========================================================================= */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-150 pb-3">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-150 pb-3">
+            <div className="flex items-center gap-2.5">
               <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">V</span>
               <div>
                 <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">Academic Excellence</h3>
@@ -1030,49 +1076,81 @@ export default function HODAppraisal() {
                 </p>
               </div>
             </div>
-            <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
-              <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 20 Marks</span>
-              <span className="text-xs font-black text-indigo-700">Score: {kra5Score} / 20</span>
+            <div className="flex items-center gap-2">
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={addKra5SubjectResult}
+                  className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[#120c7a] font-bold text-xs rounded-xl transition-all flex items-center gap-1 shadow-xs"
+                >
+                  <Plus size={14} /> Add Subject Result
+                </button>
+              )}
+              <div className="bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl text-center">
+                <span className="text-[10px] font-black text-indigo-900 uppercase block">Weightage: 20 Marks</span>
+                <span className="text-xs font-black text-indigo-700">Score: {kra5Score} / 20{!isNaN(kra5AvgPassPct) && ` (Avg: ${kra5AvgPassPct.toFixed(1)}%)`}</span>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div>
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Theory Subject Pass % (Target: 95%)</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={kra5TheoryPassPct}
-                onChange={(e) => {
-                  setKra5TheoryPassPct(e.target.value);
-                  setKra5Tier("");
-                }}
-                disabled={isReadOnly}
-                placeholder="e.g. 96.0"
-                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
-              />
-            </div>
+          <div className="space-y-4">
+            {kra5SubjectResults.map((item, index) => (
+              <div key={index} className="p-4 bg-zinc-50/70 border border-zinc-200/80 rounded-2xl relative space-y-3">
+                {kra5SubjectResults.length > 1 && (
+                  <div className="flex items-center justify-between pb-1 border-b border-zinc-200/50">
+                    <span className="text-[10px] font-black text-indigo-900 uppercase tracking-wider">Subject Result #{index + 1}</span>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => removeKra5SubjectResult(index)}
+                        className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                        title="Remove Subject Result"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">
+                      Theory Subject Pass % (Target: 95%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={item.theoryPassPct}
+                      onChange={(e) => handleKra5SubjectChange(index, "theoryPassPct", e.target.value)}
+                      disabled={isReadOnly}
+                      placeholder="e.g. 96.0"
+                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-white font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
+                    />
+                  </div>
 
-            <div>
-              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Practical Subject Pass % (Target: 90%)</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={kra5PracticalPassPct}
-                onChange={(e) => {
-                  setKra5PracticalPassPct(e.target.value);
-                  setKra5Tier("");
-                }}
-                disabled={isReadOnly}
-                placeholder="e.g. 92.5"
-                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
-              />
-            </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">
+                      Practical Subject Pass % (Target: 90%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={item.practicalPassPct}
+                      onChange={(e) => handleKra5SubjectChange(index, "practicalPassPct", e.target.value)}
+                      disabled={isReadOnly}
+                      placeholder="e.g. 92.5"
+                      className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-white font-bold text-slate-800 outline-none focus:border-indigo-600 transition-all disabled:bg-zinc-50"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
             <div className="md:col-span-2">
               <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Metrics / Performance Tier</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
@@ -1090,8 +1168,8 @@ export default function HODAppraisal() {
                     disabled={isReadOnly}
                     onClick={() => setKra5Tier(item.tier)}
                     className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border transition-all ${kra5Tier === item.tier || (kra5Score === item.score && !kra5Tier)
-                        ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
-                        : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
+                      ? "bg-[#120c7a] text-white border-[#120c7a] shadow-sm"
+                      : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
                       }`}
                   >
                     {item.label}

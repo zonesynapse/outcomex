@@ -10,6 +10,22 @@
  * { id, sNo, kra, particulars, maxMarks, value, valueLabel, scored, note }.
  */
 
+export const DEFAULT_CRITERIA = {
+  criteriaVersion: "2026_v2",
+  part1: [
+    { id: "p1_s1", sNo: 1, kra: "Pass Percentage", particulars: "Practicals Handled", maxMarks: 5, type: "practical_pass", rules: [{ min: 95, max: 100, rating: 1, marks: 5 }, { min: 0, max: 94.99, rating: 0, marks: 0 }] },
+    { id: "p1_s2", sNo: 2, kra: "Pass Percentage", particulars: "Theory Subjects Handled", maxMarks: 45, type: "theory_pass", rules: [{ min: 91, max: 100, rating: 5, marks: 45 }, { min: 81, max: 90.99, rating: 4, marks: 36 }, { min: 71, max: 80.99, rating: 3, marks: 27 }, { min: 61, max: 70.99, rating: 2, marks: 18 }, { min: 51, max: 60.99, rating: 1, marks: 9 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] }
+  ],
+  part2: [
+    { id: "p2_1a", sNo: "1a", kra: "Investing in Yourself", particulars: "Completion of Knowledge Sharing Sessions with its Outcome", maxMarks: 10, type: "knowledge_sharing", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_1c", sNo: "1c", kra: "Investing in Yourself", particulars: "Participation in Workshops, Conferences, Seminars and Special Programs, if any (Two Workshop)", maxMarks: 5, type: "workshops", targetCount: 2, marksPerUnit: 2.5 },
+    { id: "p2_1d", sNo: "1d", kra: "Investing in Yourself", particulars: "Improvements in Qualification/Interaction with Outside World (One program)", maxMarks: 10, type: "qualification_outside_world", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_2c", sNo: "2c", kra: "Contribution for the Development of the Department / Institution", particulars: "Involvement in Department Development / Student Welfare / Mentoring / Counseling / Special efforts, if any", maxMarks: 10, type: "dept_student_welfare", targetCount: 1, marksPerUnit: 10 },
+    { id: "p2_2d", sNo: "2d", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Alumni / Sports / NSS / Special efforts as a Class Teacher / Teacher", maxMarks: 5, type: "alumni_sports_nss_class_teacher", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2f", sNo: "2f", kra: "Contribution for the Development of the Department / Institution", particulars: "Contibution towards Admission (Minimum of 5 admission)", maxMarks: 10, type: "admissions", targetCount: 5, marksPerUnit: 2 }
+  ]
+};
+
 const toNum = (v) => {
   if (v === null || v === undefined || v === "") return null;
   const n = parseFloat(v);
@@ -34,9 +50,21 @@ function countRows(list, byFields) {
   return list.filter((row) => rowHasData(row, by)).length;
 }
 
-function avgField(rows, field) {
+function avgField(rows, fieldNames) {
+  const fields = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
   const vals = (Array.isArray(rows) ? rows : [])
-    .map((r) => toNum(r?.[field]))
+    .map((r) => {
+      for (const f of fields) {
+        const v = toNum(r?.[f]);
+        if (v !== null) return v;
+      }
+      const p = toNum(r?.passed);
+      const a = toNum(r?.appeared);
+      if (p !== null && a !== null && a > 0) {
+        return (p / a) * 100;
+      }
+      return null;
+    })
     .filter((v) => v !== null);
   if (vals.length === 0) return null;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
@@ -61,14 +89,29 @@ function normalizeFeedback(avg) {
 }
 
 // formData list keys grouped by purpose
-const THEORY_LISTS = ["oddTheorySubjects", "evenTheorySubjects"];
-const PRACTICAL_LISTS = ["oddPracticalSubjects", "evenPracticalSubjects"];
+const THEORY_LISTS = ["resultsAnnualTheory", "resultsQuarterly", "resultsHalfYearly", "oddTheorySubjects", "evenTheorySubjects"];
+const PRACTICAL_LISTS = ["resultsAnnualPractical", "oddPracticalSubjects", "evenPracticalSubjects"];
 const ALL_SUBJECT_LISTS = [...THEORY_LISTS, ...PRACTICAL_LISTS];
 
 const PART2_LIST_MAP = {
+  knowledge_sharing: [{ key: "iiyClasses", by: ["topic", "numClasses"] }],
+  workshops: [
+    { key: "workshops", by: ["title", "organization"] },
+    { key: "workshopsFDPs", by: ["title", "organization"] }
+  ],
+  qualification_outside_world: [
+    { key: "qualificationDetails", by: ["degree", "specialization", "university"] },
+    { key: "improvingDetails", by: "degreeRegistered" }
+  ],
+  dept_student_welfare: [{ key: "deptInvolvement", by: ["description", "role"] }],
+  alumni_sports_nss_class_teacher: [{ key: "otherContributions", by: ["role", "description"] }],
+  admissions: [
+    { key: "admissionsInstitution", sumField: "count" },
+    { key: "admissionsVijayadashami", sumField: "count" },
+    { key: "admissionContribution", sumField: "countContributed" }
+  ],
   online_courses: [{ key: "onlineCourses", by: "title" }],
   publications: [{ key: "researchPapers", by: "title" }],
-  workshops: [{ key: "workshopsFDPs", by: "title" }],
   qualification_upgrade: [{ key: "improvingDetails", by: "degreeRegistered" }],
   organizing_events: [{ key: "organizingPrograms", by: "title" }],
   funding_proposals: [{ key: "fundingProposals", by: ["title", "fundingAgencyScheme"] }],
@@ -76,8 +119,7 @@ const PART2_LIST_MAP = {
   accreditation_rd: [
     { key: "accreditationContributions", by: ["role", "description"] },
     { key: "rdContributions", by: ["role", "description"] },
-  ],
-  admissions: [{ key: "admissionContribution", sumField: "countContributed" }],
+  ]
 };
 
 function collectLists(formData, defs) {
@@ -92,7 +134,7 @@ function collectLists(formData, defs) {
 function part1Value(type, formData) {
   const avgPct = (lists) => {
     const rows = collectLists(formData, lists.map((key) => ({ key })));
-    return avgField(rows, "resultPercentage");
+    return avgField(rows, ["passPercent", "resultPercentage", "passPercentage"]);
   };
   const allRows = collectLists(
     formData,
@@ -124,20 +166,30 @@ function part1Value(type, formData) {
 function part2Count(type, formData) {
   const defs = PART2_LIST_MAP[type];
   if (!defs) return { count: 0, label: "Manual review required" };
+
+  if (type === "qualification_outside_world" && formData?.improvingQualification === "Yes") {
+    let count = 0;
+    defs.forEach(({ key, by }) => {
+      count += countRows(formData?.[key], by);
+    });
+    const finalCount = Math.max(count, 1);
+    return { count: finalCount, label: `${finalCount} qualification / outside world entries` };
+  }
+
   // Admissions: sum of contributed admission counts (falls back to row count).
   if (type === "admissions") {
     const rows = collectLists(formData, defs);
     let sum = 0;
     let hasNumeric = false;
     rows.forEach((r) => {
-      const n = toNum(r?.countContributed);
+      const n = toNum(r?.count) ?? toNum(r?.countContributed);
       if (n !== null) {
         hasNumeric = true;
         sum += n;
       }
     });
     if (hasNumeric) return { count: sum, label: `${sum} admissions contributed` };
-    const c = countRows(rows, "teamNoArea");
+    const c = countRows(rows, ["area", "teamNoArea"]);
     return { count: c, label: `${c} admission rows` };
   }
   let count = 0;

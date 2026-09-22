@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../firebase";
 import {
   doc,
@@ -9,7 +9,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import HRLayout from "../components/HRLayout";
-import { checkAppraisalPortalStatus } from "../utils/appraisalScore";
+import evaluateAppraisal, { checkAppraisalPortalStatus, DEFAULT_CRITERIA } from "../utils/appraisalScore";
 import {
   FileText,
   Save,
@@ -34,7 +34,9 @@ import {
   Target,
   FileCheck,
   Users,
-  HeartHandshake
+  HeartHandshake,
+  Check,
+  X
 } from "lucide-react";
 
 export default function TeacherAppraisal() {
@@ -243,6 +245,34 @@ export default function TeacherAppraisal() {
     return () => unsubAuth();
   }, []);
 
+  const [evalCriteria, setEvalCriteria] = useState(DEFAULT_CRITERIA);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+
+  // Fetch Appraisal Evaluation Criteria
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "appraisal_config", "criteria"), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.criteriaVersion === "2026_v2") {
+          setEvalCriteria({
+            part1: Array.isArray(data.part1) ? data.part1 : DEFAULT_CRITERIA.part1,
+            part2: Array.isArray(data.part2) ? data.part2 : DEFAULT_CRITERIA.part2
+          });
+        } else {
+          setEvalCriteria(DEFAULT_CRITERIA);
+        }
+      } else {
+        setEvalCriteria(DEFAULT_CRITERIA);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Compute Live Performance Score
+  const liveScore = useMemo(() => {
+    return evaluateAppraisal(formData, evalCriteria);
+  }, [formData, evalCriteria]);
+
   // Fetch Appraisal Schedule & Active Status
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "appraisal_config", "schedule"), (snap) => {
@@ -371,6 +401,18 @@ export default function TeacherAppraisal() {
     return (t + p + s + o).toFixed(1);
   };
 
+  const handleSubmitButtonClick = () => {
+    if (!formData.name || !formData.department) {
+      alert("Please fill in your Name and Department before submitting.");
+      return;
+    }
+    if (!formData.certified) {
+      alert("Please confirm the declaration check before submitting.");
+      return;
+    }
+    setShowSubmitModal(true);
+  };
+
   // Save / Submit Handlers
   const handleSave = async (isSubmit = false) => {
     if (!currentUser) return;
@@ -401,6 +443,8 @@ export default function TeacherAppraisal() {
         }
       };
 
+      const scoreResult = evaluateAppraisal(updatedFormData, evalCriteria);
+
       const payload = {
         docId,
         formType: "teacher",
@@ -410,13 +454,15 @@ export default function TeacherAppraisal() {
         department: formData.department || userProfile?.department || "General",
         academicYear,
         formData: updatedFormData,
-        status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
+        totalScore: scoreResult.grandTotal,
+        evaluatedScore: scoreResult,
+        status: isSubmit ? "Submitted" : (existingAppraisal?.status || "Draft"),
         submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
         updatedAt: new Date().toISOString()
       };
 
       await setDoc(docRef, payload, { merge: true });
-      alert(isSubmit ? "Teacher Appraisal Form submitted successfully!" : "Progress saved as draft.");
+      alert(isSubmit ? "Teacher Appraisal Form submitted to Coordinator successfully!" : "Progress saved as draft.");
     } catch (error) {
       console.error("Save Teacher Appraisal error:", error);
       alert("Failed to save appraisal: " + error.message);
@@ -497,7 +543,7 @@ export default function TeacherAppraisal() {
                   </button>
 
                   <button
-                    onClick={() => handleSave(true)}
+                    onClick={handleSubmitButtonClick}
                     disabled={submitting}
                     className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
                   >
@@ -513,6 +559,7 @@ export default function TeacherAppraisal() {
         {/* Closed Portal Alert */}
         {!isPortalOpen && (
           <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-800 text-xs font-semibold">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
             <span>The Appraisal Portal submission window is currently closed or outside the scheduled timeline. Form is displayed in Read-Only mode.</span>
           </div>
@@ -659,7 +706,7 @@ export default function TeacherAppraisal() {
             {/* Experience Section */}
             <div className="pt-6 border-t border-slate-100">
               <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-4">7. Experience Details (in Years)</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1.5">a) Teaching at CKSPE</label>
                   <input
@@ -681,18 +728,6 @@ export default function TeacherAppraisal() {
                     value={formData.expOther}
                     onChange={e => handleTextChange("expOther", e.target.value)}
                     placeholder="e.g. 2.0"
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1.5">c) Industrial Experience</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    disabled={isReadOnly}
-                    value={formData.expIndustrial}
-                    onChange={e => handleTextChange("expIndustrial", e.target.value)}
-                    placeholder="e.g. 1.0"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
                   />
                 </div>
@@ -2069,7 +2104,7 @@ export default function TeacherAppraisal() {
                   </button>
 
                   <button
-                    onClick={() => handleSave(true)}
+                    onClick={handleSubmitButtonClick}
                     disabled={submitting}
                     className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
                   >
@@ -2078,6 +2113,110 @@ export default function TeacherAppraisal() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Submit Confirmation & Evaluated Mark Pop-Up Modal */}
+        {showSubmitModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-3xl w-full p-6 md:p-8 space-y-6 relative animate-in fade-in zoom-in-95 duration-200 my-8">
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3 border-b border-slate-150 pb-4">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-150 flex items-center justify-center text-[#120c7a] shrink-0">
+                  <Award className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 font-heading">Performance Evaluation Summary</h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Review your evaluated marks breakdown before confirming submission to the Coordinator.
+                  </p>
+                </div>
+              </div>
+
+              {/* Total Score Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-indigo-50/70 border border-indigo-150 p-4 rounded-2xl text-center">
+                  <span className="text-[10px] font-black text-indigo-900 uppercase block mb-1">Part One (Academic)</span>
+                  <span className="text-xl font-black text-indigo-700">{liveScore.part1Total} / {liveScore.part1Max || 50} Marks</span>
+                </div>
+                <div className="bg-indigo-50/70 border border-indigo-150 p-4 rounded-2xl text-center">
+                  <span className="text-[10px] font-black text-indigo-900 uppercase block mb-1">Part Two (Development)</span>
+                  <span className="text-xl font-black text-indigo-700">{liveScore.part2Total} / {liveScore.part2Max || 50} Marks</span>
+                </div>
+                <div className="bg-gradient-to-br from-[#120c7a] to-indigo-900 text-white p-4 rounded-2xl text-center shadow-md">
+                  <span className="text-[10px] font-black text-indigo-200 uppercase block mb-1">Total Score</span>
+                  <span className="text-2xl font-extrabold">{liveScore.grandTotal} / {liveScore.grandMax || 100} Marks</span>
+                </div>
+              </div>
+
+              {/* Detailed Item Breakdown */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs max-h-[50vh] overflow-y-auto pr-1">
+                {/* Part One Breakdown */}
+                <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200/80 space-y-2.5">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-2">
+                    <span>Part One - Academic Performance</span>
+                    <span className="text-indigo-700 font-black">{liveScore.part1Total} / {liveScore.part1Max || 50} Marks</span>
+                  </div>
+                  {liveScore.part1Rows.map((row) => (
+                    <div key={row.id} className="flex items-center justify-between text-[11px] p-2.5 bg-white rounded-xl border border-slate-150 shadow-2xs">
+                      <div>
+                        <span className="font-bold text-slate-800 block">{row.sNo}. {row.particulars}</span>
+                        <span className="text-slate-500 font-medium text-[10px]">{row.valueLabel}</span>
+                      </div>
+                      <span className="font-black text-indigo-700 shrink-0 ml-2">{row.scored} / {row.maxMarks}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Part Two Breakdown */}
+                <div className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200/80 space-y-2.5">
+                  <div className="flex items-center justify-between font-bold text-slate-800 border-b border-slate-200 pb-2">
+                    <span>Part Two - Self-Development & Dept</span>
+                    <span className="text-indigo-700 font-black">{liveScore.part2Total} / {liveScore.part2Max || 50} Marks</span>
+                  </div>
+                  {liveScore.part2Rows.map((row) => (
+                    <div key={row.id} className="flex items-center justify-between text-[11px] p-2.5 bg-white rounded-xl border border-slate-150 shadow-2xs">
+                      <div>
+                        <span className="font-bold text-slate-800 block">{row.sNo}. {row.particulars}</span>
+                        <span className="text-slate-500 font-medium text-[10px]">{row.valueLabel}</span>
+                      </div>
+                      <span className="font-black text-indigo-700 shrink-0 ml-2">{row.scored} / {row.maxMarks}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-3 border-t border-slate-150">
+                <button
+                  type="button"
+                  onClick={() => setShowSubmitModal(false)}
+                  disabled={submitting}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Review & Edit Form
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSubmitModal(false);
+                    handleSave(true);
+                  }}
+                  disabled={submitting}
+                  className="w-full sm:w-auto px-6 py-2.5 bg-[#120c7a] hover:bg-indigo-900 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-900/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Confirm & Submit to Coordinator
+                </button>
+              </div>
             </div>
           </div>
         )}
