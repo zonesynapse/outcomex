@@ -34,10 +34,10 @@ export default function HRDashboard() {
         setSchedule(snap.data());
       } else {
         setSchedule({
-          academicYear: "2024-2025",
+          academicYear: "",
           isActive: true,
-          openTime: "2026-01-01T00:00",
-          closeTime: "2026-12-31T23:59"
+          openTime: "",
+          closeTime: ""
         });
       }
     });
@@ -150,7 +150,7 @@ export default function HRDashboard() {
               </div>
               <div>
                 <div className="text-xs text-slate-700 font-medium">Active Session</div>
-                <div className="text-base font-bold text-white">{schedule.academicYear || "2024-2025"}</div>
+                <div className="text-base font-bold text-white">{schedule.academicYear || "Active Session"}</div>
                 <div className="text-xs text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                   Portal Open

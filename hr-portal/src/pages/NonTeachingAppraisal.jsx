@@ -49,7 +49,7 @@ export default function NonTeachingAppraisal() {
   const [uploadingRoleDoc, setUploadingRoleDoc] = useState(false);
 
   // Academic Year State
-  const [academicYear, setAcademicYear] = useState("2024-2025");
+  const [academicYear, setAcademicYear] = useState("");
 
   // Initial Form Data strictly matching CKSPE Self-Appraisal Form for Staff Members (Images 1 & 2)
   const initialFormData = {

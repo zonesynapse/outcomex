@@ -27,7 +27,7 @@ export default function FacultyAppraisal() {
   const [scorePopup, setScorePopup] = useState(null);
 
   // Form State
-  const [academicYear, setAcademicYear] = useState("2024-2025");
+  const [academicYear, setAcademicYear] = useState("");
   const [appraisalSchedule, setAppraisalSchedule] = useState(null);
   const [isPortalOpen, setIsPortalOpen] = useState(true);
   const [checkingSchedule, setCheckingSchedule] = useState(true);
@@ -2277,7 +2277,7 @@ export default function FacultyAppraisal() {
                   {/* Admission Contributed */}
                   <div>
                     <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
-                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">Number of admissions contributed to the Institutions for AY 2024-25</span>
+                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">Number of admissions contributed to the Institutions for AY {academicYear}</span>
                       {!isReadOnly && (
                         <button
                           onClick={() => addRow("admissionContribution", { teamNoArea: "", countContributed: "", teamLeaderName: "" })}

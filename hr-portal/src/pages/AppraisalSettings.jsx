@@ -719,6 +719,12 @@ export default function AppraisalSettings() {
                           <option value="2024-2025">2024-2025</option>
                           <option value="2025-2026">2025-2026</option>
                           <option value="2026-2027">2026-2027</option>
+                          <option value="2027-2028">2027-2028</option>
+                          <option value="2028-2029">2028-2029</option>
+                          <option value="2029-2030">2029-2030</option>
+                          {academicYear && !["2024-2025", "2025-2026", "2026-2027", "2027-2028", "2028-2029", "2029-2030"].includes(academicYear) && (
+                            <option value={academicYear}>{academicYear}</option>
+                          )}
                         </select>
                       </div>
 

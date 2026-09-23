@@ -52,7 +52,7 @@ export default function TeacherAppraisal() {
   const [activeTab, setActiveTab] = useState(1);
 
   // Academic Year State
-  const [academicYear, setAcademicYear] = useState("2024-2025");
+  const [academicYear, setAcademicYear] = useState("");
 
   // Initial Form Data matching CKSPE Self-Appraisal Form for Teaching (Images 1-4)
   const initialFormData = {
@@ -815,7 +815,7 @@ export default function TeacherAppraisal() {
 
             {/* Helper Component to render Exam Tables */}
             {renderExamTableSection({
-              title: "9. Subjects Handled & Pass Percentage: THEORY: Quarterly Examination – (Sep - 2024-25)",
+              title: `9. Subjects Handled & Pass Percentage: THEORY: Quarterly Examination – (Sep - ${academicYear || "AY"})`,
               arrayKey: "resultsQuarterly",
               list: formData.resultsQuarterly,
               isReadOnly,
@@ -825,7 +825,7 @@ export default function TeacherAppraisal() {
             })}
 
             {renderExamTableSection({
-              title: "10. Subjects Handled & Pass Percentage: THEORY: Half Yearly Examination – (Dec – 2024-25)",
+              title: `10. Subjects Handled & Pass Percentage: THEORY: Half Yearly Examination – (Dec – ${academicYear || "AY"})`,
               arrayKey: "resultsHalfYearly",
               list: formData.resultsHalfYearly,
               isReadOnly,
@@ -835,7 +835,7 @@ export default function TeacherAppraisal() {
             })}
 
             {renderExamTableSection({
-              title: "11. Subjects Handled & Pass Percentage: THEORY: Annual Examination – (April – 2024-25)",
+              title: `11. Subjects Handled & Pass Percentage: THEORY: Annual Examination – (April – ${academicYear || "AY"})`,
               arrayKey: "resultsAnnualTheory",
               list: formData.resultsAnnualTheory,
               isReadOnly,
@@ -845,7 +845,7 @@ export default function TeacherAppraisal() {
             })}
 
             {renderExamTableSection({
-              title: "PRACTICALS – Annual Examination – (April – 2024-25)",
+              title: `PRACTICALS – Annual Examination – (April – ${academicYear || "AY"})`,
               arrayKey: "resultsAnnualPractical",
               list: formData.resultsAnnualPractical,
               isReadOnly,
@@ -902,7 +902,7 @@ export default function TeacherAppraisal() {
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                  A) Details of the No. of Classes handled per week (2024 - 2025)
+                  A) Details of the No. of Classes handled per week ({academicYear || "AY"})
                 </h3>
                 {!isReadOnly && (
                   <button

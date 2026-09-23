@@ -21,7 +21,7 @@ export default function HODAppraisal() {
   const [isEditingSubmitted, setIsEditingSubmitted] = useState(false);
 
   // General Form Header State
-  const [academicYear, setAcademicYear] = useState("2024-2025");
+  const [academicYear, setAcademicYear] = useState("");
   const [appraisalSchedule, setAppraisalSchedule] = useState(null);
   const [isPortalOpen, setIsPortalOpen] = useState(true);
   const [checkingSchedule, setCheckingSchedule] = useState(true);
@@ -466,7 +466,7 @@ export default function HODAppraisal() {
                 <span className="font-bold text-slate-900 block border-b border-zinc-200 pb-1.5 uppercase">Schedule Details</span>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Target Session:</span>
-                  <strong className="text-slate-800">{appraisalSchedule.academicYear || "2024-2025"}</strong>
+                  <strong className="text-slate-800">{appraisalSchedule.academicYear || academicYear}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400 font-bold uppercase">Open Time:</span>

@@ -575,7 +575,7 @@ export default function AppraisalReviews() {
     doc.setFont("Times", "normal");
     doc.text("SELF APPRAISAL FORM FOR TEACHING FACULTY", 190, 65);
     doc.setFont("Times", "italic");
-    doc.text(`Academic Session: ${app.academicYear || "2024-2025"}`, 230, 80);
+    doc.text(`Academic Session: ${app.academicYear || ""}`, 230, 80);
 
     doc.setDrawColor(200, 200, 200);
     doc.line(30, 95, 565, 95);
@@ -1309,7 +1309,7 @@ export default function AppraisalReviews() {
                         {/* IIY Classes */}
                         <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
                           <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
-                            14. A) Classes Handled per Week (2024-2025)
+                            14. A) Classes Handled per Week ({selectedAppraisal.academicYear || ""})
                           </span>
                           {selectedAppraisal.formData?.iiyClasses?.length ? (
                             <div className="overflow-x-auto border border-zinc-200 rounded-xl bg-white">
