@@ -378,5 +378,30 @@ export const getSchoolShortName = (inst) => {
   return "this Institution";
 };
 
+/**
+ * Normalizes institution strings to canonical codes (e.g., 'CKSPK', 'CKSPE', 'CKCET').
+ */
+export const normalizeInstitution = (inst) => {
+  if (!inst) return "";
+  const s = String(inst).trim().toUpperCase();
+  if (s.includes("CKSPK") || s.includes("PRACTICAL")) return "CKSPK";
+  if (s.includes("CKSPE") || s.includes("PROGRESSIVE")) return "CKSPE";
+  if (s.includes("CKCET") || s.includes("ENGINEERING")) return "CKCET";
+  return s.replace(/[^A-Z0-9]/g, "");
+};
+
+/**
+ * Strict institution matching logic for data segregation.
+ * Returns true if both institutions resolve to the same normalized school code.
+ * If userInst is empty/all or user is Super Admin, allows access.
+ */
+export const isSameInstitution = (userInst, dataInst) => {
+  const normUser = normalizeInstitution(userInst);
+  const normData = normalizeInstitution(dataInst);
+  if (!normUser) return true; // Unrestricted / All
+  if (!normData) return false; // Lock out unassigned data from specific school roles
+  return normUser === normData;
+};
+
 export default evaluateAppraisal;
 

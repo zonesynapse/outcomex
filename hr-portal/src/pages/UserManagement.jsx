@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { useDepartments } from "../hooks/useDepartments";
+import { isSameInstitution } from "../utils/appraisalScore";
 
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
@@ -226,14 +227,10 @@ export default function UserManagement() {
     // Institution Data Segregation: Restrict Principal/HR to their assigned institution unless Super Admin
     if (!isSuperAdmin) {
       if (userInstitution) {
-        list = list.filter(u => 
-          (u.institution || "").trim().toLowerCase() === userInstitution.trim().toLowerCase()
-        );
+        list = list.filter(u => isSameInstitution(userInstitution, u.institution));
       }
     } else if (selectedInstitutionFilter && selectedInstitutionFilter !== "ALL") {
-      list = list.filter(u => 
-        (u.institution || "").trim().toLowerCase() === selectedInstitutionFilter.trim().toLowerCase()
-      );
+      list = list.filter(u => isSameInstitution(selectedInstitutionFilter, u.institution));
     }
 
     if (userSearchTerm.trim()) {

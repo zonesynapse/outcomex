@@ -9,7 +9,7 @@ import {
   X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
-import { getSchoolShortName } from "../utils/appraisalScore";
+import { getSchoolShortName, isSameInstitution } from "../utils/appraisalScore";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
@@ -360,11 +360,10 @@ export default function AppraisalReviews() {
     const nameMatch = (app.facultyName || "").toLowerCase().includes(searchTerm.toLowerCase());
     const emailMatch = (app.facultyEmail || "").toLowerCase().includes(searchTerm.toLowerCase());
 
-    // Strict Institution-level Data Segregation
-    const appInst = app.institution || app.formData?.institution;
-    const instMatch = (!userInstitution || !appInst)
-      ? true
-      : appInst.trim().toLowerCase() === userInstitution.trim().toLowerCase();
+    // Strict Institution-level Data Segregation: Restrict access to matching school role only
+    const appInst = app.institution || app.formData?.institution || "";
+    const isSuperAdmin = (userRole === "Admin" || userRole === "Super Admin") && (!userInstitution || userInstitution === "ALL");
+    const instMatch = isSuperAdmin || isSameInstitution(userInstitution, appInst);
 
     const depMatch = (isHODRole || isCoordinatorRole)
       ? (app.department || "").toLowerCase() === (userDept || "").toLowerCase()
@@ -381,7 +380,7 @@ export default function AppraisalReviews() {
     return (nameMatch || emailMatch) && instMatch && depMatch && statusMatch;
   });
 
-  const availableDepts = [...new Set(appraisals.map((a) => a.department))].filter(Boolean);
+  const availableDepts = [...new Set(appraisals.filter(a => isSameInstitution(userInstitution, a.institution || a.formData?.institution)).map((a) => a.department))].filter(Boolean);
 
   const handleOpenDetails = (app) => {
     setSelectedAppraisal(app);

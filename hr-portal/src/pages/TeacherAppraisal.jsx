@@ -445,6 +445,8 @@ export default function TeacherAppraisal() {
 
       const scoreResult = evaluateAppraisal(updatedFormData, evalCriteria);
 
+      const userInst = userProfile?.institution || formData.institution || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.institution : "") || "CKSPK (Matric)";
+
       const payload = {
         docId,
         formType: "teacher",
@@ -452,8 +454,12 @@ export default function TeacherAppraisal() {
         facultyName: formData.name || userProfile?.name || currentUser.email,
         facultyEmail: currentUser.email,
         department: formData.department || userProfile?.department || "General",
+        institution: userInst,
         academicYear,
-        formData: updatedFormData,
+        formData: {
+          ...updatedFormData,
+          institution: userInst
+        },
         totalScore: scoreResult.grandTotal,
         evaluatedScore: scoreResult,
         status: isSubmit ? "Submitted" : (existingAppraisal?.status || "Draft"),
