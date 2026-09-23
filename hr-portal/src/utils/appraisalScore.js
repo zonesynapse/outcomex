@@ -352,6 +352,9 @@ export const getSchoolBannerTitle = (inst) => {
   if (str.toUpperCase().includes("CKSPE") || str.toLowerCase().includes("progressive")) {
     return "CK SCHOOL OF PROGRESSIVE EDUCATION (CKSPE)";
   }
+  if (str.toUpperCase().includes("CKCOE") || str.toLowerCase().includes("b.ed") || str.toLowerCase().includes("bed")) {
+    return "CK COLLEGE OF EDUCATION (CKCOE)";
+  }
   if (str.toUpperCase().includes("CKCET") || str.toLowerCase().includes("engineering")) {
     return "CK COLLEGE OF ENGINEERING AND TECHNOLOGY (CKCET)";
   }
@@ -363,6 +366,7 @@ export const getSchoolBannerTitle = (inst) => {
  * Returns short abbreviation for institution string.
  * e.g. "CKSPK (Matric)" -> "CKSPK"
  *      "CKSPE (CBSE)"   -> "CKSPE"
+ *      "CKCOE (B.ed)"   -> "CKCOE"
  */
 export const getSchoolShortName = (inst) => {
   const str = (inst || "").trim();
@@ -372,6 +376,9 @@ export const getSchoolShortName = (inst) => {
   if (str.toUpperCase().includes("CKSPE") || str.toLowerCase().includes("progressive")) {
     return "CKSPE";
   }
+  if (str.toUpperCase().includes("CKCOE") || str.toLowerCase().includes("b.ed") || str.toLowerCase().includes("bed")) {
+    return "CKCOE";
+  }
   if (str.toUpperCase().includes("CKCET")) {
     return "CKCET";
   }
@@ -379,13 +386,14 @@ export const getSchoolShortName = (inst) => {
 };
 
 /**
- * Normalizes institution strings to canonical codes (e.g., 'CKSPK', 'CKSPE', 'CKCET').
+ * Normalizes institution strings to canonical codes (e.g., 'CKSPK', 'CKSPE', 'CKCOE', 'CKCET').
  */
 export const normalizeInstitution = (inst) => {
   if (!inst) return "";
   const s = String(inst).trim().toUpperCase();
   if (s.includes("CKSPK") || s.includes("PRACTICAL")) return "CKSPK";
   if (s.includes("CKSPE") || s.includes("PROGRESSIVE")) return "CKSPE";
+  if (s.includes("CKCOE") || s.includes("B.ED") || s.includes("BED")) return "CKCOE";
   if (s.includes("CKCET") || s.includes("ENGINEERING")) return "CKCET";
   return s.replace(/[^A-Z0-9]/g, "");
 };

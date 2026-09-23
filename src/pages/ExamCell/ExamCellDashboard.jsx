@@ -7,7 +7,7 @@ import Layout from "../../components/Layout";
 import {
   ShieldCheck, ScrollText, CalendarCheck2, ClipboardList, CheckCircle2,
   Clock3, RefreshCw, ArrowRight, Landmark, Sparkles, TrendingUp, Award, PenLine, Building2,
-  Grid3X3, UserCheck, Printer, Activity
+  Grid3X3, UserCheck, Printer, Activity, IndianRupee
 } from "lucide-react";
 import { formatProgrammeKey, formatQPSetDisplay, parseSubjectField } from "../../lib/utils";
 
@@ -162,6 +162,10 @@ export default function ExamCellDashboard() {
               <button onClick={() => navigate("/exam-cell/seat-allocation")}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">
                 <Grid3X3 size={14} /> Seat Allocation
+              </button>
+              <button onClick={() => navigate("/exam-cell/fee-configuration")}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-400 text-slate-950 text-xs font-black hover:bg-amber-300 transition-all shadow-md cursor-pointer">
+                <IndianRupee size={14} /> Fee Config
               </button>
               <button onClick={() => navigate("/exam-cell/exam-hall-suite")}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-extrabold hover:bg-white/20 transition-all cursor-pointer">

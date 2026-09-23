@@ -7,7 +7,7 @@ import { formatProgDisplay } from "../../lib/utils";
 import { 
   LayoutDashboard, User, CheckCircle, BarChart3, Clock, IndianRupee,
   BookOpen, FileText, CalendarDays, ClipboardList, Library, Briefcase,
-  Download, Bell, Menu, X, Award, Users, Megaphone, Globe, Building2
+  Download, Bell, Menu, X, Award, Users, Megaphone, Globe, Building2, Copy
 } from "lucide-react";
 
 const studentMenuItems = [
@@ -15,6 +15,7 @@ const studentMenuItems = [
   { id: "profile", icon: User, label: "My Profile", path: "/student/profile" },
   { id: "attendance", icon: CheckCircle, label: "Attendance", path: "/student/attendance" },
   { id: "marks", icon: BarChart3, label: "Marks & Results", path: "/student/marks" },
+  { id: "photocopy", icon: Copy, label: "Photocopy", path: "/student/photocopy" },
   { id: "timetable", icon: Clock, label: "Timetable", path: "/student/timetable" },
   { id: "fees", icon: IndianRupee, label: "Fee Details", path: "/student/fees" },
   { id: "syllabus", icon: BookOpen, label: "Syllabus", path: "/student/syllabus" },

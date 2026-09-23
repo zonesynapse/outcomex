@@ -75,6 +75,9 @@ export default function AppraisalReviews() {
     return val.replace(/^"+|"+$/g, "").trim();
   };
 
+  // Normalized dept compare: "Mathematics " vs "mathematics" vs "Maths." etc.
+  const normDept = (v) => (v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
   const getSectionTitle = (id, defaultTitle) => {
     const field = customFieldsConfig.find(f => f.id === id);
     return field ? field.title : defaultTitle;
@@ -131,6 +134,7 @@ export default function AppraisalReviews() {
                   <th className="p-2.5 text-center">Appeared</th>
                   <th className="p-2.5 text-center">Passed</th>
                   <th className="p-2.5 text-center">Pass %</th>
+                  <th className="p-2.5 text-center">Subject Average</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 font-semibold">
@@ -141,6 +145,7 @@ export default function AppraisalReviews() {
                     <td className="p-2.5 text-center text-slate-600">{row.appeared || "0"}</td>
                     <td className="p-2.5 text-center text-slate-600">{row.passed || "0"}</td>
                     <td className="p-2.5 text-center font-black text-indigo-700">{row.passPercent || "-"}</td>
+                    <td className="p-2.5 text-center font-black text-emerald-700">{row.subjectAvg || "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -164,8 +169,46 @@ export default function AppraisalReviews() {
     return false;
   };
 
-  const appraisalTabs = useMemo(() => {
-    const baseTabs = [
+    // Unified automated-score source for the review table:
+  // - Faculty appraisals store it in autoScore.breakdown (+ totals on autoScore)
+  // - Teacher appraisals store it in evaluatedScore (part1Rows/part2Rows + totals)
+  const reviewScore = useMemo(() => {
+    const app = selectedAppraisal;
+    if (!app) return null;
+    const sum = (rows, k) => (rows || []).reduce((a, r) => a + (Number(r[k]) || 0), 0);
+    if (app.autoScore?.breakdown) {
+      const p1 = app.autoScore.breakdown.part1Rows || [];
+      const p2 = app.autoScore.breakdown.part2Rows || [];
+      return {
+        part1Rows: p1,
+        part2Rows: p2,
+        part1Total: app.autoScore.part1Total ?? sum(p1, "scored"),
+        part1Max: sum(p1, "maxMarks"),
+        part2Total: app.autoScore.part2Total ?? sum(p2, "scored"),
+        part2Max: sum(p2, "maxMarks"),
+        grandTotal: app.autoScore.total ?? app.autoScore.grandTotal ?? (sum(p1, "scored") + sum(p2, "scored")),
+        grandMax: app.autoScore.maxTotal ?? app.autoScore.grandMax ?? (sum(p1, "maxMarks") + sum(p2, "maxMarks")),
+      };
+    }
+    if (app.evaluatedScore && (app.evaluatedScore.part1Rows || app.evaluatedScore.part2Rows)) {
+      const ev = app.evaluatedScore;
+      const p1 = ev.part1Rows || [];
+      const p2 = ev.part2Rows || [];
+      return {
+        part1Rows: p1,
+        part2Rows: p2,
+        part1Total: ev.part1Total ?? sum(p1, "scored"),
+        part1Max: ev.part1Max ?? sum(p1, "maxMarks"),
+        part2Total: ev.part2Total ?? sum(p2, "scored"),
+        part2Max: ev.part2Max ?? sum(p2, "maxMarks"),
+        grandTotal: ev.grandTotal ?? (sum(p1, "scored") + sum(p2, "scored")),
+        grandMax: ev.grandMax ?? (sum(p1, "maxMarks") + sum(p2, "maxMarks")),
+      };
+    }
+    return null;
+  }, [selectedAppraisal]);
+
+  const appraisalTabs = useMemo(() => {    const baseTabs = [
       { id: 1, name: "Profile & Workload" },
       { id: 2, name: "Subjects & Results" },
       { id: 3, name: "Academic Development" },
@@ -355,6 +398,7 @@ export default function AppraisalReviews() {
 
   const isCoordinatorRole = userRole === "Coordinator" || (userRole || "").toLowerCase().includes("coordinator");
   const isHODRole = userRole === "HOD" || (userRole || "").toLowerCase().includes("hod");
+  const isPrincipalOrHR = userRole === "Principal" || userRole === "Principal / HR" || userRole === "HR" || userRole === "Admin" || userRole === "Super Admin" || (userRole || "").toLowerCase().includes("principal") || (userRole || "").toLowerCase().includes("hr");
 
   const filteredAppraisals = appraisals.filter((app) => {
     const nameMatch = (app.facultyName || "").toLowerCase().includes(searchTerm.toLowerCase());
@@ -366,7 +410,7 @@ export default function AppraisalReviews() {
     const instMatch = isSuperAdmin || isSameInstitution(userInstitution, appInst);
 
     const depMatch = (isHODRole || isCoordinatorRole)
-      ? (app.department || "").toLowerCase() === (userDept || "").toLowerCase()
+      ? normDept(app.department) !== "" && normDept(app.department) === normDept(userDept)
       : (deptFilter === "All" || app.department === deptFilter);
 
     // Coordinator review workflow segregation:
@@ -386,13 +430,21 @@ export default function AppraisalReviews() {
     setSelectedAppraisal(app);
     setActiveDetailsTab(1);
 
-    // Initialize HOD faculty criteria scores map
+    // Initialize reviewer criteria scores map (HOD / Coordinator editable column).
+    // Precedence: saved HOD scores -> saved Coordinator scores -> automated self scores.
     const initialHodScores = {};
     if (app.hodReview?.hodScores) {
       Object.assign(initialHodScores, app.hodReview.hodScores);
+    } else if (app.coordinatorReview?.scores) {
+      Object.assign(initialHodScores, app.coordinatorReview.scores);
     } else if (app.autoScore?.breakdown) {
       const bd = app.autoScore.breakdown;
       const allRows = [...(bd.part1Rows || []), ...(bd.part2Rows || [])];
+      allRows.forEach((r) => {
+        initialHodScores[r.id] = r.scored ?? 0;
+      });
+    } else if (app.evaluatedScore && (app.evaluatedScore.part1Rows || app.evaluatedScore.part2Rows)) {
+      const allRows = [...(app.evaluatedScore.part1Rows || []), ...(app.evaluatedScore.part2Rows || [])];
       allRows.forEach((r) => {
         initialHodScores[r.id] = r.scored ?? 0;
       });
@@ -416,7 +468,7 @@ export default function AppraisalReviews() {
     if (isHODRole || isCoordinatorRole) {
       setComments(app.hodReview?.comments || app.coordinatorReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || app.coordinatorReview?.grade || "Good");
-    } else if (userRole === "Principal" || userRole === "Admin") {
+    } else if (isPrincipalOrHR) {
       setComments(app.principalReview?.comments || "");
       setEvaluationGrade(app.principalReview?.grade || "Good");
       setFinalRating(app.principalReview?.finalRating ?? app.principalReview?.rating ?? "");
@@ -449,7 +501,34 @@ export default function AppraisalReviews() {
       updatedAt: new Date().toISOString()
     };
 
-    if (isHODRole || isCoordinatorRole) {
+    // Coordinator-only reviewers save a distinct coordinatorReview (marks +
+    // comments) and forward with HOD_Approved so Principal/HOD can see both
+    // automated marks and coordinator marks side by side.
+    const isCoordOnly = isCoordinatorRole && !isHODRole;
+
+    // Reviewer per-row totals from the editable score map over unified rows
+    const revRowsP1 = reviewScore?.part1Rows || [];
+    const revRowsP2 = reviewScore?.part2Rows || [];
+    const revVal = (r) => {
+      const v = hodFacultyScoresMap[r.id];
+      return (v === "" || v === undefined || v === null) ? (Number(r.scored) || 0) : (Number(v) || 0);
+    };
+    const revP1T = Math.round(revRowsP1.reduce((s, r) => s + revVal(r), 0) * 100) / 100;
+    const revP2T = Math.round(revRowsP2.reduce((s, r) => s + revVal(r), 0) * 100) / 100;
+
+    if (isCoordOnly) {
+      updatePayload.coordinatorReview = {
+        scores: { ...hodFacultyScoresMap },
+        part1Total: revP1T,
+        part2Total: revP2T,
+        totalScore: Math.round((revP1T + revP2T) * 100) / 100,
+        maxTotal: reviewScore?.grandMax ?? 0,
+        comments: comments.trim() || (newStatus === "HOD_Approved" ? "Reviewed by Coordinator" : ""),
+        grade: evaluationGrade,
+        reviewedBy: currentUser?.email || "",
+        reviewedAt: new Date().toISOString()
+      };
+    } else if (isHODRole) {
       updatePayload.hodReview = {
         comments: isNonTeaching
           ? (nonTeachingSpecificComment.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : ""))
@@ -458,7 +537,7 @@ export default function AppraisalReviews() {
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       };
-    } else if (userRole === "Principal" || userRole === "Admin") {
+    } else if (isPrincipalOrHR) {
       updatePayload.principalReview = {
         comments: comments || "Approved by Principal",
         grade: isNonTeaching ? derivedGrade : evaluationGrade,
@@ -472,10 +551,9 @@ export default function AppraisalReviews() {
       }
     }
 
-    if (!isNonTeaching && selectedAppraisal.autoScore?.breakdown) {
-      const bd = selectedAppraisal.autoScore.breakdown;
-      const p1 = bd.part1Rows || [];
-      const p2 = bd.part2Rows || [];
+    if (!isNonTeaching && reviewScore && !isCoordOnly) {
+      const p1 = reviewScore.part1Rows || [];
+      const p2 = reviewScore.part2Rows || [];
       const p1HodT = p1.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
       const p2HodT = p2.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
       const gHodT = p1HodT + p2HodT;
@@ -520,15 +598,23 @@ export default function AppraisalReviews() {
 
     const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
 
+    const isCoordOnlyReturn = (userRole === "Coordinator" || (userRole || "").toLowerCase().includes("coordinator")) && !(userRole === "HOD" || (userRole || "").toLowerCase().includes("hod"));
+
     const updatePayload = {
       status: "Returned",
       updatedAt: new Date().toISOString(),
-      hodReview: (isHODRole || isCoordinatorRole) ? {
+      hodReview: (isHODRole) ? {
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       } : selectedAppraisal.hodReview,
-      principalReview: (userRole === "Principal" || userRole === "Admin") ? {
+      coordinatorReview: isCoordOnlyReturn ? {
+        ...(selectedAppraisal.coordinatorReview || {}),
+        comments: correctionComments,
+        reviewedBy: currentUser?.email || "",
+        reviewedAt: new Date().toISOString()
+      } : selectedAppraisal.coordinatorReview,
+      principalReview: (isPrincipalOrHR) ? {
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
@@ -2777,20 +2863,22 @@ export default function AppraisalReviews() {
                 )}
 
                 {/* ── PERFORMANCE SCORE (CRITERIA EVALUATION) TABLE ── */}
-                {selectedAppraisal.autoScore?.breakdown && (
+                {/* Unified source: faculty autoScore.breakdown OR teacher evaluatedScore.
+                    Columns: Self (automated) | Coordinator (saved coordinatorReview) |
+                    Reviewer editable (Coordinator while Submitted, else HOD/Principal). */}
+                {reviewScore && (
                   <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs">
                     <div className="bg-indigo-50/70 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
                       <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
                       {(() => {
-                        const bd = selectedAppraisal.autoScore.breakdown;
-                        const p1 = bd.part1Rows || [];
-                        const p2 = bd.part2Rows || [];
+                        const p1 = reviewScore.part1Rows || [];
+                        const p2 = reviewScore.part2Rows || [];
                         const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
                         const gHodT = sumHod(p1) + sumHod(p2);
-                        const gM = selectedAppraisal.autoScore.maxTotal || (p1.length ? p1.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0) + (p2.length ? p2.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0);
+                        const gM = reviewScore.grandMax;
                         return (
                           <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                            HOD Score: {gHodT} / {gM}
+                            {(isCoordinatorRole && !selectedAppraisal.coordinatorReview) ? "Coordinator" : "HOD"} Score: {gHodT} / {gM}
                           </span>
                         );
                       })()}
@@ -2802,38 +2890,49 @@ export default function AppraisalReviews() {
                           <th className="p-2.5 text-center">Value</th>
                           <th className="p-2.5 text-center">Max</th>
                           <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
-                          <th className="p-2.5 text-center text-emerald-700 font-black">HOD Score</th>
+                          {selectedAppraisal.coordinatorReview && (
+                            <th className="p-2.5 text-center text-amber-700 font-black">Coordinator Score</th>
+                          )}
+                          <th className="p-2.5 text-center text-emerald-700 font-black">{(isCoordinatorRole && !selectedAppraisal.coordinatorReview) ? "Coordinator Score" : "HOD Score"}</th>
                         </tr>
                       </thead>
                       {(() => {
-                        const bd = selectedAppraisal.autoScore.breakdown;
-                        const p1 = bd.part1Rows || [];
-                        const p2 = bd.part2Rows || [];
+                        const p1 = reviewScore.part1Rows || [];
+                        const p2 = reviewScore.part2Rows || [];
                         const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
                         const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
 
-                        const p1T = selectedAppraisal.autoScore.part1Total ?? sum(p1, "scored");
-                        const p1M = p1.length ? sum(p1, "maxMarks") : 0;
+                        const p1T = reviewScore.part1Total;
+                        const p1M = reviewScore.part1Max;
                         const p1HodT = sumHod(p1);
 
-                        const p2T = selectedAppraisal.autoScore.part2Total ?? sum(p2, "scored");
-                        const p2M = p2.length ? sum(p2, "maxMarks") : 0;
+                        const p2T = reviewScore.part2Total;
+                        const p2M = reviewScore.part2Max;
                         const p2HodT = sumHod(p2);
 
-                        const gT = selectedAppraisal.autoScore.total ?? p1T + p2T;
-                        const gM = selectedAppraisal.autoScore.maxTotal ?? p1M + p2M;
+                        const gT = reviewScore.grandTotal;
+                        const gM = reviewScore.grandMax;
                         const gHodT = p1HodT + p2HodT;
 
-                        const isEditable = selectedAppraisal.status !== "Approved";
+                        const showCoordCol = !!selectedAppraisal.coordinatorReview;
+                        const coordScores = selectedAppraisal.coordinatorReview?.scores || {};
+                        const colSpan = showCoordCol ? 6 : 5;
+
+                        const canReview = isCoordinatorRole || isHODRole || isPrincipalOrHR;
+                        const isEditable = canReview && selectedAppraisal.status !== "Approved";
 
                         const rowEls = (rows) => rows.map((r) => {
                           const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
+                          const cVal = coordScores[r.id];
                           return (
                             <tr key={r.id} className="hover:bg-slate-50/50">
                               <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
                               <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
                               <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
                               <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                              {showCoordCol && (
+                                <td className="p-2.5 text-center font-black text-amber-700">{cVal === undefined || cVal === null || cVal === "" ? "—" : cVal}</td>
+                              )}
                               <td className="p-2.5 text-center font-black">
                                 {isEditable ? (
                                   <input
@@ -2865,7 +2964,7 @@ export default function AppraisalReviews() {
                             <tbody className="divide-y divide-zinc-100">
                               {p1.length > 0 && (
                                 <tr className="bg-slate-50/70">
-                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
+                                  <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
                                 </tr>
                               )}
                               {rowEls(p1)}
@@ -2874,12 +2973,15 @@ export default function AppraisalReviews() {
                                   <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td>
                                   <td className="p-2 text-center text-zinc-700">{p1M}</td>
                                   <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
+                                  {showCoordCol && (
+                                    <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part1Total ?? "—"}</td>
+                                  )}
                                   <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
                                 </tr>
                               )}
                               {p2.length > 0 && (
                                 <tr className="bg-slate-50/70">
-                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
+                                  <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
                                 </tr>
                               )}
                               {rowEls(p2)}
@@ -2888,6 +2990,9 @@ export default function AppraisalReviews() {
                                   <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td>
                                   <td className="p-2 text-center text-zinc-700">{p2M}</td>
                                   <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
+                                  {showCoordCol && (
+                                    <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part2Total ?? "—"}</td>
+                                  )}
                                   <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
                                 </tr>
                               )}
@@ -2897,6 +3002,9 @@ export default function AppraisalReviews() {
                                 <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
                                 <td className="p-3 text-center text-zinc-200">{gM}</td>
                                 <td className="p-3 text-center text-base">{gT}</td>
+                                {showCoordCol && (
+                                  <td className="p-3 text-center text-base text-amber-200">{selectedAppraisal.coordinatorReview?.totalScore ?? "—"}</td>
+                                )}
                                 <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
                               </tr>
                             </tfoot>
@@ -3069,6 +3177,28 @@ export default function AppraisalReviews() {
                   <p className="text-[11px] text-zinc-500">Provide evaluation grade and recommendation comments for this appraisal request.</p>
                 </div>
 
+                {/* Coordinator Review (shown to HOD / Principal / Admin once forwarded) */}
+                {selectedAppraisal.coordinatorReview && (userRole === "HOD" || isHODRole || isPrincipalOrHR) && (
+                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl space-y-2">
+                    <span className="text-[10px] font-black text-amber-900 uppercase tracking-widest block border-b border-amber-200 pb-1">Coordinator Review & Marks</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black text-amber-700 uppercase tracking-wider">Coordinator Total:</span>
+                      <span className="text-xs font-black text-amber-900">{selectedAppraisal.coordinatorReview.totalScore ?? "—"} / {selectedAppraisal.coordinatorReview.maxTotal ?? reviewScore?.grandMax ?? "—"}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[9px] font-black text-amber-700 uppercase tracking-wider">Evaluated Grade:</span>
+                      <span className="text-xs font-black text-amber-900">{selectedAppraisal.coordinatorReview.grade}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[9px] font-black text-amber-700 uppercase tracking-wider">Remarks:</span>
+                      <p className="text-xs text-amber-950 font-medium">{selectedAppraisal.coordinatorReview.comments || "—"}</p>
+                    </div>
+                    <div className="text-[10px] text-amber-600 italic">
+                      - Reviewed by {selectedAppraisal.coordinatorReview.reviewedBy}
+                    </div>
+                  </div>
+                )}
+
                 {/* HOD Recommendations (shown to Principal/Admin) */}
                 {selectedAppraisal.hodReview && userRole !== "HOD" && (
                   <div className="bg-blue-50 border border-blue-150 p-4 rounded-2xl space-y-2">
@@ -3103,8 +3233,8 @@ export default function AppraisalReviews() {
                   </select>
                 </div>
 
-                {/* Principal checkboxes (shown to Principal/Admin only) */}
-                {(userRole === "Principal" || userRole === "Admin") && (
+                {/* Principal checkboxes (shown to Principal/HR only) */}
+                {isPrincipalOrHR && (
                   <div className="border border-zinc-200/60 p-4 bg-white rounded-xl space-y-3">
                     <span className="block text-[10px] font-black text-zinc-500 uppercase mb-2">Principal's Remarks Checkboxes</span>
                     <div className="flex flex-col gap-2">
@@ -3157,14 +3287,14 @@ export default function AppraisalReviews() {
                   </div>
                 )}
 
-                {/* Final Rating Number Input Box */}
-                {(userRole === "Principal" || userRole === "Admin") && (
+                {/* Final Rating Number Input Box (shown to Principal/HR only) */}
+                {isPrincipalOrHR && (
                   <div>
                     <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Final Rating</label>
                     <input
                       type="number"
                       step="any"
-                      placeholder="e.g. 8.5 or 90"
+                      placeholder="e.g. 0 to 100"
                       value={finalRating}
                       onChange={(e) => setFinalRating(e.target.value)}
                       className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a]"
@@ -3193,7 +3323,7 @@ export default function AppraisalReviews() {
                         disabled={actioning}
                         className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-850 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-100 cursor-pointer disabled:opacity-50"
                       >
-                        <CheckCircle2 size={14} /> Evaluate & Forward
+                        <CheckCircle2 size={14} /> {isCoordinatorRole && userRole !== "HOD" ? "Add Marks & Forward to Principal / HOD" : "Evaluate & Forward"}
                       </button>
                       <button
                         onClick={() => setCorrectionModalOpen(true)}
@@ -3205,7 +3335,27 @@ export default function AppraisalReviews() {
                     </>
                   )}
 
-                  {(userRole === "Principal" || userRole === "Admin") && (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") && (
+                  {/* School HOD can add/update their own evaluation after Coordinator forwards */}
+                  {(userRole === "HOD" || isHODRole) && selectedAppraisal.status === "HOD_Approved" && (
+                    <>
+                      <button
+                        onClick={() => handleReviewAction("HOD_Approved")}
+                        disabled={actioning}
+                        className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-blue-100 cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 size={14} /> {actioning ? "Saving..." : "Save HOD Evaluation"}
+                      </button>
+                      <button
+                        onClick={() => setCorrectionModalOpen(true)}
+                        disabled={actioning}
+                        className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Undo2 size={14} /> Return for Correction
+                      </button>
+                    </>
+                  )}
+
+                  {isPrincipalOrHR && (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") && (
                     <>
                       <button
                         onClick={() => handleReviewAction("Approved")}

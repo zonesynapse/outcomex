@@ -43,8 +43,24 @@ export default function UserManagement() {
   const [newRoleInput, setNewRoleInput] = useState("");
   const [isAddingRole, setIsAddingRole] = useState(false);
 
-  // Department management
-  const { departments, addDepartment, removeDepartment } = useDepartments();
+  const localProfile = useMemo(() => {
+    if (!currentUser) return null;
+    try {
+      const stored = localStorage.getItem(`user_profile_${currentUser.uid}`);
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  }, [currentUser]);
+
+  const userRole = userData?.role || localProfile?.role || "";
+  const userInstitution = userData?.institution || localProfile?.institution || "";
+  const isSuperAdmin = currentUser?.email === "obe@ckcet.edu.in" || userRole === "Super Admin" || userRole === "Admin";
+  const normalizedRole = String(userRole).toLowerCase();
+  const isAuthorized = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin") || currentUser?.email === "obe@ckcet.edu.in";
+
+  // Department management (scoped to logged-in user's institution)
+  const { departments, addDepartment, removeDepartment } = useDepartments(userInstitution);
   const [newDepartmentInput, setNewDepartmentInput] = useState("");
   const [isDepartmentModalOpen, setIsDepartmentModalOpen] = useState(false);
 
@@ -96,21 +112,7 @@ export default function UserManagement() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
-  const localProfile = useMemo(() => {
-    if (!currentUser) return null;
-    try {
-      const stored = localStorage.getItem(`user_profile_${currentUser.uid}`);
-      return stored ? JSON.parse(stored) : null;
-    } catch (e) {
-      return null;
-    }
-  }, [currentUser]);
 
-  const userRole = userData?.role || localProfile?.role || "";
-  const userInstitution = userData?.institution || localProfile?.institution || "";
-  const isSuperAdmin = currentUser?.email === "obe@ckcet.edu.in" || userRole === "Super Admin" || userRole === "Admin";
-  const normalizedRole = String(userRole).toLowerCase();
-  const isAuthorized = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin") || currentUser?.email === "obe@ckcet.edu.in";
 
   const handleCreateRole = () => {
     const roleName = newRoleInput.trim();
@@ -130,7 +132,7 @@ export default function UserManagement() {
       showNotification("Please enter a department name.");
       return;
     }
-    const res = await addDepartment(newDepartmentInput);
+    const res = await addDepartment(newDepartmentInput, userInstitution || "ALL");
     showNotification(res.message);
     if (res.success) {
       setNewDepartmentInput("");
@@ -138,7 +140,7 @@ export default function UserManagement() {
   };
 
   const handleRemoveDepartmentSubmit = async (deptName) => {
-    const res = await removeDepartment(deptName);
+    const res = await removeDepartment(deptName, userInstitution || "ALL");
     showNotification(res.message);
   };
 
@@ -371,6 +373,7 @@ export default function UserManagement() {
                 <option value="ALL">All Institutions</option>
                 <option value="CKSPK (Matric)">CKSPK (Matric)</option>
                 <option value="CKSPE (CBSE)">CKSPE (CBSE)</option>
+                <option value="CKCOE (B.ed)">CKCOE (B.ed)</option>
               </select>
             </div>
           )}

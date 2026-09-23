@@ -93,6 +93,7 @@ import StudentMentorProfile from "./pages/student/MentorProfile";
 import CircularCreate from "./pages/CircularCreate";
 import CircularList from "./pages/CircularList";
 import StudentCirculars from "./pages/student/Circulars";
+import StudentPhotocopy from "./pages/student/Photocopy";
 import FacultyAppraisal from "./pages/FacultyAppraisal";
 import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
@@ -110,6 +111,8 @@ import DutyAlterationPage from "./pages/ExamCell/DutyAlterationPage";
 import HallReportsPage from "./pages/ExamCell/HallReportsPage";
 import LiveExamDashboardPage from "./pages/ExamCell/LiveExamDashboardPage";
 import ExamHallSuitePage from "./pages/ExamCell/ExamHallSuitePage";
+import FeeConfigurationPage from "./pages/ExamCell/FeeConfigurationPage";
+import ExamFormSettingPage from "./pages/ExamCell/ExamFormSettingPage";
 import ResourceHubDashboard from "./pages/resourceHub/ResourceHubDashboard";
 import ResourceManagement from "./pages/resourceHub/ResourceManagement";
 import ResourceBooking from "./pages/resourceHub/ResourceBooking";
@@ -274,6 +277,8 @@ export default function App() {
         <Route path="/exam-cell/hall-reports" element={<ProtectedRoute><HallReportsPage /></ProtectedRoute>} />
         <Route path="/exam-cell/live-dashboard" element={<ProtectedRoute><LiveExamDashboardPage /></ProtectedRoute>} />
         <Route path="/exam-cell/exam-hall-suite" element={<ProtectedRoute><ExamHallSuitePage /></ProtectedRoute>} />
+        <Route path="/exam-cell/fee-configuration" element={<ProtectedRoute><FeeConfigurationPage /></ProtectedRoute>} />
+        <Route path="/exam-cell/exam-form-setting" element={<ProtectedRoute><ExamFormSettingPage /></ProtectedRoute>} />
 
         {/* Resource Hub Routes */}
         <Route path="/resource-hub" element={<ProtectedRoute><ResourceHubDashboard /></ProtectedRoute>} />
@@ -300,6 +305,7 @@ export default function App() {
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/mentor" element={<ProtectedRoute><StudentLayout title="My Mentor"><StudentMentorProfile /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/circulars" element={<ProtectedRoute><StudentLayout title="Circulars"><StudentCirculars /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/photocopy" element={<ProtectedRoute><StudentLayout title="Photocopy"><StudentPhotocopy /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/resource-hub" element={<ProtectedRoute><StudentResourceHub /></ProtectedRoute>} />
 
         {/* Redirects */}

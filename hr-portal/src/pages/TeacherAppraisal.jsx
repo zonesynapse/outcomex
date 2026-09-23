@@ -81,22 +81,22 @@ export default function TeacherAppraisal() {
 
     // Q9: THEORY Quarterly Exam (Sep 2024-25)
     resultsQuarterly: [
-      { class: "", subject: "", appeared: "", passed: "", passPercent: "" }
+      { class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "" }
     ],
 
     // Q10: THEORY Half Yearly Exam (Dec 2024-25)
     resultsHalfYearly: [
-      { class: "", subject: "", appeared: "", passed: "", passPercent: "" }
+      { class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "" }
     ],
 
     // Q11a: THEORY Annual Exam (April 2024-25)
     resultsAnnualTheory: [
-      { class: "", subject: "", appeared: "", passed: "", passPercent: "" }
+      { class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "" }
     ],
 
     // Q11b: PRACTICALS Annual Exam (April 2024-25)
     resultsAnnualPractical: [
-      { class: "", subject: "", appeared: "", passed: "", passPercent: "" }
+      { class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "" }
     ],
 
     // Q12: Results Attributed To
@@ -2238,7 +2238,7 @@ function renderExamTableSection({
         </h3>
         {!isReadOnly && (
           <button
-            onClick={() => addArrayRow(arrayKey, { class: "", subject: "", appeared: "", passed: "", passPercent: "" })}
+            onClick={() => addArrayRow(arrayKey, { class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "" })}
             className="px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" /> Add Subject Row
@@ -2249,15 +2249,16 @@ function renderExamTableSection({
       <div className="overflow-x-auto border border-slate-200 rounded-2xl">
         <table className="w-full text-xs text-left">
           <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-700">
-            <tr>
-              <th className="p-3 text-center w-12">Sl.No</th>
-              <th className="p-3 w-40">Class</th>
-              <th className="p-3">Subject</th>
-              <th className="p-3 text-center w-28">Appeared</th>
-              <th className="p-3 text-center w-28">Passed</th>
-              <th className="p-3 text-center w-32">Pass Percentage</th>
-              {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
-            </tr>
+                <tr>
+                  <th className="p-3 text-center w-12">Sl.No</th>
+                  <th className="p-3 w-40">Class</th>
+                  <th className="p-3">Subject</th>
+                  <th className="p-3 text-center w-28">Appeared</th>
+                  <th className="p-3 text-center w-28">Passed</th>
+                  <th className="p-3 text-center w-32">Pass Percentage</th>
+                  <th className="p-3 text-center w-32">Subject Average</th>
+                  {!isReadOnly && <th className="p-3 text-center w-12">Action</th>}
+                </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-semibold">
             {(list || []).map((row, idx) => (
@@ -2310,6 +2311,18 @@ function renderExamTableSection({
                     value={row.passPercent}
                     placeholder="Auto %"
                     className="w-full p-2 bg-indigo-50/60 border border-indigo-150 text-indigo-900 rounded-lg text-xs font-bold text-center"
+                  />
+                </td>
+                <td className="p-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    disabled={isReadOnly}
+                    value={row.subjectAvg || ""}
+                    onChange={e => handleArrayRowChange(arrayKey, idx, "subjectAvg", e.target.value)}
+                    placeholder="Avg"
+                    className="w-full p-2 bg-emerald-50/60 border border-emerald-200 text-emerald-900 rounded-lg text-xs font-bold text-center focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all disabled:opacity-60"
                   />
                 </td>
                 {!isReadOnly && (

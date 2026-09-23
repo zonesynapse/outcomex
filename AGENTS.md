@@ -1,5 +1,65 @@
 ## Summary of Changes
 
+### 456. Student Answer Script Photocopy Page Enhancements (`student/Photocopy.jsx`)
+- **Goal**: Render official candidate instructions banner, auto-fetched candidate details form, dynamic subject selection table with student regulation grades and uppercase subject code/title conversion.
+- **Fix**:
+  - [`student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx):
+    - **Instruction to Candidates**: Rendered 5 updated official candidate rules with dynamic fee display (`Rs.{config.feePerSubject}/-`) and real-time last submission date (`config.toDate` from `exam_cell_settings/photocopy`).
+    - **Auto-fetched Candidate Form**: Added verified profile card displaying Name, Register Number, Month & Year of Exam (`APR/MAY 2026`), and sanitized Department name (`formatDepartment` converts `B_E_ Bio Medical Engineering` to `B.E. Bio Medical Engineering`).
+    - **Eligible Answer Scripts & Application Table**: Integrated interactive subject table starting at 1 row with a "+ Add Row" button capped at max 5 rows. Each row incurs ₹400 fee accumulating dynamically to the Total Fee summary.
+    - **Regulation Grades & Pass/Fail Result**: Dynamically populates Grade dropdown with student's regulation grades using `useRegulations()` & `grade_configs`, and Result dropdown with `Pass` / `Fail`.
+    - **Uppercase Enforcement**: Converted all typed input in Subject Code and Subject Title fields to uppercase automatically (`.toUpperCase()`).
+- **Result**: Students can complete official candidate form with dynamic regulation grades, uppercase subject entries, auto-calculated total fee, and strict 5-row maximum limit. Build passes cleanly in 6.76s with 0 errors.
+
+### 455. Exam Cell "Exam Form Setting" Page — 4 Tabs with Date-Window Control (`ExamCell/ExamFormSettingPage.jsx`)
+- **Goal**: Exam Cell module la "Exam Form Setting" page with 4 tabs (Photocopy, Revaluation, Review, ESE Registration); Photocopy tab la From–To date fix panna student-end photocopy page hide/view aganum.
+- **Fix**:
+  - Created [`src/pages/ExamCell/ExamFormSettingPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamFormSettingPage.jsx): per-tab OPEN/CLOSED toggle, From Date + To Date, fee/subject, student instructions; saved realtime to `exam_cell_settings/{photocopy|revaluation|review|ese_registration}`; per-tab status pill (Open / Scheduled / Expired / Closed); To-Date-before-From-Date blocked.
+  - [`student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): reads `fromDate`/`toDate`, computes `windowStatus` (switch OFF or today outside window → closed); badge/banner/Apply button/submit guard all honor the window.
+  - Wired route `/exam-cell/exam-form-setting` ([`App.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/App.tsx)), sidebar "Exam Form Setting" ([`Layout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/Layout.jsx)), permission ([`AdminRoleConfig.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AdminRoleConfig.jsx)).
+- **Result**: Date range ku veliya student ku photocopy form hide (Apply disabled + closed banner); range kulla view + apply. Build passes cleanly in 10.61s with 0 errors.
+
+### 454. Regulation Dropdown + Dynamic Course-Type Rates in Exam Fee Configuration (`ExamCell/FeeConfigurationPage.jsx`)
+- **Goal**: `Add Fee Structure` modal la Regulation field la Curriculum page (`Curriculum.jsx`) la create panna regulations show aganum; choose panna regulation oda course types `DETAILED RATES BREAKDOWN (IN ₹)` ku kezha show aganum.
+- **Fix** (all in [`FeeConfigurationPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/FeeConfigurationPage.jsx)):
+  - Regulation free-text input → dropdown sourced from `useRegulations()` (`regulations` collection, same as Curriculum); existing custom values preserved as an option when editing old configs; new-form default prefers first configured regulation.
+  - Subscribed to `course_type_configs` (same collection Curriculum writes); "Regular Exam" breakdown now renders one rate input per course type of the chosen regulation, switching live when regulation changes; fee keys map to legacy `theory/practical/integrated/project` for known types (old configs + stats unaffected) and sanitized keys for custom types; card breakdown already renders `fees` entries dynamically so custom types display automatically.
+- **Result**: Regulation choose panna andha regulation oda course types rate boxes-a varum. Build passes cleanly in 8.34s with 0 errors.
+
+### 453. Student Module Photocopy Page — Answer Script Photocopy Applications (`student/Photocopy.jsx`)
+- **Goal**: Student module la Exam Cell kula "Photocopy" page — students apply for End Semester answer script photocopies and track status.
+- **Fix**:
+  - Created [`src/pages/student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): lists eligible ESE scripts from `marks` collection (dual-ID student match, programme/dept/batch scoped); per-subject Apply with confirm modal; saves to `photocopy_applications` (`studentUid`, regNo, subject, exam, scored marks, fee, `paymentStatus: Pending`, `status: Applied`); realtime My Applications table with status badges (Applied → Verified → Payment Confirmed → Copy Issued / Closed / Rejected), cancel-while-Applied, total fee due; window config + per-subject fee read from `exam_cell_settings/photocopy` (defaults: open, ₹300/subject).
+  - Route `/student/photocopy` in [`App.tsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/App.tsx); "Photocopy" sidebar item (Copy icon, after Marks & Results) in [`StudentLayout.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/student/StudentLayout.jsx). Firestore catch-all rule already permits approved-user read/write, so no rules change needed.
+- **Result**: Students can apply + track photocopy requests end-to-end (staff updates status directly on `photocopy_applications` docs). Build passes cleanly in 8.60s with 0 errors.
+
+### 452. Previous-AY Assigned Subjects Missing in MarkEntry Subject Dropdown (`MarkEntry.jsx`)
+- **Goal**: Fix "previous academic year la map aana subject edhume subject dropdown la show aagala" — e.g. 22 Batch / 2025-2026 / 8th Sem showed only "Select Subject".
+- **Root Cause**: The subject list required BOTH an assignment match AND an allocated-QP match under the SAME academic-year tag. Mappings/QPs recorded under a previous AY tag failed both gates, wiping the dropdown to empty.
+- **Fix** (all in [`MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx) subjects effect):
+  - Primary assignment match is now batch + semester + department across ALL academic years (a batch takes a semester only once; AY tags vary by when HOD recorded the mapping).
+  - The allocated-QP hard filter now applies ONLY when the user has zero assigned subjects (unassigned syllabus-fallback path); assigned subjects always show. Exam dropdown strictness (Allocated & Released, AY-gated) is untouched, so QP availability is still enforced at exam selection.
+- **Result**: Previously-mapped subjects reappear in the dropdown. Build passes cleanly in 8.47s with 0 errors.
+
+### 451. Subject Average Box in Teacher Appraisal Exam Tables (`hr-portal/src/pages/TeacherAppraisal.jsx`, `AppraisalReviews.jsx`)
+- **Goal**: Add a "Subject Average" box near Pass Percentage in the Teacher Appraisal exam result tables (Quarterly, Half Yearly, Annual Theory, Annual Practical).
+- **Fix**:
+  - In [`hr-portal/src/pages/TeacherAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/TeacherAppraisal.jsx): added `subjectAvg` field to all four result row defaults + "Add Subject Row"; added "Subject Average" column with numeric input right after the Pass Percentage column in `renderExamTableSection` (auto-saved with `formData`, read-only once submitted).
+  - In [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx): added matching "Subject Average" column to `renderExamTableReview` so Coordinator/Principal/HOD see the entered averages.
+- **Result**: Teachers enter per-subject averages beside pass %; reviewers see them. hr-portal build passes cleanly in 2.99s.
+
+### 450. Teacher Appraisal Coordinator Review Workflow (`hr-portal/src/pages/AppraisalReviews.jsx`)
+- **Goal**: Teacher submits form via "Submit to Coordinator" → department Coordinator sees it, enters their own marks, forwards to Principal/HOD → Principal/HOD sees automated + coordinator marks side by side on `AppraisalReviews.jsx`, with strict per-school data segregation.
+- **Fix** (all in [`hr-portal/src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/AppraisalReviews.jsx)):
+  - Added `reviewScore` memo unifying automated marks: faculty `autoScore.breakdown` OR teacher `evaluatedScore` (previously teacher auto marks were invisible in reviews — table only gated on `autoScore.breakdown`).
+  - Criteria table now renders Self Analyse (auto) + Coordinator Score (read-only, from saved `coordinatorReview`) + editable Reviewer column (header shows "Coordinator Score" while coordinator reviews a Submitted form, else "HOD Score"); part totals + grand footer include coordinator totals; score inputs restricted to Coordinator/HOD/Principal/Admin roles while status ≠ Approved.
+  - `handleReviewAction`: coordinator-only reviewers save a distinct `coordinatorReview` (`scores`, `part1Total/2Total`, `totalScore`, `maxTotal`, comments, grade, reviewer, timestamp) and forward with `HOD_Approved`; HOD/Principal branches unchanged (HOD still saves `hodReview`).
+  - Added "Add Marks & Forward to Principal / HOD" label for coordinator forward button; added "Save HOD Evaluation" action so school HOD can record `hodReview` on `HOD_Approved` forms.
+  - Added amber "Coordinator Review & Marks" box in the review panel for HOD/Principal/Admin showing coordinator total, grade, remarks, reviewer.
+  - Return-for-correction now stores coordinator comments in `coordinatorReview` (no longer clobbers `hodReview`).
+  - Normalized department matching (`normDept`) so teacher-typed department variants still route to the right department Coordinator; institution-level segregation (`isSameInstitution`) unchanged — each school's users see only their school's data.
+- **Result**: End-to-end Teacher → Coordinator (marks) → Principal/HOD (auto + coordinator + HOD marks) workflow live. hr-portal build passes cleanly in 2.78s.
+
 ### 449. Restrict Mark Entry Button Display to Officially Allocated & Released Question Papers (`FacultyDashboard.jsx`)
 - **Goal**: Ensure the **Mark Entry** button appears ONLY on the specific question paper set that displays the green `Allocated & Released (date)` badge (i.e. the official paper allocated by Exam Cell whose exam date/time has been reached), rather than on all approved or non-allocated set papers (e.g. Set 2).
 - **Fix**:

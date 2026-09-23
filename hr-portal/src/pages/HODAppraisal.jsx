@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
-import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
+import { checkAppraisalPortalStatus, parseAppraisalDateTime, getSchoolBannerTitle } from "../utils/appraisalScore";
 
 export default function HODAppraisal() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -125,7 +125,7 @@ export default function HODAppraisal() {
           setHodName((prev) => prev || uData.displayName || uData.facultyName || uData.name || "");
           setDepartment((prev) => prev || uData.department || "");
           setDoj((prev) => prev || uData.dateOfJoining || uData.dojCollege || "");
-          setDesignation((prev) => prev || uData.designation || "Head of the Department");
+          setDesignation((prev) => prev || uData.designation || "Department Coordinator");
           setQualification((prev) => prev || uData.academicQualification || uData.qualification || "");
         }
       }
@@ -421,7 +421,7 @@ export default function HODAppraisal() {
 
     try {
       await setDoc(docRef, payload, { merge: true });
-      showToast(isSubmit ? "HOD Self-Appraisal submitted successfully to Principal!" : "Draft saved successfully.", "success");
+      showToast(isSubmit ? "Coordinator Self-Appraisal submitted successfully to Principal!" : "Draft saved successfully.", "success");
       setIsEditingSubmitted(false);
     } catch (err) {
       console.error("Save error:", err);
@@ -433,10 +433,10 @@ export default function HODAppraisal() {
 
   if (loading || checkingSchedule) {
     return (
-      <HRLayout title="HOD Appraisal Request">
+      <HRLayout title="Coordinator Appraisal Request">
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
           <Loader2 className="w-10 h-10 animate-spin text-[#120c7a]" />
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Loading HOD Appraisal Portal...</p>
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Loading Coordinator Appraisal Portal...</p>
         </div>
       </HRLayout>
     );
@@ -447,7 +447,7 @@ export default function HODAppraisal() {
     const openMs = parseAppraisalDateTime(appraisalSchedule?.openTime);
     const closeMs = parseAppraisalDateTime(appraisalSchedule?.closeTime);
     return (
-      <HRLayout title="HOD Appraisal Request">
+      <HRLayout title="Coordinator Appraisal Request">
         <div className="max-w-xl mx-auto py-16 px-4">
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-xl overflow-hidden text-center p-8 space-y-6">
             <div className="w-16 h-16 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center mx-auto text-rose-600">
@@ -455,9 +455,9 @@ export default function HODAppraisal() {
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">HOD Appraisal Portal is Closed</h2>
+              <h2 className="text-xl font-black text-slate-850 uppercase tracking-wide">Coordinator Appraisal Portal is Closed</h2>
               <p className="text-zinc-500 text-xs font-medium">
-                The HOD performance appraisal request submission portal is currently inactive or has reached its deadline.
+                The Coordinator performance appraisal request submission portal is currently inactive or has reached its deadline.
               </p>
             </div>
 
@@ -488,15 +488,30 @@ export default function HODAppraisal() {
     );
   }
 
+  const userInst = userProfile?.institution || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.institution : "") || "CKSPK (Matric)";
+  const schoolTitle = getSchoolBannerTitle(userInst);
+
   return (
-    <HRLayout title="HOD Appraisal Request">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <HRLayout title="Coordinator Appraisal Request">
+      <div className="max-w-5xl mx-auto space-y-6 pb-20">
 
         {/* Toast Notification */}
         {toast.show && (
           <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-5 py-3.5 rounded-xl text-white font-bold shadow-lg animate-slideIn ${toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"}`}>
             <CheckCircle2 size={18} />
             <span>{toast.message}</span>
+          </div>
+        )}
+
+        {/* Schedule Notice for Admin / HR */}
+        {!isPortalOpen && isAdminOrHR && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 text-amber-800 text-xs flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <span>
+                <strong>Admin Preview Notice:</strong> Portal is currently closed for general staff, but unlocked for your administrative review.
+              </span>
+            </div>
           </div>
         )}
 
@@ -509,10 +524,10 @@ export default function HODAppraisal() {
                 <Sparkles size={12} className="text-amber-400" /> HR Appraisal System
               </div>
               <h1 className="text-lg md:text-xl font-bold font-serif">
-                HoD's Performance Appraisal for the Academic Year {academicYear}
+                Coordinator's Performance Appraisal for the Academic Year {academicYear}
               </h1>
-              <p className="text-indigo-200 text-xs font-medium">
-                CK COLLEGE OF ENGINEERING AND TECHNOLOGY, CUDDALORE – 607 003. (ISO 9001:2015)
+              <p className="text-indigo-200 text-xs font-bold uppercase tracking-wide">
+                {schoolTitle}
               </p>
             </div>
 
@@ -550,7 +565,7 @@ export default function HODAppraisal() {
                     existingAppraisal.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' :
                       existingAppraisal.status === 'Returned' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-zinc-100 text-zinc-600'
                     }`}>
-                    {existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to Principal (HOD Approved)' : existingAppraisal.status}
+                    {existingAppraisal.status === 'Submitted' || existingAppraisal.status === 'HOD_Approved' ? 'Forwarded to Principal (Coordinator Reviewed)' : existingAppraisal.status}
                   </span>
                 </div>
                 {existingAppraisal.submittedAt && (
@@ -1284,7 +1299,7 @@ export default function HODAppraisal() {
             />
             <label htmlFor="hod-declaration" className="text-xs text-slate-800 font-medium leading-relaxed cursor-pointer">
               <strong className="font-bold block text-slate-900 mb-0.5 uppercase tracking-wide text-[10px]">Digital Declaration</strong>
-              I hereby declare that the performance particulars, exam pass percentages, and evidence attachments submitted in this HOD Self-Appraisal form are accurate and complete to the best of my knowledge.
+              I hereby declare that the performance particulars, exam pass percentages, and evidence attachments submitted in this Coordinator Self-Appraisal form are accurate and complete to the best of my knowledge.
             </label>
           </div>
 

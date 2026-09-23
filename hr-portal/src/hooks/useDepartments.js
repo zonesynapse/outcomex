@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { db } from "../firebase";
 import { collection, onSnapshot, doc, setDoc, deleteDoc } from "firebase/firestore";
+import { normalizeInstitution } from "../utils/appraisalScore";
 
 const DEFAULT_DEPARTMENTS = [
   "Computer Science",
@@ -11,9 +12,35 @@ const DEFAULT_DEPARTMENTS = [
   "Science & Humanities"
 ];
 
-export function useDepartments() {
-  const [departments, setDepartments] = useState(DEFAULT_DEPARTMENTS);
+export function useDepartments(targetInst = null) {
+  const [departments, setDepartments] = useState([]);
+  const [rawDepartments, setRawDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const filterDepts = (rawList, inst) => {
+    if (!inst) {
+      const unique = Array.from(new Set(rawList.map(r => r.name)));
+      return unique.length > 0 ? unique : DEFAULT_DEPARTMENTS;
+    }
+
+    const norm = normalizeInstitution(inst);
+
+    // Find departments tagged for this institution
+    const instDepts = rawList.filter(d => normalizeInstitution(d.institution) === norm);
+    if (instDepts.length > 0) {
+      return Array.from(new Set(instDepts.map(d => d.name)));
+    }
+
+    // Special rule for CKCOE: if no institution-specific departments created yet, return empty list
+    if (norm === "CKCOE") {
+      return [];
+    }
+
+    // Fallback for other institutions if no specific departments exist yet
+    const defaultDepts = rawList.filter(d => !d.institution || d.institution === "ALL" || normalizeInstitution(d.institution) === "ALL");
+    const names = Array.from(new Set(defaultDepts.map(d => d.name)));
+    return names.length > 0 ? names : DEFAULT_DEPARTMENTS;
+  };
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -22,25 +49,35 @@ export function useDepartments() {
         if (snapshot.empty) {
           try {
             for (const dept of DEFAULT_DEPARTMENTS) {
-              await setDoc(doc(db, "departments", dept), {
+              const docId = `${dept}_ALL`;
+              await setDoc(doc(db, "departments", docId), {
                 name: dept,
+                institution: "ALL",
                 createdAt: new Date().toISOString()
               });
             }
           } catch (err) {
             console.error("Error seeding default departments:", err);
           }
-          setDepartments(DEFAULT_DEPARTMENTS);
+          const seeded = DEFAULT_DEPARTMENTS.map(d => ({ id: `${d}_ALL`, name: d, institution: "ALL" }));
+          setRawDepartments(seeded);
+          setDepartments(filterDepts(seeded, targetInst));
         } else {
-          const list = [];
+          const rawList = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
             const name = data.name || docSnap.id;
-            if (name && !list.includes(name)) {
-              list.push(name);
+            const inst = data.institution || "ALL";
+            if (name) {
+              rawList.push({
+                id: docSnap.id,
+                name,
+                institution: inst
+              });
             }
           });
-          setDepartments(list.length > 0 ? list : DEFAULT_DEPARTMENTS);
+          setRawDepartments(rawList);
+          setDepartments(filterDepts(rawList, targetInst));
         }
         setLoading(false);
       },
@@ -51,21 +88,34 @@ export function useDepartments() {
     );
 
     return () => unsub();
-  }, []);
+  }, [targetInst]);
 
-  const addDepartment = async (name) => {
+  const getDepartmentsForInstitution = (inst) => {
+    return filterDepts(rawDepartments, inst);
+  };
+
+  const addDepartment = async (name, institution = "ALL") => {
     const trimmed = name?.trim();
     if (!trimmed) {
       return { success: false, message: "Department name cannot be empty." };
     }
 
-    if (departments.some((d) => d.toLowerCase() === trimmed.toLowerCase())) {
-      return { success: false, message: "Department already exists." };
+    const normInst = institution || "ALL";
+    const normCode = normalizeInstitution(normInst);
+
+    const existing = rawDepartments.find(
+      (d) => d.name.toLowerCase() === trimmed.toLowerCase() && normalizeInstitution(d.institution) === normCode
+    );
+    if (existing) {
+      return { success: false, message: `Department "${trimmed}" already exists for this institution.` };
     }
 
     try {
-      await setDoc(doc(db, "departments", trimmed), {
+      const sanitizedName = trimmed.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const docId = `${sanitizedName}_${normCode}`;
+      await setDoc(doc(db, "departments", docId), {
         name: trimmed,
+        institution: normInst,
         createdAt: new Date().toISOString()
       });
       return { success: true, message: `Department "${trimmed}" added successfully.` };
@@ -75,10 +125,16 @@ export function useDepartments() {
     }
   };
 
-  const removeDepartment = async (name) => {
+  const removeDepartment = async (name, institution) => {
     if (!name) return { success: false, message: "Invalid department name." };
     try {
-      await deleteDoc(doc(db, "departments", name));
+      const normCode = institution ? normalizeInstitution(institution) : null;
+      const item = rawDepartments.find(d => 
+        d.name.toLowerCase() === name.toLowerCase() &&
+        (!normCode || normalizeInstitution(d.institution) === normCode)
+      );
+      const docId = item ? item.id : name;
+      await deleteDoc(doc(db, "departments", docId));
       return { success: true, message: `Department "${name}" removed.` };
     } catch (err) {
       console.error("Error deleting department:", err);
@@ -88,8 +144,10 @@ export function useDepartments() {
 
   return {
     departments,
+    rawDepartments,
     loading,
     addDepartment,
-    removeDepartment
+    removeDepartment,
+    getDepartmentsForInstitution
   };
 }

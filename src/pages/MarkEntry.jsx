@@ -348,6 +348,7 @@ export default function MarkEntry() {
   const [ciaConfigs, setCiaConfigs] = useState([]);
   const [gradeConfigs, setGradeConfigs] = useState([]); // Grades for current regulation
   const fileInputRef = useRef(null);
+  const eseFileInputRef = useRef(null);
   // Resolved marks doc ID for the current filter set. Older saves stored the QP
   // push-ID in the exam slot ("..._CS25C08_-OsVReAuCyJ5lRI2-WsS_...") while the exam
   // dropdown now carries the display name ("IA 1") — exact-key-only lookup misses
@@ -388,6 +389,168 @@ export default function MarkEntry() {
     link.click();
     document.body.removeChild(link);
     showToastMsg("Template downloaded! Fill the CO marks (max 3) and upload.", "success");
+  };
+
+  const handleDownloadEseTemplate = () => {
+    if (!students || !students.length) {
+      showToastMsg("No students found to generate template.", "error");
+      return;
+    }
+
+    const isCOWise = markType === 'CO Wise';
+    const header = isCOWise
+      ? ["Register Number", "Student Name", "CO1", "CO2", "CO3", "CO4", "CO5"]
+      : ["Register Number", "Student Name", "Grade"];
+
+    const ws_data = [header];
+
+    students.forEach(s => {
+      if (isCOWise) {
+        ws_data.push([
+          s.regNo || s.reg,
+          s.name,
+          "", "", "", "", ""
+        ]);
+      } else {
+        ws_data.push([
+          s.regNo || s.reg,
+          s.name,
+          ""
+        ]);
+      }
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+    XLSX.utils.book_append_sheet(wb, ws, "ESE Template");
+
+    const cleanSub = parseSubjectCodeKey(subject) || sanitizeKey(subject) || "Subject";
+    const cleanExam = String(exam || "ESE").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const modeTag = isCOWise ? "CO_Wise" : "Grade";
+    XLSX.writeFile(wb, `ESE_${modeTag}_Template_${cleanSub}_${cleanExam}.xlsx`);
+    showToastMsg(`Downloaded ESE ${isCOWise ? "CO Wise" : "Grade"} Template successfully!`, "success");
+  };
+
+  const handleEseFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!subject || !exam) {
+      showToastMsg("Please select subject and exam first!", "error");
+      return;
+    }
+
+    let sectionIndexLookup = {};
+    try {
+      const progKey = formatProgrammeKey(programme);
+      const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+      const ssDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
+      const ssSnap = await getDoc(doc(db, 'student_section_index', ssDocId));
+      if (ssSnap.exists()) {
+        const idxData = ssSnap.data();
+        Object.entries(idxData).forEach(([key, val]) => {
+          if (key.startsWith('_')) return;
+          sectionIndexLookup[key] = key;
+          if (val?.regNo) sectionIndexLookup[val.regNo] = key;
+        });
+      }
+    } catch (err) {
+      // Non-critical
+    }
+
+    try {
+      const dataBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(dataBuffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+      if (!rawRows || rawRows.length === 0) {
+        showToastMsg("Uploaded file is empty.", "error");
+        return;
+      }
+
+      const sampleRow = rawRows[0];
+      const keys = Object.keys(sampleRow);
+      const regCol = keys.find(k => /reg/i.test(k) || /roll/i.test(k));
+      const gradeCol = keys.find(k => /^grade$/i.test(k.trim()) || (/grade/i.test(k) && !/point/i.test(k)));
+      const coCols = keys.filter(k => /^co\d+/i.test(k.trim()));
+
+      if (!regCol) {
+        showToastMsg("File must have a 'Register Number' column.", "error");
+        return;
+      }
+
+      const isCOWise = markType === 'CO Wise' || (coCols.length > 0 && !gradeCol);
+
+      if (isCOWise && coCols.length === 0) {
+        showToastMsg("File must have CO columns (e.g. CO1, CO2, CO3, CO4, CO5).", "error");
+        return;
+      } else if (!isCOWise && !gradeCol) {
+        showToastMsg("File must have a 'Grade' column.", "error");
+        return;
+      }
+
+      const activeGrades = gradeConfigs.length > 0 ? gradeConfigs : DEFAULT_GRADES;
+      const newMarksData = { ...marksData };
+      let matchCount = 0;
+
+      rawRows.forEach(row => {
+        const regno = String(row[regCol] || '').trim();
+        if (!regno) return;
+
+        const targetReg = newMarksData[regno] ? regno : (sectionIndexLookup[regno] || regno);
+        if (newMarksData[targetReg]) {
+          if (isCOWise) {
+            matchCount++;
+            coCols.forEach(col => {
+              const coKey = col.toUpperCase().trim();
+              const val = row[col];
+              if (val !== undefined && val !== '') {
+                newMarksData[targetReg][coKey] = Number(val);
+              }
+            });
+            const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(newMarksData[targetReg][co] || 0), 0);
+            newMarksData[targetReg].total = coSum;
+          } else {
+            const rawGrade = String(row[gradeCol] || '').trim().toUpperCase();
+            if (rawGrade) {
+              matchCount++;
+              if (rawGrade === 'AB' || rawGrade === 'ABSENT') {
+                newMarksData[targetReg] = {
+                  ...newMarksData[targetReg],
+                  absent: true,
+                  grade: 'AB',
+                  gradePoint: '',
+                  overall: '',
+                  total: 0
+                };
+              } else {
+                const gradeDef = activeGrades.find(g => String(g.grade).toUpperCase() === rawGrade);
+                const markVal = gradeDef ? gradeDef.mark : "";
+                const gpVal = gradeDef ? gradeDef.gradePoint : "";
+                newMarksData[targetReg] = {
+                  ...newMarksData[targetReg],
+                  absent: false,
+                  grade: rawGrade,
+                  gradePoint: gpVal,
+                  overall: markVal,
+                  total: isNaN(Number(markVal)) ? 0 : Number(markVal)
+                };
+              }
+            }
+          }
+        }
+      });
+
+      setMarksData(newMarksData);
+      showToastMsg(`Successfully imported ${isCOWise ? 'CO Marks' : 'Grades'} for ${matchCount} students!`, "success");
+    } catch (err) {
+      console.error("ESE File Upload Error:", err);
+      showToastMsg("Failed to read Excel/CSV file.", "error");
+    } finally {
+      if (eseFileInputRef.current) eseFileInputRef.current.value = '';
+    }
   };
 
   const handleFileUpload = async (e) => {
@@ -793,9 +956,12 @@ export default function MarkEntry() {
 
         // 1. User-handled subjects from assigned groups using canonical department match.
         // NOTE: g.semester may be stored as "5", "Sem 5" or "5th Semester" — always compare via deriveSemesterNumber.
+        // AcademicYear is deliberately NOT gated here: a batch takes a semester only once,
+        // so assignment docs tagged with a previous AY (recorded when HOD mapped them)
+        // are the same subjects. AY-tag variance must not wipe the dropdown.
         const semEq = (a, b) => String(deriveSemesterNumber(a) || '').trim() === String(b || '').trim();
         facultyAssignedGroups
-          .filter(g => isBatchMatch(g.batch, batch) && normAyEq(g.academicYear, academicYear) && semEq(g.semester, needSem))
+          .filter(g => isBatchMatch(g.batch, batch) && semEq(g.semester, needSem))
           .forEach(g => {
             if (isDeptMatch(g.department, department)) {
               (g.codes || []).forEach(c => {
@@ -992,17 +1158,23 @@ export default function MarkEntry() {
             .filter(Boolean)
         );
 
-        // Only keep subjects that have an active allocated QP
-        // Exception: preserve dashboardCode (from dashboard navigation) and userHandledCodes that have active QPs
+        // Assigned subjects (mapped in any AY) must always show — QP availability
+        // is enforced on the Exam dropdown, not here. The allocated-QP gate below
+        // applies ONLY when the user has no assigned subjects at all.
+        // Exception: preserve dashboardCode (from dashboard navigation).
         const hasDashboardCode = Boolean(dashboardCode);
-        uniqueCodes = uniqueCodes.filter(code => {
-          if (hasDashboardCode && code === dashboardCode) return true;
-          return activeQpSubjectCodes.has(code);
-        });
+        const hasAssignedSubjects = userHandledCodes.length > 0 || deptAllCodes.length > 0;
+        if (!hasAssignedSubjects) {
+          uniqueCodes = uniqueCodes.filter(code => {
+            if (hasDashboardCode && code === dashboardCode) return true;
+            return activeQpSubjectCodes.has(code);
+          });
+        }
 
         // Fallback 3: syllabus subjects ONLY when no assigned subjects exist at all.
-        // Otherwise an empty list is the correct answer — only assigned subjects
-        // that have a question paper may appear; never dump the full syllabus.
+        // Otherwise an empty list is the correct answer — assigned subjects always
+        // show; unassigned syllabus subjects still need an allocated QP (final gate).
+        // Never dump the full syllabus and never leak other departments' subjects.
         if (uniqueCodes.length === 0 && userHandledCodes.length === 0 && deptAllCodes.length === 0) {
           try {
             const regulation = getRegulationForBatch(progKey, batch);
@@ -1028,13 +1200,14 @@ export default function MarkEntry() {
           } catch { /* non-critical */ }
         }
 
-        // Final gate: no subject without an allocated QP may ever reach the
-        // dropdown. Fallback 3 above appends raw syllabus codes, so the QP
-        // intersection is re-applied here on the final list. The dashboard-
-        // navigated subject is always preserved.
+        // Final gate: applies ONLY to the unassigned syllabus-fallback path above.
+        // Fallback 3 appends raw syllabus codes, so the QP intersection is applied
+        // here — but never when the user has assigned subjects (those always show).
+        // The dashboard-navigated subject is always preserved.
         {
           const keepDash = dashboardCode || '';
-          uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && code === keepDash) || activeQpSubjectCodes.has(code));
+          const stillAssigned = userHandledCodes.length > 0 || deptAllCodes.length > 0;
+          uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && code === keepDash) || stillAssigned || activeQpSubjectCodes.has(code));
         }
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
@@ -3058,6 +3231,29 @@ export default function MarkEntry() {
                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-blue-900/20"
                   >
                     <Upload size={14} /> Upload CO Marks (CSV)
+                  </button>
+                </div>
+              )}
+              {isUniversityExam && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDownloadEseTemplate}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20"
+                  >
+                    <Download size={14} /> Download Template
+                  </button>
+                  <input
+                    type="file"
+                    ref={eseFileInputRef}
+                    onChange={handleEseFileUpload}
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => eseFileInputRef.current?.click()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-blue-900/20"
+                  >
+                    <Upload size={14} /> Upload Grades
                   </button>
                 </div>
               )}

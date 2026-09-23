@@ -147,7 +147,9 @@ export default function AdminRoleConfig() {
     { id: "exam-cell-duty-alteration", label: "Exam Cell — Duty Alteration & Swaps", path: "/exam-cell/duty-alteration", module: "Exam Cell" },
     { id: "exam-cell-hall-reports", label: "Exam Cell — Seating Charts & Reports", path: "/exam-cell/hall-reports", module: "Exam Cell" },
     { id: "exam-cell-live-dashboard", label: "Exam Cell — Live Exam Control Desk", path: "/exam-cell/live-dashboard", module: "Exam Cell" },
-    { id: "exam-cell-exam-hall-suite", label: "Exam Cell — Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite", module: "Exam Cell" }
+    { id: "exam-cell-exam-hall-suite", label: "Exam Cell — Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite", module: "Exam Cell" },
+    { id: "exam-cell-fee-configuration", label: "Exam Cell — Fee Configuration", path: "/exam-cell/fee-configuration", module: "Exam Cell" },
+    { id: "exam-cell-exam-form-setting", label: "Exam Cell — Exam Form Setting", path: "/exam-cell/exam-form-setting", module: "Exam Cell" }
   ];
 
   const groupedPages = useMemo(() => {

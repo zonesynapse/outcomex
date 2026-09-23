@@ -171,7 +171,9 @@ const allPossibleItems = [
   { id: "exam-cell-duty-alteration", icon: RefreshCw, label: "Duty Alterations & Swaps", path: "/exam-cell/duty-alteration" },
   { id: "exam-cell-hall-reports", icon: Printer, label: "Seating Charts & Reports", path: "/exam-cell/hall-reports" },
   { id: "exam-cell-live-dashboard", icon: Activity, label: "Live Exam Control Desk", path: "/exam-cell/live-dashboard" },
-  { id: "exam-cell-exam-hall-suite", icon: ShieldCheck, label: "Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite" }
+  { id: "exam-cell-exam-hall-suite", icon: ShieldCheck, label: "Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite" },
+  { id: "exam-cell-fee-configuration", icon: IndianRupee, label: "Fee Configuration", path: "/exam-cell/fee-configuration" },
+  { id: "exam-cell-exam-form-setting", icon: Settings2, label: "Exam Form Setting", path: "/exam-cell/exam-form-setting" },
 ];
 
 const modules = [
@@ -282,7 +284,9 @@ const modules = [
       "exam-cell-hall-reports",
       "exam-cell-live-dashboard",
       "exam-cell-exam-hall-suite",
-      "ia-schedule-creation"
+      "exam-cell-fee-configuration",
+      "ia-schedule-creation",
+      "exam-cell-exam-form-setting"
     ]
   }
 ];
@@ -579,7 +583,8 @@ export default function Layout({ children, title }) {
         'exam-cell-duty-alteration',
         'exam-cell-hall-reports',
         'exam-cell-live-dashboard',
-        'exam-cell-exam-hall-suite'
+        'exam-cell-exam-hall-suite',
+        'exam-cell-fee-configuration'
       ]);
       return Array.from(adminPerms);
     }
