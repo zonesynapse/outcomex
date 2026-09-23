@@ -8,7 +8,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import HRLayout from "../components/HRLayout";
-import { checkAppraisalPortalStatus } from "../utils/appraisalScore";
+import { checkAppraisalPortalStatus, getSchoolBannerTitle, getSchoolShortName } from "../utils/appraisalScore";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
 import {
   FileText,
@@ -336,6 +336,10 @@ export default function NonTeachingAppraisal() {
   const status = existingAppraisal?.status || "Draft";
   const isReadOnly = !isPortalOpen || status === "Approved" || status === "HOD_Approved" || status === "Submitted";
 
+  const instName = userProfile?.institution || existingAppraisal?.institution || existingAppraisal?.formData?.institution || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.institution : "") || "";
+  const schoolTitle = getSchoolBannerTitle(instName);
+  const schoolShortName = getSchoolShortName(instName);
+
   const tabs = [
     { id: 1, name: "1. Staff Profile & Experience", icon: User },
     { id: 2, name: "2. Punctuality & Leaves", icon: Clock },
@@ -354,7 +358,7 @@ export default function NonTeachingAppraisal() {
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <span className="px-3 py-1 bg-teal-500/20 border border-teal-400/30 text-teal-300 rounded-full text-xs font-bold tracking-wider uppercase">
-                  CK SCHOOL OF PROGRESSIVE EDUCATION (CKSPE)
+                  {schoolTitle}
                 </span>
                 <div className="bg-white/15 backdrop-blur-md border border-white/25 rounded-xl px-3.5 py-1 text-xs font-black text-white flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-amber-400" />
@@ -546,7 +550,7 @@ export default function NonTeachingAppraisal() {
               <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-4">6. Experience Details (in Years)</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1.5">a) At CKSPE</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">a) At {schoolShortName}</label>
                   <input
                     type="number"
                     step="0.5"

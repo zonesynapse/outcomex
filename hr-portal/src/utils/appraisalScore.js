@@ -339,5 +339,44 @@ export const checkAppraisalPortalStatus = (sched) => {
   return { isOpen: true, reason: 'open' };
 };
 
+/**
+ * Returns full banner title for an institution string.
+ * e.g. "CKSPK (Matric)" -> "CK SCHOOL OF PRACTICAL KNOWLEDGE (CKSPK)"
+ *      "CKSPE (CBSE)"   -> "CK SCHOOL OF PROGRESSIVE EDUCATION (CKSPE)"
+ */
+export const getSchoolBannerTitle = (inst) => {
+  const str = (inst || "").trim();
+  if (str.toUpperCase().includes("CKSPK") || str.toLowerCase().includes("practical")) {
+    return "CK SCHOOL OF PRACTICAL KNOWLEDGE (CKSPK)";
+  }
+  if (str.toUpperCase().includes("CKSPE") || str.toLowerCase().includes("progressive")) {
+    return "CK SCHOOL OF PROGRESSIVE EDUCATION (CKSPE)";
+  }
+  if (str.toUpperCase().includes("CKCET") || str.toLowerCase().includes("engineering")) {
+    return "CK COLLEGE OF ENGINEERING AND TECHNOLOGY (CKCET)";
+  }
+  if (str) return str;
+  return "CK SCHOOL OF PRACTICAL KNOWLEDGE (CKSPK)";
+};
+
+/**
+ * Returns short abbreviation for institution string.
+ * e.g. "CKSPK (Matric)" -> "CKSPK"
+ *      "CKSPE (CBSE)"   -> "CKSPE"
+ */
+export const getSchoolShortName = (inst) => {
+  const str = (inst || "").trim();
+  if (str.toUpperCase().includes("CKSPK") || str.toLowerCase().includes("practical")) {
+    return "CKSPK";
+  }
+  if (str.toUpperCase().includes("CKSPE") || str.toLowerCase().includes("progressive")) {
+    return "CKSPE";
+  }
+  if (str.toUpperCase().includes("CKCET")) {
+    return "CKCET";
+  }
+  return "this Institution";
+};
+
 export default evaluateAppraisal;
 

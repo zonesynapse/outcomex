@@ -9,6 +9,7 @@ import {
   X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
+import { getSchoolShortName } from "../utils/appraisalScore";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
@@ -1230,7 +1231,7 @@ export default function AppraisalReviews() {
                           </span>
                           <div className="grid grid-cols-3 gap-4 text-xs text-center">
                             <div className="p-3 bg-white rounded-xl border border-zinc-200/80">
-                              <span className="block text-[10px] font-bold text-zinc-400 uppercase">Teaching at CKSPE</span>
+                              <span className="block text-[10px] font-bold text-zinc-400 uppercase">Teaching at {getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}</span>
                               <span className="text-sm font-black text-indigo-700">{selectedAppraisal.formData?.expCKSPE || "0"} Yrs</span>
                             </div>
                             <div className="p-3 bg-white rounded-xl border border-zinc-200/80">
