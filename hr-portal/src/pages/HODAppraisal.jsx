@@ -33,6 +33,10 @@ export default function HODAppraisal() {
   const [designation, setDesignation] = useState("Head of the Department");
   const [qualification, setQualification] = useState("");
 
+  // Department Administration & Result Improvement
+  const [deptAdministrationHOD, setDeptAdministrationHOD] = useState("");
+  const [resultImprovementHOD, setResultImprovementHOD] = useState("");
+
   // ==========================================
   // KRA I: ACADEMIC IMPROVEMENT (30 Marks)
   // Target: Overall Exam Pass Percentage = 80%
@@ -213,6 +217,9 @@ export default function HODAppraisal() {
             setKra5Remarks(f.kra5.remarks || f.kra5.resultRemarks || "");
             setKra5Proof(f.kra5.proof || f.kra5.resultProof || { fileUrl: "", fileName: "" });
           }
+
+          setDeptAdministrationHOD(f.deptAdministrationHOD || f.hodDeptAdmin || "");
+          setResultImprovementHOD(f.resultImprovementHOD || f.hodResultImprovement || "");
 
           setDeclaration(data.declaration || false);
         }
@@ -401,7 +408,11 @@ export default function HODAppraisal() {
           score: kra5Score,
           remarks: kra5Remarks,
           proof: kra5Proof
-        }
+        },
+        deptAdministrationHOD,
+        resultImprovementHOD,
+        hodDeptAdmin: deptAdministrationHOD,
+        hodResultImprovement: resultImprovementHOD
       },
       declaration,
       submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
@@ -1214,6 +1225,48 @@ export default function HODAppraisal() {
                   </label>
                 )
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Department Administration & Result Improvement */}
+        <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
+          <div className="border-b border-zinc-150 pb-3">
+            <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider">
+              Department Administration & Result Improvement
+            </h3>
+            <p className="text-[10px] text-zinc-500 font-semibold">
+              Planning, Monitoring, Evaluation, Lab Upkeep & Result Improvement for the Department
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                Department Administration / Planning / Monitoring & Evaluation
+              </label>
+              <textarea
+                rows={3}
+                disabled={isReadOnly}
+                value={deptAdministrationHOD}
+                onChange={(e) => setDeptAdministrationHOD(e.target.value)}
+                placeholder="Specify administrative, planning, monitoring and evaluation details..."
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                Result Improvement of the Department, Department Ambience, Laboratory Development and Maintenance
+              </label>
+              <textarea
+                rows={3}
+                disabled={isReadOnly}
+                value={resultImprovementHOD}
+                onChange={(e) => setResultImprovementHOD(e.target.value)}
+                placeholder="Specify details for departmental result improvement, lab upkeep, and maintenance..."
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
+              />
             </div>
           </div>
         </div>

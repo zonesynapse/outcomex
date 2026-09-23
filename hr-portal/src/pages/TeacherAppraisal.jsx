@@ -136,12 +136,6 @@ export default function TeacherAppraisal() {
       { role: "", description: "", outcome: "" }
     ],
 
-    // G) Department Administration / Planning / Monitoring & Evaluation (HoDs only)
-    hodDeptAdmin: "",
-
-    // G) Result Improvement of Dept / Ambience / Lab (HoDs only)
-    hodResultImprovement: "",
-
     // H) Specify your Role / Contribution, if any other than the above
     otherRoleContribution: "",
 
@@ -154,6 +148,9 @@ export default function TeacherAppraisal() {
     admissionsVijayadashami: [
       { area: "", count: "" }
     ],
+
+    // 16. No. of TC Issued
+    numTCsIssued: "",
 
     // 17-20. Work Habits & Leave Details
     accomplishAssignment: "Yes", // Yes | with reminder | Depends on my interest
@@ -316,6 +313,7 @@ export default function TeacherAppraisal() {
             otherContributions: Array.isArray(data.formData.otherContributions) && data.formData.otherContributions.length ? data.formData.otherContributions : initialFormData.otherContributions,
             admissionsInstitution: Array.isArray(data.formData.admissionsInstitution) && data.formData.admissionsInstitution.length ? data.formData.admissionsInstitution : initialFormData.admissionsInstitution,
             admissionsVijayadashami: Array.isArray(data.formData.admissionsVijayadashami) && data.formData.admissionsVijayadashami.length ? data.formData.admissionsVijayadashami : initialFormData.admissionsVijayadashami,
+            numTCsIssued: data.formData.numTCsIssued || "",
             leaveDetails: {
               ...initialFormData.leaveDetails,
               ...(data.formData.leaveDetails || {})
@@ -1415,36 +1413,7 @@ export default function TeacherAppraisal() {
               </div>
             </div>
 
-            {/* G) HoD Department Administration & Result Improvement */}
-            <div className="pt-6 border-t border-slate-100 space-y-4">
-              <div>
-                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
-                  G) Department Administration / Planning / Monitoring & Evaluation (Applicable to HoDs only)
-                </label>
-                <textarea
-                  rows="3"
-                  disabled={isReadOnly}
-                  value={formData.hodDeptAdmin}
-                  onChange={e => handleTextChange("hodDeptAdmin", e.target.value)}
-                  placeholder="Specify administrative, planning, monitoring and evaluation details..."
-                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
-                ></textarea>
-              </div>
 
-              <div>
-                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
-                  Result Improvement of the Department, Department Ambience, Laboratory Development and Maintenance (Applicable to HoDs only)
-                </label>
-                <textarea
-                  rows="3"
-                  disabled={isReadOnly}
-                  value={formData.hodResultImprovement}
-                  onChange={e => handleTextChange("hodResultImprovement", e.target.value)}
-                  placeholder="Specify details for departmental result improvement, lab upkeep, and maintenance..."
-                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
-                ></textarea>
-              </div>
-            </div>
 
             {/* H) Additional Role / Contribution */}
             <div className="pt-6 border-t border-slate-100">
@@ -1594,6 +1563,22 @@ export default function TeacherAppraisal() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* 16. No. of TC Issued */}
+              <div className="pt-4 border-t border-slate-100">
+                <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider mb-2">
+                  16. No. of TC Issued for the AY {academicYear}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isReadOnly}
+                  value={formData.numTCsIssued || ""}
+                  onChange={e => handleTextChange("numTCsIssued", e.target.value)}
+                  placeholder="e.g. 2"
+                  className="w-full md:w-64 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all disabled:opacity-60"
+                />
               </div>
             </div>
           </div>
