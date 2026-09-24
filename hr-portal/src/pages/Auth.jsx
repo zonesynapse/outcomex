@@ -14,7 +14,7 @@ import {
 import { useDepartments } from "../hooks/useDepartments";
 
 export default function Auth() {
-  const { getDepartmentsForInstitution } = useDepartments();
+  const { departments } = useDepartments();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -32,17 +32,9 @@ export default function Auth() {
     department: ""
   });
 
-  const availableDepartments = getDepartmentsForInstitution(formData.institution);
-
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => {
-      const next = { ...prev, [name]: value };
-      if (name === "institution") {
-        next.department = "";
-      }
-      return next;
-    });
+    setFormData(prev => ({ ...prev, [name]: value }));
     if (error) setError("");
   };
 
@@ -222,7 +214,6 @@ export default function Auth() {
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="••••••••"
-                    autoComplete="current-password"
                     className="w-full bg-white border border-slate-300 pl-11 pr-4 py-3 rounded-xl text-slate-900 placeholder-slate-400 text-sm transition-all outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15"
                     required
                   />
@@ -264,7 +255,6 @@ export default function Auth() {
                   >
                     <option value="CKSPK (Matric)">CKSPK (Matric)</option>
                     <option value="CKSPE (CBSE)">CKSPE (CBSE)</option>
-                    <option value="CKCOE (B.ed)">CKCOE (B.ed)</option>
                   </select>
                 </div>
 
@@ -296,12 +286,8 @@ export default function Auth() {
                   onChange={handleChange}
                   className="w-full bg-white border border-slate-300 px-3 py-2.5 rounded-xl text-slate-900 text-sm outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15 font-medium"
                 >
-                  <option value="">
-                    {availableDepartments.length === 0
-                      ? "-- No Departments Added Yet (Contact Principal / HR) --"
-                      : "-- Select Department --"}
-                  </option>
-                  {availableDepartments.map((dept) => (
+                  <option value="">-- Select Department --</option>
+                  {departments.map((dept) => (
                     <option key={dept} value={dept}>
                       {dept}
                     </option>
@@ -380,7 +366,6 @@ export default function Auth() {
                       value={formData.password}
                       onChange={handleChange}
                       placeholder="••••••••"
-                      autoComplete="new-password"
                       className="w-full bg-white border border-slate-300 pl-9 pr-3 py-2.5 rounded-xl text-slate-900 placeholder-slate-400 text-sm transition-all outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15"
                       required
                     />
@@ -399,7 +384,6 @@ export default function Auth() {
                       value={formData.confirmPassword}
                       onChange={handleChange}
                       placeholder="••••••••"
-                      autoComplete="new-password"
                       className="w-full bg-white border border-slate-300 pl-9 pr-3 py-2.5 rounded-xl text-slate-900 placeholder-slate-400 text-sm transition-all outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15"
                       required
                     />

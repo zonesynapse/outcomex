@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import Layout from "../components/Layout";
+import { uploadFile, userStoragePath } from "../utils/fileUpload";
 import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
 import {
   FileText,
@@ -260,6 +261,32 @@ export default function NonTeachingAppraisal() {
       updated[index] = { ...updated[index], [field]: value };
       return { ...prev, iiyCourses: updated };
     });
+  };
+
+  // Upload Evidence File for Q7 Roles & Responsibilities
+  const [uploadingRoleDoc, setUploadingRoleDoc] = useState(false);
+  const handleFileUpload = async (file) => {
+    if (!file || !currentUser) return;
+    if (file.size > 100 * 1024) {
+      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
+      return;
+    }
+    setUploadingRoleDoc(true);
+    try {
+      const path = userStoragePath(currentUser.uid, "non_teaching_roles", file.name);
+      const fileUrl = await uploadFile(path, file, file.type);
+      setFormData((prev) => ({
+        ...prev,
+        rolesEvidenceUrl: fileUrl,
+        rolesEvidenceName: file.name
+      }));
+      showToast("Roles & Responsibilities document attached successfully!", "success");
+    } catch (err) {
+      console.error("Upload error:", err);
+      showToast("Failed to upload file: " + err.message, "error");
+    } finally {
+      setUploadingRoleDoc(false);
+    }
   };
 
   // Admissions Table Handlers
@@ -656,15 +683,27 @@ export default function NonTeachingAppraisal() {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-zinc-600 mb-1.5">Attach Additional Proof / Details Document URL (Optional)</label>
-            <input
-              type="text"
-              disabled={isReadOnly}
-              value={formData.rolesEvidenceUrl}
-              onChange={(e) => setFormData({ ...formData, rolesEvidenceUrl: e.target.value })}
-              className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
-              placeholder="https://drive.google.com/..."
-            />
+            <label className="block text-xs font-bold text-zinc-600 mb-1.5">Attach Additional Proof / Details Document (Max 100 KB)</label>
+            <div className="flex items-center gap-3">
+              {!isReadOnly && (
+                <label className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-[#120c7a] rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer">
+                  <span>{uploadingRoleDoc ? "Uploading..." : formData.rolesEvidenceUrl ? "Change Attachment Sheet" : "Attach File (Max 100 KB)"}</span>
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                  />
+                </label>
+              )}
+              <input
+                type="text"
+                disabled={isReadOnly}
+                value={formData.rolesEvidenceUrl || ""}
+                onChange={(e) => setFormData({ ...formData, rolesEvidenceUrl: e.target.value })}
+                className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2 text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                placeholder="https://... or upload file"
+              />
+            </div>
           </div>
         </div>
 

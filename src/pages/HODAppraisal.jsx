@@ -5,7 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, Sparkles,
-  UploadCloud, Paperclip, Check, Loader2, RefreshCw, Layers, Target, TrendingUp
+  UploadCloud, Paperclip, Check, Loader2, RefreshCw, Layers, Target, TrendingUp, AlertCircle
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
@@ -269,10 +269,16 @@ export default function HODAppraisal() {
   // File Upload Helper
   const handleFileUpload = async (file, pathKey, onSuccess) => {
     if (!file || !currentUser) return;
+
+    if (file.size > 100 * 1024) {
+      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
+      return;
+    }
+
     setUploadingMap(prev => ({ ...prev, [pathKey]: true }));
     try {
-      const storagePath = userStoragePath("hod_appraisals", currentUser.uid, file.name);
-      const fileUrl = await uploadFile(file, storagePath);
+      const storagePath = userStoragePath(currentUser.uid, "hod_appraisals", file.name);
+      const fileUrl = await uploadFile(storagePath, file, file.type);
       onSuccess(fileUrl, file.name);
       showToast("File attached successfully!", "success");
     } catch (err) {
@@ -518,6 +524,17 @@ export default function HODAppraisal() {
           </div>
         )}
 
+        {/* Document Upload Guideline Banner */}
+        <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5 text-amber-900 font-semibold text-xs">
+            <AlertCircle size={16} className="text-amber-600 shrink-0" />
+            <span><strong>Document Upload Policy:</strong> All uploaded proof documents must be in PDF or Image format and strictly <strong>under 100 KB</strong> in file size.</span>
+          </div>
+          <span className="shrink-0 bg-amber-200/80 text-amber-900 text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border border-amber-300 w-fit">
+            Max 100 KB / File
+          </span>
+        </div>
+
         {/* HOD Personal Info Card */}
         <div className="bg-white rounded-3xl border border-zinc-200/80 p-6 shadow-sm space-y-4">
           <div className="flex items-center gap-2 border-b border-zinc-150 pb-3">
@@ -677,7 +694,7 @@ export default function HODAppraisal() {
                 !isReadOnly && (
                   <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl cursor-pointer transition-all">
                     <UploadCloud size={14} />
-                    <span>{uploadingMap["kra1"] ? "Uploading..." : "Attach Proof (PDF / Image)"}</span>
+                    <span>{uploadingMap["kra1"] ? "Uploading..." : "Attach Proof (PDF / Image - Max 100 KB)"}</span>
                     <input
                       type="file"
                       className="hidden"
@@ -782,7 +799,7 @@ export default function HODAppraisal() {
                         !isReadOnly && (
                           <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                             <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
+                            <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof (Max 100 KB)"}</span>
                             <input
                               type="file"
                               className="hidden"
@@ -881,7 +898,7 @@ export default function HODAppraisal() {
                         !isReadOnly && (
                           <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                             <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra3_${param.key}`] ? "Uploading..." : "Attach Proof"}</span>
+                            <span>{uploadingMap[`kra3_${param.key}`] ? "Uploading..." : "Attach Proof (Max 100 KB)"}</span>
                             <input
                               type="file"
                               className="hidden"
@@ -978,7 +995,7 @@ export default function HODAppraisal() {
                       !isReadOnly && (
                         <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all">
                           <UploadCloud size={12} />
-                          <span>{uploadingMap[`kra4_${idx}`] ? "Uploading..." : "Attach Proof File"}</span>
+                          <span>{uploadingMap[`kra4_${idx}`] ? "Uploading..." : "Attach Proof File (Max 100 KB)"}</span>
                           <input
                             type="file"
                             className="hidden"
@@ -1077,7 +1094,7 @@ export default function HODAppraisal() {
                     !isReadOnly && (
                       <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_result"] ? "Uploading..." : "Attach Result Sheet"}</span>
+                        <span>{uploadingMap["kra5_result"] ? "Uploading..." : "Attach Result Sheet (Max 100 KB)"}</span>
                         <input
                           type="file"
                           className="hidden"
@@ -1147,7 +1164,7 @@ export default function HODAppraisal() {
                     !isReadOnly && (
                       <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_course"] ? "Uploading..." : "Attach Certificate"}</span>
+                        <span>{uploadingMap["kra5_course"] ? "Uploading..." : "Attach Certificate (Max 100 KB)"}</span>
                         <input
                           type="file"
                           className="hidden"
@@ -1217,7 +1234,7 @@ export default function HODAppraisal() {
                     !isReadOnly && (
                       <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
                         <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_pub"] ? "Uploading..." : "Attach Paper Copy"}</span>
+                        <span>{uploadingMap["kra5_pub"] ? "Uploading..." : "Attach Paper Copy (Max 100 KB)"}</span>
                         <input
                           type="file"
                           className="hidden"

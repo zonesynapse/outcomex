@@ -247,10 +247,14 @@ export default function NonTeachingAppraisal() {
   // Upload Evidence File for Q7 Roles & Responsibilities
   const handleFileUpload = async (file) => {
     if (!file || !currentUser) return;
+    if (file.size > 100 * 1024) {
+      alert(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`);
+      return;
+    }
     setUploadingRoleDoc(true);
     try {
-      const path = userStoragePath(currentUser.uid, `non_teaching_roles_${academicYear}_${file.name}`);
-      const fileUrl = await uploadFile(file, path);
+      const path = userStoragePath(currentUser.uid, "non_teaching_roles", file.name);
+      const fileUrl = await uploadFile(path, file, file.type);
       setFormData((prev) => ({
         ...prev,
         rolesEvidenceUrl: fileUrl,
@@ -599,7 +603,7 @@ export default function NonTeachingAppraisal() {
                 {!isReadOnly && (
                   <label className="px-3.5 py-2 bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer">
                     {uploadingRoleDoc ? <Loader2 className="w-4 h-4 animate-spin text-teal-600" /> : <Paperclip className="w-4 h-4 text-teal-600" />}
-                    <span>{formData.rolesEvidenceUrl ? "Change Attachment Sheet" : "Attach Separate Sheet / Document"}</span>
+                    <span>{formData.rolesEvidenceUrl ? "Change Attachment Sheet (Max 100 KB)" : "Attach Separate Sheet / Document (Max 100 KB)"}</span>
                     <input
                       type="file"
                       className="hidden"

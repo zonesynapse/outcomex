@@ -24,7 +24,7 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, getAllCandidateAttendanceDocIds } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, getAllCandidateAttendanceDocIds, prepareAttendancePayload } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 // Local sanitizeKey — does NOT replace spaces/slashes (matches doc IDs created by HODRoleConfig, MarkEntry, etc.)
@@ -1650,16 +1650,21 @@ export default function Attendance() {
     }
 
     try {
-      await setDoc(doc(db, "attendance", attendanceDocId), {
-        _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() },
-        records_json: JSON.stringify(updatedRecords),
-        records: deleteField()
-      }, { merge: true });
+      const payload = prepareAttendancePayload(updatedRecords, {
+        _meta: { totalHours: nextTotal, updatedAt: new Date().toISOString() }
+      });
+
+      await setDoc(doc(db, "attendance", attendanceDocId), payload, { merge: true });
       alert(`Attendance for ${attendanceDate} (Periods: ${periods.join(', ')}) saved successfully!`);
 
       const newRecordKeys = Object.keys(updatedRecords).sort();
       setRecordDates(newRecordKeys);
-      setAttendanceData(prev => ({ ...prev, records_json: JSON.stringify(updatedRecords), records: updatedRecords, _meta: { totalHours: nextTotal } }));
+      setAttendanceData(prev => ({
+        ...prev,
+        ...payload,
+        records: updatedRecords,
+        _meta: { totalHours: nextTotal }
+      }));
 
       // Clear period selection and reset state for next attendance entry
       setPeriod("");
@@ -1684,12 +1689,10 @@ export default function Attendance() {
       const updatedRecords = { ...getAttendanceRecords(attendanceData) };
       delete updatedRecords[recordKey];
 
-      await setDoc(doc(db, "attendance", attendanceDocId), {
-        records_json: JSON.stringify(updatedRecords),
-        records: deleteField()
-      }, { merge: true });
+      const payload = prepareAttendancePayload(updatedRecords);
+      await setDoc(doc(db, "attendance", attendanceDocId), payload, { merge: true });
 
-      setAttendanceData(prev => ({ ...prev, records_json: JSON.stringify(updatedRecords), records: updatedRecords }));
+      setAttendanceData(prev => ({ ...prev, ...payload, records: updatedRecords }));
       setRecordDates(Object.keys(updatedRecords).sort());
       setCurrentRecordData(null);
       setTopicTaught("");

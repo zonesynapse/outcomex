@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import {
+  Paperclip, useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, getDoc } from "firebase/firestore";
@@ -135,6 +136,7 @@ export default function AppraisalReviews() {
                   <th className="p-2.5 text-center">Passed</th>
                   <th className="p-2.5 text-center">Pass %</th>
                   <th className="p-2.5 text-center">Subject Average</th>
+                  <th className="p-2.5 text-center">Attachment</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 font-semibold">
@@ -146,6 +148,21 @@ export default function AppraisalReviews() {
                     <td className="p-2.5 text-center text-slate-600">{row.passed || "0"}</td>
                     <td className="p-2.5 text-center font-black text-indigo-700">{row.passPercent || "-"}</td>
                     <td className="p-2.5 text-center font-black text-emerald-700">{row.subjectAvg || "-"}</td>
+                    <td className="p-2.5 text-center">
+                      {row.fileUrl ? (
+                        <a
+                          href={row.fileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all"
+                          title={row.fileName || "View Proof Attachment"}
+                        >
+                          <Paperclip className="w-3 h-3" /> Proof
+                        </a>
+                      ) : (
+                        <span className="text-zinc-400 font-semibold text-[10px]">-</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -674,7 +691,7 @@ export default function AppraisalReviews() {
     const info = [
       ["Faculty Name:", data.name || "", "Designation:", data.designation || ""],
       ["Department:", data.department || "", "Date of Birth:", data.dob || ""],
-      ["Age:", data.age || "", "DOJ College:", data.dojCollege || ""],
+      ["Age:", data.age || "", "DOJ School:", data.dojCollege || ""],
       ["DOJ Present Post:", data.dojPresentPost || "", "Academic Qual:", data.academicQualification || ""],
       ["Specialization:", data.subjectSpecialization || "", "", ""]
     ];
@@ -693,7 +710,7 @@ export default function AppraisalReviews() {
     doc.text("2. EXPERIENCE SUMMARY (Years)", 30, doc.lastAutoTable.finalY + 25);
 
     const expData = [
-      ["Teaching at CKCET", data.experience?.teachingCKCET || "0"],
+      [`Teaching at ${getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}`, data.experience?.teachingCKCET || data.expCKCET || data.expCKSPE || "0"],
       ["Teaching Elsewhere", data.experience?.teachingElsewhere || "0"],
       ["Industrial Experience", data.experience?.industrial || "0"]
     ];
@@ -830,7 +847,7 @@ export default function AppraisalReviews() {
                         selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
                           "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
                   }`}>
-                  {selectedAppraisal.status.replace("_", " ")}
+                  {selectedAppraisal.status === "HOD_Approved" ? "COORDINATOR APPROVED" : selectedAppraisal.status.replace("_", " ")}
                 </span>
               </div>
             </div>
@@ -1292,7 +1309,7 @@ export default function AppraisalReviews() {
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.department || selectedAppraisal.department}</span>
                             </div>
                             <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ College</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ School</span>
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
                             </div>
                             <div>
@@ -1450,6 +1467,7 @@ export default function AppraisalReviews() {
                                     <th className="p-2.5 text-center">Days</th>
                                     <th className="p-2.5">Organization</th>
                                     <th className="p-2.5 text-center">Report Submitted</th>
+                                    <th className="p-2.5 text-center">Attachment</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-200 font-semibold">
@@ -1460,6 +1478,21 @@ export default function AppraisalReviews() {
                                       <td className="p-2.5 text-center text-slate-600">{w.numDays || "-"}</td>
                                       <td className="p-2.5 text-slate-700">{w.organization || "-"}</td>
                                       <td className="p-2.5 text-center font-bold">{w.reportSubmitted || "Yes"}</td>
+                                      <td className="p-2.5 text-center">
+                                        {w.fileUrl ? (
+                                          <a
+                                            href={w.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all"
+                                            title={w.fileName || "View Attachment"}
+                                          >
+                                            <Paperclip className="w-3 h-3" /> Proof
+                                          </a>
+                                        ) : (
+                                          <span className="text-zinc-400 font-semibold text-[10px]">-</span>
+                                        )}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -1658,7 +1691,7 @@ export default function AppraisalReviews() {
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.qualification || "-"}</span>
                             </div>
                             <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ College</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ School</span>
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
                             </div>
                             <div>
@@ -1678,8 +1711,8 @@ export default function AppraisalReviews() {
                           </span>
                           <div className="grid grid-cols-3 gap-4 text-xs">
                             <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience at CKCET</span>
-                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expCKCET || "0"} Yrs</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience at {getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}</span>
+                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expCKCET || selectedAppraisal.formData?.expCKSPE || selectedAppraisal.formData?.experience?.teachingCKCET || "0"} Yrs</span>
                             </div>
                             <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
                               <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience Elsewhere</span>
@@ -1736,8 +1769,8 @@ export default function AppraisalReviews() {
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.applyLeaveAdvance || "-"}</span>
                             </div>
                             <div className="bg-white p-3 rounded-xl border border-zinc-200">
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Tendency to Consume Balance CL</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.consumeBalanceCL || "-"}</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">No. of CL Taken in Last Academic Year</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.consumeBalanceCL !== undefined && selectedAppraisal.formData?.consumeBalanceCL !== "" ? `${selectedAppraisal.formData.consumeBalanceCL} / 12 Days` : "-"}</span>
                             </div>
                           </div>
                         </div>
@@ -1958,7 +1991,7 @@ export default function AppraisalReviews() {
                               )}
                               {isSectionVisible("f_dojCollege") && (
                                 <div>
-                                  <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_dojCollege", "DOJ College")}</span>
+                                  <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_dojCollege", "DOJ School")}</span>
                                   <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
                                 </div>
                               )}
@@ -1989,7 +2022,7 @@ export default function AppraisalReviews() {
                             <div className="grid grid-cols-3 gap-4">
                               {isSectionVisible("f_teachingCKCET") && (
                                 <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_teachingCKCET", "Teaching CKCET")}</span>
+                                  <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_teachingCKCET", `Teaching ${getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}`)}</span>
                                   <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.experience?.teachingCKCET || "0"} Yrs</span>
                                 </div>
                               )}
@@ -3421,7 +3454,7 @@ export default function AppraisalReviews() {
                     <option value="All">All Statuses</option>
                     <option value="Draft">Draft</option>
                     <option value="Submitted">Submitted</option>
-                    <option value="HOD_Approved">HOD Approved</option>
+                    <option value="HOD_Approved">Coordinator Approved</option>
                     <option value="Approved">Approved</option>
                     <option value="Returned">Returned</option>
                   </select>
@@ -3472,7 +3505,7 @@ export default function AppraisalReviews() {
                                     app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
                                       "bg-zinc-500/10 text-zinc-700"
                               }`}>
-                              {app.status.replace("_", " ")}
+                              {app.status === "HOD_Approved" ? "Coordinator Approved" : app.status.replace("_", " ")}
                             </span>
                           </td>
                           <td className="p-4 text-center font-bold text-indigo-950">

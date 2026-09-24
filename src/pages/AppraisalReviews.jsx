@@ -516,7 +516,7 @@ export default function AppraisalReviews() {
     const info = [
       ["Faculty Name:", data.name || "", "Designation:", data.designation || ""],
       ["Department:", data.department || "", "Date of Birth:", data.dob || ""],
-      ["Age:", data.age || "", "DOJ College:", data.dojCollege || ""],
+      ["Age:", data.age || "", "DOJ School:", data.dojCollege || ""],
       ["DOJ Present Post:", data.dojPresentPost || "", "Academic Qual:", data.academicQualification || ""],
       ["Specialization:", data.subjectSpecialization || "", "", ""]
     ];
@@ -535,7 +535,7 @@ export default function AppraisalReviews() {
     doc.text("2. EXPERIENCE SUMMARY (Years)", 30, doc.lastAutoTable.finalY + 25);
 
     const expData = [
-      ["Teaching at CKCET", data.experience?.teachingCKCET || "0"],
+      [`Teaching at ${getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}`, data.experience?.teachingCKCET || data.expCKCET || data.expCKSPE || "0"],
       ["Teaching Elsewhere", data.experience?.teachingElsewhere || "0"],
       ["Industrial Experience", data.experience?.industrial || "0"]
     ];
@@ -671,7 +671,7 @@ export default function AppraisalReviews() {
                         selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
                           "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
                   }`}>
-                  {selectedAppraisal.status.replace("_", " ")}
+                  {selectedAppraisal.status === "HOD_Approved" ? "COORDINATOR APPROVED" : selectedAppraisal.status.replace("_", " ")}
                 </span>
               </div>
             </div>
@@ -1176,7 +1176,7 @@ export default function AppraisalReviews() {
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.qualification || "-"}</span>
                             </div>
                             <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ College</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ School</span>
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
                             </div>
                             <div>
@@ -1196,8 +1196,8 @@ export default function AppraisalReviews() {
                           </span>
                           <div className="grid grid-cols-3 gap-4 text-xs">
                             <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience at CKCET</span>
-                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expCKCET || "0"} Yrs</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience at {getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}</span>
+                              <span className="text-sm font-black text-indigo-950">{selectedAppraisal.formData?.expCKCET || selectedAppraisal.formData?.expCKSPE || selectedAppraisal.formData?.experience?.teachingCKCET || "0"} Yrs</span>
                             </div>
                             <div className="bg-white p-3 rounded-xl border border-zinc-200 text-center">
                               <span className="block text-[10px] font-black text-zinc-400 uppercase">Experience Elsewhere</span>
@@ -1477,7 +1477,7 @@ export default function AppraisalReviews() {
                           )}
                           {isSectionVisible("f_dojCollege") && (
                             <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_dojCollege", "DOJ College")}</span>
+                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_dojCollege", "DOJ School")}</span>
                               <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
                             </div>
                           )}
@@ -1508,7 +1508,7 @@ export default function AppraisalReviews() {
                         <div className="grid grid-cols-3 gap-4">
                           {isSectionVisible("f_teachingCKCET") && (
                             <div className="bg-white border border-zinc-200 p-3 rounded-xl text-center">
-                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_teachingCKCET", "Teaching CKCET")}</span>
+                              <span className="block text-[9px] font-black text-zinc-400 uppercase tracking-wider truncate">{getSectionTitle("f_teachingCKCET", `Teaching ${getSchoolShortName(selectedAppraisal.institution || selectedAppraisal.formData?.institution)}`)}</span>
                               <span className="text-xs font-bold text-slate-850">{selectedAppraisal.formData?.experience?.teachingCKCET || "0"} Yrs</span>
                             </div>
                           )}
@@ -2860,7 +2860,7 @@ export default function AppraisalReviews() {
                     <option value="All">All Statuses</option>
                     <option value="Draft">Draft</option>
                     <option value="Submitted">Submitted</option>
-                    <option value="HOD_Approved">HOD Approved</option>
+                    <option value="HOD_Approved">Coordinator Approved</option>
                     <option value="Approved">Approved</option>
                     <option value="Returned">Returned</option>
                   </select>
@@ -2911,7 +2911,7 @@ export default function AppraisalReviews() {
                                     app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
                                       "bg-zinc-500/10 text-zinc-700"
                               }`}>
-                              {app.status.replace("_", " ")}
+                              {app.status === "HOD_Approved" ? "Coordinator Approved" : app.status.replace("_", " ")}
                             </span>
                           </td>
                           <td className="p-4 text-center font-bold text-indigo-950">

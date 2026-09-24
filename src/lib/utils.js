@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { deleteField } from "firebase/firestore";
 
 /**
  * Utility for merging tailwind classes
@@ -156,6 +157,69 @@ export function parseStudentDocId(id, availableProgrammes = []) {
   };
 }
 
+export function prepareAttendancePayload(updatedRecords, extraMeta = {}) {
+  const safeRecords = updatedRecords && typeof updatedRecords === 'object' ? updatedRecords : {};
+  const fullJson = JSON.stringify(safeRecords);
+
+  // Safe chunk size limit per property (500 KB = 500,000 bytes)
+  const CHUNK_SIZE = 500000;
+
+  if (fullJson.length <= CHUNK_SIZE) {
+    const payload = {
+      records_json: fullJson,
+      records: deleteField()
+    };
+    for (let i = 2; i <= 25; i++) {
+      payload[`records_json_${i}`] = deleteField();
+    }
+    if (extraMeta) {
+      Object.assign(payload, extraMeta);
+    }
+    return payload;
+  }
+
+  // Split updatedRecords entries into multiple JSON chunks <= CHUNK_SIZE
+  const entries = Object.entries(safeRecords);
+  const chunks = [];
+  let currentChunk = {};
+  let currentSize = 2; // For "{}"
+
+  for (const [key, val] of entries) {
+    const itemStr = JSON.stringify({ [key]: val });
+    const itemLen = itemStr.length - 2; // Subtract length of outer {}
+    if (currentSize + itemLen > CHUNK_SIZE && Object.keys(currentChunk).length > 0) {
+      chunks.push(JSON.stringify(currentChunk));
+      currentChunk = {};
+      currentSize = 2;
+    }
+    currentChunk[key] = val;
+    currentSize += itemLen + 1;
+  }
+
+  if (Object.keys(currentChunk).length > 0) {
+    chunks.push(JSON.stringify(currentChunk));
+  }
+
+  const payload = {
+    records_json: chunks[0] || "{}",
+    records: deleteField()
+  };
+
+  for (let i = 1; i < chunks.length; i++) {
+    payload[`records_json_${i + 1}`] = chunks[i];
+  }
+
+  for (let i = chunks.length + 1; i <= 25; i++) {
+    payload[`records_json_${i}`] = deleteField();
+  }
+
+  if (extraMeta) {
+    Object.assign(payload, extraMeta);
+  }
+
+  return payload;
+}
+
 export function getAttendanceRecords(attData) {
   if (!attData || typeof attData !== 'object') return {};
 
@@ -179,7 +243,7 @@ export function getAttendanceRecords(attData) {
 
     Object.entries(recObj).forEach(([rk, rVal]) => {
       if (!rVal || typeof rVal !== 'object') return;
-      if (rk.startsWith('_') || rk === 'records_json' || rk === 'records') return;
+      if (rk.startsWith('_') || rk.startsWith('records_json') || rk === 'records' || rk === 'records_chunks') return;
 
       let normKey = rk;
       const dateMatch = rk.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4}|\d{2}\/\d{2}\/\d{4})/);
@@ -217,31 +281,40 @@ export function getAttendanceRecords(attData) {
     });
   };
 
-  if (attData.records_json !== undefined && attData.records_json !== null) {
-    if (typeof attData.records_json === 'object') {
-      processRecordObject(attData.records_json);
-    } else if (typeof attData.records_json === 'string' && attData.records_json.trim() !== '') {
-      try {
-        const parsed = JSON.parse(attData.records_json);
-        processRecordObject(parsed);
-      } catch (e) {
-        console.warn("Failed to parse records_json:", e);
+  // 1. Process primary records_json and any chunked records_json_2, records_json_3, ..., records_chunks
+  Object.keys(attData).forEach(key => {
+    if (key === 'records_json' || key.startsWith('records_json_') || key === 'records_chunks') {
+      const val = attData[key];
+      if (val !== undefined && val !== null) {
+        if (typeof val === 'object') {
+          processRecordObject(val);
+        } else if (typeof val === 'string' && val.trim() !== '') {
+          try {
+            const parsed = JSON.parse(val);
+            processRecordObject(parsed);
+          } catch (e) {
+            console.warn(`Failed to parse ${key}:`, e);
+          }
+        }
       }
     }
-  }
+  });
 
+  // 2. Process records field if present (legacy)
   if (attData.records) {
     processRecordObject(attData.records);
   }
 
+  // 3. Process alternative array/object fields
   ['dailyRecords', 'attendanceRecords', 'sessions', 'history', 'dates', 'recordsMap'].forEach(field => {
     if (attData[field]) {
       processRecordObject(attData[field]);
     }
   });
 
+  // 4. Process any root keys containing period records
   Object.entries(attData).forEach(([key, val]) => {
-    if (key.startsWith('_') || key === 'records_json' || key === 'records' || key === 'students') return;
+    if (key.startsWith('_') || key.startsWith('records_json') || key === 'records' || key === 'records_chunks' || key === 'students') return;
     if (val && typeof val === 'object' && (val.students || val.period || key.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})/))) {
       let datePart = '';
       const dMatch = key.match(/^(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4}|\d{2}\/\d{2}\/\d{4})/);

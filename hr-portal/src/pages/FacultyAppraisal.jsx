@@ -7,7 +7,7 @@ import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2, 
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
   ChevronLeft, Sparkles, HeartHandshake, Eye, Check, Loader2, RefreshCw, Users, Library,
-  UploadCloud, Paperclip, Edit2, X
+  UploadCloud, Paperclip, Edit2, X, AlertCircle
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
@@ -345,11 +345,8 @@ export default function FacultyAppraisal() {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Check size limit dynamically (default to 300KB if not specified)
-    const sectionConfig = customFieldsConfig.find(f => f.id === sectionId);
-    const maxSizeKb = sectionConfig?.maxSizeKb ? parseInt(sectionConfig.maxSizeKb) : 300;
-    if (file.size > maxSizeKb * 1024) {
-      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of ${maxSizeKb} KB configured for this section.`, "error");
+    if (file.size > 100 * 1024) {
+      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
       e.target.value = ""; // Reset the input
       return;
     }
@@ -822,6 +819,15 @@ export default function FacultyAppraisal() {
 
     return (
       <div className="mt-8 pt-8 border-t border-zinc-150 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 mb-4 shadow-xs">
+          <div className="flex items-center gap-2 text-amber-900 font-semibold text-xs">
+            <AlertCircle size={16} className="text-amber-600 shrink-0" />
+            <span><strong>Proof Attachment Guideline:</strong> Ensure each attached evidence document is in PDF or Image format and strictly <strong>under 100 KB</strong>.</span>
+          </div>
+          <span className="shrink-0 bg-amber-200/80 text-amber-900 text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border border-amber-300 w-fit">
+            Max 100 KB / File
+          </span>
+        </div>
         <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 mb-4">
           <Award size={14} className="text-[#120c7a]" /> Additional Custom Sections & Evidences
         </h4>
@@ -914,6 +920,11 @@ export default function FacultyAppraisal() {
                                           onChange={async (e) => {
                                             const file = e.target.files[0];
                                             if (!file) return;
+                                            if (file.size > 100 * 1024) {
+                                              showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
+                                              e.target.value = "";
+                                              return;
+                                            }
                                             const storagePath = userStoragePath(currentUser.uid, "appraisal_evidences", `${col.id}_${file.name}`);
                                             try {
                                               const url = await uploadFile(storagePath, file, file.type);
@@ -998,9 +1009,8 @@ export default function FacultyAppraisal() {
                 const file = e.target.files[0];
                 if (!file) return;
 
-                const maxSizeKb = field.maxSizeKb ? parseInt(field.maxSizeKb) : 300;
-                if (file.size > maxSizeKb * 1024) {
-                  showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of ${maxSizeKb} KB configured for this field.`, "error");
+                if (file.size > 100 * 1024) {
+                  showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
                   e.target.value = "";
                   return;
                 }
@@ -1220,6 +1230,17 @@ export default function FacultyAppraisal() {
           )}
         </div>
 
+        {/* Document Upload Size Guideline Banner */}
+        <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs mb-6">
+          <div className="flex items-center gap-2.5 text-amber-900 font-semibold text-xs">
+            <AlertCircle size={18} className="text-amber-600 shrink-0" />
+            <span><strong>Document Upload Policy:</strong> All uploaded proof documents must be in PDF or Image format and strictly <strong>under 100 KB</strong> in file size.</span>
+          </div>
+          <span className="shrink-0 bg-amber-200/80 text-amber-900 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border border-amber-300 w-fit">
+            Max 100 KB / File
+          </span>
+        </div>
+
         {/* Read-Only Banner */}
         {isReadOnly && (
           <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-2xl flex items-center gap-3 mb-6">
@@ -1307,7 +1328,7 @@ export default function FacultyAppraisal() {
                     )}
                     {isSectionVisible("f_dojCollege") && (
                       <div>
-                        <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">{getSectionTitle("f_dojCollege", "Date of Joining CKCET")}</label>
+                        <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">{getSectionTitle("f_dojCollege", `Date of Joining ${getSchoolShortName(currentUser?.institution || userProfile?.institution)}`)}</label>
                         {getSectionDescription("f_dojCollege") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_dojCollege")}</p>}
                         <input type="date" value={formData.dojCollege} onChange={(e) => handleInputChange("dojCollege", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold text-zinc-700" />
                       </div>
@@ -1342,7 +1363,7 @@ export default function FacultyAppraisal() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {isSectionVisible("f_teachingCKCET") && (
                       <div>
-                        <label className="block text-[10px] font-black text-[#120c7a] uppercase tracking-widest mb-1">{getSectionTitle("f_teachingCKCET", "Teaching at CKCET (Yrs)")}</label>
+                        <label className="block text-[10px] font-black text-[#120c7a] uppercase tracking-widest mb-1">{getSectionTitle("f_teachingCKCET", `Teaching at ${getSchoolShortName(currentUser?.institution || userProfile?.institution)} (Yrs)`)}</label>
                         {getSectionDescription("f_teachingCKCET") && <p className="text-[9px] text-zinc-400 mb-1">{getSectionDescription("f_teachingCKCET")}</p>}
                         <input type="number" value={formData.experience.teachingCKCET} onChange={(e) => handleNestedInputChange("experience", "teachingCKCET", e.target.value)} disabled={isReadOnly} className="w-full rounded-xl border border-zinc-200 p-3 text-xs font-semibold text-zinc-700 focus:outline-none" />
                       </div>
@@ -2908,11 +2929,17 @@ export default function FacultyAppraisal() {
 
           {activeTab === 7 && (
             <div className="space-y-8 animate-fadeIn text-xs">
-              <div className="border-b border-zinc-150 pb-3 mb-6">
-                <h3 className="text-sm font-black text-slate-850 uppercase tracking-wider flex items-center gap-1.5">
-                  <Award size={18} className="text-[#120c7a]" /> 7. Dynamic Evidences & Disclosures
-                </h3>
-                <p className="text-[10px] text-zinc-400 font-semibold mt-0.5 uppercase">Provide details and upload required proof document files configured by HR.</p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-150 pb-3 mb-6">
+                <div>
+                  <h3 className="text-sm font-black text-slate-850 uppercase tracking-wider flex items-center gap-1.5">
+                    <Award size={18} className="text-[#120c7a]" /> 7. Dynamic Evidences & Disclosures
+                  </h3>
+                  <p className="text-[10px] text-zinc-400 font-semibold mt-0.5 uppercase">Provide details and upload required proof document files (Max file size: 100 KB per file).</p>
+                </div>
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200/90 text-amber-900 px-3 py-1.5 rounded-xl text-xs font-bold shrink-0">
+                  <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                  <span>Upload Limit: Under 100 KB</span>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-8">
@@ -2938,10 +2965,8 @@ export default function FacultyAppraisal() {
                     const file = e.target.files[0];
                     if (!file) return;
 
-                    // Check size limit dynamically (default to 300KB if not specified)
-                    const maxSizeKb = field.maxSizeKb ? parseInt(field.maxSizeKb) : 300;
-                    if (file.size > maxSizeKb * 1024) {
-                      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of ${maxSizeKb} KB configured for this field.`, "error");
+                    if (file.size > 100 * 1024) {
+                      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
                       e.target.value = ""; // Reset input
                       return;
                     }
@@ -3069,7 +3094,7 @@ export default function FacultyAppraisal() {
                                 </button>
                               ) : (
                                 <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-750 text-white rounded-xl font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-indigo-100">
-                                  <UploadCloud size={14} /> Upload File
+                                  <UploadCloud size={14} /> Upload File (Max 100 KB)
                                   <input
                                     type="file"
                                     onChange={handleFileSelect}

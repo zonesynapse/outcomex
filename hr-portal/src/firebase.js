@@ -5,16 +5,20 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// Your web app's Firebase configuration
+// Load Firebase configuration strictly from environment variables (.env)
 const firebaseConfig = {
-  apiKey: "AIzaSyAXQFtD2qrXsvgJPaR8UPjQuUaNkElwI04",
-  authDomain: "ck-group-of-education.firebaseapp.com",
-  projectId: "ck-group-of-education",
-  storageBucket: "ck-group-of-education.firebasestorage.app",
-  messagingSenderId: "224409622020",
-  appId: "1:224409622020:web:41727f131c6461f80b4751",
-  measurementId: "G-JSM3BD3JNR"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
+
+if (!firebaseConfig.apiKey) {
+  console.error("Firebase configuration is missing. Please check your hr-portal/.env file.");
+}
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
