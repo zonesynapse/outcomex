@@ -1,5 +1,15 @@
 ## Summary of Changes
 
+### 457. Appraisal 100KB File Limit Enforcements & Attendance Firestore 1MB Chunking Fix (`FacultyAppraisal.jsx`, `HODAppraisal.jsx`, `NonTeachingAppraisal.jsx`, `TeacherAppraisal.jsx`, `Attendance.jsx`, `utils.js`)
+- **Goal**:
+  1. Enforce strict 100KB document upload limit across all appraisal pages (`FacultyAppraisal`, `HODAppraisal`, `NonTeachingAppraisal`, `TeacherAppraisal`) in both root app and `hr-portal` with prominent top policy alert banners and explicit `(Max 100 KB)` button labels.
+  2. Resolve Firestore 1MB document property length error (`FirebaseError: The value of property "records_json" is longer than 1048487 bytes`) in `Attendance.jsx` without disturbing past data.
+- **Fix**:
+  - [`src/lib/utils.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/lib/utils.js): Created `prepareAttendancePayload` helper to automatically chunk `updatedRecords` into safe <= 500KB properties (`records_json`, `records_json_2`, `records_json_3`, etc.); updated `getAttendanceRecords` to merge all chunk keys dynamically into a single `records` dictionary.
+  - [`src/pages/Attendance.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/Attendance.jsx): Integrated `prepareAttendancePayload` in `handleSaveAttendance` and `handleClearAttendance`.
+  - [`FacultyAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyAppraisal.jsx), [`HODAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODAppraisal.jsx), [`NonTeachingAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/NonTeachingAppraisal.jsx), [`TeacherAppraisal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/hr-portal/src/pages/TeacherAppraisal.jsx): Added 100KB size validation checks (`file.size > 100 * 1024`), added Document Upload Policy alert banners, and added `(Max 100 KB)` labels to all attach buttons.
+- **Result**: Attendance records chunk automatically when exceeding 500KB preventing Firestore 1MB errors; all appraisal document uploads enforce a strict 100KB limit with full UX visibility; all past data remains 100% intact. Both builds pass cleanly in 7.08s and 2.40s.
+
 ### 456. Student Answer Script Photocopy Page Enhancements (`student/Photocopy.jsx`)
 - **Goal**: Render official candidate instructions banner, auto-fetched candidate details form, dynamic subject selection table with student regulation grades and uppercase subject code/title conversion.
 - **Fix**:
