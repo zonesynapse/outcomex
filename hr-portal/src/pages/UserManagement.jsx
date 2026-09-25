@@ -373,7 +373,7 @@ export default function UserManagement() {
                 <option value="ALL">All Institutions</option>
                 <option value="CKSPK (Matric)">CKSPK (Matric)</option>
                 <option value="CKSPE (CBSE)">CKSPE (CBSE)</option>
-                <option value="CKCOE (B.ed)">CKCOE (B.ed)</option>
+                <option value="CKCOE">CKCOE</option>
               </select>
             </div>
           )}

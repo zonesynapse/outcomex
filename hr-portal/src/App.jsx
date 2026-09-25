@@ -57,34 +57,40 @@ function HomeRedirect() {
       try {
         let role = "";
         let designation = "";
+        let institution = "";
         const userDoc = await getDoc(doc(db, "users", user.uid));
         if (userDoc.exists()) {
           const d = userDoc.data();
           role = d.role || "";
           designation = d.designation || "";
+          institution = d.institution || "";
         } else {
           const localStr = localStorage.getItem(`user_profile_${user.uid}`);
           if (localStr) {
             const p = JSON.parse(localStr);
             role = p.role || "";
             designation = p.designation || "";
+            institution = p.institution || "";
           }
         }
 
         const r = (String(role) + " " + String(designation)).toLowerCase();
+        const inst = String(institution).toUpperCase();
 
-        if (r.includes("coordinator") || r.includes("hod") || r.includes("head")) {
-          setTargetPath("/coordinator-appraisal");
-        } else if (r.includes("principal") || r.includes("hr") || r.includes("admin")) {
+        if (r.includes("principal") || r.includes("hr") || r.includes("admin")) {
           setTargetPath("/reviews");
-        } else if (r.includes("non-teaching") || r.includes("staff")) {
+        } else if (inst.includes("CKCOE") || inst.includes("ENGINEERING")) {
+          setTargetPath("/faculty-appraisal");
+        } else if (r.includes("coordinator") || r.includes("hod") || r.includes("head")) {
+          setTargetPath("/coordinator-appraisal");
+        } else if (r.includes("non-teaching")) {
           setTargetPath("/non-teaching-appraisal");
         } else {
           setTargetPath("/teacher-appraisal");
         }
       } catch (err) {
         console.error("HomeRedirect role check error:", err);
-        setTargetPath("/coordinator-appraisal");
+        setTargetPath("/reviews");
       } finally {
         setLoading(false);
       }
@@ -104,7 +110,7 @@ function HomeRedirect() {
 
   if (!auth.currentUser) return <Navigate to="/auth" replace />;
 
-  return <Navigate to={targetPath || "/coordinator-appraisal"} replace />;
+  return <Navigate to={targetPath || "/reviews"} replace />;
 }
 
 export default function App() {
@@ -124,6 +130,15 @@ export default function App() {
         
         <Route 
           path="/appraisal" 
+          element={
+            <ProtectedRoute>
+              <FacultyAppraisal />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/faculty-appraisal" 
           element={
             <ProtectedRoute>
               <FacultyAppraisal />

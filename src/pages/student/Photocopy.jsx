@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
-import { db, auth } from "../../firebase";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { db, auth, functions } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
 import {
   doc,
   collection,
@@ -26,6 +27,9 @@ import {
   Ban,
   Plus,
   Trash2,
+  CreditCard,
+  ShieldCheck,
+  Check,
 } from "lucide-react";
 
 const sanitizeKey = (key) => {
@@ -53,10 +57,10 @@ const formatDepartment = (dept, programme) => {
 };
 
 const formatDisplayDate = (dateStr) => {
-  if (!dateStr) return '19-09-2026';
+  if (!dateStr) return '30.09.2026';
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     const [y, m, d] = dateStr.split('-');
-    return `${d}-${m}-${y}`;
+    return `${d}.${m}.${y}`;
   }
   return dateStr;
 };
@@ -115,6 +119,8 @@ const isEseExam = (examName, isUniversityFlag) => {
 
 const STATUS_STYLES = {
   Applied: 'bg-amber-100 text-amber-800 border-amber-200',
+  'Submitted to HOD': 'bg-blue-100 text-blue-800 border-blue-200',
+  'Recommended by HOD': 'bg-indigo-100 text-indigo-800 border-indigo-200',
   Verified: 'bg-blue-100 text-blue-800 border-blue-200',
   'Payment Confirmed': 'bg-indigo-100 text-indigo-800 border-indigo-200',
   'Copy Issued': 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -146,9 +152,77 @@ export default function Photocopy() {
     { id: 1, semesterNo: '1', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: 400 }
   ]);
 
+  const [payModal, setPayModal] = useState({ open: false, appDocId: null, subjects: [], amount: 0 });
+  const [initiatingPay, setInitiatingPay] = useState(false);
+  const [verifyingPay, setVerifyingPay] = useState(false);
+  const [verifyingOrderId, setVerifyingOrderId] = useState('');
+
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3500);
+  };
+
+  // Payment Verification on Return from Exam Cell Gateway
+  const verifyPaymentOnReturn = useCallback(async (orderId) => {
+    setVerifyingPay(true);
+    setVerifyingOrderId(orderId);
+
+    // 10-second safety fallback timer guaranteeing loading state never hangs
+    const safetyTimer = setTimeout(() => {
+      setVerifyingPay(false);
+    }, 10000);
+
+    try {
+      const verifyFn = httpsCallable(functions, "verifyExamCellPayment");
+      const result = await verifyFn({ orderId });
+      const data = result.data;
+      if (data.success) {
+        showToast(`Exam Cell Payment Successful! Amount ₹${data.amount || ''} paid. Electronic bill attached.`, 'success');
+      } else {
+        showToast(`Payment status: ${data.status || 'Pending'}. Order ID: ${orderId}`, 'error');
+      }
+    } catch (err) {
+      console.error("Verify exam cell payment error:", err);
+      showToast("Payment status returned. If debited, your application will update shortly.", "error");
+    } finally {
+      clearTimeout(safetyTimer);
+      setVerifyingPay(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order_id");
+    if (orderId) {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+      verifyPaymentOnReturn(orderId);
+    }
+  }, [verifyPaymentOnReturn]);
+
+  const handleStartPayment = async (appDocId, feeAmt) => {
+    setInitiatingPay(true);
+    try {
+      const createSessionFn = httpsCallable(functions, "createExamCellPaymentSession");
+      const returnUrl = window.location.origin + window.location.pathname;
+      const res = await createSessionFn({
+        amount: Number(feeAmt),
+        category: 'Photocopy Application',
+        appId: appDocId,
+        returnUrl,
+      });
+
+      if (res.data?.paymentUrl) {
+        window.location.href = res.data.paymentUrl;
+        return;
+      } else {
+        showToast("Gateway response did not contain a valid payment URL.", "error");
+      }
+    } catch (err) {
+      console.error("Initiate exam cell payment error:", err);
+      showToast("Payment Gateway Error: " + err.message, "error");
+    }
+    setInitiatingPay(false);
   };
 
   useEffect(() => {
@@ -159,8 +233,14 @@ export default function Photocopy() {
         const snap = await getDoc(doc(db, 'users', user.uid));
         if (snap.exists()) setStudentData(snap.data());
       } catch (err) { console.error(err); }
+      setLoading(false);
     });
-    return () => unsub();
+    // Fallback safety timer to ensure page never gets stuck on spinner
+    const timer = setTimeout(() => setLoading(false), 1500);
+    return () => {
+      unsub();
+      clearTimeout(timer);
+    };
   }, []);
 
   // Photocopy window config & fee from Exam Cell (subscribed in real-time)
@@ -238,12 +318,11 @@ export default function Photocopy() {
     }
   }, [studentData, getRegulationForBatch]);
 
-  // Eligible answer scripts from marks
+  // Eligible answer scripts from marks (Optimized background fetch)
   useEffect(() => {
     if (!studentData) return;
     const { regNo, programme, department, batch } = studentData;
     if (!regNo && !studentData.reg && !studentData.admNo && !studentData.admissionNo) {
-      setLoading(false);
       return;
     }
 
@@ -266,7 +345,18 @@ export default function Photocopy() {
         const targetDeptNorm = normPunct(department);
         const targetBatchNorm = normPunct(batch);
 
-        const snapshot = await getDocs(collection(db, 'marks'));
+        let snapshot;
+        if (batch) {
+          try {
+            const batchQuery = query(collection(db, 'marks'), where('batch', '==', batch));
+            snapshot = await getDocs(batchQuery);
+          } catch (_) {
+            snapshot = await getDocs(collection(db, 'marks'));
+          }
+        } else {
+          snapshot = await getDocs(collection(db, 'marks'));
+        }
+
         const found = [];
         for (const docSnap of snapshot.docs) {
           const data = docSnap.data() || {};
@@ -304,7 +394,6 @@ export default function Photocopy() {
           return true;
         }));
       } catch (err) { console.error('Fetch photocopy scripts error:', err); }
-      setLoading(false);
     };
     fetchScripts();
   }, [studentData]);
@@ -423,9 +512,9 @@ export default function Photocopy() {
     setSubmitting(true);
     try {
       const regNoVal = studentData.regNo || studentData.reg || studentData.admNo || studentData.admissionNo || '';
-      const pricePerRow = Number(config.feePerSubject) || 400;
+      const pricePerRow = Number(config.feePerSubject) || 350;
 
-      await addDoc(collection(db, 'photocopy_applications'), {
+      const docRef = await addDoc(collection(db, 'photocopy_applications'), {
         studentUid: currentUser.uid,
         studentName: studentData.name || studentData.studentName || currentUser.email,
         regNo: regNoVal,
@@ -445,21 +534,28 @@ export default function Photocopy() {
         subjectCount: subjectRows.length,
         feeAmount: totalApplicationFee,
         paymentStatus: 'Pending',
-        status: 'Applied',
+        status: 'Payment Pending',
+        billAttached: false,
         appliedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
-      showToast(`Photocopy application submitted for ${subjectRows.length} subject(s)! Pay ₹${totalApplicationFee} at the Exam Cell counter.`, 'success');
+      showToast(`Application created! Connecting to Exam Cell HDFC Payment Gateway...`, 'success');
+
       // Reset back to 1 row
       setSubjectRows([
         { id: Date.now(), semesterNo: '1', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: pricePerRow }
       ]);
+      setSubmitting(false);
+
+      // Connect to real HDFC gateway payment session
+      await handleStartPayment(docRef.id, totalApplicationFee);
+      return;
     } catch (err) {
       console.error('Submit application error:', err);
       showToast('Failed to submit application: ' + err.message, 'error');
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleCancel = async (app) => {
@@ -530,6 +626,21 @@ export default function Photocopy() {
         )}
       </div>
 
+      {verifyingPay && (
+        <div className="bg-indigo-50/90 border-2 border-indigo-200 rounded-3xl p-5 flex items-center justify-between shadow-lg animate-in fade-in duration-300">
+          <div className="flex items-center gap-3.5">
+            <Loader2 className="w-6 h-6 text-indigo-600 animate-spin shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm text-indigo-950">Verifying Payment Status with HDFC Gateway...</p>
+              <p className="text-xs text-indigo-700 font-mono mt-0.5">Order Reference: {verifyingOrderId}</p>
+            </div>
+          </div>
+          <span className="text-xs font-black text-indigo-700 bg-white px-3.5 py-1.5 rounded-full border border-indigo-200 shadow-sm">
+            Please wait...
+          </span>
+        </div>
+      )}
+
       {/* Official Instructions & Candidate Details Form Card */}
       <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 p-6 md:p-8 space-y-6">
         {/* Instruction to Candidates */}
@@ -539,19 +650,19 @@ export default function Photocopy() {
           </h3>
           <ol className="list-decimal list-inside space-y-2.5 text-xs md:text-sm font-semibold text-slate-700 leading-relaxed bg-slate-50/80 p-5 rounded-2xl border border-slate-200/80">
             <li>
-              Fee for Photocopy is <span className="font-bold text-[#120c7a]">Rs.{config.feePerSubject || 400}/-</span> per answer script and should be paid at the College only.
+              Candidates who wish to apply for revaluation must first apply for the photocopy of the answer script by paying a fee of Rs. {config.feePerSubject || 350}/- per course. Candidates are eligible to apply irrespective of the grade secured in the End Semester Examination.
             </li>
             <li>
-              Application for Photocopy must be submitted to the Principal of the concerned College on or before <span className="font-bold text-slate-900">{formatDisplayDate(config.toDate)}</span>.
+              The application for the photocopy of the answer script shall be submitted to the Controller of Examinations only through the Institute OBE Portal on or before {formatDisplayDate(config.toDate)}.
             </li>
             <li>
-              There is no provision for applying photocopy of Practical/Project examination Papers.
+              Revaluation is not applicable for Practical / Project Courses.
             </li>
             <li>
-              Incomplete/defective application will be rejected and the fee will neither be refunded nor adjusted towards any fee due to the College.
+              Incomplete, incorrect, or defective applications will be rejected. The fee once paid will neither be refunded nor adjusted against any other fee or dues payable to the Institution.
             </li>
             <li>
-              No application will be accepted beyond the due date prescribed.
+              No application will be accepted after the prescribed due date under any circumstances.
             </li>
           </ol>
         </div>
@@ -839,17 +950,29 @@ export default function Photocopy() {
                       </span>
                     </td>
                     <td className="px-4 md:px-6 py-3 text-center">
-                      {a.status === 'Applied' ? (
-                        <button
-                          onClick={() => handleCancel(a)}
-                          disabled={actioningId === a.id}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-xl text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          {actioningId === a.id ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Cancel
-                        </button>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
+                      <div className="flex items-center justify-center gap-2">
+                        {a.paymentStatus !== 'Paid' && (
+                          <button
+                            onClick={() => handleStartPayment(a.id, a.feeAmount || config.feePerSubject)}
+                            disabled={initiatingPay}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-black shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {initiatingPay ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />} Pay ₹{a.feeAmount || config.feePerSubject}
+                          </button>
+                        )}
+                        {a.status === 'Applied' && (
+                          <button
+                            onClick={() => handleCancel(a)}
+                            disabled={actioningId === a.id}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-xl text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {actioningId === a.id ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Cancel
+                          </button>
+                        )}
+                        {a.paymentStatus === 'Paid' && a.status !== 'Applied' && (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -858,9 +981,84 @@ export default function Photocopy() {
           </div>
         )}
         <p className="px-4 md:px-8 py-4 text-[11px] text-slate-400 font-medium flex items-center gap-1.5 border-t border-slate-100">
-          <Clock size={12} /> Pay the fee at the Exam Cell counter. The issued copy can be collected as per the status above.
+          <Clock size={12} /> Pay online via Exam Cell HDFC Gateway or at the Exam Cell counter. Issued copies can be collected as per the status above.
         </p>
       </div>
+
+      {/* Exam Cell Payment Checkout Modal */}
+      {payModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 space-y-0">
+            {/* Modal Header */}
+            <div className="bg-[#120c7a] px-6 py-4 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-base flex items-center gap-2">
+                  <CreditCard size={18} className="text-amber-300" /> Exam Cell Payment Checkout
+                </h3>
+                <p className="text-blue-200 text-[11px]">Separate HDFC Gateway Account for Exam Cell Fees</p>
+              </div>
+              <button
+                onClick={() => setPayModal({ open: false, appDocId: null, subjects: [], amount: 0 })}
+                className="p-1 text-blue-200 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs space-y-1">
+                <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                  <ShieldCheck size={16} /> Exam Cell HDFC Payment Account
+                </div>
+                <p className="text-emerald-700 text-[11px]">
+                  This fee payment is processed directly into the Exam Cell HDFC Account (NOT the general college tuition fee account).
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-bold text-slate-600">
+                  <span>Candidate:</span>
+                  <span className="text-slate-900 font-mono">{studentData?.regNo || studentData?.reg || studentData?.name}</span>
+                </div>
+                <div className="flex justify-between text-xs font-bold text-slate-600">
+                  <span>Department:</span>
+                  <span className="text-slate-900">{formatDepartment(studentData?.department, studentData?.programme)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-bold text-slate-600">
+                  <span>Service:</span>
+                  <span className="text-[#120c7a]">Photocopy Application ({payModal.subjects.length} subject(s))</span>
+                </div>
+              </div>
+
+              <div className="border-t border-b border-slate-200 py-3 flex items-center justify-between">
+                <span className="text-xs font-extrabold text-slate-700 uppercase">Total Amount Due:</span>
+                <span className="text-xl font-black text-[#120c7a]">₹{payModal.amount}</span>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleStartPayment(payModal.appDocId, payModal.amount)}
+                  disabled={initiatingPay}
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  {initiatingPay ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
+                  {initiatingPay ? "Connecting Gateway..." : `Pay ₹${payModal.amount} via Exam Cell HDFC Gateway`}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPayModal({ open: false, appDocId: null, subjects: [], amount: 0 })}
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -14,7 +14,6 @@ import {
 import { useDepartments } from "../hooks/useDepartments";
 
 export default function Auth() {
-  const { departments } = useDepartments();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -31,6 +30,8 @@ export default function Auth() {
     role: "Staff / Non-Teaching",
     department: ""
   });
+
+  const { departments } = useDepartments(formData.institution);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -196,6 +197,7 @@ export default function Auth() {
                     value={formData.email}
                     onChange={handleChange}
                     placeholder="e.g. staff@ck.ac.in"
+                    autoComplete="email"
                     className="w-full bg-white border border-slate-300 pl-11 pr-4 py-3 rounded-xl text-slate-900 placeholder-slate-400 text-sm transition-all outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15"
                     required
                   />
@@ -214,6 +216,7 @@ export default function Auth() {
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="••••••••"
+                    autoComplete="current-password"
                     className="w-full bg-white border border-slate-300 pl-11 pr-4 py-3 rounded-xl text-slate-900 placeholder-slate-400 text-sm transition-all outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15"
                     required
                   />
@@ -250,11 +253,22 @@ export default function Auth() {
                   <select
                     name="institution"
                     value={formData.institution}
-                    onChange={handleChange}
+                    onChange={(e) => {
+                      const newInst = e.target.value;
+                      let newRole = formData.role;
+                      if (newInst === "CKCOE") {
+                        if (newRole !== "Staff / Non-Teaching" && newRole !== "Principal / HR") {
+                          newRole = "Staff / Non-Teaching";
+                        }
+                      }
+                      setFormData(prev => ({ ...prev, institution: newInst, role: newRole, department: "" }));
+                      if (error) setError("");
+                    }}
                     className="w-full bg-white border border-slate-300 px-3 py-2.5 rounded-xl text-slate-900 text-sm outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15 font-medium"
                   >
                     <option value="CKSPK (Matric)">CKSPK (Matric)</option>
                     <option value="CKSPE (CBSE)">CKSPE (CBSE)</option>
+                    <option value="CKCOE">CKCOE</option>
                   </select>
                 </div>
 
@@ -268,9 +282,18 @@ export default function Auth() {
                     onChange={handleChange}
                     className="w-full bg-white border border-slate-300 px-3 py-2.5 rounded-xl text-slate-900 text-sm outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/15 font-medium"
                   >
-                    <option value="Staff / Non-Teaching">Staff / Non-Teaching</option>
-                    <option value="Coordinator">Coordinator</option>
-                    <option value="Principal / HR">Principal / HR</option>
+                    {formData.institution === "CKCOE" ? (
+                      <>
+                        <option value="Staff / Non-Teaching">Staff / Non-Teaching</option>
+                        <option value="Principal / HR">Principal / HR</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="Staff / Non-Teaching">Staff / Non-Teaching</option>
+                        <option value="Coordinator">Coordinator</option>
+                        <option value="Principal / HR">Principal / HR</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>

@@ -110,15 +110,19 @@ export default function TeacherAppraisal() {
 
     // Q9: THEORY Quarterly Exam (Sep 2024-25)
     resultsQuarterly: [{ class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "", fileUrl: "", fileName: "" }],
+    resultsQuarterlySummary: "",
 
     // Q10: THEORY Half Yearly Exam (Dec 2024-25)
     resultsHalfYearly: [{ class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "", fileUrl: "", fileName: "" }],
+    resultsHalfYearlySummary: "",
 
     // Q11a: THEORY Annual Exam (April 2024-25)
     resultsAnnualTheory: [{ class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "", fileUrl: "", fileName: "" }],
+    resultsAnnualTheorySummary: "",
 
     // Q11b: PRACTICALS Annual Exam (April 2024-25)
     resultsAnnualPractical: [{ class: "", subject: "", appeared: "", passed: "", passPercent: "", subjectAvg: "", fileUrl: "", fileName: "" }],
+    resultsAnnualPracticalSummary: "",
 
     // Q12: Results Attributed To
     resultsAttributedTo: {
@@ -555,7 +559,8 @@ export default function TeacherAppraisal() {
               <span className={`px-4 py-2 rounded-2xl text-xs font-extrabold uppercase tracking-wider border shadow-sm ${status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
                 status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
                   status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                    "bg-slate-700/50 text-slate-300 border-slate-600/50"
+                    status === "Returned" ? "bg-rose-500/20 text-rose-300 border-rose-500/40" :
+                      "bg-slate-700/50 text-slate-300 border-slate-600/50"
                 }`}>
                 Status: {status.replace("_", " ")}
               </span>
@@ -585,10 +590,32 @@ export default function TeacherAppraisal() {
           </div>
         </div>
 
+        {/* Returned for Correction Alert */}
+        {status === "Returned" && (
+          <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-amber-900 shadow-xs">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-amber-800">
+                  Form Returned for Correction
+                </h4>
+                <p className="text-xs font-medium text-amber-900 mt-0.5">
+                  Your appraisal form has been returned for corrections. All fields are unlocked for you to edit your data. Please make the required changes and click <strong>Submit to Coordinator</strong> to re-submit.
+                </p>
+                {(existingAppraisal?.coordinatorReview?.comments || existingAppraisal?.hodReview?.comments || existingAppraisal?.principalReview?.comments) && (
+                  <div className="mt-2 text-xs font-semibold bg-amber-100/80 border border-amber-200/80 p-2.5 rounded-xl text-amber-950">
+                    <span className="font-extrabold uppercase text-[10px] text-amber-800 block mb-0.5">Reviewer Remarks:</span>
+                    {existingAppraisal?.coordinatorReview?.comments || existingAppraisal?.hodReview?.comments || existingAppraisal?.principalReview?.comments}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Closed Portal Alert */}
         {!isPortalOpen && (
           <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-800 text-xs font-semibold">
-            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
             <span>The Appraisal Portal submission window is currently closed or outside the scheduled timeline. Form is displayed in Read-Only mode.</span>
           </div>
@@ -838,9 +865,12 @@ export default function TeacherAppraisal() {
             {renderExamTableSection({
               title: `9. Subjects Handled & Pass Percentage: THEORY: Quarterly Examination / Term 1– (Sep - ${academicYear || "AY"})`,
               arrayKey: "resultsQuarterly",
+              summaryKey: "resultsQuarterlySummary",
+              summaryValue: formData.resultsQuarterlySummary,
               list: formData.resultsQuarterly,
               isReadOnly,
               handleArrayRowChange,
+              handleTextChange,
               addArrayRow,
               removeArrayRow,
               uploadingExamMap,
@@ -850,9 +880,12 @@ export default function TeacherAppraisal() {
             {renderExamTableSection({
               title: `10. Subjects Handled & Pass Percentage: THEORY: Half Yearly Examination / Term 2– (Dec – ${academicYear || "AY"})`,
               arrayKey: "resultsHalfYearly",
+              summaryKey: "resultsHalfYearlySummary",
+              summaryValue: formData.resultsHalfYearlySummary,
               list: formData.resultsHalfYearly,
               isReadOnly,
               handleArrayRowChange,
+              handleTextChange,
               addArrayRow,
               removeArrayRow,
               uploadingExamMap,
@@ -862,9 +895,12 @@ export default function TeacherAppraisal() {
             {renderExamTableSection({
               title: `11. Subjects Handled & Pass Percentage: THEORY: Annual Examination / Term 3– (April – ${academicYear || "AY"})`,
               arrayKey: "resultsAnnualTheory",
+              summaryKey: "resultsAnnualTheorySummary",
+              summaryValue: formData.resultsAnnualTheorySummary,
               list: formData.resultsAnnualTheory,
               isReadOnly,
               handleArrayRowChange,
+              handleTextChange,
               addArrayRow,
               removeArrayRow,
               uploadingExamMap,
@@ -874,9 +910,12 @@ export default function TeacherAppraisal() {
             {renderExamTableSection({
               title: `PRACTICALS – Annual Examination / Term 3– (April – ${academicYear || "AY"})`,
               arrayKey: "resultsAnnualPractical",
+              summaryKey: "resultsAnnualPracticalSummary",
+              summaryValue: formData.resultsAnnualPracticalSummary,
               list: formData.resultsAnnualPractical,
               isReadOnly,
               handleArrayRowChange,
+              handleTextChange,
               addArrayRow,
               removeArrayRow,
               uploadingExamMap,
@@ -2316,9 +2355,12 @@ export default function TeacherAppraisal() {
 function renderExamTableSection({
   title,
   arrayKey,
+  summaryKey,
+  summaryValue = "",
   list = [],
   isReadOnly,
   handleArrayRowChange,
+  handleTextChange,
   addArrayRow,
   removeArrayRow,
   uploadingExamMap = {},
@@ -2488,6 +2530,21 @@ function renderExamTableSection({
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Summary Text Box */}
+      <div className="mt-3">
+        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+          Summary
+        </label>
+        <textarea
+          rows={2}
+          disabled={isReadOnly}
+          value={summaryValue || ""}
+          onChange={(e) => handleTextChange && summaryKey && handleTextChange(summaryKey, e.target.value)}
+          placeholder="Enter summary for this examination..."
+          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all disabled:opacity-60 resize-y"
+        />
       </div>
     </div>
   );

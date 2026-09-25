@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, getDocs, addDoc, onSnapshot, setDoc, query, where } from "firebase/firestore";
+import { doc, collection, getDoc, getDocs, addDoc, updateDoc, onSnapshot, setDoc, query, where } from "firebase/firestore";
 import { serverTimestamp } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
   Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
-  Download, FileSpreadsheet, Undo2, Send
+  Download, FileSpreadsheet, Undo2, Send, Copy
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import Layout from "../components/Layout";
+import AnnaUniversityPhotocopyModal from "../components/AnnaUniversityPhotocopyModal";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
@@ -559,9 +560,59 @@ export default function HODDashboard() {
   const [showActivityModal, setShowActivityModal] = useState(false);
   const [returnComment, setReturnComment] = useState("");
   const [showReturnInput, setShowReturnInput] = useState(false);
-  const [isActioning, setIsActioning] = useState(false);
   const [dutyIndents, setDutyIndents] = useState([]);
   const [dutyIndentsLoading, setDutyIndentsLoading] = useState(true);
+
+  // Photocopy Applications State
+  const [photocopyApps, setPhotocopyApps] = useState([]);
+  const [selectedPhotoApp, setSelectedPhotoApp] = useState(null);
+  const [showPhotoAppModal, setShowPhotoAppModal] = useState(false);
+  const [recommendingPhoto, setRecommendingPhoto] = useState(false);
+
+  useEffect(() => {
+    if (!hodDepartment) return;
+    const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetDeptNorm = norm(hodDepartment);
+
+    const unsub = onSnapshot(collection(db, 'photocopy_applications'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const filtered = list.filter(app => {
+        if (!app.department) return true;
+        return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
+      });
+      filtered.sort((a, b) => {
+        const at = a.appliedAt?.toMillis ? a.appliedAt.toMillis() : new Date(a.appliedAt || 0).getTime();
+        const bt = b.appliedAt?.toMillis ? b.appliedAt.toMillis() : new Date(b.appliedAt || 0).getTime();
+        return bt - at;
+      });
+      setPhotocopyApps(filtered);
+    });
+    return () => unsub();
+  }, [hodDepartment]);
+
+  const handleRecommendPhotocopy = async (app) => {
+    if (!app?.id) return;
+    setRecommendingPhoto(true);
+    try {
+      const hodSig = hodName || auth.currentUser?.displayName || auth.currentUser?.email || 'HOD Signature';
+      const hodSigUrl = currentHodSignature || userProfile?.signatureUrl || '';
+      await updateDoc(doc(db, 'photocopy_applications', app.id), {
+        status: 'Recommended by HOD',
+        hodSignature: hodSig,
+        hodSignatureUrl: hodSigUrl,
+        hodRecommendedBy: auth.currentUser?.email || '',
+        hodRecommendedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Photocopy application for ${app.studentName || app.regNo} recommended & submitted to Exam Cell!`, 'success');
+      setShowPhotoAppModal(false);
+      setSelectedPhotoApp(null);
+    } catch (err) {
+      console.error("Recommend photocopy error:", err);
+      showToast("Failed to recommend application: " + err.message, "error");
+    }
+    setRecommendingPhoto(false);
+  };
   const [allocWfId, setAllocWfId] = useState(null);
   const [allocSelected, setAllocSelected] = useState([]);
   const [allocSaving, setAllocSaving] = useState(false);
@@ -3818,6 +3869,85 @@ const isDeptMatch = (docDept, targetDept) => {
           </div>
         </div>
 
+        {/* ═══ Answer Script Photocopy Applications (HOD Approval & Recommendation) ═══ */}
+        <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 mt-6">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4 border-b border-zinc-100 pb-4">
+            <div>
+              <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                <Copy size={18} className="text-[#120c7a]" />
+                Answer Script Photocopy Applications
+                <span className="text-xs bg-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-full font-bold">
+                  {hodDepartment || "Department"}
+                </span>
+                <span className="text-xs bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">
+                  {photocopyApps.filter(a => a.status === 'Submitted to HOD' || a.status === 'Applied' || a.status === 'Payment Confirmed').length} Pending Recommendation
+                </span>
+              </h2>
+              <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+                Review candidate details, subjects, and attached payment bill before recommending to Exam Cell
+              </p>
+            </div>
+          </div>
+
+          {photocopyApps.length === 0 ? (
+            <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-8 text-center flex flex-col items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#120c7a] flex items-center justify-center mb-3">
+                <Copy size={24} />
+              </div>
+              <h3 className="text-xs font-bold text-zinc-900">No Photocopy Applications Submitted</h3>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                Student photocopy applications for {hodDepartment || "your department"} will appear here for HOD recommendation.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 text-zinc-700 font-bold border-b border-zinc-200">
+                    <th className="p-3">Register No</th>
+                    <th className="p-3">Student Name</th>
+                    <th className="p-3">Department</th>
+                    <th className="p-3 text-center">Subject(s)</th>
+                    <th className="p-3 text-center">Fee Status</th>
+                    <th className="p-3 text-center">HOD Recommendation</th>
+                    <th className="p-3 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {photocopyApps.map((app) => (
+                    <tr key={app.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-3 font-mono font-bold text-zinc-900">{app.regNo || '—'}</td>
+                      <td className="p-3 font-bold text-zinc-800">{app.studentName}</td>
+                      <td className="p-3 font-medium text-zinc-600">{formatDepartmentDisplay(app.department, app.programme)}</td>
+                      <td className="p-3 text-center font-bold text-[#120c7a]">
+                        {app.subjectCount || (Array.isArray(app.subjects) ? app.subjects.length : 1)} Subject(s)
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+                          ✓ PAID (Bill Attached)
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase ${app.status === 'Recommended by HOD' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
+                          {app.status === 'Recommended by HOD' ? `✓ Recommended by HOD (${app.hodSignature || ''})` : 'Pending Recommendation'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          onClick={() => { setSelectedPhotoApp(app); setShowPhotoAppModal(true); }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                        >
+                          <Eye size={13} /> View Form
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* ═══ Faculty / Non-Teaching Appraisal Review Modal (HOD) ═══ */}
         {appraisalReview && (
           <div className="fixed inset-0 bg-black/60 z-[100] backdrop-blur-sm flex items-center justify-center p-4">
@@ -5927,6 +6057,22 @@ const isDeptMatch = (docDept, targetDept) => {
           </div>
         </div>
       )}
+
+      {/* Official Anna University Photocopy Application Modal */}
+      {showPhotoAppModal && (
+        <AnnaUniversityPhotocopyModal
+          app={selectedPhotoApp}
+          onClose={() => {
+            setShowPhotoAppModal(false);
+            setSelectedPhotoApp(null);
+          }}
+          onRecommend={handleRecommendPhotocopy}
+          isHod={true}
+          hodSignatureUrl={currentHodSignature}
+          processing={recommendingPhoto}
+        />
+      )}
     </Layout>
   );
 }
+

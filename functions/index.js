@@ -11,16 +11,99 @@ const HDFC_API_KEY = defineSecret("HDFC_API_KEY");
 const HDFC_MERCHANT_ID = defineSecret("HDFC_MERCHANT_ID");
 const HDFC_MODE = defineSecret("HDFC_MODE");
 
+const EXAM_CELL_HDFC_API_KEY = defineSecret("EXAM_CELL_HDFC_API_KEY");
+const EXAM_CELL_HDFC_MERCHANT_ID = defineSecret("EXAM_CELL_HDFC_MERCHANT_ID");
+const EXAM_CELL_HDFC_RESPONSE_KEY = defineSecret("EXAM_CELL_HDFC_RESPONSE_KEY");
+const EXAM_CELL_HDFC_MODE = defineSecret("EXAM_CELL_HDFC_MODE");
+
 const SANDBOX_BASE = "https://smartgateway.hdfcuat.bank.in";
 const PRODUCTION_BASE = "https://smartgateway.hdfc.bank.in";
 
 function getConfig() {
-  const isSandbox = HDFC_MODE.value() !== "production";
+  let apiKey = process.env.HDFC_API_KEY || "";
+  let merchantId = process.env.HDFC_MERCHANT_ID || "";
+  let mode = process.env.HDFC_MODE || "production";
+
+  try {
+    if (typeof HDFC_API_KEY !== "undefined" && HDFC_API_KEY.value) {
+      const val = HDFC_API_KEY.value();
+      if (val) apiKey = val;
+    }
+  } catch (_) {}
+
+  try {
+    if (typeof HDFC_MERCHANT_ID !== "undefined" && HDFC_MERCHANT_ID.value) {
+      const val = HDFC_MERCHANT_ID.value();
+      if (val) merchantId = val;
+    }
+  } catch (_) {}
+
+  try {
+    if (typeof HDFC_MODE !== "undefined" && HDFC_MODE.value) {
+      const val = HDFC_MODE.value();
+      if (val) mode = val;
+    }
+  } catch (_) {}
+
+  const isSandbox = mode === "sandbox";
   const baseUrl = isSandbox ? SANDBOX_BASE : PRODUCTION_BASE;
-  const apiKey = HDFC_API_KEY.value();
-  const merchantId = HDFC_MERCHANT_ID.value();
   const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
   return { baseUrl, apiKey, merchantId, basicAuth, isSandbox };
+}
+
+async function getExamCellConfig() {
+  let apiKey = process.env.EXAM_CELL_HDFC_API_KEY || "";
+  let merchantId = process.env.EXAM_CELL_HDFC_MERCHANT_ID || "";
+  let responseKey = process.env.EXAM_CELL_HDFC_RESPONSE_KEY || "";
+  let mode = process.env.EXAM_CELL_HDFC_MODE || "production";
+
+  try {
+    if (typeof EXAM_CELL_HDFC_API_KEY !== "undefined" && EXAM_CELL_HDFC_API_KEY.value) {
+      const val = EXAM_CELL_HDFC_API_KEY.value();
+      if (val) apiKey = val;
+    }
+  } catch (_) {}
+
+  try {
+    if (typeof EXAM_CELL_HDFC_MERCHANT_ID !== "undefined" && EXAM_CELL_HDFC_MERCHANT_ID.value) {
+      const val = EXAM_CELL_HDFC_MERCHANT_ID.value();
+      if (val) merchantId = val;
+    }
+  } catch (_) {}
+
+  try {
+    if (typeof EXAM_CELL_HDFC_RESPONSE_KEY !== "undefined" && EXAM_CELL_HDFC_RESPONSE_KEY.value) {
+      const val = EXAM_CELL_HDFC_RESPONSE_KEY.value();
+      if (val) responseKey = val;
+    }
+  } catch (_) {}
+
+  try {
+    if (typeof EXAM_CELL_HDFC_MODE !== "undefined" && EXAM_CELL_HDFC_MODE.value) {
+      const val = EXAM_CELL_HDFC_MODE.value();
+      if (val) mode = val;
+    }
+  } catch (_) {}
+
+  if (!apiKey || !merchantId) {
+    try {
+      const gwSnap = await db.collection("exam_cell_settings").doc("gateway").get();
+      if (gwSnap.exists) {
+        const gwData = gwSnap.data();
+        if (gwData.apiKey) apiKey = gwData.apiKey;
+        if (gwData.merchantId) merchantId = gwData.merchantId;
+        if (gwData.responseKey) responseKey = gwData.responseKey;
+        if (gwData.mode) mode = gwData.mode;
+      }
+    } catch (e) {
+      console.error("Error reading exam_cell_settings/gateway from Firestore:", e);
+    }
+  }
+
+  const isSandbox = mode === "sandbox";
+  const baseUrl = isSandbox ? SANDBOX_BASE : PRODUCTION_BASE;
+  const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
+  return { baseUrl, apiKey, merchantId, responseKey, basicAuth, isSandbox };
 }
 
 function validateAuth(request) {
@@ -37,7 +120,6 @@ function generateOrderId() {
 
 exports.createPaymentSession = onCall(
   {
-    secrets: [HDFC_API_KEY, HDFC_MERCHANT_ID, HDFC_MODE],
     cors: true,
     maxInstances: 20,
     concurrency: 40,
@@ -316,7 +398,6 @@ exports.createPaymentSession = onCall(
 
 exports.verifyPayment = onCall(
   {
-    secrets: [HDFC_API_KEY, HDFC_MERCHANT_ID, HDFC_MODE],
     cors: true,
     maxInstances: 20,
     concurrency: 40,
@@ -494,6 +575,93 @@ exports.verifyPayment = onCall(
   }
 );
 
+function sendRedirectResponse(res, targetUrl) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Completed - Returning to Portal...</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+    }
+    .card {
+      background: #ffffff;
+      padding: 36px 28px;
+      border-radius: 20px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      border: 1px solid #e2e8f0;
+    }
+    .icon-container {
+      width: 56px;
+      height: 56px;
+      background: #eff6ff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+    }
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #cbd5e1;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { font-size: 20px; font-weight: 800; margin: 0 0 8px; color: #1e293b; }
+    p { font-size: 14px; color: #64748b; margin: 0 0 24px; line-height: 1.5; }
+    .btn {
+      display: inline-block;
+      width: 100%;
+      padding: 12px 20px;
+      background: #1e1b4b;
+      color: #ffffff;
+      font-weight: 700;
+      font-size: 14px;
+      border-radius: 12px;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 6px -1px rgba(30, 27, 75, 0.2);
+    }
+    .btn:hover { background: #312e81; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-container">
+      <div class="spinner"></div>
+    </div>
+    <h2>Payment Gateway Response Received</h2>
+    <p>Redirecting you safely back to the OBE Portal...</p>
+    <a id="redirectBtn" href="${targetUrl}" class="btn">Return to Portal Now &rarr;</a>
+  </div>
+  <script>
+    setTimeout(function() {
+      window.location.href = "${targetUrl}";
+    }, 100);
+  </script>
+</body>
+</html>`;
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(html);
+}
+
 exports.paymentCallback = onRequest(
   {
     cors: true,
@@ -525,6 +693,280 @@ exports.paymentCallback = onRequest(
       const connector = redirectUrl.includes("?") ? "&" : "?";
       redirectUrl = `${redirectUrl}${connector}order_id=${orderId}`;
     }
-    res.redirect(302, redirectUrl);
+    sendRedirectResponse(res, redirectUrl);
+  }
+);
+
+function generateExamOrderId() {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rand = randomUUID().split("-")[0].toUpperCase();
+  return `EXAM${ts}${rand}`;
+}
+
+exports.createExamCellPaymentSession = onCall(
+  {
+    cors: true,
+    maxInstances: 20,
+    concurrency: 40,
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    validateAuth(request);
+    const { data } = request;
+    const uid = request.auth.uid;
+    const userEmail = request.auth.token.email || "";
+    const userName = request.auth.token.name || "";
+
+    const { amount, category, appId, returnUrl } = data;
+
+    if (!amount || typeof amount !== "number" || amount <= 0) {
+      throw new HttpsError("invalid-argument", "Valid amount is required.");
+    }
+    if (!returnUrl || typeof returnUrl !== "string") {
+      throw new HttpsError("invalid-argument", "Return URL is required.");
+    }
+
+    const { baseUrl, merchantId, basicAuth, isSandbox, apiKey } = await getExamCellConfig();
+
+    if (!apiKey || !merchantId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Exam Cell HDFC Gateway credentials are not yet configured. Please contact Exam Cell."
+      );
+    }
+
+    const orderId = generateExamOrderId();
+    const projectId = process.env.GCLOUD_PROJECT || "outcomex";
+    const region = "us-central1";
+    let callbackUrl;
+    if (process.env.FUNCTIONS_EMULATOR === "true") {
+      callbackUrl = `http://127.0.0.1:5001/${projectId}/${region}/examCellPaymentCallback`;
+    } else {
+      callbackUrl = `https://${region}-${projectId}.cloudfunctions.net/examCellPaymentCallback`;
+    }
+
+    const payload = {
+      order_id: orderId,
+      amount: amount.toFixed(2),
+      currency: "INR",
+      customer_id: uid,
+      customer_email: userEmail,
+      customer_phone: data.phone || "",
+      payment_page_client_id: merchantId,
+      action: "paymentPage",
+      return_url: callbackUrl,
+      description: `Exam Cell Payment: ${category || "Photocopy"}`,
+      first_name: userName.split(" ")[0] || "Student",
+      last_name: userName.split(" ").slice(1).join(" ") || "",
+      source_object: "PAYMENT_LINK",
+    };
+
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/session`, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          "x-merchantid": merchantId,
+          "Content-Type": "application/json",
+          version: "2023-06-30",
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (networkError) {
+      console.error("Exam Cell HDFC network error:", networkError);
+      throw new HttpsError("unavailable", "Exam Cell Payment gateway is temporarily unreachable.");
+    }
+
+    let responseText = "";
+    try {
+      responseText = await response.text();
+    } catch (readError) {
+      throw new HttpsError("internal", "Could not read response from Exam Cell gateway.");
+    }
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      throw new HttpsError("internal", "Exam Cell gateway returned invalid response format.");
+    }
+
+    if (!response.ok || !responseData?.payment_links?.web) {
+      const errMsg = responseData?.error_info?.developer_message || responseData?.message || "Exam Cell Payment session creation failed";
+      throw new HttpsError("failed-precondition", errMsg);
+    }
+
+    const paymentRecord = {
+      orderId,
+      appId: appId || "",
+      uid,
+      studentId: uid,
+      studentEmail: userEmail,
+      studentName: userName || userEmail,
+      category: category || "Photocopy",
+      amount,
+      currency: "INR",
+      status: "PENDING",
+      hdfcOrderId: responseData.id,
+      paymentUrl: responseData.payment_links.web,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      environment: isSandbox ? "sandbox" : "production",
+      returnUrl,
+    };
+
+    await db.collection("exam_cell_payments").doc(orderId).set(paymentRecord);
+
+    if (appId) {
+      try {
+        await db.collection("photocopy_applications").doc(appId).update({
+          orderId,
+          updatedAt: Timestamp.now(),
+        });
+      } catch (_) {}
+    }
+
+    return {
+      success: true,
+      orderId,
+      paymentUrl: responseData.payment_links.web,
+    };
+  }
+);
+
+exports.verifyExamCellPayment = onCall(
+  {
+    cors: true,
+    maxInstances: 20,
+    concurrency: 40,
+    enforceAppCheck: false,
+  },
+  async (request) => {
+    validateAuth(request);
+    const { data } = request;
+    const { orderId } = data;
+
+    if (!orderId || typeof orderId !== "string") {
+      throw new HttpsError("invalid-argument", "Order ID is required.");
+    }
+
+    const paymentRef = db.collection("exam_cell_payments").doc(orderId);
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) {
+      throw new HttpsError("not-found", "Exam Cell Payment record not found.");
+    }
+    const paymentRecord = paymentSnap.data();
+
+    if (paymentRecord.status === "SUCCESS") {
+      return {
+        success: true,
+        status: "SUCCESS",
+        amount: paymentRecord.amount,
+        orderId,
+      };
+    }
+
+    const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
+
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/orders/${orderId}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          "x-merchantid": merchantId,
+          "x-customerid": request.auth.uid,
+          "Content-Type": "application/json",
+          version: "2023-06-30",
+        },
+      });
+    } catch (networkError) {
+      throw new HttpsError("unavailable", "Exam Cell Payment gateway is unreachable.");
+    }
+
+    let responseText = await response.text();
+    let responseData = JSON.parse(responseText);
+
+    const hdfcStatus = responseData.status;
+    let localStatus = "PENDING";
+
+    if (hdfcStatus === "CHARGED") {
+      localStatus = "SUCCESS";
+    } else if (["FAILED", "EXPIRED", "VOID", "DECLINED"].includes(hdfcStatus)) {
+      localStatus = "FAILED";
+    }
+
+    await paymentRef.update({
+      hdfcStatus,
+      status: localStatus,
+      updatedAt: Timestamp.now(),
+      verifiedAt: Timestamp.now(),
+    });
+
+    if (localStatus === "SUCCESS" && paymentRecord.appId) {
+      try {
+        const txnId = responseData.payment_gateway_response?.txn_id || responseData.payment_gateway_response?.rrn || orderId;
+        const paidTimestamp = Timestamp.now();
+        const receiptNo = `REC-EXAM-${orderId}`;
+        const electronicBill = {
+          receiptNo,
+          orderId,
+          transactionId: txnId,
+          amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
+          paidAt: new Date().toISOString(),
+          paymentGateway: "HDFC SmartGateway (Exam Cell Account #76983)",
+          paymentStatus: "Paid",
+          billAttached: true,
+        };
+
+        await db.collection("photocopy_applications").doc(paymentRecord.appId).update({
+          paymentStatus: "Paid",
+          status: "Submitted to HOD",
+          billAttached: true,
+          transactionId: txnId,
+          receiptNo: receiptNo,
+          paidAt: paidTimestamp,
+          electronicBill: electronicBill,
+          updatedAt: paidTimestamp,
+        });
+      } catch (err) {
+        console.error("Failed to update photocopy application payment status:", err);
+      }
+    }
+
+    return {
+      success: localStatus === "SUCCESS",
+      status: localStatus,
+      hdfcStatus,
+      amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
+      orderId,
+    };
+  }
+);
+
+exports.examCellPaymentCallback = onRequest(
+  { cors: true },
+  async (req, res) => {
+    const orderId = req.body?.order_id || req.query?.order_id || req.body?.orderId || req.query?.orderId || "";
+    let redirectUrl = "https://outcomex.web.app/student/photocopy";
+
+    if (orderId) {
+      try {
+        const docSnap = await db.collection("exam_cell_payments").doc(orderId).get();
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data.returnUrl) redirectUrl = data.returnUrl;
+        }
+      } catch (err) {
+        console.error("Error retrieving returnUrl for exam cell callback:", err);
+      }
+    }
+
+    if (orderId) {
+      const connector = redirectUrl.includes("?") ? "&" : "?";
+      redirectUrl = `${redirectUrl}${connector}order_id=${orderId}`;
+    }
+    sendRedirectResponse(res, redirectUrl);
   }
 );

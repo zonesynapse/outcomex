@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
-import { onSnapshot, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { onSnapshot, doc, setDoc, updateDoc, collection, query, orderBy, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import Layout from "../../components/Layout";
+import AnnaUniversityPhotocopyModal from "../../components/AnnaUniversityPhotocopyModal";
 import {
   Copy, RefreshCw, FileSearch, GraduationCap,
   Save, Loader2, CheckCircle2, AlertCircle,
-  CalendarDays, IndianRupee, Power, FileText
+  CalendarDays, IndianRupee, Power, FileText,
+  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck
 } from "lucide-react";
 
 const FORM_TABS = [
@@ -58,6 +60,13 @@ export default function ExamFormSettingPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
 
+  // Submitted Photocopy Applications state
+  const [photocopyApps, setPhotocopyApps] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(true);
+  const [selectedApp, setSelectedApp] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState(null);
+
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
@@ -86,6 +95,20 @@ export default function ExamFormSettingPage() {
     return () => unsubs.forEach((u) => u());
   }, []);
 
+  // Realtime sync of submitted photocopy applications
+  useEffect(() => {
+    const q = query(collection(db, "photocopy_applications"), orderBy("appliedAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setPhotocopyApps(list);
+      setLoadingApps(false);
+    }, (err) => {
+      console.error("Error fetching photocopy applications:", err);
+      setLoadingApps(false);
+    });
+    return () => unsub();
+  }, []);
+
   const setField = (field, value) => {
     setForms((prev) => ({ ...prev, [activeTab]: { ...prev[activeTab], [field]: value } }));
   };
@@ -111,6 +134,22 @@ export default function ExamFormSettingPage() {
       showToast("Failed to save. " + err.message, "error");
     }
     setSaving(false);
+  };
+
+  const handleUpdatePhotocopyStatus = async (appId, newStatus) => {
+    setUpdatingStatusId(appId);
+    try {
+      await updateDoc(doc(db, "photocopy_applications", appId), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.email || "Exam Cell",
+      });
+      showToast(`Application status updated to "${newStatus}"`, "success");
+    } catch (err) {
+      console.error("Error updating photocopy application status:", err);
+      showToast("Failed to update status: " + err.message, "error");
+    }
+    setUpdatingStatusId(null);
   };
 
   const windowStatus = (form) => {
@@ -268,7 +307,205 @@ export default function ExamFormSettingPage() {
             </div>
           </div>
         )}
+
+        {/* ═══ Submitted Applications Section (Photocopy Tab) ═══ */}
+        {activeTab === "photocopy" && (
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-lg overflow-hidden space-y-0">
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-3 text-white">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  <Copy size={18} className="text-amber-300" /> Submitted Photocopy Applications
+                </h3>
+                <p className="text-xs text-blue-200 font-medium">
+                  Review student photocopy forms with attached payment bills and HOD recommendations.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
+                  Total Applications: {photocopyApps.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-6">
+              {loadingApps ? (
+                <div className="py-12 text-center text-zinc-400">
+                  <Loader2 size={24} className="mx-auto animate-spin mb-2 text-[#120c7a]" />
+                  <p className="text-xs font-medium">Loading submitted applications...</p>
+                </div>
+              ) : photocopyApps.length === 0 ? (
+                <div className="py-12 text-center text-zinc-400 bg-slate-50 rounded-xl border border-dashed border-zinc-200">
+                  <FileText size={32} className="mx-auto mb-2 opacity-40 text-zinc-400" />
+                  <p className="text-sm font-bold text-zinc-600">No Submitted Applications Yet</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">When students submit photocopy requests and HOD recommends them, they will appear here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 text-zinc-600 font-bold uppercase tracking-wider text-[10px] border-b border-zinc-200">
+                      <tr>
+                        <th className="p-3">Candidate / Reg No</th>
+                        <th className="p-3">Department</th>
+                        <th className="p-3">Subjects</th>
+                        <th className="p-3">Payment Bill</th>
+                        <th className="p-3">HOD Recommendation</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 text-zinc-700 font-medium">
+                      {photocopyApps.map((app) => {
+                        const isHodRecommended = app.status === "Recommended by HOD" || !!app.hodSignature;
+                        return (
+                          <tr key={app.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3">
+                              <div className="font-bold text-zinc-900">{app.studentName || 'Student'}</div>
+                              <div className="text-[11px] font-mono text-indigo-700 font-semibold">{app.regNo || '—'}</div>
+                            </td>
+                            <td className="p-3">
+                              <div className="font-bold text-zinc-800">{app.department || app.dept || '—'}</div>
+                              <div className="text-[10px] text-zinc-400">{app.batch ? `Batch ${app.batch}` : ''}</div>
+                            </td>
+                            <td className="p-3">
+                              <div className="font-bold text-zinc-900">{app.subjectCount || app.subjects?.length || 1} Subject(s)</div>
+                              <div className="text-[10px] text-zinc-500 line-clamp-1">
+                                {app.subjects?.map(s => s.code).join(", ")}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle size={11} /> PAID (₹{app.feeAmount || 400})
+                              </span>
+                              {app.transactionId && (
+                                <div className="text-[9px] font-mono text-zinc-400 mt-0.5">{app.transactionId}</div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              {isHodRecommended ? (
+                                <div className="space-y-0.5">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-800 border border-blue-200">
+                                    <UserCheck size={11} /> Recommended
+                                  </span>
+                                  {app.hodSignature && (
+                                    <div className="text-[9px] text-emerald-700 font-semibold italic flex items-center gap-1">
+                                      <span>Signature attached</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                                  <Clock size={11} /> Pending HOD
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${
+                                app.status === "Copy Issued"
+                                  ? "bg-purple-100 text-purple-800 border-purple-200"
+                                  : app.status === "Closed"
+                                  ? "bg-zinc-200 text-zinc-700 border-zinc-300"
+                                  : app.status === "Recommended by HOD"
+                                  ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                  : "bg-blue-100 text-blue-800 border-blue-200"
+                              }`}>
+                                {app.status || "Applied"}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    setSelectedApp(app);
+                                    setShowModal(true);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1 border border-indigo-200"
+                                >
+                                  <Eye size={13} /> View Form
+                                </button>
+
+                                {app.status !== "Copy Issued" && (
+                                  <button
+                                    onClick={() => handleUpdatePhotocopyStatus(app.id, "Copy Issued")}
+                                    disabled={updatingStatusId === app.id}
+                                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1 shadow-sm disabled:opacity-50"
+                                  >
+                                    {updatingStatusId === app.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                                    Issue Copy
+                                  </button>
+                                )}
+
+                                {app.status !== "Closed" && (
+                                  <button
+                                    onClick={() => handleUpdatePhotocopyStatus(app.id, "Closed")}
+                                    disabled={updatingStatusId === app.id}
+                                    className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1 border border-zinc-300 disabled:opacity-50"
+                                  >
+                                    <XCircle size={13} /> Close
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Dedicated Exam Cell HDFC Gateway Credentials Card */}
+        <ExamCellGatewayCard showToast={showToast} />
       </div>
+
+      {/* Official Anna University Form View Modal for Exam Cell */}
+      {showModal && selectedApp && (
+        <AnnaUniversityPhotocopyModal
+          app={selectedApp}
+          onClose={() => {
+            setShowModal(false);
+            setSelectedApp(null);
+          }}
+          isExamCell={true}
+        />
+      )}
     </Layout>
+  );
+}
+
+function ExamCellGatewayCard() {
+  return (
+    <div className="bg-white rounded-2xl border border-indigo-100 shadow-lg p-6 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+            <IndianRupee size={17} className="text-emerald-600" /> Exam Cell HDFC Payment Gateway
+          </h3>
+          <p className="text-[11px] font-medium text-slate-500 mt-0.5">
+            Dedicated HDFC Merchant Gateway hardcoded in Cloud Environment for Exam Cell payments (Photocopy, Revaluation, Review & ESE Registration). Isolated from tuition fee account.
+          </p>
+        </div>
+        <span className="px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5">
+          <ShieldCheck size={13} /> Cloud Env Active (Merchant ID: 76983)
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs font-mono font-bold text-slate-700">
+        <div>
+          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Merchant ID</span>
+          <span className="text-slate-900">76983</span>
+        </div>
+        <div>
+          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Gateway Endpoint</span>
+          <span className="text-emerald-700">https://smartgateway.hdfc.bank.in</span>
+        </div>
+        <div>
+          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Environment</span>
+          <span className="text-indigo-700 font-sans">Production (Live Gateway)</span>
+        </div>
+      </div>
+    </div>
   );
 }

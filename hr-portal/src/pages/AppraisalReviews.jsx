@@ -93,13 +93,13 @@ export default function AppraisalReviews() {
     return customFieldsConfig.find(f => f.id === secId)?.evidenceRequired === true;
   };
 
-  const renderRowEvidenceHeader = (sectionId) => {
-    if (!isSectionEvidenceRequired(sectionId)) return null;
+  const renderRowEvidenceHeader = (sectionId, force = true) => {
+    if (!force && !isSectionEvidenceRequired(sectionId)) return null;
     return <th className="border border-zinc-200 p-2 text-center w-28 text-[10px] uppercase font-bold text-zinc-600 bg-zinc-50">Evidence</th>;
   };
 
-  const renderRowEvidenceCellReadOnly = (row, sectionId) => {
-    if (!isSectionEvidenceRequired(sectionId)) return null;
+  const renderRowEvidenceCellReadOnly = (row, sectionId, force = true) => {
+    if (!force && !isSectionEvidenceRequired(sectionId)) return null;
     return (
       <td className="border border-zinc-200 p-1.5 text-center min-w-[100px]">
         {row.fileUrl ? (
@@ -119,7 +119,7 @@ export default function AppraisalReviews() {
     );
   };
 
-  const renderExamTableReview = (title, list = []) => {
+  const renderExamTableReview = (title, list = [], summaryText = "") => {
     return (
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-3">
         <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
@@ -170,6 +170,76 @@ export default function AppraisalReviews() {
           </div>
         ) : (
           <p className="text-xs text-zinc-400 italic">No subject results recorded.</p>
+        )}
+
+        {/* Exam Table Summary Box */}
+        {list?.length > 0 && (() => {
+          const validRows = (list || []).filter(r => (r.subject && r.subject.trim()) || (r.class && r.class.trim()));
+          const totalSubjects = validRows.length;
+          let totalAppeared = 0;
+          let totalPassed = 0;
+          let sumSubjectAvg = 0;
+          let avgCount = 0;
+
+          (list || []).forEach(r => {
+            const app = parseInt(r.appeared, 10);
+            const pas = parseInt(r.passed, 10);
+            const sAvg = parseFloat(r.subjectAvg);
+
+            if (!isNaN(app)) totalAppeared += app;
+            if (!isNaN(pas)) totalPassed += pas;
+            if (!isNaN(sAvg)) {
+              sumSubjectAvg += sAvg;
+              avgCount++;
+            }
+          });
+
+          const overallPassPct = totalAppeared > 0
+            ? ((totalPassed / totalAppeared) * 100).toFixed(2)
+            : "0.00";
+
+          const overallAvg = avgCount > 0
+            ? (sumSubjectAvg / avgCount).toFixed(2)
+            : "0.00";
+
+          return (
+            <div className="mt-2.5 bg-gradient-to-r from-slate-50 via-indigo-50/40 to-slate-50 border border-slate-200/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-[#120c7a] text-white text-[9px] font-black uppercase tracking-wider rounded-lg">
+                  Exam Summary
+                </span>
+                <span className="font-extrabold text-slate-800">
+                  {totalSubjects} {totalSubjects === 1 ? "Subject" : "Subjects"} Recorded
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5 font-bold text-slate-700">
+                <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-center">
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">Total Appeared</span>
+                  <span className="font-extrabold text-slate-900">{totalAppeared}</span>
+                </div>
+                <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-center">
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">Total Passed</span>
+                  <span className="font-extrabold text-emerald-700">{totalPassed}</span>
+                </div>
+                <div className="px-3 py-1 bg-indigo-100/80 border border-indigo-200 rounded-lg text-center">
+                  <span className="text-[9px] uppercase font-bold text-indigo-600 block">Overall Pass %</span>
+                  <span className="font-black text-indigo-950 text-sm">{overallPassPct}%</span>
+                </div>
+                <div className="px-3 py-1 bg-emerald-100/80 border border-emerald-200 rounded-lg text-center">
+                  <span className="text-[9px] uppercase font-bold text-emerald-700 block">Subject Average</span>
+                  <span className="font-black text-emerald-950 text-sm">{overallAvg}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+        {summaryText && (
+          <div className="mt-3 p-3 bg-white border border-slate-200 rounded-xl text-xs">
+            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block mb-1">
+              Summary
+            </span>
+            <p className="text-slate-800 font-medium whitespace-pre-wrap">{summaryText}</p>
+          </div>
         )}
       </div>
     );
@@ -431,8 +501,8 @@ export default function AppraisalReviews() {
       : (deptFilter === "All" || app.department === deptFilter);
 
     // Coordinator review workflow segregation:
-    // "Submitted" appraisals are pending Coordinator review; hide from HOD/Principal until Coordinator evaluates and forwards.
-    if (!isCoordinatorRole && app.status === "Submitted") {
+    // Hide "Submitted" appraisals from HODs (who wait for Coordinator review), but allow Principal/HR to see them directly.
+    if (!isCoordinatorRole && !isPrincipalOrHR && app.status === "Submitted") {
       return false;
     }
 
@@ -597,6 +667,13 @@ export default function AppraisalReviews() {
       };
     }
 
+    // Strip any undefined top-level properties before passing payload to Firestore updateDoc
+    Object.keys(updatePayload).forEach(key => {
+      if (updatePayload[key] === undefined) {
+        delete updatePayload[key];
+      }
+    });
+
     try {
       const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
@@ -619,39 +696,63 @@ export default function AppraisalReviews() {
 
     const updatePayload = {
       status: "Returned",
-      updatedAt: new Date().toISOString(),
-      hodReview: (isHODRole) ? {
+      updatedAt: new Date().toISOString()
+    };
+
+    if (isHODRole) {
+      updatePayload.hodReview = {
+        ...(selectedAppraisal.hodReview || {}),
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
-      } : selectedAppraisal.hodReview,
-      coordinatorReview: isCoordOnlyReturn ? {
+      };
+    } else if (selectedAppraisal.hodReview !== undefined) {
+      updatePayload.hodReview = selectedAppraisal.hodReview;
+    }
+
+    if (isCoordOnlyReturn) {
+      updatePayload.coordinatorReview = {
         ...(selectedAppraisal.coordinatorReview || {}),
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
-      } : selectedAppraisal.coordinatorReview,
-      principalReview: (isPrincipalOrHR) ? {
+      };
+    } else if (selectedAppraisal.coordinatorReview !== undefined) {
+      updatePayload.coordinatorReview = selectedAppraisal.coordinatorReview;
+    }
+
+    if (isPrincipalOrHR) {
+      updatePayload.principalReview = {
+        ...(selectedAppraisal.principalReview || {}),
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
-      } : selectedAppraisal.principalReview
-    };
+      };
+    } else if (selectedAppraisal.principalReview !== undefined) {
+      updatePayload.principalReview = selectedAppraisal.principalReview;
+    }
 
     if (isNonTeaching) {
-      const totalScore = Object.values(nonTeachingEvalMarks).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      const totalScore = Object.values(nonTeachingEvalMarks || {}).reduce((sum, v) => sum + (Number(v) || 0), 0);
       const derivedGrade = calculateNonTeachingGrade(totalScore);
       updatePayload.performanceEvaluation = {
-        marks: nonTeachingEvalMarks,
+        marks: nonTeachingEvalMarks || {},
         totalMarks: totalScore,
         gradeSecured: derivedGrade,
-        specificComments: nonTeachingSpecificComment.trim(),
-        recommendation: nonTeachingRecommendation,
-        incrementGrade: nonTeachingIncrementGrade,
+        specificComments: (nonTeachingSpecificComment || "").trim(),
+        recommendation: nonTeachingRecommendation || "",
+        incrementGrade: nonTeachingIncrementGrade || "",
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       };
     }
+
+    // Strip any undefined top-level properties before passing payload to Firestore updateDoc
+    Object.keys(updatePayload).forEach(key => {
+      if (updatePayload[key] === undefined) {
+        delete updatePayload[key];
+      }
+    });
 
     try {
       const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
@@ -1382,10 +1483,10 @@ export default function AppraisalReviews() {
                         </div>
 
                         {/* Exam Tables Helper */}
-                        {renderExamTableReview("9. THEORY: Quarterly Examination (Sep)", selectedAppraisal.formData?.resultsQuarterly)}
-                        {renderExamTableReview("10. THEORY: Half Yearly Examination (Dec)", selectedAppraisal.formData?.resultsHalfYearly)}
-                        {renderExamTableReview("11. THEORY: Annual Examination (April)", selectedAppraisal.formData?.resultsAnnualTheory)}
-                        {renderExamTableReview("PRACTICALS: Annual Examination (April)", selectedAppraisal.formData?.resultsAnnualPractical)}
+                        {renderExamTableReview("9. THEORY: Quarterly Examination (Sep)", selectedAppraisal.formData?.resultsQuarterly, selectedAppraisal.formData?.resultsQuarterlySummary)}
+                        {renderExamTableReview("10. THEORY: Half Yearly Examination (Dec)", selectedAppraisal.formData?.resultsHalfYearly, selectedAppraisal.formData?.resultsHalfYearlySummary)}
+                        {renderExamTableReview("11. THEORY: Annual Examination (April)", selectedAppraisal.formData?.resultsAnnualTheory, selectedAppraisal.formData?.resultsAnnualTheorySummary)}
+                        {renderExamTableReview("PRACTICALS: Annual Examination (April)", selectedAppraisal.formData?.resultsAnnualPractical, selectedAppraisal.formData?.resultsAnnualPracticalSummary)}
 
                         {/* Attribution */}
                         <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-2">
