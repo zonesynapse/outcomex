@@ -66,6 +66,7 @@ export default function HRLayout({ children }) {
   const userInst = profile?.institution || "";
   const normalizedRole = String(userRole).toLowerCase();
   
+  const isCenterHead = normalizedRole.includes("center head") || normalizedRole.includes("centre head");
   const isCoordinator = normalizedRole.includes("coordinator");
   const isPrincipalHR = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin");
   const isCKCOE = userInst.toUpperCase().includes("CKCOE") || userInst.toUpperCase().includes("ENGINEERING");
@@ -76,6 +77,11 @@ export default function HRLayout({ children }) {
       { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 },
       { id: "user-management", label: "User Management", path: "/users", icon: Users },
       { id: "appraisal-settings", label: "Appraisal Settings", path: "/settings", icon: Settings2 }
+    ];
+  } else if (isCenterHead) {
+    // Center Head (CKSPK only) — exclusive access to Coordinator HOD Appraisal form
+    navItems = [
+      { id: "coordinator-appraisal", label: "Coordinator Appraisal Request", path: "/coordinator-appraisal", icon: Award }
     ];
   } else if (isCKCOE) {
     navItems = [

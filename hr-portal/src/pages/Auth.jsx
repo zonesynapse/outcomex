@@ -256,10 +256,14 @@ export default function Auth() {
                     onChange={(e) => {
                       const newInst = e.target.value;
                       let newRole = formData.role;
-                      if (newInst === "CKCOE") {
+                      const isCKCOE = newInst === "CKCOE";
+                      const isCKSPK = newInst.toUpperCase().includes("CKSPK");
+                      if (isCKCOE) {
                         if (newRole !== "Staff / Non-Teaching" && newRole !== "Principal / HR") {
                           newRole = "Staff / Non-Teaching";
                         }
+                      } else if (!isCKSPK && newRole === "Center Head") {
+                        newRole = "Staff / Non-Teaching";
                       }
                       setFormData(prev => ({ ...prev, institution: newInst, role: newRole, department: "" }));
                       if (error) setError("");
@@ -285,6 +289,13 @@ export default function Auth() {
                     {formData.institution === "CKCOE" ? (
                       <>
                         <option value="Staff / Non-Teaching">Staff / Non-Teaching</option>
+                        <option value="Principal / HR">Principal / HR</option>
+                      </>
+                    ) : formData.institution.toUpperCase().includes("CKSPK") ? (
+                      <>
+                        <option value="Staff / Non-Teaching">Staff / Non-Teaching</option>
+                        <option value="Coordinator">Coordinator</option>
+                        <option value="Center Head">Center Head</option>
                         <option value="Principal / HR">Principal / HR</option>
                       </>
                     ) : (

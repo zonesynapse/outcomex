@@ -10,6 +10,26 @@ import HRLayout from "../components/HRLayout";
 import { useDepartments } from "../hooks/useDepartments";
 import { isSameInstitution } from "../utils/appraisalScore";
 
+// Union of every role offered on the Register page (Auth.jsx) across institutions
+const ALL_REGISTER_ROLES = [
+  "Staff / Non-Teaching",
+  "Coordinator",
+  "Center Head",
+  "Principal / HR"
+];
+
+// Mirrors Auth.jsx Register-page Role dropdown per institution:
+// CKCOE -> Staff / Non-Teaching, Principal / HR
+// CKSPK -> Staff / Non-Teaching, Coordinator, Center Head, Principal / HR
+// Others (CKSPE, etc.) -> Staff / Non-Teaching, Coordinator, Principal / HR
+const getRolesForInstitution = (inst) => {
+  const s = String(inst || "").toUpperCase();
+  if (!s || s === "ALL") return [...ALL_REGISTER_ROLES];
+  if (s.includes("CKCOE")) return ["Staff / Non-Teaching", "Principal / HR"];
+  if (s.includes("CKSPK")) return ["Staff / Non-Teaching", "Coordinator", "Center Head", "Principal / HR"];
+  return ["Staff / Non-Teaching", "Coordinator", "Principal / HR"];
+};
+
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,13 +53,8 @@ export default function UserManagement() {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [userToReject, setUserToReject] = useState(null);
 
-  const [availableRoles, setAvailableRoles] = useState([
-    "Staff / Non-Teaching",
-    "Teacher / Faculty",
-    "HOD / Coordinator",
-    "Principal",
-    "HR / Admin"
-  ]);
+  // Custom roles added via "+ Add Role" (session-level extras on top of register-page roles)
+  const [availableRoles, setAvailableRoles] = useState([...ALL_REGISTER_ROLES]);
   const [newRoleInput, setNewRoleInput] = useState("");
   const [isAddingRole, setIsAddingRole] = useState(false);
 
@@ -58,6 +73,16 @@ export default function UserManagement() {
   const isSuperAdmin = currentUser?.email === "obe@ckcet.edu.in" || userRole === "Super Admin" || userRole === "Admin";
   const normalizedRole = String(userRole).toLowerCase();
   const isAuthorized = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin") || currentUser?.email === "obe@ckcet.edu.in";
+
+  // Role options for a table row: exact Register-page roles for that row's
+  // institution + any custom "+ Add Role" extras + current value (legacy safety)
+  const getRowRoleOptions = (rowUser) => {
+    const base = getRolesForInstitution(rowUser?.institution || (!isSuperAdmin ? userInstitution : selectedInstitutionFilter));
+    const customs = availableRoles.filter((r) => !base.includes(r) && ALL_REGISTER_ROLES.includes(r) === false);
+    const opts = [...base, ...customs];
+    if (rowUser?.role && !opts.includes(rowUser.role)) opts.push(rowUser.role);
+    return opts;
+  };
 
   // Department management (scoped to logged-in user's institution)
   const { departments, addDepartment, removeDepartment } = useDepartments(userInstitution);
@@ -430,7 +455,7 @@ export default function UserManagement() {
                           onChange={(e) => handleRoleChange(user.uid, e.target.value)}
                           className="bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl focus:ring-indigo-600 focus:border-indigo-600 block w-full p-2 outline-none transition-all min-w-[140px]"
                         >
-                          {availableRoles.map(role => (
+                          {getRowRoleOptions(user).map(role => (
                             <option key={role} value={role}>{role}</option>
                           ))}
                         </select>

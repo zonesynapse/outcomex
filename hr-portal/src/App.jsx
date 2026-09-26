@@ -76,9 +76,12 @@ function HomeRedirect() {
 
         const r = (String(role) + " " + String(designation)).toLowerCase();
         const inst = String(institution).toUpperCase();
+        const isCenterHead = r.includes("center head") || r.includes("centre head");
 
         if (r.includes("principal") || r.includes("hr") || r.includes("admin")) {
           setTargetPath("/reviews");
+        } else if (isCenterHead) {
+          setTargetPath("/coordinator-appraisal");
         } else if (inst.includes("CKCOE") || inst.includes("ENGINEERING")) {
           setTargetPath("/faculty-appraisal");
         } else if (r.includes("coordinator") || r.includes("hod") || r.includes("head")) {

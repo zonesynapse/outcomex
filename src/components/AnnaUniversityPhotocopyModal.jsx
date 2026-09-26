@@ -172,7 +172,7 @@ export default function AnnaUniversityPhotocopyModal({
           <div className="flex items-center gap-2">
             <FileText size={18} className="text-amber-300" />
             <h3 className="font-extrabold text-sm md:text-base">
-              Official Anna University Answer Script Application
+              Official End Semester Answer Script Application
             </h3>
           </div>
           <div className="flex items-center gap-2">
