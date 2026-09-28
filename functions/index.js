@@ -922,7 +922,7 @@ exports.verifyExamCellPayment = onCall(
 
         await db.collection("photocopy_applications").doc(paymentRecord.appId).update({
           paymentStatus: "Paid",
-          status: "Submitted to HOD",
+          status: "Payment Confirmed",
           billAttached: true,
           transactionId: txnId,
           receiptNo: receiptNo,

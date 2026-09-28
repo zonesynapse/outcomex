@@ -1,5 +1,12 @@
 ## Summary of Changes
 
+### 479. Two-Phase Photocopy Payment & Explicit "Submit to HOD" Flow (`student/Photocopy.jsx`, `functions/index.js`)
+- **Goal**: Replace the "Submit Application" button with a "Pay ₹{amount}" button, set application status to `Payment Confirmed` upon successful payment verification, and display a green "Submit to HOD" button for paid applications to continue the recommendation workflow.
+- **Fix**:
+  - [`src/pages/student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): Replaced the primary form button text with **`Pay ₹{totalApplicationFee}`** (`CreditCard` icon). Added `handleSubmitToHod(app)` handler to update document status to `'Submitted to HOD'`. Added a green **`"Submit to HOD"`** action button in the "My Applications" table and a payment success notification banner for paid applications pending HOD submission.
+  - [`functions/index.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/functions/index.js): Updated `verifyExamCellPayment` so successful payment verification sets `status: 'Payment Confirmed'` (and `paymentStatus: 'Paid'`) instead of auto-submitting directly to HOD, requiring explicit student submission.
+- **Result**: Photocopy applications follow a two-step flow: Pay online -> Receive payment confirmation & electronic bill -> Click "Submit to HOD" to forward to HOD for recommendation. Build passes cleanly in 7.02s with 0 errors.
+
 ### 478. Enforce Exact 1 Single A4 Page Print Output (`AnnaUniversityPhotocopyModal.jsx`)
 - **Goal**: Fix print issue where clicking "Print" in the browser generated 7 pages instead of 1 single page.
 - **Fix**:

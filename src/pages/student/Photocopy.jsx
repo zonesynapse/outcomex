@@ -566,6 +566,22 @@ export default function Photocopy() {
     }
   };
 
+  const handleSubmitToHod = async (app) => {
+    if (!app?.id) return;
+    setActioningId(app.id);
+    try {
+      await updateDoc(doc(db, 'photocopy_applications', app.id), {
+        status: 'Submitted to HOD',
+        updatedAt: serverTimestamp(),
+      });
+      showToast('Application successfully submitted to HOD!', 'success');
+    } catch (err) {
+      console.error('Submit to HOD error:', err);
+      showToast('Failed to submit to HOD: ' + err.message, 'error');
+    }
+    setActioningId(null);
+  };
+
   const handleCancel = async (app) => {
     if (!window.confirm(`Cancel photocopy application?`)) return;
     setActioningId(app.id);
@@ -646,6 +662,27 @@ export default function Photocopy() {
           <span className="text-xs font-black text-indigo-700 bg-white px-3.5 py-1.5 rounded-full border border-indigo-200 shadow-sm">
             Please wait...
           </span>
+        </div>
+      )}
+
+      {applications.some(a => a.paymentStatus === 'Paid' && (a.status === 'Payment Confirmed' || a.status === 'Paid' || a.status === 'Payment Pending')) && (
+        <div className="bg-emerald-50 border-2 border-emerald-200 rounded-3xl p-5 flex flex-wrap items-center justify-between gap-3 shadow-lg animate-in fade-in duration-300">
+          <div className="flex items-center gap-3.5">
+            <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm text-emerald-950">Payment Completed & Verified!</p>
+              <p className="text-xs text-emerald-700 font-semibold mt-0.5">Your fee payment is successful. Click "Submit to HOD" below to forward your application to HOD.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const pendingApp = applications.find(a => a.paymentStatus === 'Paid' && (a.status === 'Payment Confirmed' || a.status === 'Paid' || a.status === 'Payment Pending'));
+              if (pendingApp) handleSubmitToHod(pendingApp);
+            }}
+            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <Send size={14} /> Submit to HOD
+          </button>
         </div>
       )}
 
@@ -896,8 +933,8 @@ export default function Photocopy() {
                 disabled={submitting || !windowStatus.open}
                 className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer disabled:cursor-not-allowed"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                Submit Application
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
+                Pay ₹{totalApplicationFee}
               </button>
             </div>
           </div>
@@ -972,17 +1009,21 @@ export default function Photocopy() {
                             {initiatingPay ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />} Pay ₹{a.feeAmount || config.feePerSubject}
                           </button>
                         )}
-                        {a.status === 'Applied' && (
+
+                        {a.paymentStatus === 'Paid' && (a.status === 'Payment Confirmed' || a.status === 'Paid' || a.status === 'Payment Pending') && (
                           <button
-                            onClick={() => handleCancel(a)}
+                            onClick={() => handleSubmitToHod(a)}
                             disabled={actioningId === a.id}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 rounded-xl text-[11px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer disabled:opacity-50 active:scale-95"
                           >
-                            {actioningId === a.id ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />} Cancel
+                            {actioningId === a.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Submit to HOD
                           </button>
                         )}
-                        {a.paymentStatus === 'Paid' && a.status !== 'Applied' && (
-                          <span className="text-slate-300">—</span>
+
+                        {a.paymentStatus === 'Paid' && a.status !== 'Payment Confirmed' && a.status !== 'Paid' && a.status !== 'Payment Pending' && (
+                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 inline-flex items-center gap-1">
+                            <CheckCircle2 size={12} /> Submitted
+                          </span>
                         )}
                       </div>
                     </td>
