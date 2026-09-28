@@ -9,7 +9,7 @@ import {
   Copy, RefreshCw, FileSearch, GraduationCap,
   Save, Loader2, CheckCircle2, AlertCircle,
   CalendarDays, IndianRupee, Power, FileText,
-  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet
+  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet, RotateCcw, X
 } from "lucide-react";
 
 const FORM_TABS = [
@@ -68,10 +68,62 @@ export default function ExamFormSettingPage() {
   const [selectedApp, setSelectedApp] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [updatingStatusId, setUpdatingStatusId] = useState(null);
+  const [revokeModal, setRevokeModal] = useState({ open: false, app: null });
+  const [revokeMessage, setRevokeMessage] = useState("");
+  const [revoking, setRevoking] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [selectedExportStatuses, setSelectedExportStatuses] = useState(["ALL"]);
+
+  const getStatusCount = (statusId) => {
+    if (statusId === "ALL") return photocopyApps.length;
+    return photocopyApps.filter((app) => (app.status || "Payment Pending") === statusId).length;
+  };
+
+  const toggleExportStatus = (statusKey) => {
+    if (statusKey === "ALL") {
+      setSelectedExportStatuses(["ALL"]);
+      return;
+    }
+    setSelectedExportStatuses((prev) => {
+      let filtered = prev.filter((s) => s !== "ALL");
+      if (filtered.includes(statusKey)) {
+        filtered = filtered.filter((s) => s !== statusKey);
+      } else {
+        filtered.push(statusKey);
+      }
+      if (filtered.length === 0) return ["ALL"];
+      return filtered;
+    });
+  };
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 3000);
+  };
+
+  const handleRevokePhotocopyByExamCell = async () => {
+    if (!revokeModal.app?.id) return;
+    if (!revokeMessage.trim()) {
+      showToast("Please enter a reason/message for revoking the application.", "error");
+      return;
+    }
+    setRevoking(true);
+    try {
+      await updateDoc(doc(db, "photocopy_applications", revokeModal.app.id), {
+        status: "Revoked by Exam Cell",
+        revokeReason: revokeMessage.trim(),
+        revokedBy: "Exam Cell Admin",
+        revokedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Application for ${revokeModal.app.studentName || revokeModal.app.regNo} revoked & returned to department / student.`, "success");
+      setRevokeModal({ open: false, app: null });
+      setRevokeMessage("");
+    } catch (err) {
+      console.error("Revoke photocopy error:", err);
+      showToast("Failed to revoke application: " + err.message, "error");
+    }
+    setRevoking(false);
   };
 
   // Realtime sync of all four form windows
@@ -160,6 +212,16 @@ export default function ExamFormSettingPage() {
       return;
     }
 
+    const isAll = selectedExportStatuses.includes("ALL") || selectedExportStatuses.length === 0;
+    const filteredApps = isAll
+      ? photocopyApps
+      : photocopyApps.filter((app) => selectedExportStatuses.includes(app.status || "Payment Pending"));
+
+    if (filteredApps.length === 0) {
+      showToast("No applications match the selected status filter.", "error");
+      return;
+    }
+
     try {
       const cleanCourseCode = (rawCode) => {
         if (!rawCode) return "";
@@ -168,11 +230,12 @@ export default function ExamFormSettingPage() {
 
       const rawRows = [];
 
-      photocopyApps.forEach((app) => {
+      filteredApps.forEach((app) => {
         const studentReg = app.regNo || app.registerNo || "—";
         const studentName = app.studentName || app.name || "—";
         const rawDept = app.department || app.dept || "";
         const deptName = formatDepartmentDisplay(rawDept, app.programme) || rawDept || "—";
+        const statusLabel = app.status || "Payment Pending";
 
         const subjects = Array.isArray(app.subjects) && app.subjects.length > 0 ? app.subjects : [null];
 
@@ -202,6 +265,7 @@ export default function ExamFormSettingPage() {
             sem: sem ? (String(sem).toLowerCase().startsWith("sem") ? sem : `Sem ${sem}`) : "—",
             courseCode: cleanedCode || code || "—",
             courseTitle: title || "—",
+            statusLabel,
           });
         });
       });
@@ -222,6 +286,7 @@ export default function ExamFormSettingPage() {
         "Year / Sem": item.sem,
         "Course Code": item.courseCode,
         "Course Name": item.courseTitle,
+        "Application Status": item.statusLabel,
       }));
 
       const ws = XLSX.utils.json_to_sheet(rows);
@@ -234,6 +299,7 @@ export default function ExamFormSettingPage() {
         { wch: 14 }, // Year / Sem
         { wch: 16 }, // Course Code
         { wch: 42 }, // Course Name
+        { wch: 24 }, // Application Status
       ];
 
       const wb = XLSX.utils.book_new();
@@ -242,7 +308,8 @@ export default function ExamFormSettingPage() {
       const dateStamp = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `Photocopy_Master_Applications_${dateStamp}.xlsx`);
 
-      showToast(`Master Excel exported & sorted by Course Code (${rows.length} rows)!`, "success");
+      showToast(`Master Excel exported for ${rows.length} rows (${filteredApps.length} applications)!`, "success");
+      setExportModalOpen(false);
     } catch (err) {
       console.error("Export Master Error:", err);
       showToast("Failed to export Master Excel: " + err.message, "error");
@@ -419,10 +486,10 @@ export default function ExamFormSettingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleExportMaster}
+                  onClick={() => setExportModalOpen(true)}
                   disabled={photocopyApps.length === 0}
                   className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-emerald-500"
-                  title="Export Master Excel with all student register numbers, names, departments, and course details"
+                  title="Export Master Excel report with status selection filter"
                 >
                   <FileSpreadsheet size={15} /> Export Master
                 </button>
@@ -528,6 +595,13 @@ export default function ExamFormSettingPage() {
                                   <Eye size={13} /> View Form
                                 </button>
 
+                                <button
+                                  onClick={() => setRevokeModal({ open: true, app })}
+                                  className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold transition-all flex items-center gap-1 border border-amber-200"
+                                >
+                                  <RotateCcw size={13} /> Revoke
+                                </button>
+
                                 {app.status !== "Copy Issued" && (
                                   <button
                                     onClick={() => handleUpdatePhotocopyStatus(app.id, "Copy Issued")}
@@ -575,6 +649,185 @@ export default function ExamFormSettingPage() {
           }}
           isExamCell={true}
         />
+      )}
+
+      {/* Exam Cell Photocopy Revoke Modal */}
+      {revokeModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setRevokeModal({ open: false, app: null })}>
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden border border-amber-100" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-amber-900 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-2xl backdrop-blur-sm text-white">
+                  <RotateCcw size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-base leading-tight">Revoke Photocopy Application</h3>
+                  <p className="text-amber-100 text-[11px] font-semibold">Send back to Department HOD & Student for corrections (Fee stays Paid ✓)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevokeModal({ open: false, app: null })}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs font-semibold text-amber-900 space-y-1">
+                <p><strong>Candidate:</strong> {revokeModal.app?.studentName} ({revokeModal.app?.regNo})</p>
+                <p><strong>Department:</strong> {formatDepartmentDisplay(revokeModal.app?.department, revokeModal.app?.programme)}</p>
+                <p className="text-[11px] text-amber-700 pt-1">Enter correction instructions. This will return the application to the student and department HOD for correction & re-submission.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Revoke Reason / Correction Instructions *
+                </label>
+                <textarea
+                  value={revokeMessage}
+                  onChange={(e) => setRevokeMessage(e.target.value)}
+                  placeholder="e.g. Subject code GE3751 has grade mismatch. Please correct and re-submit via HOD."
+                  rows={4}
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-2xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setRevokeModal({ open: false, app: null })}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRevokePhotocopyByExamCell}
+                  disabled={revoking || !revokeMessage.trim()}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  {revoking ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Confirm Revoke & Return
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Master Status Filter Modal */}
+      {exportModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-emerald-100 text-emerald-700">
+                  <FileSpreadsheet size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Export Master Excel Report</h3>
+                  <p className="text-xs font-medium text-slate-500">Select application status(es) to include in the exported report</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExportModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Select Status(es) to Export</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedExportStatuses(["ALL"])}
+                  className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedExportStatuses([])}
+                  className="text-xs font-bold text-slate-500 hover:underline cursor-pointer"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+              {[
+                { id: "ALL", label: "All Statuses", badge: "bg-slate-200 text-slate-900" },
+                { id: "Payment Confirmed", label: "Payment Confirmed", badge: "bg-sky-100 text-sky-800" },
+                { id: "Submitted to HOD", label: "Submitted to HOD", badge: "bg-blue-100 text-blue-800" },
+                { id: "Recommended by HOD", label: "Recommended by HOD", badge: "bg-emerald-100 text-emerald-800" },
+                { id: "Copy Issued", label: "Copy Issued", badge: "bg-purple-100 text-purple-800" },
+                { id: "Payment Pending", label: "Payment Pending", badge: "bg-amber-100 text-amber-800" },
+                { id: "Revoked by HOD", label: "Revoked by HOD", badge: "bg-orange-100 text-orange-800" },
+                { id: "Revoked by Exam Cell", label: "Revoked by Exam Cell", badge: "bg-red-100 text-red-800" },
+                { id: "Closed", label: "Closed", badge: "bg-zinc-200 text-zinc-700" },
+              ].map((opt) => {
+                const count = getStatusCount(opt.id);
+                const isChecked = selectedExportStatuses.includes(opt.id) || (selectedExportStatuses.includes("ALL") && opt.id === "ALL");
+                return (
+                  <div
+                    key={opt.id}
+                    onClick={() => toggleExportStatus(opt.id)}
+                    className={`flex items-center justify-between p-3 rounded-2xl border-2 transition-all cursor-pointer ${
+                      isChecked
+                        ? "border-emerald-500 bg-emerald-50/50 shadow-sm"
+                        : "border-slate-200 bg-slate-50/50 hover:bg-slate-100/80"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        readOnly
+                        className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300 pointer-events-none"
+                      />
+                      <span className="text-xs font-bold text-slate-800">{opt.label}</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${opt.badge}`}>
+                      {count}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/80 flex items-center justify-between text-xs">
+              <span className="text-slate-600 font-semibold">Matching Applications to Export:</span>
+              <span className="font-extrabold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                {selectedExportStatuses.includes("ALL")
+                  ? photocopyApps.length
+                  : photocopyApps.filter((a) => selectedExportStatuses.includes(a.status || "Payment Pending")).length}{" "}
+                Applications
+              </span>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setExportModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExportMaster}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet size={15} />
+                Download Excel Report
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );

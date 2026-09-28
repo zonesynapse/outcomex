@@ -8,7 +8,7 @@ import {
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
   Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
-  Download, FileSpreadsheet, Undo2, Send, Copy
+  Download, FileSpreadsheet, Undo2, Send, Copy, RotateCcw
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -568,6 +568,9 @@ export default function HODDashboard() {
   const [selectedPhotoApp, setSelectedPhotoApp] = useState(null);
   const [showPhotoAppModal, setShowPhotoAppModal] = useState(false);
   const [recommendingPhoto, setRecommendingPhoto] = useState(false);
+  const [revokePhotoModal, setRevokePhotoModal] = useState({ open: false, app: null });
+  const [revokeMessage, setRevokeMessage] = useState("");
+  const [revokingPhoto, setRevokingPhoto] = useState(false);
 
   useEffect(() => {
     if (!hodDepartment) return;
@@ -612,6 +615,31 @@ export default function HODDashboard() {
       showToast("Failed to recommend application: " + err.message, "error");
     }
     setRecommendingPhoto(false);
+  };
+
+  const handleRevokePhotocopy = async () => {
+    if (!revokePhotoModal.app?.id) return;
+    if (!revokeMessage.trim()) {
+      showToast("Please enter a reason/message for revoking the application.", "error");
+      return;
+    }
+    setRevokingPhoto(true);
+    try {
+      await updateDoc(doc(db, 'photocopy_applications', revokePhotoModal.app.id), {
+        status: 'Revoked by HOD',
+        revokeReason: revokeMessage.trim(),
+        revokedBy: auth.currentUser?.email || '',
+        revokedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Application for ${revokePhotoModal.app.studentName || revokePhotoModal.app.regNo} revoked & returned to student for correction.`, 'success');
+      setRevokePhotoModal({ open: false, app: null });
+      setRevokeMessage("");
+    } catch (err) {
+      console.error("Revoke photocopy error:", err);
+      showToast("Failed to revoke application: " + err.message, "error");
+    }
+    setRevokingPhoto(false);
   };
   const [allocWfId, setAllocWfId] = useState(null);
   const [allocSelected, setAllocSelected] = useState([]);
@@ -3928,17 +3956,27 @@ const isDeptMatch = (docDept, targetDept) => {
                         </span>
                       </td>
                       <td className="p-3 text-center">
-                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase ${app.status === 'Recommended by HOD' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
-                          {app.status === 'Recommended by HOD' ? `✓ Recommended by HOD (${app.hodSignature || ''})` : 'Pending Recommendation'}
+                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase ${app.status === 'Recommended by HOD' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : app.status === 'Revoked by HOD' ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-blue-50 text-blue-800 border-blue-200'}`}>
+                          {app.status === 'Recommended by HOD' ? `✓ Recommended by HOD (${app.hodSignature || ''})` : app.status === 'Revoked by HOD' ? 'Revoked (Returned to Student)' : 'Pending Recommendation'}
                         </span>
                       </td>
                       <td className="p-3 text-center">
-                        <button
-                          onClick={() => { setSelectedPhotoApp(app); setShowPhotoAppModal(true); }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
-                        >
-                          <Eye size={13} /> View Form
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => { setSelectedPhotoApp(app); setShowPhotoAppModal(true); }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                          >
+                            <Eye size={13} /> View Form
+                          </button>
+                          {app.status !== 'Recommended by HOD' && app.status !== 'Revoked by HOD' && (
+                            <button
+                              onClick={() => { setRevokePhotoModal({ open: true, app }); setRevokeMessage(""); }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                            >
+                              <RotateCcw size={13} /> Revoke
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -6071,6 +6109,68 @@ const isDeptMatch = (docDept, targetDept) => {
           hodSignatureUrl={currentHodSignature}
           processing={recommendingPhoto}
         />
+      )}
+
+      {/* HOD Photocopy Revoke Modal */}
+      {revokePhotoModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setRevokePhotoModal({ open: false, app: null })}>
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden border border-amber-100" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-amber-900 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-2xl backdrop-blur-sm text-white">
+                  <RotateCcw size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-base leading-tight">Revoke Photocopy Application</h3>
+                  <p className="text-amber-100 text-[11px] font-semibold">Send back to candidate for corrections (Fee stays Paid ✓)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevokePhotoModal({ open: false, app: null })}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs font-semibold text-amber-900 space-y-1">
+                <p><strong>Candidate:</strong> {revokePhotoModal.app?.studentName} ({revokePhotoModal.app?.regNo})</p>
+                <p className="text-[11px] text-amber-700">Enter your feedback or correction instructions below. The candidate can edit subject codes, titles, or semester numbers and re-submit to HOD.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Revoke Reason / Correction Instructions *
+                </label>
+                <textarea
+                  value={revokeMessage}
+                  onChange={(e) => setRevokeMessage(e.target.value)}
+                  placeholder="e.g. Please correct Subject Code GE3751 grade to U and re-submit."
+                  rows={4}
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-2xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setRevokePhotoModal({ open: false, app: null })}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRevokePhotocopy}
+                  disabled={revokingPhoto || !revokeMessage.trim()}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  {revokingPhoto ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Confirm Revoke & Return
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );

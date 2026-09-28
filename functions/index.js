@@ -858,87 +858,113 @@ exports.verifyExamCellPayment = onCall(
     }
     const paymentRecord = paymentSnap.data();
 
-    if (paymentRecord.status === "SUCCESS") {
-      return {
-        success: true,
-        status: "SUCCESS",
-        amount: paymentRecord.amount,
-        orderId,
-      };
-    }
-
     const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
 
-    let response;
-    try {
-      response = await fetch(`${baseUrl}/orders/${orderId}`, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${basicAuth}`,
-          "x-merchantid": merchantId,
-          "x-customerid": request.auth.uid,
-          "Content-Type": "application/json",
-          version: "2023-06-30",
-        },
-      });
-    } catch (networkError) {
-      throw new HttpsError("unavailable", "Exam Cell Payment gateway is unreachable.");
+    let responseData = {};
+    let localStatus = paymentRecord.status || "PENDING";
+    let rawStatus = paymentRecord.hdfcStatus || "";
+
+    const headers = {
+      Authorization: `Basic ${basicAuth}`,
+      "x-merchantid": merchantId,
+      "Content-Type": "application/json",
+      version: "2023-06-30",
+    };
+    if (paymentRecord.uid || paymentRecord.studentId) {
+      headers["x-customerid"] = paymentRecord.uid || paymentRecord.studentId;
     }
 
-    let responseText = await response.text();
-    let responseData = JSON.parse(responseText);
+    try {
+      const response = await fetch(`${baseUrl}/orders/${orderId}`, {
+        method: "GET",
+        headers,
+      });
 
-    const hdfcStatus = responseData.status;
-    let localStatus = "PENDING";
+      if (response.ok) {
+        const responseText = await response.text();
+        try {
+          responseData = JSON.parse(responseText);
+          rawStatus = (responseData.status || responseData.order_status || responseData.txn_status || "").toUpperCase();
+        } catch (_) {}
+      }
+    } catch (networkError) {
+      console.error("Exam Cell Payment status check network error:", networkError);
+    }
 
-    if (hdfcStatus === "CHARGED") {
+    const successStatuses = ["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"];
+    const failedStatuses = ["FAILED", "EXPIRED", "VOID", "DECLINED", "CANCELLED", "AUTHENTICATION_FAILED", "AUTHORIZATION_FAILED", "JUSPAY_DECLINED"];
+
+    if (successStatuses.includes(rawStatus) || paymentRecord.status === "SUCCESS") {
       localStatus = "SUCCESS";
-    } else if (["FAILED", "EXPIRED", "VOID", "DECLINED"].includes(hdfcStatus)) {
+    } else if (failedStatuses.includes(rawStatus)) {
       localStatus = "FAILED";
     }
 
     await paymentRef.update({
-      hdfcStatus,
+      hdfcStatus: rawStatus || paymentRecord.hdfcStatus || "UNKNOWN",
       status: localStatus,
       updatedAt: Timestamp.now(),
       verifiedAt: Timestamp.now(),
     });
 
-    if (localStatus === "SUCCESS" && paymentRecord.appId) {
-      try {
-        const txnId = responseData.payment_gateway_response?.txn_id || responseData.payment_gateway_response?.rrn || orderId;
-        const paidTimestamp = Timestamp.now();
-        const receiptNo = `REC-EXAM-${orderId}`;
-        const electronicBill = {
-          receiptNo,
-          orderId,
-          transactionId: txnId,
-          amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
-          paidAt: new Date().toISOString(),
-          paymentGateway: "HDFC SmartGateway (Exam Cell Account #76983)",
-          paymentStatus: "Paid",
-          billAttached: true,
-        };
+    if (localStatus === "SUCCESS") {
+      let targetAppId = paymentRecord.appId;
+      if (!targetAppId) {
+        try {
+          const appSnap = await db.collection("photocopy_applications").where("orderId", "==", orderId).limit(1).get();
+          if (!appSnap.empty) {
+            targetAppId = appSnap.docs[0].id;
+          }
+        } catch (err) {
+          console.error("Error finding photocopy application by orderId:", err);
+        }
+      }
 
-        await db.collection("photocopy_applications").doc(paymentRecord.appId).update({
-          paymentStatus: "Paid",
-          status: "Payment Confirmed",
-          billAttached: true,
-          transactionId: txnId,
-          receiptNo: receiptNo,
-          paidAt: paidTimestamp,
-          electronicBill: electronicBill,
-          updatedAt: paidTimestamp,
-        });
-      } catch (err) {
-        console.error("Failed to update photocopy application payment status:", err);
+      if (targetAppId) {
+        try {
+          const appRef = db.collection("photocopy_applications").doc(targetAppId);
+          const appSnap = await appRef.get();
+          const currentAppData = appSnap.exists ? appSnap.data() : {};
+
+          const txnId = responseData.payment_gateway_response?.txn_id || responseData.payment_gateway_response?.rrn || responseData.id || orderId;
+          const paidTimestamp = Timestamp.now();
+          const receiptNo = `REC-EXAM-${orderId}`;
+          const electronicBill = {
+            receiptNo,
+            orderId,
+            transactionId: txnId,
+            amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
+            paidAt: new Date().toISOString(),
+            paymentGateway: "HDFC SmartGateway (Exam Cell Account #76983)",
+            paymentStatus: "Paid",
+            billAttached: true,
+          };
+
+          const updateFields = {
+            paymentStatus: "Paid",
+            billAttached: true,
+            transactionId: txnId,
+            receiptNo: receiptNo,
+            paidAt: paidTimestamp,
+            electronicBill: electronicBill,
+            updatedAt: paidTimestamp,
+          };
+
+          if (!currentAppData.status || currentAppData.status === "Payment Pending" || currentAppData.status === "Applied") {
+            updateFields.status = "Payment Confirmed";
+          }
+
+          await appRef.update(updateFields);
+        } catch (err) {
+          console.error("Failed to update photocopy application payment status:", err);
+        }
       }
     }
 
     return {
       success: localStatus === "SUCCESS",
       status: localStatus,
-      hdfcStatus,
+      hdfcStatus: rawStatus,
       amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
       orderId,
     };

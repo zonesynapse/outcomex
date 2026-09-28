@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { 
-  signInWithEmailAndPassword, 
+import {
+  signInWithEmailAndPassword,
   sendPasswordResetEmail,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -65,14 +65,14 @@ export default function Auth() {
   const location = useLocation();
   const navigate = useNavigate();
   const [isActive, setIsActive] = useState(location.pathname === "/signup");
-  
+
   // Form States
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   const [regRole, setRegRole] = useState("faculty"); // "faculty" or "student"
-  
+
   const [regTitle, setRegTitle] = useState("Mr.");
   const [regFacultyName, setRegFacultyName] = useState("");
   const [regFacultyId, setRegFacultyId] = useState("");
@@ -90,7 +90,7 @@ export default function Auth() {
   const [studentBatch, setStudentBatch] = useState("");
   const [studentDepartment, setStudentDepartment] = useState("unknown");
   const [matchingStatus, setMatchingStatus] = useState("");
-  
+
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getActiveBatches, batchStatus } = useBatches(durations);
   const { designations } = useDesignations();
@@ -101,7 +101,7 @@ export default function Auth() {
   }, [studentProgramme, getActiveBatches]);
   const defaultAdminEmail = import.meta.env.VITE_DEFAULT_ADMIN_EMAIL;
   const masterAdminEmail = import.meta.env.VITE_MASTER_ADMIN_EMAIL;
-  
+
   // UI States
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -152,7 +152,7 @@ export default function Auth() {
     e.preventDefault();
     setError("");
     setMessage("");
-    
+
     // Validate email format
     const trimmedEmail = loginEmail.trim();
     if (!isValidEmail(trimmedEmail)) {
@@ -160,14 +160,14 @@ export default function Auth() {
       setLoading(false);
       return;
     }
-    
+
     // Validate password length
     if (!loginPassword || loginPassword.length < 6) { // Firebase minimum password length is 6
       setError("Please enter a valid password.");
       setLoading(false);
       return;
     }
-    
+
     setLoading(true);
     try {
       await setPersistence(auth, browserLocalPersistence);
@@ -183,9 +183,9 @@ export default function Auth() {
       }
       const userProfile = userSnap.data();
       if (userProfile.role !== "Student") {
-        if (!userProfile.isApproved && 
-            user.email?.toLowerCase() !== defaultAdminEmail?.toLowerCase() && 
-            user.email?.toLowerCase() !== masterAdminEmail?.toLowerCase()) {
+        if (!userProfile.isApproved &&
+          user.email?.toLowerCase() !== defaultAdminEmail?.toLowerCase() &&
+          user.email?.toLowerCase() !== masterAdminEmail?.toLowerCase()) {
           await signOut(auth);
           setError("Your account is pending admin approval.");
           setLoading(false);
@@ -373,7 +373,7 @@ export default function Auth() {
         console.error(err);
         // Cleanup auth user if creation succeeded but validation failed
         if (createdUser) {
-          try { await createdUser.delete(); } catch (_) {}
+          try { await createdUser.delete(); } catch (_) { }
         }
         if (err.code === 'auth/email-already-in-use') {
           setError("This Email is already registered. Please login or use a different email.");
@@ -384,7 +384,7 @@ export default function Auth() {
       }
       return;
     }
-    
+
     // Validate all required fields
     if (!regFacultyName.trim()) {
       setError("Faculty name is required.");
@@ -410,14 +410,14 @@ export default function Auth() {
       setError("Designation is required.");
       return;
     }
-    
+
     // Validate email format
     const trimmedEmail = regEmail.trim();
     if (!isValidEmail(trimmedEmail)) {
       setError("Please enter a valid email address.");
       return;
     }
-    
+
     // Validate password
     if (regPassword.length < 6) { // Align with Firebase minimum password length
       setError("Password must be at least 8 characters.");
@@ -427,11 +427,11 @@ export default function Auth() {
       setError("Password is too long.");
       return;
     }
-    
+
     // Sanitize text inputs to prevent injection attacks
     const sanitizedFacultyName = sanitizeText(regFacultyName, 100);
     const sanitizedFacultyId = sanitizeFacultyId(regFacultyId);
-    
+
     if (!sanitizedFacultyName) {
       setError("Faculty name contains invalid characters.");
       return;
@@ -440,14 +440,14 @@ export default function Auth() {
       setError("Faculty ID contains invalid characters.");
       return;
     }
-    
+
     setLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, trimmedEmail, regPassword);
       const user = userCredential.user;
       const fullDisplayName = `${regTitle} ${sanitizedFacultyName}`;
       await updateProfile(user, { displayName: fullDisplayName });
-      
+
       // Save user profile to Firestore (sanitized data)
       const isDefaultAdmin = user.email === defaultAdminEmail || user.email === masterAdminEmail;
       try {
@@ -466,22 +466,22 @@ export default function Auth() {
           isApproved: isDefaultAdmin ? true : false,
           createdAt: new Date().toISOString()
         });
-        
+
         // Firestore-ல் சேமித்தல்
         await setDoc(doc(db, "users", user.uid), userDataToSave, { merge: true });
-        
+
       } catch (fsErr) {
         console.error("Failed to save profile to Firestore:", fsErr);
-        
+
         // Firestore-ல் சேமிக்க முடியவில்லை என்றால் Auth பயனரை நீக்கிவிடுவது நல்லது 
         // அப்போதுதான் அவர்கள் மீண்டும் அதே மின்னஞ்சலில் பதிவு செய்ய முடியும்.
         try { await user.delete(); } catch (delErr) { console.error(delErr); }
-        
+
         setError("Failed to save profile. " + (fsErr.code === 'permission-denied' ? "Permission denied. Check Firestore Rules." : "Please contact admin."));
         setLoading(false);
         return;
       }
-      
+
       if (!isDefaultAdmin) {
         setMessage("Registration successful! Please wait for admin approval to login.");
         setIsActive(false); // Switch to login tab
@@ -511,7 +511,7 @@ export default function Auth() {
       setError("Please enter your email address in the email field first.");
       return;
     }
-    
+
     if (!isValidEmail(trimmedEmail)) {
       setError("Please enter a valid email address.");
       return;
@@ -558,12 +558,12 @@ export default function Auth() {
   return (
     <div className="min-h-screen flex justify-center items-center bg-gradient-to-br from-[#f0f0fa] to-[#BBDEFB] p-5">
       <div className={`relative w-[850px] max-w-[calc(100%-40px)] h-[700px] bg-white rounded-[30px] shadow-[0_0_30px_rgba(0,0,0,0.2)] overflow-hidden ${isActive ? 'active' : ''}`}>
-        
+
         {/* Login Form */}
         <div className="absolute right-0 w-full md:w-1/2 h-full bg-white flex items-center text-center p-10 z-[1] transition-all duration-300 ease-in-out form-box login">
           <form onSubmit={handleLogin} className="w-full">
             <h1 className="text-4xl font-bold -mt-2.5 mb-2 text-zinc-800">Login</h1>
-            
+
             {error && !isActive && (
               <div className="my-3 flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-medium text-red-600 border border-red-100">
                 <AlertCircle size={14} /> {error}
@@ -613,7 +613,7 @@ export default function Auth() {
             <button type="submit" disabled={loading} className="w-full h-12 bg-[#120c7a] rounded-full shadow-[0_0_10px_rgba(0,0,0,0.1)] border-none cursor-pointer text-base text-white font-semibold hover:bg-blue-600 transition-all flex items-center justify-center gap-2">
               {loading ? <Loader2 className="animate-spin" size={20} /> : "Login"}
             </button>
-            <p className="mt-5 text-[10px] text-zinc-400">Students: Use your Reg No. / Admission No. with @student.ckcet.edu (e.g. 420722104001@student.ckcet.edu)</p>
+
           </form>
         </div>
 
@@ -621,7 +621,7 @@ export default function Auth() {
         <div className="absolute left-0 w-full md:w-1/2 h-full bg-white flex items-center text-center px-8 py-6 z-[1] transition-all duration-300 ease-in-out form-box register overflow-y-auto">
           <form onSubmit={handleSignup} className="w-full py-4">
             <h1 className="text-3xl font-bold mb-4 text-zinc-800">Registration</h1>
-            
+
             {error && isActive && (
               <div className="my-3 flex items-center gap-2 rounded-lg bg-red-50 p-2 text-xs font-medium text-red-600 border border-red-100">
                 <AlertCircle size={14} /> {error}
@@ -679,112 +679,112 @@ export default function Auth() {
                 </div>
               </div>
             ) : (
-            <><div className="flex gap-3 mb-4">
-              <div className="relative w-1/3">
-                <select
-                  value={regTitle}
-                  onChange={(e) => setRegTitle(e.target.value)}
-                  className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
-                  required
-                >
-                  <option value="Mr.">Mr.</option>
-                  <option value="Mrs.">Mrs.</option>
-                  <option value="Ms.">Ms.</option>
-                  <option value="Dr.">Dr.</option>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+              <><div className="flex gap-3 mb-4">
+                <div className="relative w-1/3">
+                  <select
+                    value={regTitle}
+                    onChange={(e) => setRegTitle(e.target.value)}
+                    className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
+                    required
+                  >
+                    <option value="Mr.">Mr.</option>
+                    <option value="Mrs.">Mrs.</option>
+                    <option value="Ms.">Ms.</option>
+                    <option value="Dr.">Dr.</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                </div>
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Faculty Name"
+                    maxLength="100"
+                    className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
+                    value={regFacultyName}
+                    onChange={(e) => setRegFacultyName(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  placeholder="Faculty Name"
-                  maxLength="100"
-                  className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
-                  value={regFacultyName}
-                  onChange={(e) => setRegFacultyName(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Faculty ID"
-                  maxLength="50"
-                  className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
-                  value={regFacultyId}
-                  onChange={(e) => setRegFacultyId(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="relative">
-                <input
-                  type="date"
-                  className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 focus:ring-2 focus:ring-[#120c7a]"
-                  value={regDateOfJoining}
-                  onChange={(e) => setRegDateOfJoining(e.target.value)}
-                  required
-                />
-                <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Date of Joining</span>
-              </div>
-            </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Faculty ID"
+                      maxLength="50"
+                      className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]"
+                      value={regFacultyId}
+                      onChange={(e) => setRegFacultyId(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 focus:ring-2 focus:ring-[#120c7a]"
+                      value={regDateOfJoining}
+                      onChange={(e) => setRegDateOfJoining(e.target.value)}
+                      required
+                    />
+                    <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Date of Joining</span>
+                  </div>
+                </div>
 
-            <div className="relative mb-6">
-              <select
-                value={regDesignation}
-                onChange={(e) => setRegDesignation(e.target.value)}
-                className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
-                required
-              >
-                <option value="">Select Designation</option>
-                {designations.map((desig) => (
-                  <option key={desig} value={desig}>
-                    {desig}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-              <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Designation</span>
-            </div>
+                <div className="relative mb-6">
+                  <select
+                    value={regDesignation}
+                    onChange={(e) => setRegDesignation(e.target.value)}
+                    className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
+                    required
+                  >
+                    <option value="">Select Designation</option>
+                    {designations.map((desig) => (
+                      <option key={desig} value={desig}>
+                        {desig}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  <span className="absolute -top-4 left-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Designation</span>
+                </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              <div className="relative">
-                <select
-                  value={regProgramme}
-                  onChange={(e) => {
-                    setRegProgramme(e.target.value);
-                    setRegDepartment("");
-                  }}
-                  className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
-                  required
-                >
-                  <option value="">Programme</option>
-                  {Object.keys(PROGRAMME_DEPARTMENTS).map(prog => (
-                    <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-              </div>
-              <div className="relative">
-                <select
-                  value={regDepartment}
-                  onChange={(e) => setRegDepartment(e.target.value)}
-                  disabled={!regProgramme}
-                  className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
-                  required
-                >
-                  <option value="">Department</option>
-                  {regProgramme && PROGRAMME_DEPARTMENTS[regProgramme]?.map(dept => (
-                    <option key={dept} value={dept}>{dept}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
-              </div>
-            </div>
+                <div className="grid grid-cols-2 gap-3 mb-6">
+                  <div className="relative">
+                    <select
+                      value={regProgramme}
+                      onChange={(e) => {
+                        setRegProgramme(e.target.value);
+                        setRegDepartment("");
+                      }}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a]"
+                      required
+                    >
+                      <option value="">Programme</option>
+                      {Object.keys(PROGRAMME_DEPARTMENTS).map(prog => (
+                        <option key={prog} value={prog}>{formatProgDisplay(prog)}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
+                  <div className="relative">
+                    <select
+                      value={regDepartment}
+                      onChange={(e) => setRegDepartment(e.target.value)}
+                      disabled={!regProgramme}
+                      className="w-full h-[50px] pl-4 pr-8 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 appearance-none focus:ring-2 focus:ring-[#120c7a] disabled:opacity-50"
+                      required
+                    >
+                      <option value="">Department</option>
+                      {regProgramme && PROGRAMME_DEPARTMENTS[regProgramme]?.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={16} />
+                  </div>
+                </div>
 
-            </>)}
+              </>)}
 
             <div className="relative mb-4">
               <input type="email" placeholder="Email" maxLength="254" className="w-full h-[50px] pl-4 pr-4 bg-[#eee] rounded-lg border-none outline-none text-sm font-medium text-zinc-800 placeholder:text-zinc-400 focus:ring-2 focus:ring-[#120c7a]" value={regEmail} onChange={e => setRegEmail(e.target.value)} required />
@@ -806,7 +806,7 @@ export default function Auth() {
         {/* Toggle Box */}
         <div className="absolute w-full h-full toggle-box pointer-events-none">
           <div className={`toggle-bg absolute left-[-250%] w-[300%] h-full bg-[#120c7a] rounded-[150px] z-[2] transition-all duration-1000 ease-in-out ${isActive ? 'left-[50%]' : ''}`}></div>
-          
+
           <div className="relative w-full h-full z-[2] toggle-panels">
             {/* Left Panel - Shown when Login is active */}
             <div className={`absolute w-full md:w-1/2 h-full text-white flex flex-col justify-center items-center toggle-panel toggle-left ${isActive ? 'pointer-events-none' : 'pointer-events-auto'}`}>
@@ -830,14 +830,14 @@ export default function Auth() {
 
         {/* Mobile Toggle Buttons */}
         <div className="md:hidden absolute bottom-0 left-0 w-full flex border-t border-zinc-200 bg-white z-10">
-          <button 
-            onClick={() => handleToggle(false)} 
+          <button
+            onClick={() => handleToggle(false)}
             className={`flex-1 py-3 text-sm font-bold transition-colors ${!isActive ? "text-[#120c7a] border-b-2 border-[#120c7a]" : "text-zinc-500"}`}
           >
             Login
           </button>
-          <button 
-            onClick={() => handleToggle(true)} 
+          <button
+            onClick={() => handleToggle(true)}
             className={`flex-1 py-3 text-sm font-bold transition-colors ${isActive ? "text-[#120c7a] border-b-2 border-[#120c7a]" : "text-zinc-500"}`}
           >
             Register

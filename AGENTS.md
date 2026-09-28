@@ -1,5 +1,39 @@
 ## Summary of Changes
 
+### 484. HDFC Gateway Payment Status Synchronization & Manual Verification (`functions/index.js`, `student/Photocopy.jsx`)
+- **Goal**: Fix issue where payments completed on HDFC SmartGateway showed "SUCCESS" on gateway portal but remained "Pending" in Firestore and UI.
+- **Fix**:
+  - [`functions/index.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/functions/index.js): Updated `verifyExamCellPayment` to accept all HDFC success status codes (`["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"]`), query application by `orderId` if `appId` is missing, and ensure `paymentStatus: "Paid"` and electronic bill are attached while preserving workflow status.
+  - [`src/pages/student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): Added auto-verification effect on page load for applications with `orderId` and a manual **`Verify Status`** button (`RotateCcw` icon) next to `Pay ₹350` button.
+- **Result**: Successful HDFC gateway payments immediately update Firestore document to `paymentStatus: 'Paid'` and sync UI status cleanly. Build passes cleanly in 7.51s with 0 errors.
+
+### 483. Status Selection Modal for Master Excel Export (`ExamFormSettingPage.jsx`)
+- **Goal**: Allow Exam Cell Admin to choose specific status(es) before exporting the Photocopy Master Excel spreadsheet.
+- **Fix**:
+  - [`src/pages/ExamCell/ExamFormSettingPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamFormSettingPage.jsx): Added an **`Export Master Status Filter Modal`** that displays all application statuses (`All Statuses`, `Payment Confirmed`, `Submitted to HOD`, `Recommended by HOD`, `Copy Issued`, `Payment Pending`, `Revoked by HOD`, `Revoked by Exam Cell`, `Closed`) with real-time count badges, multi-select checkboxes, "Select All"/"Clear" buttons, and an explicit `Application Status` column in the exported Excel spreadsheet.
+- **Result**: Exam Cell Admin can filter applications by status before generating the sorted Master Excel report. Build passes cleanly in 7.09s with 0 errors.
+
+### 482. Exam Cell Revoke Photocopy Application Flow (`ExamFormSettingPage.jsx`)
+- **Goal**: Add a "Revoke" button in the Submitted Photocopy Applications table in Exam Cell module allowing admins to return applications with feedback instructions to department HOD & student.
+- **Fix**:
+  - [`src/pages/ExamCell/ExamFormSettingPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamFormSettingPage.jsx): Added a **`Revoke`** action button next to **`View Form`** in the ACTIONS column, implemented `handleRevokePhotocopyByExamCell` to set document status to `'Revoked by Exam Cell'` with `revokeReason` message while preserving `paymentStatus: 'Paid'`.
+- **Result**: Exam Cell Admin can return applications for corrections without requesting duplicate payments from students. Build passes cleanly in 7.05s with 0 errors.
+
+### 481. Photocopy Application HOD Revoke & Student Correction Workflow (`HODDashboard.jsx`, `student/Photocopy.jsx`)
+- **Goal**: Add a "Revoke" button next to "View Form" in the HOD Dashboard photocopy table allowing HOD to return applications with feedback for correction, and allow students to edit subject rows and re-submit to HOD without re-paying.
+- **Fix**:
+  - [`src/pages/HODDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/HODDashboard.jsx): Added a **`Revoke`** action button next to **`View Form`** in the Answer Script Photocopy Applications table. Implemented `revokePhotoModal` and `handleRevokePhotocopy` to update document status to `'Revoked by HOD'` with `revokeReason` message while keeping `paymentStatus: 'Paid'` intact.
+  - [`src/pages/student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): Added a banner displaying the HOD's feedback for revoked applications. Added `handleLoadRevokedApp` and `editingAppId` state allowing students to load & edit subject details. Updated form button to **`"Save & Submit to HOD"`** for revoked applications. Added **`"Edit Details"`** and **`"Submit to HOD"`** action buttons in "My Applications" table.
+- **Result**: HOD can revoke applications with correction instructions. Students can correct subject details and re-submit to HOD with zero additional fees. Build passes cleanly in 6.84s with 0 errors.
+
+### 480. Strict Single A4 Page Print Optimization & Blank Page Elimination (`AnnaUniversityPhotocopyModal.jsx`)
+- **Goal**: Resolve issue where printing the official Anna University photocopy application modal generated 7 pages (1 page broken into 2 plus 5 trailing blank pages), fitting the entire form onto **EXACTLY 1 SINGLE A4 PAGE**.
+- **Fix**:
+  - [`src/components/AnnaUniversityPhotocopyModal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/AnnaUniversityPhotocopyModal.jsx):
+    1. Updated `@media print` rules to lock `html, body`, `.printable-modal-overlay`, `.printable-modal-content`, and `.printable-form-area` to `max-height: 100vh !important; overflow: hidden !important;`, preventing background DOM layout from creating extra trailing blank pages.
+    2. Applied compact print utility classes (`print:p-2.5`, `print:py-0.5`, `print:text-[10px]`, `print:h-6`) across header logo banner, candidate instructions, candidate details table, subjects table, and HOD/candidate signature boxes.
+- **Result**: Clicking "Print" in browser preview renders the complete official Anna University application form on **EXACTLY 1 SINGLE A4 PAGE** with zero blank pages. Build passes cleanly in 7.32s with 0 errors.
+
 ### 479. Two-Phase Photocopy Payment & Explicit "Submit to HOD" Flow (`student/Photocopy.jsx`, `functions/index.js`)
 - **Goal**: Replace the "Submit Application" button with a "Pay ₹{amount}" button, set application status to `Payment Confirmed` upon successful payment verification, and display a green "Submit to HOD" button for paid applications to continue the recommendation workflow.
 - **Fix**:

@@ -170,56 +170,68 @@ export default function AnnaUniversityPhotocopyModal({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 4mm 6mm 4mm 6mm;
+            margin: 3mm 5mm 3mm 5mm;
+          }
+          html, body {
+            height: 100vh !important;
+            max-height: 100vh !important;
+            overflow: hidden !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
           }
           body * {
             visibility: hidden !important;
           }
-          .no-print {
+          .no-print, .no-print * {
             display: none !important;
           }
           .printable-form-area, .printable-form-area * {
             visibility: visible !important;
           }
           .printable-modal-overlay {
-            position: absolute !important;
+            position: fixed !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
-            height: auto !important;
-            min-height: 0 !important;
+            height: 100vh !important;
+            max-height: 100vh !important;
             background: white !important;
             padding: 0 !important;
             margin: 0 !important;
-            overflow: visible !important;
+            overflow: hidden !important;
             display: block !important;
+            z-index: 999999 !important;
           }
           .printable-modal-content {
-            position: absolute !important;
+            position: relative !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
-            max-width: 100% !important;
+            height: 100vh !important;
+            max-height: 100vh !important;
             box-shadow: none !important;
             border: none !important;
             border-radius: 0 !important;
             margin: 0 !important;
             padding: 0 !important;
-            overflow: visible !important;
-            max-height: none !important;
+            overflow: hidden !important;
             break-inside: avoid !important;
             page-break-inside: avoid !important;
           }
           .printable-form-area {
-            position: absolute !important;
+            position: relative !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
+            height: 100% !important;
+            max-height: 100vh !important;
             padding: 0 !important;
             margin: 0 !important;
-            overflow: visible !important;
+            overflow: hidden !important;
             break-inside: avoid !important;
             page-break-inside: avoid !important;
+            box-sizing: border-box !important;
           }
         }
       `}</style>
@@ -249,37 +261,37 @@ export default function AnnaUniversityPhotocopyModal({
         </div>
 
         {/* Printable Official Form Area */}
-        <div className="p-6 md:p-10 overflow-y-auto space-y-6 text-slate-900 font-sans text-xs md:text-sm bg-white print:p-0 printable-form-area">
+        <div className="p-4 md:p-8 overflow-y-auto space-y-4 text-slate-900 font-sans text-xs md:text-sm bg-white print:p-0 printable-form-area">
           {/* Form Header Box */}
-          <div className="border-2 border-slate-900 p-4 relative">
-            <div className="flex items-center justify-between gap-4 border-b-2 border-slate-900 pb-3">
+          <div className="border-2 border-slate-900 p-3 sm:p-4 print:p-2.5 relative">
+            <div className="flex items-center justify-between gap-3 border-b-2 border-slate-900 pb-2 print:pb-1.5">
               {/* College Logo Banner */}
               <div className="flex-1 flex flex-col items-center justify-center text-center">
                 <img
                   src="/logo.png"
                   alt="CK College of Engineering & Technology"
-                  className="max-h-16 md:max-h-20 w-auto object-contain mx-auto mb-2"
+                  className="max-h-14 md:max-h-16 print:max-h-11 w-auto object-contain mx-auto mb-1"
                 />
-                <p className="text-[14px] sm:text-[16px] font-bold underline tracking-wider uppercase text-slate-900 leading-tight">
+                <p className="text-[13px] sm:text-[15px] print:text-[12px] font-bold underline tracking-wider uppercase text-slate-900 leading-tight">
                   APPLICATION FOR PHOTOCOPY / REVALUATION
                 </p>
-                <p className="text-[12px] sm:text-[14px] font-bold text-slate-700 uppercase mt-1 tracking-wider leading-tight">
+                <p className="text-[11px] sm:text-[13px] print:text-[10px] font-bold text-slate-700 uppercase mt-0.5 tracking-wider leading-tight">
                   END SEMESTER EXAMINATIONS - APRIL / MAY - 2026
                 </p>
               </div>
 
               {/* P Badge */}
-              <div className="w-14 h-14 md:w-16 md:h-16 border-2 border-slate-900 flex items-center justify-center font-serif text-2xl md:text-3xl font-black text-slate-900 shrink-0">
+              <div className="w-12 h-12 md:w-14 md:h-14 print:w-11 print:h-11 border-2 border-slate-900 flex items-center justify-center font-serif text-xl md:text-2xl print:text-xl font-black text-slate-900 shrink-0">
                 P
               </div>
             </div>
 
             {/* Instruction to Candidates */}
-            <div className="mt-4 space-y-2">
-              <h5 className="text-center font-black text-xs md:text-sm underline uppercase tracking-wider text-slate-900">
+            <div className="mt-2.5 print:mt-1.5 space-y-1 print:space-y-0.5">
+              <h5 className="text-center font-black text-xs print:text-[11px] underline uppercase tracking-wider text-slate-900">
                 INSTRUCTION TO CANDIDATES
               </h5>
-              <ol className="list-decimal list-inside text-[11px] md:text-xs font-medium text-slate-800 space-y-1.5 leading-tight px-2">
+              <ol className="list-decimal list-inside text-[10.5px] print:text-[9px] font-medium text-slate-800 space-y-1 print:space-y-0.5 leading-tight px-1">
                 <li>Candidates who wish to apply for revaluation must first apply for the photocopy of the answer script by paying a fee of Rs. {dynamicFee}/- per course. Candidates are eligible to apply irrespective of the grade secured in the End Semester Examination.</li>
                 <li>The application for the photocopy of the answer script shall be submitted to the Controller of Examinations only through the Institute OBE Portal on or before {dynamicDueDate}.</li>
                 <li>Revaluation is not applicable for Practical / Project Courses.</li>
@@ -289,53 +301,53 @@ export default function AnnaUniversityPhotocopyModal({
             </div>
 
             {/* Candidate Details Table */}
-            <div className="mt-4 border-2 border-slate-900 text-xs">
+            <div className="mt-2.5 print:mt-1.5 border-2 border-slate-900 text-xs print:text-[10px]">
               <table className="w-full border-collapse">
                 <tbody>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">1.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">Name</td>
-                    <td className="p-2 font-black text-slate-900 uppercase">{app.studentName || '—'}</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">1.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">Name</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-black text-slate-900 uppercase">{app.studentName || '—'}</td>
                   </tr>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">2.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">Register Number</td>
-                    <td className="p-2 font-black font-mono text-slate-900">{app.regNo || '—'}</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">2.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">Register Number</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-black font-mono text-slate-900">{app.regNo || '—'}</td>
                   </tr>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">3.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">College Code / Name</td>
-                    <td className="p-2 font-bold text-slate-900">4207 - CK COLLEGE OF ENGINEERING AND TECHNOLOGY</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">3.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">College Code / Name</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-bold text-slate-900">4207 - CK COLLEGE OF ENGINEERING AND TECHNOLOGY</td>
                   </tr>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">4.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">Degree & Branch</td>
-                    <td className="p-2 font-bold text-slate-900">{formatDepartment(app.department, app.programme)}</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">4.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">Degree & Branch</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-bold text-slate-900">{formatDepartment(app.department, app.programme)}</td>
                   </tr>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">5.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">Month & Year of Examination</td>
-                    <td className="p-2 font-bold text-slate-900">APR/MAY 2026</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">5.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">Month & Year of Examination</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-bold text-slate-900">APR/MAY 2026</td>
                   </tr>
                   <tr className="border-b-2 border-slate-900">
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">6.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">No. of Subjects applied for Revaluation/Photocopy</td>
-                    <td className="p-2 font-black text-slate-900">{app.subjectCount || subjects.length}</td>
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">6.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">No. of Subjects applied for Revaluation/Photocopy</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1 font-black text-slate-900">{app.subjectCount || subjects.length}</td>
                   </tr>
                   <tr>
-                    <td className="w-8 border-r-2 border-slate-900 p-2 font-bold text-center">7.</td>
-                    <td className="w-56 border-r-2 border-slate-900 p-2 font-bold text-slate-800">Amount of fee paid to the College</td>
-                    <td className="p-2">
-                      <div className="flex flex-col gap-1.5">
+                    <td className="w-8 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-center">7.</td>
+                    <td className="w-56 border-r-2 border-slate-900 p-1.5 print:py-0.5 print:px-1 font-bold text-slate-800">Amount of fee paid to the College</td>
+                    <td className="p-1.5 print:py-0.5 print:px-1">
+                      <div className="flex flex-col gap-1 print:gap-0.5">
                         <div className="flex items-center gap-2">
-                          <span className="font-black text-sm text-slate-900">
+                          <span className="font-black text-xs print:text-[11px] text-slate-900">
                             Rs. {app.feeAmount || 350}/-
                           </span>
-                          <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-emerald-100 border border-emerald-400 px-2 py-0.5 rounded shadow-sm">
+                          <span className="inline-flex items-center gap-1 text-[10px] print:text-[8.5px] font-black text-emerald-800 bg-emerald-100 border border-emerald-400 px-1.5 py-0.5 rounded shadow-sm">
                             ✓ ELECTRONIC PAYMENT BILL ATTACHED
                           </span>
                         </div>
-                        <div className="bg-emerald-50/70 border border-emerald-300 rounded p-2 text-[10px] text-slate-800 font-mono leading-tight space-y-0.5">
+                        <div className="bg-emerald-50/70 border border-emerald-300 rounded p-1.5 print:p-1 text-[9.5px] print:text-[8.5px] text-slate-800 font-mono leading-tight space-y-0.5">
                           <p><span className="font-bold text-slate-900">Receipt No:</span> {app.receiptNo || app.electronicBill?.receiptNo || `REC-EXAM-${app.orderId || 'ONLINE'}`}</p>
                           <p><span className="font-bold text-slate-900">Txn ID:</span> {app.transactionId || app.electronicBill?.transactionId || 'TXN_ONLINE_PAID'}</p>
                           <p><span className="font-bold text-slate-900">Gateway:</span> HDFC SmartGateway (Exam Cell Account #76983)</p>
@@ -349,32 +361,32 @@ export default function AnnaUniversityPhotocopyModal({
             </div>
 
             {/* Subjects Table */}
-            <div className="mt-4 border-2 border-slate-900 text-xs">
-              <p className="p-2 font-bold border-b-2 border-slate-900 text-slate-900 bg-slate-50">
+            <div className="mt-2.5 print:mt-1.5 border-2 border-slate-900 text-xs print:text-[10px]">
+              <p className="p-1.5 print:p-1 font-bold border-b-2 border-slate-900 text-slate-900 bg-slate-50 print:text-[10px]">
                 8. Subjects for which revaluation of valued answer scripts required:
               </p>
               <table className="w-full border-collapse text-center">
                 <thead>
                   <tr className="border-b-2 border-slate-900 font-bold bg-slate-100 text-slate-900">
-                    <th className="w-24 border-r-2 border-slate-900 p-2.5 text-center">Semester No.</th>
-                    <th className="w-36 border-r-2 border-slate-900 p-2.5 text-center">Subject Code</th>
-                    <th className="border-r-2 border-slate-900 p-2.5 text-left">Subject Title</th>
-                    <th className="w-20 border-r-2 border-slate-900 p-2.5 text-center">Grade</th>
-                    <th className="w-20 p-2.5 text-center">Result</th>
+                    <th className="w-24 border-r-2 border-slate-900 p-2 print:py-1 print:px-1 text-center">Semester No.</th>
+                    <th className="w-36 border-r-2 border-slate-900 p-2 print:py-1 print:px-1 text-center">Subject Code</th>
+                    <th className="border-r-2 border-slate-900 p-2 print:py-1 print:px-1 text-left">Subject Title</th>
+                    <th className="w-20 border-r-2 border-slate-900 p-2 print:py-1 print:px-1 text-center">Grade</th>
+                    <th className="w-20 p-2 print:py-1 print:px-1 text-center">Result</th>
                   </tr>
                 </thead>
                 <tbody className="font-bold text-slate-900">
                   {rowsToRender.map((r, idx) => {
                     const info = getSubjectDetails(r, idx);
                     return (
-                      <tr key={idx} className="h-10 border-b-2 border-slate-900 last:border-b-0">
-                        <td className="border-r-2 border-slate-900 p-2 text-center font-bold">
+                      <tr key={idx} className="h-8 print:h-6 border-b-2 border-slate-900 last:border-b-0">
+                        <td className="border-r-2 border-slate-900 p-1 print:py-0.5 print:px-1 text-center font-bold">
                           {info.sem ? `${info.sem}.` : ''}
                         </td>
-                        <td className="border-r-2 border-slate-900 p-2 text-center font-mono font-bold uppercase">{info.code}</td>
-                        <td className="border-r-2 border-slate-900 p-2 text-left font-bold uppercase">{info.title}</td>
-                        <td className="border-r-2 border-slate-900 p-2 text-center font-black text-indigo-900">{info.grade}</td>
-                        <td className="p-2 text-center font-black">{info.result}</td>
+                        <td className="border-r-2 border-slate-900 p-1 print:py-0.5 print:px-1 text-center font-mono font-bold uppercase">{info.code}</td>
+                        <td className="border-r-2 border-slate-900 p-1 print:py-0.5 print:px-1 text-left font-bold uppercase">{info.title}</td>
+                        <td className="border-r-2 border-slate-900 p-1 print:py-0.5 print:px-1 text-center font-black text-indigo-900">{info.grade}</td>
+                        <td className="p-1 print:py-0.5 print:px-1 text-center font-black">{info.result}</td>
                       </tr>
                     );
                   })}
@@ -383,10 +395,10 @@ export default function AnnaUniversityPhotocopyModal({
             </div>
 
             {/* Section 9: HOD Recommendation & Signatures */}
-            <div className="mt-4 border-2 border-slate-900 p-3 space-y-4 text-xs">
+            <div className="mt-2.5 print:mt-1.5 border-2 border-slate-900 p-2.5 print:p-1.5 space-y-2.5 print:space-y-1 text-xs print:text-[10px]">
               <p className="font-bold text-slate-900">9. Recommendations of the HOD:</p>
 
-              <div className="bg-slate-50 border border-slate-300 p-3 rounded text-[11px] font-semibold text-slate-700">
+              <div className="bg-slate-50 border border-slate-300 p-2 print:p-1 rounded text-[10.5px] print:text-[9px] font-semibold text-slate-700">
                 {app.status === 'Recommended by HOD' || app.hodSignature ? (
                   <p className="text-emerald-800 font-bold">
                     ✓ Verified subject codes, titles, grades, and fee receipt. Recommended for Photocopy / Revaluation issuance.
@@ -398,41 +410,41 @@ export default function AnnaUniversityPhotocopyModal({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-8 pt-4">
+              <div className="grid grid-cols-2 gap-4 print:gap-3 pt-2 print:pt-1">
                 {/* HOD Signature Box */}
-                <div className="border border-slate-300 p-3 rounded relative text-center space-y-2">
+                <div className="border border-slate-300 p-2 print:p-1 rounded relative text-center space-y-1 print:space-y-0.5">
                   <span className="font-bold block text-slate-800">Signature of the HOD</span>
                   {app.status === 'Recommended by HOD' || app.hodSignature || finalHodSigUrl || (isHod && hodSignatureUrl) ? (
-                    <div className="py-2 px-3 bg-blue-50/80 border border-blue-200 rounded text-center flex flex-col items-center justify-center space-y-1">
+                    <div className="py-1.5 print:py-0.5 px-2 bg-blue-50/80 border border-blue-200 rounded text-center flex flex-col items-center justify-center space-y-0.5">
                       {finalHodSigUrl && (
                         <img
                           src={finalHodSigUrl}
                           alt="HOD Digital Signature"
-                          className="h-10 md:h-12 max-w-[160px] object-contain mx-auto border-b border-blue-200/80 pb-1 mb-1"
+                          className="h-8 md:h-10 print:h-7 max-w-[140px] object-contain mx-auto border-b border-blue-200/80 pb-0.5 mb-0.5"
                         />
                       )}
-                      <span className="font-serif font-black text-blue-900 text-sm block italic">
+                      <span className="font-serif font-black text-blue-900 text-xs print:text-[11px] block italic">
                         {app.hodSignature || 'HOD Signature'}
                       </span>
-                      <span className="text-[10px] font-bold text-blue-700 block">
+                      <span className="text-[9.5px] print:text-[8.5px] font-bold text-blue-700 block">
                         Digitally Recommended • {formatDisplayDate(app.hodRecommendedAt)}
                       </span>
                     </div>
                   ) : (
-                    <div className="py-4 border-2 border-dashed border-slate-300 rounded text-slate-400 font-bold italic">
+                    <div className="py-3 print:py-2 border-2 border-dashed border-slate-300 rounded text-slate-400 font-bold italic text-[11px] print:text-[9px]">
                       [ Signature Pending ]
                     </div>
                   )}
                 </div>
 
                 {/* Candidate Signature Box */}
-                <div className="border border-slate-300 p-3 rounded relative text-center space-y-2">
+                <div className="border border-slate-300 p-2 print:p-1 rounded relative text-center space-y-1 print:space-y-0.5">
                   <span className="font-bold block text-slate-800">Signature of the Candidate</span>
-                  <div className="py-2 bg-emerald-50/80 border border-emerald-200 rounded text-center">
-                    <span className="font-serif font-black text-emerald-900 text-sm block italic">
+                  <div className="py-1.5 print:py-0.5 bg-emerald-50/80 border border-emerald-200 rounded text-center">
+                    <span className="font-serif font-black text-emerald-900 text-xs print:text-[11px] block italic">
                       {app.studentName}
                     </span>
-                    <span className="text-[10px] font-bold text-emerald-700 block">
+                    <span className="text-[9.5px] print:text-[8.5px] font-bold text-emerald-700 block">
                       Digitally Verified • {formatDisplayDate(app.appliedAt)}
                     </span>
                   </div>
@@ -440,12 +452,12 @@ export default function AnnaUniversityPhotocopyModal({
               </div>
 
               {/* Station, Date, Principal, Seal */}
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-300 text-[11px] font-bold">
+              <div className="grid grid-cols-2 gap-4 pt-2 print:pt-1 border-t border-slate-300 text-[10px] print:text-[9px] font-bold">
                 <div>
                   <p>Station : <span className="font-black text-slate-900">CUDDALORE</span></p>
-                  <p className="mt-2">Date : <span className="font-black text-slate-900">{formatDisplayDate(app.appliedAt)}</span></p>
+                  <p className="mt-1">Date : <span className="font-black text-slate-900">{formatDisplayDate(app.appliedAt)}</span></p>
                 </div>
-                <div className="text-right space-y-1">
+                <div className="text-right space-y-0.5">
                   {/* <p>Signature of the Principal : <span className="font-black text-[#120c7a]">APPROVED</span></p> */}
                   <p>College Seal : <span className="font-black text-slate-700">[ CKCET OFFICIAL SEAL ]</span></p>
                 </div>

@@ -30,6 +30,8 @@ import {
   CreditCard,
   ShieldCheck,
   Check,
+  Edit2,
+  RotateCcw,
 } from "lucide-react";
 
 const sanitizeKey = (key) => {
@@ -123,6 +125,7 @@ const STATUS_STYLES = {
   'Recommended by HOD': 'bg-indigo-100 text-indigo-800 border-indigo-200',
   Verified: 'bg-blue-100 text-blue-800 border-blue-200',
   'Payment Confirmed': 'bg-indigo-100 text-indigo-800 border-indigo-200',
+  'Revoked by HOD': 'bg-amber-100 text-amber-800 border-amber-300',
   'Copy Issued': 'bg-emerald-100 text-emerald-800 border-emerald-200',
   Closed: 'bg-slate-100 text-slate-600 border-slate-200',
   Rejected: 'bg-rose-100 text-rose-700 border-rose-200',
@@ -151,6 +154,7 @@ export default function Photocopy() {
   const [subjectRows, setSubjectRows] = useState([
     { id: 1, semesterNo: '', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: 400 }
   ]);
+  const [editingAppId, setEditingAppId] = useState(null);
 
   const [payModal, setPayModal] = useState({ open: false, appDocId: null, subjects: [], amount: 0 });
   const [initiatingPay, setInitiatingPay] = useState(false);
@@ -199,6 +203,15 @@ export default function Photocopy() {
       verifyPaymentOnReturn(orderId);
     }
   }, [verifyPaymentOnReturn]);
+
+  // Auto-verify pending applications that have orderId on load
+  useEffect(() => {
+    if (!applications || applications.length === 0) return;
+    const pendingWithOrder = applications.filter(a => a.orderId && a.paymentStatus !== 'Paid');
+    pendingWithOrder.forEach(app => {
+      verifyPaymentOnReturn(app.orderId);
+    });
+  }, [applications, verifyPaymentOnReturn]);
 
   const handleStartPayment = async (appDocId, feeAmt) => {
     setInitiatingPay(true);
@@ -522,6 +535,30 @@ export default function Photocopy() {
       const regNoVal = studentData.regNo || studentData.reg || studentData.admNo || studentData.admissionNo || '';
       const pricePerRow = Number(config.feePerSubject) || 350;
 
+      if (editingAppId) {
+        await updateDoc(doc(db, 'photocopy_applications', editingAppId), {
+          subjects: subjectRows.map(r => ({
+            semesterNo: r.semesterNo || '',
+            subjectCode: r.subjectCode || '',
+            subjectTitle: r.subjectTitle || '',
+            grade: r.grade || 'U',
+            result: r.result || 'Fail',
+            fee: pricePerRow,
+          })),
+          subjectCount: subjectRows.length,
+          feeAmount: totalApplicationFee,
+          status: 'Submitted to HOD',
+          updatedAt: serverTimestamp(),
+        });
+        showToast('Application details updated & re-submitted to HOD!', 'success');
+        setEditingAppId(null);
+        setSubjectRows([
+          { id: Date.now(), semesterNo: '', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: pricePerRow }
+        ]);
+        setSubmitting(false);
+        return;
+      }
+
       const docRef = await addDoc(collection(db, 'photocopy_applications'), {
         studentUid: currentUser.uid,
         studentName: studentData.name || studentData.studentName || currentUser.email,
@@ -575,11 +612,30 @@ export default function Photocopy() {
         updatedAt: serverTimestamp(),
       });
       showToast('Application successfully submitted to HOD!', 'success');
+      if (editingAppId === app.id) setEditingAppId(null);
     } catch (err) {
       console.error('Submit to HOD error:', err);
       showToast('Failed to submit to HOD: ' + err.message, 'error');
     }
     setActioningId(null);
+  };
+
+  const handleLoadRevokedApp = (app) => {
+    if (!app) return;
+    setEditingAppId(app.id);
+    if (Array.isArray(app.subjects) && app.subjects.length > 0) {
+      setSubjectRows(app.subjects.map((s, idx) => ({
+        id: Date.now() + idx,
+        semesterNo: s.semesterNo || '',
+        subjectCode: s.subjectCode || '',
+        subjectTitle: s.subjectTitle || '',
+        grade: s.grade || 'U',
+        result: s.result || 'Fail',
+        fee: s.fee || Number(config.feePerSubject) || 350,
+      })));
+    }
+    showToast(`Application loaded. Update subject details below and click "Save & Submit to HOD".`, 'success');
+    window.scrollTo({ top: 600, behavior: 'smooth' });
   };
 
   const handleCancel = async (app) => {
@@ -662,6 +718,32 @@ export default function Photocopy() {
           <span className="text-xs font-black text-indigo-700 bg-white px-3.5 py-1.5 rounded-full border border-indigo-200 shadow-sm">
             Please wait...
           </span>
+        </div>
+      )}
+
+      {applications.some(a => a.status === 'Revoked by HOD') && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-3xl p-5 flex flex-wrap items-center justify-between gap-3 shadow-lg animate-in fade-in duration-300">
+          <div className="flex items-start gap-3.5">
+            <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-extrabold text-sm text-amber-950">Application Returned by HOD for Correction</p>
+              <p className="text-xs text-amber-900 font-bold mt-1">
+                HOD Feedback: <span className="underline italic">"{applications.find(a => a.status === 'Revoked by HOD')?.revokeReason || 'Correction requested'}"</span>
+              </p>
+              <p className="text-[11px] text-amber-700 mt-1 font-medium">
+                Fee Status: <span className="font-bold text-emerald-700">✓ PAID & VERIFIED</span> (No extra payment needed). Update your subjects below and click "Save & Submit to HOD".
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const revApp = applications.find(a => a.status === 'Revoked by HOD');
+              if (revApp) handleLoadRevokedApp(revApp);
+            }}
+            className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <Edit2 size={14} /> Correct Application
+          </button>
         </div>
       )}
 
@@ -933,8 +1015,8 @@ export default function Photocopy() {
                 disabled={submitting || !windowStatus.open}
                 className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer disabled:cursor-not-allowed"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
-                Pay ₹{totalApplicationFee}
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : editingAppId ? <Send size={16} /> : <CreditCard size={16} />}
+                {editingAppId ? "Save & Submit to HOD" : `Pay ₹${totalApplicationFee}`}
               </button>
             </div>
           </div>
@@ -1001,13 +1083,25 @@ export default function Photocopy() {
                     <td className="px-4 md:px-6 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
                         {a.paymentStatus !== 'Paid' && (
-                          <button
-                            onClick={() => handleStartPayment(a.id, a.feeAmount || config.feePerSubject)}
-                            disabled={initiatingPay}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-black shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                          >
-                            {initiatingPay ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />} Pay ₹{a.feeAmount || config.feePerSubject}
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => handleStartPayment(a.id, a.feeAmount || config.feePerSubject)}
+                              disabled={initiatingPay}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-black shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              {initiatingPay ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />} Pay ₹{a.feeAmount || config.feePerSubject}
+                            </button>
+                            {a.orderId && (
+                              <button
+                                onClick={() => verifyPaymentOnReturn(a.orderId)}
+                                disabled={verifyingPay}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-[11px] font-black border border-indigo-200 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                                title="Check payment status with HDFC Gateway"
+                              >
+                                {verifyingPay && verifyingOrderId === a.orderId ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Verify Status
+                              </button>
+                            )}
+                          </div>
                         )}
 
                         {a.paymentStatus === 'Paid' && (a.status === 'Payment Confirmed' || a.status === 'Paid' || a.status === 'Payment Pending') && (
@@ -1020,7 +1114,25 @@ export default function Photocopy() {
                           </button>
                         )}
 
-                        {a.paymentStatus === 'Paid' && a.status !== 'Payment Confirmed' && a.status !== 'Paid' && a.status !== 'Payment Pending' && (
+                        {a.status === 'Revoked by HOD' && (
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleLoadRevokedApp(a)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[11px] font-black shadow-sm transition-all cursor-pointer"
+                            >
+                              <Edit2 size={13} /> Edit Details
+                            </button>
+                            <button
+                              onClick={() => handleSubmitToHod(a)}
+                              disabled={actioningId === a.id}
+                              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+                            >
+                              {actioningId === a.id ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Submit to HOD
+                            </button>
+                          </div>
+                        )}
+
+                        {a.paymentStatus === 'Paid' && a.status !== 'Payment Confirmed' && a.status !== 'Paid' && a.status !== 'Payment Pending' && a.status !== 'Revoked by HOD' && (
                           <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 inline-flex items-center gap-1">
                             <CheckCircle2 size={12} /> Submitted
                           </span>
