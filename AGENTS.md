@@ -1,5 +1,11 @@
 ## Summary of Changes
 
+### 476. Mandatory Numeric-Only Semester No Field (`student/Photocopy.jsx`)
+- **Goal**: Make `SEMESTER NO.` in the photocopy application table start empty (no auto-incrementing numbers), enforce mandatory entry upon submission, and restrict input strictly to numbers (digits 0-9).
+- **Fix**:
+  - [`src/pages/student/Photocopy.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/student/Photocopy.jsx): Updated `subjectRows` state initialization and `handleAddSubjectRow` to set `semesterNo: ''` by default. Updated `handleSubjectRowChange` to strip non-digit characters (`replace(/\D/g, '')`). Added `hasEmptySem` validation check in `handleSubmitApplication` to throw toast error if any row's semester number is empty. Updated input field JSX with `inputMode="numeric"`, `pattern="[0-9]*"`, `placeholder="Sem *"`, `maxLength={2}`, and `required`.
+- **Result**: Students must manually type numeric semester numbers (0-9 only), with strict form submission validation. Build passes cleanly in 7.25s with 0 errors.
+
 ### 475. Export Master Excel for Photocopy Applications (`ExamFormSettingPage.jsx`)
 - **Goal**: Add an "Export Master" button in the Exam Cell Submitted Photocopy Applications section to generate and download an Excel spreadsheet matching the exact specified column layout.
 - **Fix**:

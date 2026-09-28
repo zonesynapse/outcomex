@@ -147,9 +147,9 @@ export default function Photocopy() {
   const [regulationName, setRegulationName] = useState('');
   const [regulationGrades, setRegulationGrades] = useState(DEFAULT_ANNA_GRADES);
 
-  // Subject Table Rows State (Starts with 1 row, max 5)
+  // Subject Table Rows State (Starts with 1 row with empty Semester No)
   const [subjectRows, setSubjectRows] = useState([
-    { id: 1, semesterNo: '1', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: 400 }
+    { id: 1, semesterNo: '', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: 400 }
   ]);
 
   const [payModal, setPayModal] = useState({ open: false, appDocId: null, subjects: [], amount: 0 });
@@ -442,13 +442,12 @@ export default function Photocopy() {
       showToast('Maximum 5 subjects allowed per application.', 'error');
       return;
     }
-    const nextSem = String(subjectRows.length + 1);
     const pricePerRow = Number(config.feePerSubject) || 400;
     setSubjectRows(prev => [
       ...prev,
       {
         id: Date.now(),
-        semesterNo: nextSem,
+        semesterNo: '',
         subjectCode: '',
         subjectTitle: '',
         grade: 'U',
@@ -467,7 +466,10 @@ export default function Photocopy() {
     setSubjectRows(prev => {
       const updated = [...prev];
       let val = value;
-      if (field === 'subjectCode' || field === 'subjectTitle') {
+      if (field === 'semesterNo') {
+        // Enforce numeric digits only (0-9) and max 2 digits
+        val = String(value || '').replace(/\D/g, '').slice(0, 2);
+      } else if (field === 'subjectCode' || field === 'subjectTitle') {
         val = String(value || '').toUpperCase();
       }
       const currentRow = { ...updated[index], [field]: val };
@@ -475,7 +477,7 @@ export default function Photocopy() {
       if (field === 'selectedScriptId') {
         const script = eligibleScripts.find(s => s.docId === value || s.subject === value);
         if (script) {
-          currentRow.semesterNo = script.semester || String(index + 1);
+          currentRow.semesterNo = script.semester ? String(script.semester) : (currentRow.semesterNo || '');
           currentRow.subjectCode = String(script.subjectCode || '').toUpperCase();
           currentRow.subjectTitle = String(script.subject || '').toUpperCase();
           if (script.isAbsent) {
@@ -503,9 +505,15 @@ export default function Photocopy() {
       return;
     }
 
-    const hasEmpty = subjectRows.some(r => !r.subjectTitle.trim() && !r.subjectCode.trim());
-    if (hasEmpty) {
+    const hasEmptyCodeOrTitle = subjectRows.some(r => !r.subjectTitle.trim() && !r.subjectCode.trim());
+    if (hasEmptyCodeOrTitle) {
       showToast('Please fill in or select the subject code & title for all rows.', 'error');
+      return;
+    }
+
+    const hasEmptySem = subjectRows.some(r => !r.semesterNo || !String(r.semesterNo).trim());
+    if (hasEmptySem) {
+      showToast('Semester number is mandatory for all subjects. Please enter semester number (digits only).', 'error');
       return;
     }
 
@@ -542,9 +550,9 @@ export default function Photocopy() {
 
       showToast(`Application created! Connecting to Exam Cell HDFC Payment Gateway...`, 'success');
 
-      // Reset back to 1 row
+      // Reset form
       setSubjectRows([
-        { id: Date.now(), semesterNo: '1', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: pricePerRow }
+        { id: Date.now(), semesterNo: '', subjectCode: '', subjectTitle: '', grade: 'U', result: 'Fail', fee: pricePerRow }
       ]);
       setSubmitting(false);
 
@@ -747,10 +755,14 @@ export default function Photocopy() {
                         <span className="font-bold text-slate-500">{idx + 1}.</span>
                         <input
                           type="text"
-                          value={row.semesterNo}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          maxLength={2}
+                          value={row.semesterNo || ''}
                           onChange={(e) => handleSubjectRowChange(idx, 'semesterNo', e.target.value)}
-                          placeholder="Sem"
-                          className="w-12 text-center bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                          placeholder="Sem *"
+                          required
+                          className="w-12 text-center bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-black text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-400 placeholder:font-normal"
                         />
                       </div>
                     </td>
