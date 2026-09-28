@@ -161,8 +161,12 @@ export default function ExamFormSettingPage() {
     }
 
     try {
-      const rows = [];
-      let slNo = 1;
+      const cleanCourseCode = (rawCode) => {
+        if (!rawCode) return "";
+        return String(rawCode).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      };
+
+      const rawRows = [];
 
       photocopyApps.forEach((app) => {
         const studentReg = app.regNo || app.registerNo || "—";
@@ -189,17 +193,36 @@ export default function ExamFormSettingPage() {
             }
           }
 
-          rows.push({
-            "SL.No.": slNo++,
-            "Reg. No of the Student": studentReg,
-            "Name of the Student": studentName,
-            "Department": deptName,
-            "Year / Sem": sem ? (String(sem).toLowerCase().startsWith("sem") ? sem : `Sem ${sem}`) : "—",
-            "Course Code": code || "—",
-            "Course Name": title || "—",
+          const cleanedCode = cleanCourseCode(code);
+
+          rawRows.push({
+            studentReg,
+            studentName,
+            deptName,
+            sem: sem ? (String(sem).toLowerCase().startsWith("sem") ? sem : `Sem ${sem}`) : "—",
+            courseCode: cleanedCode || code || "—",
+            courseTitle: title || "—",
           });
         });
       });
+
+      // Sort rows by Course Code (alphanumeric sort)
+      rawRows.sort((a, b) => {
+        const codeA = a.courseCode || "";
+        const codeB = b.courseCode || "";
+        return codeA.localeCompare(codeB, undefined, { numeric: true, sensitivity: "base" });
+      });
+
+      // Map sorted entries to final spreadsheet columns with sequential SL.No.
+      const rows = rawRows.map((item, index) => ({
+        "SL.No.": index + 1,
+        "Reg. No of the Student": item.studentReg,
+        "Name of the Student": item.studentName,
+        "Department": item.deptName,
+        "Year / Sem": item.sem,
+        "Course Code": item.courseCode,
+        "Course Name": item.courseTitle,
+      }));
 
       const ws = XLSX.utils.json_to_sheet(rows);
 
@@ -219,7 +242,7 @@ export default function ExamFormSettingPage() {
       const dateStamp = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `Photocopy_Master_Applications_${dateStamp}.xlsx`);
 
-      showToast(`Master Excel exported successfully (${rows.length} rows)!`, "success");
+      showToast(`Master Excel exported & sorted by Course Code (${rows.length} rows)!`, "success");
     } catch (err) {
       console.error("Export Master Error:", err);
       showToast("Failed to export Master Excel: " + err.message, "error");
