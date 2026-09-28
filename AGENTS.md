@@ -1,5 +1,11 @@
 ## Summary of Changes
 
+### 478. Enforce Exact 1 Single A4 Page Print Output (`AnnaUniversityPhotocopyModal.jsx`)
+- **Goal**: Fix print issue where clicking "Print" in the browser generated 7 pages instead of 1 single page.
+- **Fix**:
+  - [`src/components/AnnaUniversityPhotocopyModal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/AnnaUniversityPhotocopyModal.jsx): Added an embedded `@media print` style block and printable CSS class scopes (`printable-modal-overlay`, `printable-modal-content`, `printable-form-area`). Configured `@page { size: A4 portrait; margin: 4mm 6mm; }`, set `body * { visibility: hidden !important; }` while setting `.printable-form-area` to `visibility: visible !important` and `page-break-inside: avoid !important`.
+- **Result**: Clicking "Print" now outputs the entire official Anna University application form cleanly on **EXACTLY 1 SINGLE A4 PAGE**. Build passes cleanly in 7.78s with 0 errors.
+
 ### 477. Remove Continuous Fallback Numbers for Empty Rows in Printable Form (`AnnaUniversityPhotocopyModal.jsx`)
 - **Goal**: Remove fallback `idx + 1` continuous numbers (`2.`, `3.`, `4.`, `5.`) in the `Semester No.` column for empty placeholder rows in Section 8 of the printable Anna University photocopy application form modal.
 - **Fix**:

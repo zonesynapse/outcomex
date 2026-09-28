@@ -165,8 +165,65 @@ export default function AnnaUniversityPhotocopyModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full my-auto overflow-hidden border border-slate-300 flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200 printable-modal-overlay">
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 4mm 6mm 4mm 6mm;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .printable-form-area, .printable-form-area * {
+            visibility: visible !important;
+          }
+          .printable-modal-overlay {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            background: white !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            display: block !important;
+          }
+          .printable-modal-content {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-shadow: none !important;
+            border: none !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+            max-height: none !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          .printable-form-area {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+        }
+      `}</style>
+      <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full my-auto overflow-hidden border border-slate-300 flex flex-col max-h-[92vh] printable-modal-content">
         {/* Top Control Bar */}
         <div className="bg-[#120c7a] px-6 py-3 text-white flex items-center justify-between shrink-0 no-print">
           <div className="flex items-center gap-2">
@@ -192,7 +249,7 @@ export default function AnnaUniversityPhotocopyModal({
         </div>
 
         {/* Printable Official Form Area */}
-        <div className="p-6 md:p-10 overflow-y-auto space-y-6 text-slate-900 font-sans text-xs md:text-sm bg-white print:p-0">
+        <div className="p-6 md:p-10 overflow-y-auto space-y-6 text-slate-900 font-sans text-xs md:text-sm bg-white print:p-0 printable-form-area">
           {/* Form Header Box */}
           <div className="border-2 border-slate-900 p-4 relative">
             <div className="flex items-center justify-between gap-4 border-b-2 border-slate-900 pb-3">
