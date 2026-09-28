@@ -1,5 +1,11 @@
 ## Summary of Changes
 
+### 477. Remove Continuous Fallback Numbers for Empty Rows in Printable Form (`AnnaUniversityPhotocopyModal.jsx`)
+- **Goal**: Remove fallback `idx + 1` continuous numbers (`2.`, `3.`, `4.`, `5.`) in the `Semester No.` column for empty placeholder rows in Section 8 of the printable Anna University photocopy application form modal.
+- **Fix**:
+  - [`src/components/AnnaUniversityPhotocopyModal.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/components/AnnaUniversityPhotocopyModal.jsx): Updated `getSubjectDetails` to return `sem: ''` for null/empty rows instead of `idx + 1`. Updated Table 8 JSX to render `{info.sem ? `${info.sem}.` : ''}`, ensuring empty placeholder rows have completely blank semester number cells without stray numbers or dots.
+- **Result**: Printable form modal displays semester numbers strictly for subjects actually applied for, leaving unused placeholder rows blank. Build passes cleanly in 8.27s with 0 errors.
+
 ### 476. Mandatory Numeric-Only Semester No Field (`student/Photocopy.jsx`)
 - **Goal**: Make `SEMESTER NO.` in the photocopy application table start empty (no auto-incrementing numbers), enforce mandatory entry upon submission, and restrict input strictly to numbers (digits 0-9).
 - **Fix**:

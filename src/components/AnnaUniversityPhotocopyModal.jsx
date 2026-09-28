@@ -45,11 +45,11 @@ const formatDueDate = (dateVal) => {
   return formatDisplayDate(dateVal);
 };
 
-const getSubjectDetails = (r, idx) => {
+const getSubjectDetails = (r) => {
   if (!r) {
-    return { sem: idx + 1, code: '', title: '', grade: '', result: '' };
+    return { sem: '', code: '', title: '', grade: '', result: '' };
   }
-  let sem = r.semesterNo || r.sem || (idx + 1);
+  let sem = r.semesterNo || r.sem || '';
   let code = (r.subjectCode || r.code || '').trim();
   let title = (r.subjectTitle || r.title || r.name || '').trim();
   let grade = r.grade || '';
@@ -311,7 +311,9 @@ export default function AnnaUniversityPhotocopyModal({
                     const info = getSubjectDetails(r, idx);
                     return (
                       <tr key={idx} className="h-10 border-b-2 border-slate-900 last:border-b-0">
-                        <td className="border-r-2 border-slate-900 p-2 text-center font-bold">{info.sem}.</td>
+                        <td className="border-r-2 border-slate-900 p-2 text-center font-bold">
+                          {info.sem ? `${info.sem}.` : ''}
+                        </td>
                         <td className="border-r-2 border-slate-900 p-2 text-center font-mono font-bold uppercase">{info.code}</td>
                         <td className="border-r-2 border-slate-900 p-2 text-left font-bold uppercase">{info.title}</td>
                         <td className="border-r-2 border-slate-900 p-2 text-center font-black text-indigo-900">{info.grade}</td>
