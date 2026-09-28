@@ -3,11 +3,13 @@ import { onSnapshot, doc, setDoc, updateDoc, collection, query, orderBy, serverT
 import { db, auth } from "../../firebase";
 import Layout from "../../components/Layout";
 import AnnaUniversityPhotocopyModal from "../../components/AnnaUniversityPhotocopyModal";
+import * as XLSX from "xlsx";
+import { formatDepartmentDisplay } from "../../lib/utils";
 import {
   Copy, RefreshCw, FileSearch, GraduationCap,
   Save, Loader2, CheckCircle2, AlertCircle,
   CalendarDays, IndianRupee, Power, FileText,
-  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck
+  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet
 } from "lucide-react";
 
 const FORM_TABS = [
@@ -150,6 +152,78 @@ export default function ExamFormSettingPage() {
       showToast("Failed to update status: " + err.message, "error");
     }
     setUpdatingStatusId(null);
+  };
+
+  const handleExportMaster = () => {
+    if (!photocopyApps || photocopyApps.length === 0) {
+      showToast("No submitted applications available to export.", "error");
+      return;
+    }
+
+    try {
+      const rows = [];
+      let slNo = 1;
+
+      photocopyApps.forEach((app) => {
+        const studentReg = app.regNo || app.registerNo || "—";
+        const studentName = app.studentName || app.name || "—";
+        const rawDept = app.department || app.dept || "";
+        const deptName = formatDepartmentDisplay(rawDept, app.programme) || rawDept || "—";
+
+        const subjects = Array.isArray(app.subjects) && app.subjects.length > 0 ? app.subjects : [null];
+
+        subjects.forEach((s, idx) => {
+          let code = "";
+          let title = "";
+          let sem = s?.semesterNo || s?.sem || app.semester || app.year || `${idx + 1}`;
+
+          if (s) {
+            code = (s.subjectCode || s.code || "").trim();
+            title = (s.subjectTitle || s.title || s.name || "").trim();
+            if (code && !title) {
+              const spaceIdx = code.indexOf(" ");
+              if (spaceIdx > 0) {
+                title = code.slice(spaceIdx + 1).trim();
+                code = code.slice(0, spaceIdx).trim();
+              }
+            }
+          }
+
+          rows.push({
+            "SL.No.": slNo++,
+            "Reg. No of the Student": studentReg,
+            "Name of the Student": studentName,
+            "Department": deptName,
+            "Year / Sem": sem ? (String(sem).toLowerCase().startsWith("sem") ? sem : `Sem ${sem}`) : "—",
+            "Course Code": code || "—",
+            "Course Name": title || "—",
+          });
+        });
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+
+      ws["!cols"] = [
+        { wch: 8 },  // SL.No.
+        { wch: 22 }, // Reg. No of the Student
+        { wch: 28 }, // Name of the Student
+        { wch: 35 }, // Department
+        { wch: 14 }, // Year / Sem
+        { wch: 16 }, // Course Code
+        { wch: 42 }, // Course Name
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Master Photocopy Applications");
+
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `Photocopy_Master_Applications_${dateStamp}.xlsx`);
+
+      showToast(`Master Excel exported successfully (${rows.length} rows)!`, "success");
+    } catch (err) {
+      console.error("Export Master Error:", err);
+      showToast("Failed to export Master Excel: " + err.message, "error");
+    }
   };
 
   const windowStatus = (form) => {
@@ -321,6 +395,14 @@ export default function ExamFormSettingPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportMaster}
+                  disabled={photocopyApps.length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-emerald-500"
+                  title="Export Master Excel with all student register numbers, names, departments, and course details"
+                >
+                  <FileSpreadsheet size={15} /> Export Master
+                </button>
                 <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
                   Total Applications: {photocopyApps.length}
                 </span>

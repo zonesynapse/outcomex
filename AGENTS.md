@@ -1,5 +1,11 @@
 ## Summary of Changes
 
+### 475. Export Master Excel for Photocopy Applications (`ExamFormSettingPage.jsx`)
+- **Goal**: Add an "Export Master" button in the Exam Cell Submitted Photocopy Applications section to generate and download an Excel spreadsheet matching the exact specified column layout.
+- **Fix**:
+  - [`src/pages/ExamCell/ExamFormSettingPage.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamFormSettingPage.jsx): Added an **"Export Master"** button with a `FileSpreadsheet` icon next to the "Total Applications" header badge. Implemented `handleExportMaster` which uses `xlsx` to parse all submitted photocopy applications and their courses into spreadsheet rows with exact columns (`SL.No.`, `Reg. No of the Student`, `Name of the Student`, `Department`, `Year / Sem`, `Course Code`, `Course Name`).
+- **Result**: Exam Cell Admin can download the complete Photocopy Master Excel spreadsheet in one click with formatted column widths. Build passes cleanly in 9.59s with 0 errors.
+
 ### 474. Instant Gateway Callback Landing Redirect & Electronic Bill Attachment (`functions/index.js`, `student/Photocopy.jsx`, `AnnaUniversityPhotocopyModal.jsx`)
 - **Goal**: Resolve Gateway callback 302 form POST browser hangs, prevent 10-minute spinning loading delays, generate and attach official Electronic Payment Bills to photocopy applications, and enforce instant seamless return navigation.
 - **Fix**:
