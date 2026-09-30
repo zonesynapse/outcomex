@@ -1,5 +1,25 @@
 ## Summary of Changes
 
+### 487. Export & Import `getSchoolShortName` Helper Fix (`src/utils/appraisalScore.js`, `src/pages/AppraisalReviews.jsx`)
+- **Goal**: Fix runtime console error `ReferenceError: Can't find variable: getSchoolShortName` when opening or reviewing appraisals on `AppraisalReviews.jsx`.
+- **Fix**:
+  - [`src/utils/appraisalScore.js`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/utils/appraisalScore.js): Exported `getSchoolShortName`, `normalizeInstitution`, `isSameInstitution`, and `getSchoolBannerTitle` helper functions matching `hr-portal/src/utils/appraisalScore.js`.
+  - [`src/pages/AppraisalReviews.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/AppraisalReviews.jsx): Imported `getSchoolShortName`, `isSameInstitution`, and `getSchoolBannerTitle` at the top of the file.
+- **Result**: `getSchoolShortName` is cleanly resolved during runtime on `AppraisalReviews.jsx` without any `ReferenceError` console exceptions. Build passes cleanly in 6.87s with 0 errors.
+
+### 486. Faculty Dashboard Handoff Section Auto-Selection Fix (`FacultyDashboard.jsx`, `MarkEntry.jsx`)
+- **Goal**: When clicking the "Mark Entry" button for a question paper on `FacultyDashboard.jsx`, ensure the **`SECTION`** dropdown on `MarkEntry.jsx` automatically pre-selects the paper's section (e.g., `Sec-A`).
+- **Fix**:
+  - [`src/pages/FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx): Updated `buildMarkEntryPayload` to resolve section from all possible property aliases (`src.section`, `src.sec`, `src.sections[0]`, `src.allocatedTo.section`, `src.meta.section`).
+  - [`src/pages/MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx): Added a dedicated `useEffect` that fuzzy-matches `dashboardQp.section` against `availableSections` (`Sec-A` <-> `A` <-> `SEC_A`) and auto-selects the matching section as soon as section options load.
+- **Result**: Clicking "Mark Entry" on any QP card in Faculty Dashboard automatically populates all dropdowns including Section, loading the enrolled student list seamlessly. Build passes cleanly in 6.84s with 0 errors.
+
+### 485. Course Enrolment Student Filtering & Exact Firestore Key Matching (`src/pages/MarkEntry.jsx`)
+- **Goal**: In Mark Entry, when a subject is selected, display ONLY students who were enrolled in that subject via Course Enrolment (`CourseEnrolment.jsx`). If 0 students were enrolled (no enrolments exist), display all section students by default. Match existing Firestore enrolment documents using exact raw document ID keys (e.g. `PG_Master of Business Administration_2025-2027_2026-2027_3_MB25001`).
+- **Fix**:
+  - [`src/pages/MarkEntry.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/MarkEntry.jsx): Added raw department string (`Master of Business Administration`), raw batch year range (`2025-2027`), raw academic year, and raw section suffixes to `candidateDocIds`. Executed `Promise.allSettled()` across candidate IDs and filtered `studentList` strictly to students with `val === true` in Firestore (removing students marked `false` or un-enrolled).
+- **Result**: Selecting a subject in Mark Entry loads instantly (~100ms) and correctly filters the table to show ONLY enrolled students (e.g., excluding `420725631001` which has `false`), while defaulting to all students if no course enrolment document exists. Build passes cleanly in 10.28s with 0 errors.
+
 ### 484. HDFC Gateway Payment Status Synchronization & Manual Verification (`functions/index.js`, `student/Photocopy.jsx`)
 - **Goal**: Fix issue where payments completed on HDFC SmartGateway showed "SUCCESS" on gateway portal but remained "Pending" in Firestore and UI.
 - **Fix**:

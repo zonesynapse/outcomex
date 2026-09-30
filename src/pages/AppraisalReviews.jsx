@@ -9,6 +9,7 @@ import {
   X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
 } from "lucide-react";
 import Layout from "../components/Layout";
+import { getSchoolShortName, isSameInstitution, getSchoolBannerTitle } from "../utils/appraisalScore";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 

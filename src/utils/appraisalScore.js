@@ -287,5 +287,58 @@ export const checkAppraisalPortalStatus = (sched) => {
   return { isOpen: true, reason: 'open' };
 };
 
+/**
+ * Returns short abbreviation for institution string.
+ * e.g. "CKSPK (Matric)" -> "CKSPK"
+ *      "CKSPE (CBSE)"   -> "CKSPE"
+ *      "CKCOE (B.ed)"   -> "CKCOE"
+ *      "CKCET (Engg)"   -> "CKCET"
+ */
+export const getSchoolShortName = (inst) => {
+  const str = (inst || "").trim();
+  if (str.toUpperCase().includes("CKSPK") || str.toLowerCase().includes("practical")) {
+    return "CKSPK";
+  }
+  if (str.toUpperCase().includes("CKSPE") || str.toLowerCase().includes("progressive")) {
+    return "CKSPE";
+  }
+  if (str.toUpperCase().includes("CKCOE") || str.toLowerCase().includes("b.ed") || str.toLowerCase().includes("bed")) {
+    return "CKCOE";
+  }
+  if (str.toUpperCase().includes("CKCET")) {
+    return "CKCET";
+  }
+  return "this Institution";
+};
+
+/**
+ * Normalizes institution strings to canonical codes (e.g., 'CKSPK', 'CKSPE', 'CKCOE', 'CKCET').
+ */
+export const normalizeInstitution = (inst) => {
+  if (!inst) return "";
+  const s = String(inst).trim().toUpperCase();
+  if (s.includes("CKSPK") || s.includes("PRACTICAL")) return "CKSPK";
+  if (s.includes("CKSPE") || s.includes("PROGRESSIVE")) return "CKSPE";
+  if (s.includes("CKCOE") || s.includes("B.ED") || s.includes("BED")) return "CKCOE";
+  if (s.includes("CKCET")) return "CKCET";
+  return s;
+};
+
+export const isSameInstitution = (instA, instB) => {
+  const normA = normalizeInstitution(instA);
+  const normB = normalizeInstitution(instB);
+  if (!normA || !normB) return false;
+  return normA === normB;
+};
+
+export const getSchoolBannerTitle = (inst) => {
+  const code = normalizeInstitution(inst);
+  if (code === "CKSPK") return "Sri C K Practical Kindergarten School";
+  if (code === "CKSPE") return "Sri C K School of Progressive Education";
+  if (code === "CKCOE") return "C K College of Education";
+  if (code === "CKCET") return "C K College of Engineering & Technology";
+  return inst || "Institution Appraisal System";
+};
+
 export default evaluateAppraisal;
 
