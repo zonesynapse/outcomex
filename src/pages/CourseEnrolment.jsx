@@ -210,10 +210,28 @@ export default function CourseEnrolment() {
 
         setStudents(studentsList.sort((a,b) => a.examNo.localeCompare(b.examNo)));
 
-        // Fetch existing enrolments
-        const enrolmentDocId = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
-        const enrolSnap = await getDoc(doc(db, 'course_enrolments', enrolmentDocId));
-        setEnrolments(enrolSnap.data() || {});
+        // Fetch existing enrolments (checking section suffix & clean code candidate keys)
+        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+        const subCodeClean = (subject?.code || subject?.id || String(subject).split(' - ')[0]).toUpperCase().trim();
+        const candidateEnrolIds = [
+          `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}${sectionSuffix}`,
+          `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${sanitizeKey(subCodeClean)}${sectionSuffix}`,
+          `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`,
+          `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${sanitizeKey(subCodeClean)}`,
+        ];
+
+        let enrolSnap = null;
+        for (const cid of candidateEnrolIds) {
+          if (!cid) continue;
+          try {
+            const snap = await getDoc(doc(db, 'course_enrolments', cid));
+            if (snap.exists()) {
+              enrolSnap = snap;
+              break;
+            }
+          } catch (_) {}
+        }
+        setEnrolments(enrolSnap ? (enrolSnap.data() || {}) : {});
       } catch (error) {
         console.error("Error fetching data:", error);
         setStudents([]);
@@ -255,11 +273,19 @@ export default function CourseEnrolment() {
     const yearKey = sanitizeKey(academicYear);
     const semNum = deriveSemesterNumber(semester);
     const subjectKey = sanitizeKey(subject);
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+    const subCodeClean = (subject?.code || subject?.id || String(subject).split(' - ')[0]).toUpperCase().trim();
 
-    const enrolKey = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
-    
+    const enrolKeyBase = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${subjectKey}`;
+    const enrolKeyClean = `${progKey}_${deptKey}_${batchKey}_${yearKey}_${semNum}_${sanitizeKey(subCodeClean)}`;
+
     try {
-      await setDoc(doc(db, 'course_enrolments', enrolKey), enrolments);
+      await setDoc(doc(db, 'course_enrolments', enrolKeyBase), enrolments);
+      await setDoc(doc(db, 'course_enrolments', enrolKeyClean), enrolments, { merge: true });
+      if (sectionSuffix) {
+        await setDoc(doc(db, 'course_enrolments', `${enrolKeyBase}${sectionSuffix}`), enrolments, { merge: true });
+        await setDoc(doc(db, 'course_enrolments', `${enrolKeyClean}${sectionSuffix}`), enrolments, { merge: true });
+      }
       setSuccessMessage("Enrolments saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

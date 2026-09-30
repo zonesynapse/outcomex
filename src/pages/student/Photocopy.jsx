@@ -449,10 +449,27 @@ export default function Photocopy() {
     return { open: true, label: 'Applications Open' };
   }, [config.isOpen, config.fromDate, config.toDate]);
 
+  // Calculate total subjects already applied for by current student across active applications
+  const totalAppliedSubjects = useMemo(() => {
+    return (applications || []).reduce((sum, app) => {
+      if (app.status === 'Cancelled') return sum;
+      if (editingAppId && app.id === editingAppId) return sum;
+      const count = Array.isArray(app.subjects) && app.subjects.length > 0
+        ? app.subjects.length
+        : (app.subjectCount || 1);
+      return sum + count;
+    }, 0);
+  }, [applications, editingAppId]);
+
+  const remainingSubjectQuota = useMemo(() => {
+    const rem = 5 - totalAppliedSubjects;
+    return rem > 0 ? rem : 0;
+  }, [totalAppliedSubjects]);
+
   // Subject Table Handlers (+ Add Row, Remove Row, Update Field)
   const handleAddSubjectRow = () => {
-    if (subjectRows.length >= 5) {
-      showToast('Maximum 5 subjects allowed per application.', 'error');
+    if (subjectRows.length >= remainingSubjectQuota) {
+      showToast(`Maximum limit of 5 subjects reached. You have already applied for ${totalAppliedSubjects} subject(s), so you can only add ${remainingSubjectQuota} more subject(s).`, 'error');
       return;
     }
     const pricePerRow = Number(config.feePerSubject) || 400;
@@ -515,6 +532,16 @@ export default function Photocopy() {
     if (!currentUser || !studentData) return;
     if (!windowStatus.open) {
       showToast(`Photocopy applications are currently closed (${windowStatus.label}).`, 'error');
+      return;
+    }
+
+    if (!editingAppId && totalAppliedSubjects >= 5) {
+      showToast('You have already applied for the maximum allowed limit of 5 subjects.', 'error');
+      return;
+    }
+
+    if (!editingAppId && (totalAppliedSubjects + subjectRows.length > 5)) {
+      showToast(`Total subjects across all applications cannot exceed 5. (Already applied: ${totalAppliedSubjects}, Attempting to add: ${subjectRows.length})`, 'error');
       return;
     }
 
@@ -836,173 +863,184 @@ export default function Photocopy() {
       </div>
 
       {/* Eligible Answer Scripts & Dynamic Application Table */}
-      <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200">
-        <div className="bg-[#120c7a] px-4 md:px-8 py-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-white font-bold text-lg flex items-center gap-2">
-              <Copy size={20} /> Eligible Answer Scripts & Subject Details
-            </h2>
-            <p className="text-blue-200 text-[11px] mt-0.5">
-              Add up to 5 subjects for photocopy {regulationName ? `(Regulation: ${regulationName})` : ''}
-            </p>
+      {totalAppliedSubjects >= 5 && !editingAppId ? (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-[2.5rem] p-6 text-center space-y-2 shadow-lg animate-in fade-in duration-300">
+          <div className="inline-flex items-center justify-center p-3 bg-amber-100 text-amber-800 rounded-full mb-1">
+            <AlertCircle size={28} />
           </div>
-          <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-white/15 text-white">
-            ₹{config.feePerSubject || 400} / Subject
-          </span>
+          <h3 className="font-extrabold text-base text-amber-950">Maximum Limit Reached (5 / 5 Subjects Applied)</h3>
+          <p className="text-xs text-amber-800 max-w-lg mx-auto leading-relaxed font-semibold">
+            You have already applied for the maximum allowed limit of 5 subjects across your photocopy applications. You cannot apply for additional subjects.
+          </p>
         </div>
+      ) : (
+        <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200">
+          <div className="bg-[#120c7a] px-4 md:px-8 py-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-white font-bold text-lg flex items-center gap-2">
+                <Copy size={20} /> Eligible Answer Scripts & Subject Details
+              </h2>
+              <p className="text-blue-200 text-[11px] mt-0.5 font-semibold">
+                Applied: {totalAppliedSubjects}/5 subjects | Remaining Quota: {remainingSubjectQuota} subject(s)
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-white/15 text-white">
+              ₹{config.feePerSubject || 400} / Subject
+            </span>
+          </div>
 
-        <div className="p-4 md:p-6 space-y-4">
-          <div className="overflow-x-auto border border-slate-300 rounded-2xl shadow-sm">
-            <table className="w-full text-xs md:text-sm border-collapse">
-              <thead>
-                <tr className="bg-slate-800 text-white font-black text-center text-xs uppercase tracking-wider">
-                  <th className="px-3 py-3 w-28 border-r border-slate-700">Semester No.</th>
-                  <th className="px-3 py-3 w-40 border-r border-slate-700">Subject Code</th>
-                  <th className="px-3 py-3 border-r border-slate-700 text-left">Subject Title</th>
-                  <th className="px-3 py-3 w-36 border-r border-slate-700">Grade</th>
-                  <th className="px-3 py-3 w-36 border-r border-slate-700">Result</th>
-                  <th className="px-3 py-3 w-28 border-r border-slate-700">Price (₹)</th>
-                  <th className="px-3 py-3 w-16">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
-                {subjectRows.map((row, idx) => (
-                  <tr key={row.id || idx} className="hover:bg-slate-50 transition-colors">
-                    {/* Semester No */}
-                    <td className="px-3 py-2.5 text-center font-bold border-r border-slate-200">
-                      <div className="flex items-center gap-1 justify-center">
-                        <span className="font-bold text-slate-500">{idx + 1}.</span>
+          <div className="p-4 md:p-6 space-y-4">
+            <div className="overflow-x-auto border border-slate-300 rounded-2xl shadow-sm">
+              <table className="w-full text-xs md:text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-800 text-white font-black text-center text-xs uppercase tracking-wider">
+                    <th className="px-3 py-3 w-28 border-r border-slate-700">Semester No.</th>
+                    <th className="px-3 py-3 w-40 border-r border-slate-700">Subject Code</th>
+                    <th className="px-3 py-3 border-r border-slate-700 text-left">Subject Title</th>
+                    <th className="px-3 py-3 w-36 border-r border-slate-700">Grade</th>
+                    <th className="px-3 py-3 w-36 border-r border-slate-700">Result</th>
+                    <th className="px-3 py-3 w-28 border-r border-slate-700">Price (₹)</th>
+                    <th className="px-3 py-3 w-16">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 bg-white">
+                  {subjectRows.map((row, idx) => (
+                    <tr key={row.id || idx} className="hover:bg-slate-50 transition-colors">
+                      {/* Semester No */}
+                      <td className="px-3 py-2.5 text-center font-bold border-r border-slate-200">
+                        <div className="flex items-center gap-1 justify-center">
+                          <span className="font-bold text-slate-500">{idx + 1}.</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            maxLength={2}
+                            value={row.semesterNo || ''}
+                            onChange={(e) => handleSubjectRowChange(idx, 'semesterNo', e.target.value)}
+                            placeholder="Sem *"
+                            required
+                            className="w-12 text-center bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-black text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-400 placeholder:font-normal"
+                          />
+                        </div>
+                      </td>
+
+                      {/* Subject Code */}
+                      <td className="px-3 py-2.5 border-r border-slate-200">
                         <input
                           type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          maxLength={2}
-                          value={row.semesterNo || ''}
-                          onChange={(e) => handleSubjectRowChange(idx, 'semesterNo', e.target.value)}
-                          placeholder="Sem *"
-                          required
-                          className="w-12 text-center bg-slate-50 border border-slate-300 rounded-lg px-1.5 py-1 text-xs font-black text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-400 placeholder:font-normal"
+                          value={row.subjectCode}
+                          onChange={(e) => handleSubjectRowChange(idx, 'subjectCode', e.target.value)}
+                          placeholder="e.g. GE3751"
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 font-mono focus:ring-2 focus:ring-blue-500 outline-none uppercase"
                         />
-                      </div>
-                    </td>
+                      </td>
 
-                    {/* Subject Code */}
-                    <td className="px-3 py-2.5 border-r border-slate-200">
-                      <input
-                        type="text"
-                        value={row.subjectCode}
-                        onChange={(e) => handleSubjectRowChange(idx, 'subjectCode', e.target.value)}
-                        placeholder="e.g. GE3751"
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 font-mono focus:ring-2 focus:ring-blue-500 outline-none uppercase"
-                      />
-                    </td>
-
-                    {/* Subject Title */}
-                    <td className="px-3 py-2.5 border-r border-slate-200">
-                      {eligibleScripts.length > 0 ? (
-                        <div className="space-y-1">
-                          <select
-                            onChange={(e) => handleSubjectRowChange(idx, 'selectedScriptId', e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none mb-1"
-                          >
-                            <option value="">-- Choose Published Script or Type Below --</option>
-                            {eligibleScripts.map((s, i) => (
-                              <option key={i} value={s.docId}>
-                                {s.subjectCode ? `[${s.subjectCode}] ` : ''}{s.subject} ({s.exam})
-                              </option>
-                            ))}
-                          </select>
+                      {/* Subject Title */}
+                      <td className="px-3 py-2.5 border-r border-slate-200">
+                        {eligibleScripts.length > 0 ? (
+                          <div className="space-y-1">
+                            <select
+                              onChange={(e) => handleSubjectRowChange(idx, 'selectedScriptId', e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none mb-1"
+                            >
+                              <option value="">-- Choose Published Script or Type Below --</option>
+                              {eligibleScripts.map((s, i) => (
+                                <option key={i} value={s.docId}>
+                                  {s.subjectCode ? `[${s.subjectCode}] ` : ''}{s.subject} ({s.exam})
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={row.subjectTitle}
+                              onChange={(e) => handleSubjectRowChange(idx, 'subjectTitle', e.target.value.toUpperCase())}
+                              placeholder="Or type custom subject title..."
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                            />
+                          </div>
+                        ) : (
                           <input
                             type="text"
                             value={row.subjectTitle}
                             onChange={(e) => handleSubjectRowChange(idx, 'subjectTitle', e.target.value.toUpperCase())}
-                            placeholder="Or type custom subject title..."
-                            className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                            placeholder="Enter Subject Title..."
+                            className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
                           />
-                        </div>
-                      ) : (
-                        <input
-                          type="text"
-                          value={row.subjectTitle}
-                          onChange={(e) => handleSubjectRowChange(idx, 'subjectTitle', e.target.value.toUpperCase())}
-                          placeholder="Enter Subject Title..."
-                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
-                        />
-                      )}
-                    </td>
+                        )}
+                      </td>
 
-                    {/* Grade (Regulation Matched Dropdown) */}
-                    <td className="px-3 py-2.5 border-r border-slate-200 text-center">
-                      <select
-                        value={row.grade}
-                        onChange={(e) => handleSubjectRowChange(idx, 'grade', e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-extrabold text-[#120c7a] focus:ring-2 focus:ring-blue-500 outline-none text-center cursor-pointer"
-                      >
-                        {regulationGrades.map((g) => (
-                          <option key={g} value={g}>
-                            {g}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-
-                    {/* Result (Pass / Fail Dropdown) */}
-                    <td className="px-3 py-2.5 border-r border-slate-200 text-center">
-                      <select
-                        value={row.result}
-                        onChange={(e) => handleSubjectRowChange(idx, 'result', e.target.value)}
-                        className={`w-full border rounded-lg px-2 py-1.5 text-xs font-black text-center outline-none cursor-pointer ${
-                          row.result === 'Pass'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                            : 'bg-rose-50 text-rose-700 border-rose-300'
-                        }`}
-                      >
-                        <option value="Pass">Pass</option>
-                        <option value="Fail">Fail</option>
-                      </select>
-                    </td>
-
-                    {/* Price / Fee */}
-                    <td className="px-3 py-2.5 text-center font-extrabold text-slate-900 border-r border-slate-200">
-                      ₹{config.feePerSubject || 400}
-                    </td>
-
-                    {/* Action */}
-                    <td className="px-3 py-2.5 text-center">
-                      {subjectRows.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveSubjectRow(idx)}
-                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Remove subject row"
+                      {/* Grade (Regulation Matched Dropdown) */}
+                      <td className="px-3 py-2.5 border-r border-slate-200 text-center">
+                        <select
+                          value={row.grade}
+                          onChange={(e) => handleSubjectRowChange(idx, 'grade', e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-extrabold text-[#120c7a] focus:ring-2 focus:ring-blue-500 outline-none text-center cursor-pointer"
                         >
-                          <Trash2 size={15} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                          {regulationGrades.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
 
-          {/* Footer controls: Add Row, Total Fee summary, Submit button */}
-          <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleAddSubjectRow}
-                disabled={subjectRows.length >= 5}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#120c7a] hover:opacity-90 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed shadow-sm"
-              >
-                <Plus size={15} /> Add Row ({subjectRows.length}/5)
-              </button>
-              {subjectRows.length >= 5 && (
-                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
-                  Maximum 5 rows reached
-                </span>
-              )}
+                      {/* Result (Pass / Fail Dropdown) */}
+                      <td className="px-3 py-2.5 border-r border-slate-200 text-center">
+                        <select
+                          value={row.result}
+                          onChange={(e) => handleSubjectRowChange(idx, 'result', e.target.value)}
+                          className={`w-full border rounded-lg px-2 py-1.5 text-xs font-black text-center outline-none cursor-pointer ${
+                            row.result === 'Pass'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                              : 'bg-rose-50 text-rose-700 border-rose-300'
+                          }`}
+                        >
+                          <option value="Pass">Pass</option>
+                          <option value="Fail">Fail</option>
+                        </select>
+                      </td>
+
+                      {/* Price / Fee */}
+                      <td className="px-3 py-2.5 text-center font-extrabold text-slate-900 border-r border-slate-200">
+                        ₹{config.feePerSubject || 400}
+                      </td>
+
+                      {/* Action */}
+                      <td className="px-3 py-2.5 text-center">
+                        {subjectRows.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSubjectRow(idx)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Remove subject row"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+
+            {/* Footer controls: Add Row, Total Fee summary, Submit button */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddSubjectRow}
+                  disabled={subjectRows.length >= remainingSubjectQuota}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-[#120c7a] hover:opacity-90 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed shadow-sm"
+                >
+                  <Plus size={15} /> Add Row ({subjectRows.length}/{remainingSubjectQuota})
+                </button>
+                {subjectRows.length >= remainingSubjectQuota && (
+                  <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                    Remaining Quota Reached ({remainingSubjectQuota} max)
+                  </span>
+                )}
+              </div>
 
             <div className="flex flex-wrap items-center gap-4">
               <div className="bg-slate-100 border border-slate-300 px-4 py-2 rounded-xl flex items-center gap-2">
@@ -1022,6 +1060,7 @@ export default function Photocopy() {
           </div>
         </div>
       </div>
+      )}
 
       {/* My applications */}
       <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">

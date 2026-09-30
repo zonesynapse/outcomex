@@ -580,6 +580,13 @@ export default function HODDashboard() {
     const unsub = onSnapshot(collection(db, 'photocopy_applications'), (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       const filtered = list.filter(app => {
+        // Exclude unpaid / Payment Pending applications
+        const isPaid = app.paymentStatus === 'Paid' || app.billAttached === true || !!app.electronicBill || !!app.transactionId;
+        const isConfirmedStatus = ['Payment Confirmed', 'Submitted to HOD', 'Recommended by HOD', 'Copy Issued', 'Closed', 'Revoked by HOD', 'Revoked by Exam Cell'].includes(app.status);
+        if ((!isPaid && !isConfirmedStatus) || app.status === 'Payment Pending' || app.paymentStatus === 'Pending') {
+          return false;
+        }
+
         if (!app.department) return true;
         return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
       });

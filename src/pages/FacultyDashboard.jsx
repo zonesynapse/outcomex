@@ -351,8 +351,9 @@ export default function FacultyDashboard() {
           const isMyUid = setterUid && setterUid === currentUid;
           const isMyName = normFacultyName && setterName && setterName === normFacultyName;
           const hasExamDate = as.examDate && String(as.examDate).trim().length > 0;
+          const isPrincipalApproved = data.principalApproved === true || data.status === "Approved" || as.approved === true;
 
-          if ((isMyUid || isMyName) && hasExamDate) {
+          if ((isMyUid || isMyName) && hasExamDate && isPrincipalApproved) {
             myTasks.push({
               docId: d.id,
               batch: data.batch || '',
@@ -995,6 +996,8 @@ export default function FacultyDashboard() {
       .map(s => String(s || '').trim())
       .find(s => s && !isQpKey(s)) || '';
 
+    const resolvedSec = src.section || src.sec || (Array.isArray(src.sections) ? src.sections[0] : '') || src.allocatedTo?.section || src.meta?.section || src._meta?.section || '';
+
     return {
       ...src,
       programme: src.programme || src.program || src.progKey || '',
@@ -1003,7 +1006,8 @@ export default function FacultyDashboard() {
       academic_year: src.academic_year || src.academicYear || '',
       academicYear: src.academicYear || src.academic_year || '',
       semester: src.semester || '',
-      section: src.section || '',
+      section: resolvedSec,
+      sec: resolvedSec,
       subject: subjectDisplay,
       course: subjectDisplay,
       subject_code: code,
@@ -1464,6 +1468,7 @@ export default function FacultyDashboard() {
 
         // Count generated sets by this faculty for this subject code — ONLY written test papers count
         // Match against both old (rawCode) and canonical (canonicalCode) to catch all saved QPs.
+        const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const generatedSets = (baseQps || []).filter(qp => {
           const parsedQp = parseSubjectField(qp.subject);
           const rawQpCode = parsedQp.code || qp.subject_code || qp.subject || '';
@@ -1478,6 +1483,20 @@ export default function FacultyDashboard() {
           } else {
             if (qpCodeNorm !== rawCodeNorm) return false;
           }
+
+          // Match exam name / exam ID or batch + semester so past exam QPs don't inflate sets for a new exam
+          if (task.examName && qp.exam_name) {
+            const taskExamNorm = normClean(task.examName);
+            const qpExamNorm = normClean(qp.exam_name);
+            if (taskExamNorm && qpExamNorm && taskExamNorm !== qpExamNorm) return false;
+          }
+          if (task.batch && qp.batch) {
+            if (normClean(task.batch) !== normClean(qp.batch)) return false;
+          }
+          if (task.semester && qp.semester) {
+            if (String(task.semester).trim() !== String(qp.semester).trim()) return false;
+          }
+
           const isWrittenTest = isWrittenTestQp(qp);
           return isWrittenTest;
         });

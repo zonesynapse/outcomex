@@ -6,7 +6,7 @@ import {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { db, auth } from "../firebase";
-import { collection, onSnapshot, doc, updateDoc, setDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, updateDoc, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { formatDepartmentDisplay, formatBatchDisplay } from "../lib/utils";
 
 const parseSyllabusDocId = (id) => {
@@ -402,6 +402,8 @@ export default function PrincipalIAScheduleView({
 }) {
   const [scheduleDocs, setScheduleDocs] = useState([]);
   const [allSyllabus, setAllSyllabus] = useState([]);
+  const [loadingSchedules, setLoadingSchedules] = useState(true);
+  const [loadingSyllabus, setLoadingSyllabus] = useState(true);
   const [courseEnrolmentsMap, setCourseEnrolmentsMap] = useState({});
   const [approvingKey, setApprovingKey] = useState("");
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
@@ -940,11 +942,13 @@ export default function PrincipalIAScheduleView({
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       const docs = [];
       snap.forEach(d => docs.push({ id: d.id, ...d.data() }));
-      docs.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      docs.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) || a.id.localeCompare(b.id));
       setScheduleDocs(docs);
+      setLoadingSchedules(false);
     }, (err) => {
       console.warn("qp_setter_assignments listener error:", err);
       setScheduleDocs([]);
+      setLoadingSchedules(false);
     });
     return () => unsub();
   }, []);
@@ -957,10 +961,13 @@ export default function PrincipalIAScheduleView({
         const parsed = parseSyllabusDocId(d.id);
         docs.push({ id: d.id, ...parsed, data: d.data() });
       });
+      docs.sort((a, b) => a.id.localeCompare(b.id));
       setAllSyllabus(docs);
+      setLoadingSyllabus(false);
     }, (err) => {
       console.warn("syllabus_data listener error:", err);
       setAllSyllabus([]);
+      setLoadingSyllabus(false);
     });
     return () => unsub();
   }, []);
@@ -1082,15 +1089,34 @@ export default function PrincipalIAScheduleView({
     return `${rawExamName} (${cleanReg})`;
   };
 
-  const getCanonicalCode = (code, name, deptKey, semNum) => {
+  const getCanonicalCode = (code, name, deptKey, semNum, batch) => {
     const cleanCode = String(code || "").trim();
-    // If we have an explicit course code (e.g. BM25C06, CS8591, BM3591), use it directly!
     if (cleanCode && cleanCode !== 'undefined' && cleanCode !== 'null') {
-      return cleanCode;
+      const isModernCode = /^[A-Z]{2}\d{2}[A-Z]\d{2}/i.test(cleanCode) || /^[A-Z]{2}\d{4}/i.test(cleanCode);
+      if (isModernCode) return cleanCode;
     }
-    // Fallback: search syllabus_data (Regulation) for subject name matching this department & semester
+
     if (name && allSyllabus.length > 0) {
       const normN = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const resolvedReg = resolveBatchRegulation(batch, "");
+      const normReg = normCodeKey(resolvedReg);
+
+      for (const sDoc of allSyllabus) {
+        if (deptKey && sDoc.deptKey && !sDoc.deptKey.toLowerCase().includes(String(deptKey).toLowerCase())) continue;
+        const sRegNorm = normCodeKey(sDoc.regKey || "");
+        if (normReg && sRegNorm && !normReg.includes(sRegNorm) && !sRegNorm.includes(normReg)) continue;
+
+        const subsBySem = sDoc.data?.semesters || {};
+        for (const [sKey, rawSubs] of Object.entries(subsBySem)) {
+          if (semNum && String(sKey).trim() !== String(semNum).trim()) continue;
+          const subs = toArray(rawSubs);
+          const found = subs.find(s => s?.name && String(s.name).toLowerCase().replace(/[^a-z0-9]/g, "") === normN);
+          if (found && (found.code || found.subjectCode || found.courseCode)) {
+            return String(found.code || found.subjectCode || found.courseCode).trim();
+          }
+        }
+      }
+
       for (const sDoc of allSyllabus) {
         if (deptKey && sDoc.deptKey && !sDoc.deptKey.toLowerCase().includes(String(deptKey).toLowerCase())) continue;
         const subsBySem = sDoc.data?.semesters || {};
@@ -1103,6 +1129,9 @@ export default function PrincipalIAScheduleView({
           }
         }
       }
+    }
+    if (cleanCode && cleanCode !== 'undefined' && cleanCode !== 'null') {
+      return cleanCode;
     }
     return cleanCode || name || "";
   };
@@ -1189,12 +1218,91 @@ export default function PrincipalIAScheduleView({
     return false;
   };
 
+  // Filter out legacy/stale assignment keys that belong to a different regulation
+  // than the sDoc's target batch/regulation.
+  const getActiveAssignmentsForDoc = (sDoc) => {
+    const assignments = sDoc.assignments || {};
+    const entries = Object.entries(assignments).filter(([_, as]) => Boolean(as?.examDate));
+    if (entries.length <= 1) return entries;
+
+    const targetReg = resolveBatchRegulation(sDoc.batch, "");
+    const normTargetReg = normCodeKey(targetReg);
+
+    // Get active course codes for this batch/semester from allSyllabus
+    const activeSyllabusCodes = new Set();
+    allSyllabus.forEach(sDocItem => {
+      const sRegNorm = normCodeKey(sDocItem.regKey || "");
+      const isRegMatch = !normTargetReg || !sRegNorm || sRegNorm.includes(normTargetReg) || normTargetReg.includes(sRegNorm);
+      if (!isRegMatch) return;
+
+      const rawSubs = sDocItem.data?.semesters?.[sDoc.semester] || sDocItem.data?.semesters?.[`sem_${sDoc.semester}`] || [];
+      const subs = toArray(rawSubs);
+      subs.forEach(sub => {
+        if (!sub || sub.isNonOBE === true || sub.isActive === false) return;
+        const c = String(sub.code || sub.subjectCode || sub.courseCode || "").trim();
+        if (c) activeSyllabusCodes.add(normCodeKey(c));
+      });
+    });
+
+    if (activeSyllabusCodes.size === 0) return entries;
+
+    const matchingEntries = entries.filter(([assignKey, as]) => {
+      const rawCode = String(as.code || assignKey || "").trim();
+      return activeSyllabusCodes.has(normCodeKey(rawCode));
+    });
+
+    if (matchingEntries.length > 0) {
+      return matchingEntries;
+    }
+
+    return entries;
+  };
+
+  const normalizeBatchKey = (batchStr) => {
+    if (!batchStr) return "";
+    const s = String(batchStr).trim();
+    const match = s.match(/\b(20\d{2})\b/);
+    if (match) {
+      const startYr = parseInt(match[1], 10);
+      const isPG = s.toLowerCase().includes("pg") || s.toLowerCase().includes("mba") || s.toLowerCase().includes("m.e");
+      const duration = isPG ? 2 : 4;
+      return `${startYr}-${startYr + duration}`;
+    }
+    return s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  };
+
+  const normalizeExamKey = (rawName, rawId) => {
+    const str = `${rawName || ""} ${rawId || ""}`.toUpperCase();
+    const match = str.match(/\b(IA\s*\d+|MODEL\s*\d*|END\s*SEM\s*\d*|SEMESTER\s*\d*|MID\s*TERM\s*\d*)\b/i);
+    if (match) {
+      return match[1].replace(/\s+/g, "");
+    }
+    return str.replace(/[^A-Z0-9]/g, "") || "EXAM";
+  };
+
+  // Filter scheduleDocs to keep only the latest schedule document per (batch, semester, exam)
+  const activeLatestScheduleDocs = useMemo(() => {
+    const seen = new Set();
+    const result = [];
+    scheduleDocs.forEach(d => {
+      const normB = normalizeBatchKey(d.batch);
+      const normS = String(d.semester || "").trim();
+      const normE = normalizeExamKey(d.examName, d.examId);
+      const groupKey = `${normB}|${normS}|${normE}`;
+      if (seen.has(groupKey)) return; // Skip older revision documents for the exact same batch/sem/exam
+      seen.add(groupKey);
+      result.push(d);
+    });
+    return result;
+  }, [scheduleDocs]);
+
   // Flatten only subjects that have an assigned exam date, grouped by department
   const rows = useMemo(() => {
+    if (loadingSchedules || loadingSyllabus) return [];
     const out = [];
-    scheduleDocs.forEach(sDoc => {
+    activeLatestScheduleDocs.forEach(sDoc => {
       if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
-      if (hideApproved && (sDoc.principalApproved === true || sDoc.status === "Approved")) return;
+      if (hideApproved && (sDoc.principalApproved === true || sDoc.status === "Approved" || sDoc.status === "Draft")) return;
       const assignments = sDoc.assignments || {};
       // Find batch-level default timing from any subject in the schedule document that has timing configured
       let docDefaultSTime = "";
@@ -1206,7 +1314,9 @@ export default function PrincipalIAScheduleView({
         if ((item?.slot || item?.session) && !docDefaultSlot) docDefaultSlot = item.slot || item.session;
       });
 
-      Object.entries(assignments).forEach(([assignKey, as]) => {
+      const validDocEntries = getActiveAssignmentsForDoc(sDoc);
+
+      validDocEntries.forEach(([assignKey, as]) => {
         if (!as?.examDate) return; // only subjects with assigned dates
 
         if (filterDate && !normDateMatch(as.examDate, filterDate)) return;
@@ -1224,7 +1334,7 @@ export default function PrincipalIAScheduleView({
           depts = semMapped.length > 0 ? semMapped : allMapped;
         }
 
-        const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept, sDoc.semester);
+        const displayCode = getCanonicalCode(as.code || assignKey, as.name, depts[0]?.dept, sDoc.semester, sDoc.batch);
 
         let sTime = as.startTime || "";
         let eTime = as.endTime || "";
@@ -1336,13 +1446,18 @@ export default function PrincipalIAScheduleView({
       });
     }
 
-    // Deduplicate rows for the same subject across alias keys / multiple matching docs.
+    // Deduplicate rows for the same subject across alias keys / multiple matching docs / legacy regulation codes.
     // Field-level merge (non-empty wins, approved OR'd, departments unioned) so exam
     // dates & timings saved under any key variant always surface — prevents legacy
-    // duplicate entries from rendering "date but no time" ghost rows.
+    // duplicate entries from rendering separate rows.
     const mergedBySubject = new Map();
     out.forEach(r => {
-      const key = `${normCodeKey(r.code || r.rawCode || r.rawKey)}|${r.batch || ""}|${r.semester || ""}`;
+      const normB = normalizeBatchKey(r.batch);
+      const normExam = normalizeExamKey(r.examName, r.examId);
+      const normSubName = normCodeKey(r.name);
+      const normCode = normCodeKey(r.code || r.rawCode || r.rawKey);
+      const subjectKey = normSubName || normCode;
+      const key = `${subjectKey}|${normB}|${r.semester || ""}|${normExam}`;
       const base = mergedBySubject.get(key);
       if (!base) {
         mergedBySubject.set(key, { ...r });
@@ -1358,6 +1473,13 @@ export default function PrincipalIAScheduleView({
         const baseEmpty = merged[f] === undefined || merged[f] === null || merged[f] === "" || merged[f] === "-";
         if (baseEmpty && v !== undefined && v !== null && v !== "" && v !== "-") merged[f] = v;
       });
+
+      // Code preference: If base code is an old code (e.g. BM3301) and incoming code is a modern regulation code (e.g. BM25C05), prefer the modern code format!
+      const isModernCode = (c) => /^[A-Z]{2}\d{2}[A-Z]\d{2}/i.test(c);
+      if (!isModernCode(merged.code) && isModernCode(r.code)) {
+        merged.code = r.code;
+      }
+
       const seenDepts = new Set();
       merged.departments = [...(base.departments || []), ...(r.departments || [])].filter(d => {
         const sig = d?.key || `${d?.progKey}_${d?.dept}`;
@@ -1370,11 +1492,14 @@ export default function PrincipalIAScheduleView({
 
     const grouped = {};
     Array.from(mergedBySubject.values()).forEach(r => {
+      const seenLabels = new Set();
       r.departments.forEach(d => {
         if (!isValidDeptBatch(d.progKey, d.dept, r.batch)) return;
         const label = d.dept === "_unmapped"
           ? "Unknown Department"
           : formatDepartmentDisplay(d.dept, d.progKey);
+        if (seenLabels.has(label)) return;
+        seenLabels.add(label);
         if (!grouped[label]) grouped[label] = [];
         grouped[label].push({ ...r, deptLabel: label });
       });
@@ -1387,13 +1512,23 @@ export default function PrincipalIAScheduleView({
         );
 
         const batchMap = {};
+        const seenSubKeys = new Set();
         sortedItems.forEach(item => {
-          const bKey = `${item.batch || "Unknown"}___${item.semester || ""}`;
+          const normB = normalizeBatchKey(item.batch);
+          const normExam = normalizeExamKey(item.examName, item.examId);
+          const normSubName = normCodeKey(item.name);
+          const normCode = normCodeKey(item.code || item.rawCode || item.rawKey);
+          const subKey = `${normSubName || normCode}|${normB}|${item.semester || ""}|${normExam}`;
+          if (seenSubKeys.has(subKey)) return;
+          seenSubKeys.add(subKey);
+
+          const bKey = `${item.batch || "Unknown"}___${item.semester || ""}___${item.examName || "Exam"}`;
           if (!batchMap[bKey]) {
             batchMap[bKey] = {
               batch: item.batch,
               semester: item.semester,
               academicYear: item.academicYear,
+              examName: item.examName,
               items: []
             };
           }
@@ -1401,7 +1536,9 @@ export default function PrincipalIAScheduleView({
         });
 
         const batchGroups = Object.values(batchMap).sort((a, b) =>
-          String(b.batch).localeCompare(String(a.batch)) || String(a.semester).localeCompare(String(b.semester))
+          String(b.batch).localeCompare(String(a.batch)) ||
+          String(a.semester).localeCompare(String(b.semester)) ||
+          String(a.examName || "").localeCompare(String(b.examName || ""))
         );
 
         return {
@@ -1411,7 +1548,7 @@ export default function PrincipalIAScheduleView({
         };
       })
       .sort((a, b) => a.dept.localeCompare(b.dept));
-  }, [scheduleDocs, codeDeptMap]);
+  }, [activeLatestScheduleDocs, codeDeptMap, loadingSchedules, loadingSyllabus]);
 
   const [selectedBatchFilter, setSelectedBatchFilter] = useState("ALL");
 
@@ -1430,13 +1567,23 @@ export default function PrincipalIAScheduleView({
       if (!filteredItems.length) return null;
 
       const batchMap = {};
+      const seenSubKeys = new Set();
       filteredItems.forEach(item => {
-        const bKey = `${item.batch || "Unknown"}___${item.semester || ""}`;
+        const normB = normalizeBatchKey(item.batch);
+        const normExam = normalizeExamKey(item.examName, item.examId);
+        const normSubName = normCodeKey(item.name);
+        const normCode = normCodeKey(item.code || item.rawCode || item.rawKey);
+        const subKey = `${normSubName || normCode}|${normB}|${item.semester || ""}|${normExam}`;
+        if (seenSubKeys.has(subKey)) return;
+        seenSubKeys.add(subKey);
+
+        const bKey = `${item.batch || "Unknown"}___${item.semester || ""}___${item.examName || "Exam"}`;
         if (!batchMap[bKey]) {
           batchMap[bKey] = {
             batch: item.batch,
             semester: item.semester,
             academicYear: item.academicYear,
+            examName: item.examName,
             items: []
           };
         }
@@ -1444,7 +1591,9 @@ export default function PrincipalIAScheduleView({
       });
 
       const batchGroups = Object.values(batchMap).sort((a, b) =>
-        String(b.batch).localeCompare(String(a.batch)) || String(a.semester).localeCompare(String(b.semester))
+        String(b.batch).localeCompare(String(a.batch)) ||
+        String(a.semester).localeCompare(String(b.semester)) ||
+        String(a.examName || "").localeCompare(String(b.examName || ""))
       );
 
       return {
@@ -1553,12 +1702,12 @@ export default function PrincipalIAScheduleView({
     }
   }, [displayScheduledItems, courseEnrolmentsRawMap, studentsMasterRegsMap, onRegisterNumbersChange]);
 
-  const totalScheduled = useMemo(() => rows.reduce((sum, g) => sum + g.items.length, 0), [rows]);
+  const totalScheduled = useMemo(() => filteredRows.reduce((sum, g) => sum + g.items.length, 0), [filteredRows]);
   const approvedCount = useMemo(() => {
-    return rows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
-  }, [rows]);
+    return filteredRows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
+  }, [filteredRows]);
 
-  const pendingCount = useMemo(() => rows.reduce((sum, g) => sum + g.items.filter(i => !i.approved).length, 0), [rows]);
+  const pendingCount = useMemo(() => filteredRows.reduce((sum, g) => sum + g.items.filter(i => !i.approved).length, 0), [filteredRows]);
   const allApproved = rows.length === 0 || pendingCount === 0;
 
   useEffect(() => {
@@ -1566,6 +1715,15 @@ export default function PrincipalIAScheduleView({
       onPendingCountChange(allApproved ? 0 : totalScheduled);
     }
   }, [allApproved, totalScheduled, onPendingCountChange]);
+
+  if (loadingSchedules || loadingSyllabus) {
+    return (
+      <div className="w-full flex flex-col items-center justify-center min-h-[200px] py-12 gap-3 text-zinc-400">
+        <Loader2 className="animate-spin text-[#120c7a]" size={32} />
+        <span className="text-xs font-bold uppercase tracking-wider">Loading IA Examination Schedule...</span>
+      </div>
+    );
+  }
 
   if (hideApproved && allApproved) {
     return null;
@@ -1619,6 +1777,31 @@ export default function PrincipalIAScheduleView({
 
         return updateDoc(doc(db, "qp_setter_assignments", docId), updates);
       }));
+
+      // Notify assigned QP Setters upon Principal approval
+      items.forEach(async (it) => {
+        if (!it.setterUid) return;
+        try {
+          await addDoc(collection(db, "notifications"), {
+            type: "qp_setter_assigned",
+            targetUid: it.setterUid,
+            targetName: it.setterName || "",
+            batch: it.batch || "",
+            academicYear: it.academicYear || "",
+            semester: it.semester || "",
+            subjectCode: it.code,
+            subjectName: it.name,
+            numSets: it.numSets || 1,
+            fromDate: it.fromDate || "",
+            toDate: it.toDate || "",
+            assignedBy: "Principal",
+            createdAt: serverTimestamp(),
+            read: false
+          });
+        } catch (e) {
+          // ignore notification error
+        }
+      });
 
       showToast("IA Schedule approved successfully!", "success");
     } catch (err) {
@@ -1934,6 +2117,11 @@ export default function PrincipalIAScheduleView({
                           {bg.academicYear && (
                             <span className="text-xs text-zinc-500 font-medium hidden sm:inline">
                               ({bg.academicYear})
+                            </span>
+                          )}
+                          {bg.examName && (
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              {bg.examName}
                             </span>
                           )}
                         </div>

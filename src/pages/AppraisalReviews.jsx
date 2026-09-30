@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
-  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
+  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { getSchoolShortName, isSameInstitution, getSchoolBannerTitle } from "../utils/appraisalScore";
@@ -806,19 +806,33 @@ export default function AppraisalReviews() {
                                   <p className="font-medium">{k1.remarks}</p>
                                 </div>
                               )}
-                              {k1.proof?.fileUrl && (
-                                <div className="flex items-center gap-2 pt-1">
-                                  <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document:</span>
-                                  <a
-                                    href={k1.proof.fileUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs"
-                                  >
-                                    View Evidence ({k1.proof.fileName || "File"})
-                                  </a>
-                                </div>
-                              )}
+                              {(() => {
+                                const proofs = (() => {
+                                  if (!k1.proof) return [];
+                                  if (Array.isArray(k1.proof)) return k1.proof;
+                                  if (Array.isArray(k1.proof.proofs)) return k1.proof.proofs;
+                                  if (k1.proof.fileUrl) return [{ fileUrl: k1.proof.fileUrl, fileName: k1.proof.fileName || "File" }];
+                                  return [];
+                                })();
+                                if (proofs.length === 0) return null;
+                                return (
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document(s):</span>
+                                    {proofs.map((pf, pIdx) => (
+                                      <a
+                                        key={pIdx}
+                                        href={pf.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                      >
+                                        <Paperclip size={11} />
+                                        <span>{pf.fileName || `Evidence #${pIdx + 1}`}</span>
+                                      </a>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           );
                         })()}
@@ -847,6 +861,12 @@ export default function AppraisalReviews() {
                               <div className="space-y-3">
                                 {k2SubItems.map((item) => {
                                   const sub = k2[item.key] || {};
+                                  const proofs = (() => {
+                                    if (Array.isArray(sub.proofs)) return sub.proofs;
+                                    if (Array.isArray(sub)) return sub;
+                                    if (sub.fileUrl) return [{ fileUrl: sub.fileUrl, fileName: sub.fileName || "File" }];
+                                    return [];
+                                  })();
                                   return (
                                     <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
                                       <div className="flex items-center justify-between">
@@ -862,17 +882,21 @@ export default function AppraisalReviews() {
                                           {cleanText(sub.remarks)}
                                         </p>
                                       )}
-                                      {sub.fileUrl && (
-                                        <div className="flex items-center gap-2 pt-0.5">
-                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                          <a
-                                            href={sub.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                          >
-                                            View Evidence ({sub.fileName || "File"})
-                                          </a>
+                                      {proofs.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
+                                          {proofs.map((pf, pIdx) => (
+                                            <a
+                                              key={pIdx}
+                                              href={pf.fileUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                            >
+                                              <Paperclip size={11} />
+                                              <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                            </a>
+                                          ))}
                                         </div>
                                       )}
                                     </div>
@@ -911,6 +935,12 @@ export default function AppraisalReviews() {
                               <div className="space-y-3">
                                 {k3SubItems.map((item) => {
                                   const sub = k3[item.key] || {};
+                                  const proofs = (() => {
+                                    if (Array.isArray(sub.proofs)) return sub.proofs;
+                                    if (Array.isArray(sub)) return sub;
+                                    if (sub.fileUrl) return [{ fileUrl: sub.fileUrl, fileName: sub.fileName || "File" }];
+                                    return [];
+                                  })();
                                   return (
                                     <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
                                       <div className="flex items-center justify-between">
@@ -924,17 +954,21 @@ export default function AppraisalReviews() {
                                           {cleanText(sub.remarks)}
                                         </p>
                                       )}
-                                      {sub.fileUrl && (
-                                        <div className="flex items-center gap-2 pt-0.5">
-                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                          <a
-                                            href={sub.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                          >
-                                            View Evidence ({sub.fileName || "File"})
-                                          </a>
+                                      {proofs.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
+                                          {proofs.map((pf, pIdx) => (
+                                            <a
+                                              key={pIdx}
+                                              href={pf.fileUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                            >
+                                              <Paperclip size={11} />
+                                              <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                            </a>
+                                          ))}
                                         </div>
                                       )}
                                     </div>
@@ -961,27 +995,39 @@ export default function AppraisalReviews() {
                               </div>
                               {Array.isArray(k4) && k4.length > 0 ? (
                                 <div className="space-y-3">
-                                  {k4.map((item, idx) => (
-                                    <div key={idx} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1">
-                                      <span className="font-bold text-slate-800 block text-xs">{idx + 1}. {item.title || "Contribution"}</span>
-                                      {item.description && (
-                                        <p className="text-zinc-600 font-medium text-[11px]">{cleanText(item.description)}</p>
-                                      )}
-                                      {item.fileUrl && (
-                                        <div className="flex items-center gap-2 pt-1">
-                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                          <a
-                                            href={item.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                          >
-                                            View Evidence ({item.fileName || "File"})
-                                          </a>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
+                                  {k4.map((item, idx) => {
+                                    const proofs = (() => {
+                                      if (Array.isArray(item.proofs)) return item.proofs;
+                                      if (Array.isArray(item)) return item;
+                                      if (item.fileUrl) return [{ fileUrl: item.fileUrl, fileName: item.fileName || "File" }];
+                                      return [];
+                                    })();
+                                    return (
+                                      <div key={idx} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1">
+                                        <span className="font-bold text-slate-800 block text-xs">{idx + 1}. {item.title || "Contribution"}</span>
+                                        {item.description && (
+                                          <p className="text-zinc-600 font-medium text-[11px]">{cleanText(item.description)}</p>
+                                        )}
+                                        {proofs.length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
+                                            {proofs.map((pf, pIdx) => (
+                                              <a
+                                                key={pIdx}
+                                                href={pf.fileUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                              >
+                                                <Paperclip size={11} />
+                                                <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                              </a>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               ) : (
                                 <p className="text-xs text-zinc-400 italic">No contributions specified.</p>
@@ -1002,6 +1048,19 @@ export default function AppraisalReviews() {
                             "51_60": "Pass % 51% - 60% (2 Marks)",
                             "below_50": "Pass % < 50% (0 Marks)"
                           };
+
+                          const getKra5Proofs = (subItem) => {
+                            if (!subItem) return [];
+                            if (Array.isArray(subItem)) return subItem;
+                            if (Array.isArray(subItem.proofs)) return subItem.proofs;
+                            if (subItem.fileUrl) return [{ fileUrl: subItem.fileUrl, fileName: subItem.fileName || "File" }];
+                            return [];
+                          };
+
+                          const resultProofs = getKra5Proofs(k5.resultProof);
+                          const courseProofs = getKra5Proofs(k5.onlineCourse);
+                          const pubProofs = getKra5Proofs(k5.publication);
+
                           return (
                             <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
                               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
@@ -1026,17 +1085,21 @@ export default function AppraisalReviews() {
                                       {cleanText(k5.resultRemarks)}
                                     </p>
                                   )}
-                                  {k5.resultProof?.fileUrl && (
-                                    <div className="flex items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Proof:</span>
-                                      <a
-                                        href={k5.resultProof.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                      >
-                                        View Evidence ({k5.resultProof.fileName || "File"})
-                                      </a>
+                                  {resultProofs.length > 0 && (
+                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Proof(s):</span>
+                                      {resultProofs.map((pf, pIdx) => (
+                                        <a
+                                          key={pIdx}
+                                          href={pf.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                        >
+                                          <Paperclip size={11} />
+                                          <span>{pf.fileName || `Result Proof #${pIdx + 1}`}</span>
+                                        </a>
+                                      ))}
                                     </div>
                                   )}
                                 </div>
@@ -1055,17 +1118,21 @@ export default function AppraisalReviews() {
                                       {cleanText(k5.onlineCourse.remarks)}
                                     </p>
                                   )}
-                                  {k5.onlineCourse?.fileUrl && (
-                                    <div className="flex items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                      <a
-                                        href={k5.onlineCourse.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                      >
-                                        View Evidence ({k5.onlineCourse.fileName || "File"})
-                                      </a>
+                                  {courseProofs.length > 0 && (
+                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Certificate Proof(s):</span>
+                                      {courseProofs.map((pf, pIdx) => (
+                                        <a
+                                          key={pIdx}
+                                          href={pf.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                        >
+                                          <Paperclip size={11} />
+                                          <span>{pf.fileName || `Certificate #${pIdx + 1}`}</span>
+                                        </a>
+                                      ))}
                                     </div>
                                   )}
                                 </div>
@@ -1084,17 +1151,21 @@ export default function AppraisalReviews() {
                                       {cleanText(k5.publication.remarks)}
                                     </p>
                                   )}
-                                  {k5.publication?.fileUrl && (
-                                    <div className="flex items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                      <a
-                                        href={k5.publication.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                      >
-                                        View Evidence ({k5.publication.fileName || "File"})
-                                      </a>
+                                  {pubProofs.length > 0 && (
+                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Publication Proof(s):</span>
+                                      {pubProofs.map((pf, pIdx) => (
+                                        <a
+                                          key={pIdx}
+                                          href={pf.fileUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                        >
+                                          <Paperclip size={11} />
+                                          <span>{pf.fileName || `Publication Proof #${pIdx + 1}`}</span>
+                                        </a>
+                                      ))}
                                     </div>
                                   )}
                                 </div>

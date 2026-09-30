@@ -1587,13 +1587,22 @@ export default function Attendance() {
     const existingStudents = isAnotherFacultyRecord ? (currentRecordData.students || {}) : {};
     const newStudentsMap = {};
 
-    const makeStudentEntry = (s) => ({
-      status: s.status,
-      hours: s.hours,
-      topicTaught: isEventAttendance ? "" : (s.topicTaught || topicTaught.trim()),
-      teachingAid: isEventAttendance ? "" : (s.teachingAid || teachingAid),
-      teachingMethodology: isEventAttendance ? "" : (s.teachingMethodology || teachingMethodology)
-    });
+    const makeStudentEntry = (s) => {
+      const entry = {
+        status: s.status,
+        hours: s.hours,
+      };
+      if (s.topicTaught && s.topicTaught.trim() !== topicTaught.trim()) {
+        entry.topicTaught = s.topicTaught.trim();
+      }
+      if (s.teachingAid && s.teachingAid !== teachingAid) {
+        entry.teachingAid = s.teachingAid;
+      }
+      if (s.teachingMethodology && s.teachingMethodology !== teachingMethodology) {
+        entry.teachingMethodology = s.teachingMethodology;
+      }
+      return entry;
+    };
 
     students.forEach(s => {
       if (s._conflict) return; // skip conflict students
@@ -1603,8 +1612,6 @@ export default function Attendance() {
       if (isAnotherFacultyRecord && (getStudentData(existingStudents, s.reg) !== undefined)) return; // skip existing in merge mode
       const entry = makeStudentEntry(studentObj);
       newStudentsMap[s.reg] = entry;
-      const altId = idMap[s.reg];
-      if (altId) newStudentsMap[altId] = entry;
     });
     let mergedStudentsMap = { ...existingStudents, ...newStudentsMap };
     const hasNewEntries = Object.keys(newStudentsMap).length > 0;
@@ -1619,8 +1626,6 @@ export default function Attendance() {
         const studentObj = { ...s, status: finalStatus, hours: finalHours };
         const entry = makeStudentEntry(studentObj);
         freshMap[s.reg] = entry;
-        const altId = idMap[s.reg];
-        if (altId) freshMap[altId] = entry;
       });
       mergedStudentsMap = freshMap;
     }

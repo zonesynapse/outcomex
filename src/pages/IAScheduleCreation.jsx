@@ -304,7 +304,15 @@ export default function IAScheduleCreation({ embedded = false }) {
       const docs = [];
       snap.forEach(d => {
         const parsed = parseSyllabusDocId(d.id);
-        docs.push({ id: d.id, ...parsed, data: d.data() });
+        const data = d.data() || {};
+        docs.push({
+          id: d.id,
+          ...parsed,
+          docProgramme: data.programme || parsed.progKey,
+          docDepartment: data.department || parsed.deptKey,
+          docRegulation: data.regulation || parsed.regKey,
+          data
+        });
       });
       setAllSyllabus(docs);
     }, () => setAllSyllabus([]));
@@ -611,7 +619,11 @@ export default function IAScheduleCreation({ embedded = false }) {
   }, [courseTypeConfigs, academicYear]);
 
   const getCanonicalCode = useCallback((rawCode, name, deptKey) => {
-    if (!name && !rawCode) return rawCode || "";
+    const rawTrimmed = (rawCode || "").trim().toUpperCase();
+    if (rawTrimmed) {
+      return rawTrimmed;
+    }
+    if (!name) return "";
     const nameMap = courseBankMap._nameMap || {};
     const normName = String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     if (deptKey && normName) {
@@ -623,68 +635,112 @@ export default function IAScheduleCreation({ embedded = false }) {
     if (normName && nameMap[normName]) {
       return nameMap[normName];
     }
-    const normC = normCodeKey(rawCode);
-    if (courseBankMap[normC]?.canonicalCode) {
-      return courseBankMap[normC].canonicalCode;
-    }
-    return rawCode || "";
+    return "";
   }, [courseBankMap]);
+
+  // Helper to match document regulation against target batch regulation strictly
+  const matchRegulation = useCallback((docReg, targetReg) => {
+    if (!targetReg) return true;
+    if (!docReg) return false;
+
+    const dNorm = normClean(docReg);
+    const tNorm = normClean(targetReg);
+    if (dNorm === tNorm) return true;
+
+    // Compare stripped 'au' prefix (e.g. "au-r2025" vs "r2025")
+    const dClean = dNorm.replace(/^au/, "");
+    const tClean = tNorm.replace(/^au/, "");
+    if (dClean === tClean) return true;
+
+    // Compare extracted regulation year (e.g. R2025 vs R2021)
+    const getRegYear = (str) => {
+      const m = String(str).match(/R\s*(\d{4})/i) || String(str).match(/(19|20)\d{2}/);
+      return m ? m[1] || m[0] : null;
+    };
+
+    const dYear = getRegYear(docReg);
+    const tYear = getRegYear(targetReg);
+    if (dYear && tYear) return dYear === tYear;
+
+    return false;
+  }, []);
 
   // 7. Aggregate Subjects across ALL Departments (Common vs Department-Specific)
   const syllabusSubjects = useMemo(() => {
     if (!batch || !semester) return [];
     const byCode = {};
 
-    // Restrict departments strictly to the selected programme if specified
+    // Get the regulation mapped to the selected batch
+    const progToUse = selectedProgramme || (activeProgrammes.length > 0 ? activeProgrammes[0] : "");
+    const targetRegulation = getRegulationForBatch(progToUse, batch) || getRegulationForBatch("", batch);
+    if (!targetRegulation) return [];
+
+    const configuredTypes = getConfiguredTypesForRegulation(targetRegulation);
+
+    // Allowed departments for the selected programme (if programme filter is picked)
     const allowedDeptsForProg = selectedProgramme && deptMap[selectedProgramme]
       ? new Set(deptMap[selectedProgramme].map(d => sanitizeKey(d)))
       : null;
 
-    activeProgrammes.forEach(prog => {
-      const progKey = formatProgrammeKey(prog);
-      const regulation = getRegulationForBatch(progKey, batch);
-      if (!regulation) return;
-      const regNorm = normClean(regulation);
-      const configuredTypes = getConfiguredTypesForRegulation(regulation);
+    // Filter syllabus_data docs strictly matching targetRegulation
+    const matchingDocs = allSyllabus.filter(s => {
+      const docReg = s.data?.regulation || s.docRegulation || s.regKey;
+      if (!matchRegulation(docReg, targetRegulation)) return false;
 
-      const matching = allSyllabus.filter(s => s.progKey === progKey && normClean(s.regKey) === regNorm);
-      matching.forEach(sDoc => {
-        if (allowedDeptsForProg && !allowedDeptsForProg.has(sanitizeKey(sDoc.deptKey))) return;
-        const subs = toArray(sDoc.data?.semesters?.[semester]);
-        subs.forEach(sub => {
-          if (!sub || sub.isNonOBE === true || sub.isActive === false) return;
-          const rawCode = String(sub.code || sub.subjectCode || sub.courseCode || "").trim();
-          const name = String(sub.name || sub.subjectName || sub.courseName || sub.title || "").trim();
-          if (!rawCode && !name) return;
+      // Department check if programme selected
+      if (allowedDeptsForProg) {
+        const deptStr = s.data?.department || s.docDepartment || s.deptKey;
+        const deptClean = sanitizeKey(deptStr);
+        if (deptStr !== "Overall" && deptClean !== "Overall" && !allowedDeptsForProg.has(deptClean)) {
+          const matchDept = Array.from(allowedDeptsForProg).some(d =>
+            sanitizeKey(d) === deptClean || cleanStr(d) === cleanStr(deptStr)
+          );
+          if (!matchDept) return false;
+        }
+      }
 
-          const canonicalCode = getCanonicalCode(rawCode, name, sDoc.deptKey);
-          const code = canonicalCode || rawCode;
-          const codeKey = normCodeKey(code);
+      return true;
+    });
 
-          if (!byCode[codeKey]) {
-            byCode[codeKey] = { code, name, courseTypes: [], departments: [], rawCodes: [] };
-          }
-          if (name && !byCode[codeKey].name) byCode[codeKey].name = name;
-          if (code && byCode[codeKey].code !== code) byCode[codeKey].code = code;
-          const rawNormLocal = normCodeKey(rawCode);
-          if (rawNormLocal && !byCode[codeKey].rawCodes.some(rc => normCodeKey(rc) === rawNormLocal)) {
-            byCode[codeKey].rawCodes.push(rawCode);
-          }
+    matchingDocs.forEach(sDoc => {
+      const deptVal = sDoc.data?.department || sDoc.docDepartment || sDoc.deptKey || "Overall";
+      const deptCleanKey = sanitizeKey(deptVal);
+      const progKey = sDoc.progKey || (selectedProgramme ? formatProgrammeKey(selectedProgramme) : "UG");
 
-          const bankEntry = courseBankMap[codeKey];
-          const deptCleanKey = sanitizeKey(sDoc.deptKey);
-          const bankType = String(bankEntry?._byDept?.[deptCleanKey] || bankEntry?._anyType || "").trim();
-          const ignoreTypes = new Set(["", "program course", "overall", "undefined", "null", "professional elective", "open elective", "mandatory course"]);
-          const useBankType = bankType && !ignoreTypes.has(bankType.toLowerCase());
-          const baseType = useBankType ? bankType : deriveSubjectCourseType(sub);
-          const ct = mapToConfiguredCourseType(baseType, configuredTypes);
-          if (ct && !byCode[codeKey].courseTypes.includes(ct)) byCode[codeKey].courseTypes.push(ct);
+      const subs = toArray(sDoc.data?.semesters?.[semester]);
+      subs.forEach(sub => {
+        if (!sub || sub.isNonOBE === true || sub.isActive === false) return;
+        const rawCode = String(sub.code || sub.subjectCode || sub.courseCode || "").trim();
+        const name = String(sub.name || sub.subjectName || sub.courseName || sub.title || "").trim();
+        if (!rawCode && !name) return;
 
-          const key = `${progKey}|||${sDoc.deptKey}`;
-          if (!byCode[codeKey].departments.some(d => d.key === key)) {
-            byCode[codeKey].departments.push({ progKey, prog, dept: sDoc.deptKey, key });
-          }
-        });
+        const canonicalCode = getCanonicalCode(rawCode, name, deptCleanKey);
+        const code = canonicalCode || rawCode;
+        const codeKey = normCodeKey(code);
+
+        if (!byCode[codeKey]) {
+          byCode[codeKey] = { code, name, courseTypes: [], departments: [], rawCodes: [] };
+        }
+        if (name && !byCode[codeKey].name) byCode[codeKey].name = name;
+        if (code && byCode[codeKey].code !== code) byCode[codeKey].code = code;
+
+        const rawNormLocal = normCodeKey(rawCode);
+        if (rawNormLocal && !byCode[codeKey].rawCodes.some(rc => normCodeKey(rc) === rawNormLocal)) {
+          byCode[codeKey].rawCodes.push(rawCode);
+        }
+
+        const bankEntry = courseBankMap[codeKey];
+        const bankType = String(bankEntry?._byDept?.[deptCleanKey] || bankEntry?._anyType || "").trim();
+        const ignoreTypes = new Set(["", "program course", "overall", "undefined", "null", "professional elective", "open elective", "mandatory course"]);
+        const useBankType = bankType && !ignoreTypes.has(bankType.toLowerCase());
+        const baseType = useBankType ? bankType : deriveSubjectCourseType(sub);
+        const ct = mapToConfiguredCourseType(baseType, configuredTypes);
+        if (ct && !byCode[codeKey].courseTypes.includes(ct)) byCode[codeKey].courseTypes.push(ct);
+
+        const key = `${progKey}|||${deptCleanKey}`;
+        if (!byCode[codeKey].departments.some(d => d.key === key)) {
+          byCode[codeKey].departments.push({ progKey, prog: progKey, dept: deptVal, key });
+        }
       });
     });
 
@@ -699,7 +755,7 @@ export default function IAScheduleCreation({ embedded = false }) {
         }
         return a.code.localeCompare(b.code);
       });
-  }, [allSyllabus, activeProgrammes, batch, semester, getRegulationForBatch, getConfiguredTypesForRegulation, courseBankMap]);
+  }, [allSyllabus, selectedProgramme, activeProgrammes, batch, semester, getRegulationForBatch, matchRegulation, getConfiguredTypesForRegulation, courseBankMap, deptMap, getCanonicalCode]);
 
   // Configured course types (from Curriculum course_type_configs) across the selected batch's regulations,
   // ordered by configuration. Falls back to types derived from the current semester's subjects when none configured.
@@ -971,7 +1027,11 @@ export default function IAScheduleCreation({ embedded = false }) {
         const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
         const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
 
-        if (isBatchMatch && isSemMatch && isAyMatch) {
+        const dExamId = normCodeKey(data.examId || data.examName || "");
+        const curExamKey = normCodeKey(selectedExamId || selectedExam?.title || "");
+        const isExamMatch = !curExamKey || !dExamId || dExamId === curExamKey || dExamId.includes(curExamKey) || curExamKey.includes(dExamId);
+
+        if (isBatchMatch && isSemMatch && isAyMatch && isExamMatch) {
           if (data.assignments && typeof data.assignments === "object") {
             Object.entries(data.assignments).forEach(([k, item]) => {
               if (!item) return;
@@ -1290,22 +1350,27 @@ export default function IAScheduleCreation({ embedded = false }) {
   };
 
   // Save Assignments to Firestore
-  const handleSaveAssignments = async () => {
+  const handleSaveAssignments = async (isDraft = false) => {
     if (!batch || !academicYear || !semester) {
       showToast("Please select Batch, Academic Year, and Semester first.", "error");
       return;
     }
 
-    const unassigned = rows.filter(r => !getAssignmentForCode(r.code, assignments)?.setterUid);
-    if (unassigned.length > 0) {
-      if (!window.confirm(`${unassigned.length} subjects have not been assigned a QP Setter yet. Do you still want to save?`)) {
-        return;
+    if (!isDraft) {
+      const unassigned = rows.filter(r => !getAssignmentForCode(r.code, assignments)?.setterUid);
+      if (unassigned.length > 0) {
+        if (!window.confirm(`${unassigned.length} subjects have not been assigned a QP Setter yet. Do you still want to submit for Principal approval?`)) {
+          return;
+        }
       }
     }
 
     setSaving(true);
     try {
-      const docKey = `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
+      const examKey = selectedExam?.id ? sanitizeKey(selectedExam.id) : (selectedExam?.title ? sanitizeKey(selectedExam.title) : "");
+      const docKey = examKey 
+        ? `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}_${examKey}` 
+        : `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
       const savedReg = getRegulationForBatch(activeProgrammes[0], batch);
       let cleanExamName = selectedExam?.title || "";
       if (savedReg && cleanExamName) {
@@ -1338,7 +1403,7 @@ export default function IAScheduleCreation({ embedded = false }) {
           slot: as.slot || "",
           session: as.session || "",
           timeSlot: as.timeSlot || "",
-          approved: as.approved === true
+          approved: false
         };
       });
 
@@ -1349,41 +1414,21 @@ export default function IAScheduleCreation({ embedded = false }) {
         examId: selectedExam?.id || "",
         examName: cleanExamName || selectedExam?.title || "",
         examWindow: selectedExam ? `${selectedExam.fromDate} to ${selectedExam.toDate}` : "",
-        status: "Pending Principal Approval",
+        status: isDraft ? "Draft" : "Pending Principal Approval",
+        principalApproved: false,
         updatedBy: currentUserData?.facultyName || auth.currentUser?.email || "Exam Cell",
         updatedById: auth.currentUser?.uid || "",
         updatedAt: new Date().toISOString(),
         assignments: payloadAssignments
       };
 
-      await setDoc(doc(db, "qp_setter_assignments", docKey), payload, { merge: true });
+      await setDoc(doc(db, "qp_setter_assignments", docKey), payload);
 
-      // Notify newly assigned QP setters in background
-      Object.values(assignments).forEach(async (as) => {
-        if (!as.setterUid) return;
-        try {
-          await addDoc(collection(db, "notifications"), {
-            type: "qp_setter_assigned",
-            targetUid: as.setterUid,
-            targetName: as.setterName || "",
-            batch,
-            academicYear,
-            semester,
-            subjectCode: as.code,
-            subjectName: as.name,
-            numSets: as.numSets || 1,
-            fromDate: as.fromDate || "",
-            toDate: as.toDate || "",
-            assignedBy: currentUserData?.facultyName || "Exam Cell",
-            createdAt: serverTimestamp(),
-            read: false
-          });
-        } catch (e) {
-          // ignore silent notification errors
-        }
-      });
-
-      showToast("IA Schedule saved and moved to Principal for approval!", "success");
+      if (isDraft) {
+        showToast("Schedule draft saved successfully!", "success");
+      } else {
+        showToast("IA Schedule saved and moved to Principal for approval!", "success");
+      }
     } catch (err) {
       console.error("Failed to save QP setter assignments:", err);
       showToast("Failed to save assignments.", "error");
@@ -2039,17 +2084,25 @@ export default function IAScheduleCreation({ embedded = false }) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleGenerateReport}
-                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl text-xs font-extrabold shadow-lg shadow-emerald-950/20 transition-all cursor-pointer"
+                  className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl text-xs font-extrabold shadow-lg shadow-emerald-950/20 transition-all cursor-pointer"
                 >
                   <Printer size={16} />
                   Print Timetable Report
                 </button>
                 <button
-                  onClick={handleSaveAssignments}
+                  onClick={() => handleSaveAssignments(true)}
                   disabled={saving}
-                  className="bg-[#120c7a] hover:bg-[#100b6e] text-white px-8 py-3 rounded-2xl text-xs font-extrabold shadow-lg shadow-blue-950/20 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-5 py-3 rounded-2xl text-xs font-extrabold shadow-lg shadow-amber-950/20 transition-all cursor-pointer disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  Save Draft
+                </button>
+                <button
+                  onClick={() => handleSaveAssignments(false)}
+                  disabled={saving}
+                  className="bg-[#120c7a] hover:bg-[#100b6e] text-white px-6 py-3 rounded-2xl text-xs font-extrabold shadow-lg shadow-blue-950/20 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   Save & Notify QP Setters
                 </button>
               </div>

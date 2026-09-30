@@ -2025,18 +2025,102 @@ export default function MarkEntry() {
 
         // Check course enrolments for this subject and semester
         if (subject) {
-          const enrollDocId = `${progKey}_${sanitizeKey(department)}_${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${deriveSemesterNumber(semester)}_${parseSubjectCodeKey(subject)}`;
-          const enrollSnap = await getDoc(doc(db, 'course_enrolments', enrollDocId));
-          const enrolled = {};
-          if (enrollSnap.exists()) {
-            const obj = enrollSnap.data() || {};
-            // Filter metadata keys starting with '_' out so empty enrolment docs don't clear student list
-            Object.keys(obj).filter(k => !k.startsWith('_')).forEach(k => { enrolled[k] = true; });
-            // Filter students to only enrolled ones IF non-meta student register numbers actually exist
-            if (Object.keys(enrolled).length > 0) {
-              studentList = studentList.filter(s => enrolled[s.reg]);
-              setStudents(studentList);
+          const semNum = deriveSemesterNumber(semester);
+          const rawSubCode = (typeof subject === 'object' ? (subject.code || subject.id) : String(subject).split(' - ')[0]).toUpperCase().trim();
+          const subCodeClean = sanitizeKey(rawSubCode);
+          const subSanitized = sanitizeKey(typeof subject === 'object' ? (subject.name || subject.id || '') : subject);
+          
+          // Derive batch year range (e.g. "25 Batch (2025-27)" -> "2025-2027")
+          let batchYearRange = '';
+          if (batch) {
+            const mYears = String(batch).match(/(19|20)\d{2}/g);
+            if (mYears && mYears.length >= 2) {
+              batchYearRange = `${mYears[0]}-${mYears[mYears.length - 1]}`;
+            } else {
+              const mShort = String(batch).match(/(20\d{2})\s*[-–—]\s*(\d{2,4})/);
+              if (mShort) {
+                let yEnd = mShort[2];
+                if (yEnd.length === 2) yEnd = `${mShort[1].slice(0, 2)}${yEnd}`;
+                batchYearRange = `${mShort[1]}-${yEnd}`;
+              }
             }
+          }
+
+          const deptKeys = Array.from(new Set([
+            department,
+            sanitizeKey(department),
+            sanitizeKeyStrict(department)
+          ].filter(Boolean)));
+
+          const batchKeys = Array.from(new Set([
+            batch,
+            batchYearRange,
+            batchYearRange.replace('-', '_'),
+            sanitizeKey(batch),
+            sanitizeKeyStrict(batch)
+          ].filter(Boolean)));
+
+          const yearKeys = Array.from(new Set([
+            academicYear,
+            sanitizeKey(academicYear),
+            String(academicYear || '').replace(/[^0-9-]/g, '')
+          ].filter(Boolean)));
+
+          const subKeys = Array.from(new Set([subCodeClean, subSanitized, rawSubCode].filter(Boolean)));
+          
+          const secClean = section ? sanitizeKey(section) : '';
+          const sectionSuffixes = Array.from(new Set([
+            section ? `_${section}` : '',
+            secClean ? `_${secClean}` : '',
+            secClean ? `_SEC_${secClean.toUpperCase()}` : '',
+            '',
+            '_Sec-A', '_Sec-B', '_SEC_A', '_SEC_B', '_A', '_B'
+          ].filter(v => v !== undefined)));
+
+          const candidateDocIds = [];
+          for (const prog of [progKey, programme].filter(Boolean)) {
+            for (const dK of deptKeys) {
+              for (const bK of batchKeys) {
+                for (const yK of yearKeys) {
+                  for (const sK of subKeys) {
+                    for (const sSuff of sectionSuffixes) {
+                      const cid = `${prog}_${dK}_${bK}_${yK}_${semNum}_${sK}${sSuff}`;
+                      if (!candidateDocIds.includes(cid)) {
+                        candidateDocIds.push(cid);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          const enrolled = {};
+          const enrolResults = await Promise.allSettled(
+            candidateDocIds.map(cid => getDoc(doc(db, 'course_enrolments', cid)))
+          );
+
+          enrolResults.forEach(res => {
+            if (res.status === 'fulfilled' && res.value && res.value.exists()) {
+              const obj = res.value.data() || {};
+              Object.entries(obj).forEach(([k, val]) => {
+                if (k.startsWith('_')) return;
+                if (val === true || val === 1 || val === "true" || (typeof val === 'object' && val !== null && val.enrolled !== false)) {
+                  enrolled[k] = true;
+                }
+              });
+            }
+          });
+
+          if (Object.keys(enrolled).length > 0) {
+            studentList = studentList.filter(s => {
+              const sReg = String(s.reg || s.regNo || s.examNo || '').trim();
+              const sNorm = sReg.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+              return Object.keys(enrolled).some(eKey => {
+                const eNorm = String(eKey).trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                return eNorm === sNorm || eKey === sReg;
+              });
+            });
           }
           setEnrolledRegs(enrolled);
         } else {
@@ -2053,11 +2137,12 @@ export default function MarkEntry() {
               ...s,
               regNo: sectionIndexData[s.reg]?.regNo || ""
             }));
-            setStudents(studentList);
           }
         } catch (e) {
           // Non-critical — index may not exist yet
         }
+
+        setStudents(studentList);
 
         if (exam && markType) {
           const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
@@ -2931,13 +3016,39 @@ export default function MarkEntry() {
       if (semLabel !== semester) setSemester(semLabel);
     }
     // Section defaults to qp section or Sec-A
-    const qpSec = qp.section || '';
+    const qpSec = qp.section || qp.sec || (Array.isArray(qp.sections) ? qp.sections[0] : '') || qp.allocatedTo?.section || qp.meta?.section || qp._meta?.section || '';
     if (qpSec && qpSec !== section) setSection(qpSec);
     // Subject + Exam are set after their option lists populate (separate effects below)
     // Re-runs when assignments/user profile arrive so dept resolution improves
     // (all setters are idempotent — identical values bail out, no loops).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardQp, facultyAssignedGroups, userDepartment]);
+
+  // After availableSections load or dashboardQp arrives, auto-select matching section
+  useEffect(() => {
+    if (!dashboardQp || availableSections.length === 0) return;
+    const rawSec = dashboardQp.section || dashboardQp.sec || (Array.isArray(dashboardQp.sections) ? dashboardQp.sections[0] : '') || dashboardQp.allocatedTo?.section || dashboardQp.meta?.section || dashboardQp._meta?.section || '';
+    const normSec = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    let secToSet = '';
+    
+    if (rawSec) {
+      const targetNorm = normSec(rawSec);
+      secToSet = availableSections.find(s => {
+        const n = normSec(s);
+        return n === targetNorm || n.endsWith(targetNorm) || targetNorm.endsWith(n) || (targetNorm === 'a' && n === 'seca');
+      }) || '';
+    }
+
+    if (!secToSet && availableSections.length === 1) {
+      secToSet = availableSections[0];
+    } else if (!secToSet && availableSections.length > 0 && rawSec) {
+      secToSet = availableSections[0];
+    }
+
+    if (secToSet && secToSet !== section) {
+      setSection(secToSet);
+    }
+  }, [dashboardQp, availableSections]);
 
   // After subjects load, auto-select the dashboard QP's subject code
   useEffect(() => {

@@ -157,8 +157,51 @@ export function parseStudentDocId(id, availableProgrammes = []) {
   };
 }
 
+export function compactAttendanceRecords(records) {
+  if (!records || typeof records !== 'object') return {};
+  const cleaned = {};
+
+  for (const [recKey, recVal] of Object.entries(records)) {
+    if (!recVal || typeof recVal !== 'object') continue;
+
+    const parentTopic = (recVal.topicTaught || '').trim();
+    const parentAid = (recVal.teachingAid || '').trim();
+    const parentMethod = (recVal.teachingMethodology || '').trim();
+
+    const rawStudents = recVal.students || {};
+    const compactStudents = {};
+
+    if (rawStudents && typeof rawStudents === 'object' && !Array.isArray(rawStudents)) {
+      for (const [sKey, sVal] of Object.entries(rawStudents)) {
+        if (!sVal) continue;
+        let entry = typeof sVal === 'string' ? { status: sVal } : { ...sVal };
+
+        // Strip student-level topic/aid/methodology if they match parent record or are empty
+        if (entry.topicTaught && entry.topicTaught.trim() === parentTopic) delete entry.topicTaught;
+        if (entry.teachingAid && entry.teachingAid === parentAid) delete entry.teachingAid;
+        if (entry.teachingMethodology && entry.teachingMethodology === parentMethod) delete entry.teachingMethodology;
+
+        if (entry.topicTaught === '') delete entry.topicTaught;
+        if (entry.teachingAid === '') delete entry.teachingAid;
+        if (entry.teachingMethodology === '') delete entry.teachingMethodology;
+
+        compactStudents[sKey] = entry;
+      }
+    } else {
+      compactStudents = rawStudents;
+    }
+
+    cleaned[recKey] = {
+      ...recVal,
+      students: compactStudents,
+    };
+  }
+
+  return cleaned;
+}
+
 export function prepareAttendancePayload(updatedRecords, extraMeta = {}) {
-  const safeRecords = updatedRecords && typeof updatedRecords === 'object' ? updatedRecords : {};
+  const safeRecords = updatedRecords && typeof updatedRecords === 'object' ? compactAttendanceRecords(updatedRecords) : {};
   const fullJson = JSON.stringify(safeRecords);
 
   // Safe chunk size limit per property (500 KB = 500,000 bytes)

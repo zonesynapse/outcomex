@@ -91,6 +91,7 @@ export default function PrincipalDashboard() {
   const [circularActioning, setCircularActioning] = useState(false);
 
   const [pendingIACount, setPendingIACount] = useState(-1);
+  const [showIAScheduleModal, setShowIAScheduleModal] = useState(false);
   const [pendingAppraisals, setPendingAppraisals] = useState([]);
 
   // Fetch pending appraisals forwarded by HOD
@@ -1029,7 +1030,7 @@ export default function PrincipalDashboard() {
     { label: "Fee Dashboard", desc: "Collections Summary", icon: CreditCard, color: "bg-violet-500", href: "/fee/dashboard" },
     { label: "Placements", desc: "Drives & Placed List", icon: Briefcase, color: "bg-emerald-500", href: "/placement/dashboard" },
     { label: "Circulars", desc: "Pending Circular Approval", icon: Megaphone, color: "bg-sky-500", onClick: 'circularModal' },
-    { label: "Pending IA Schedule", desc: "IA 1, 2, 3 Exams Approval", icon: BookOpen, color: "bg-[#120c7a]", href: "/academic/ia-schedule" }
+    { label: "Pending IA Schedule", desc: "IA 1, 2, 3 Exams Approval", icon: BookOpen, color: "bg-[#120c7a]", onClick: 'iaScheduleModal', badge: pendingIACount > 0 ? pendingIACount : null }
   ];
 
   const moduleCards = [
@@ -1313,12 +1314,23 @@ export default function PrincipalDashboard() {
                 <button key={action.label}
                   onClick={() => {
                     if (action.onClick === 'attendanceModal') openAttendanceModal();
+                    else if (action.onClick === 'iaScheduleModal') setShowIAScheduleModal(true);
+                    else if (action.onClick === 'pendingPopup') openPendingPopup();
+                    else if (action.onClick === 'reportsPopup') openReportsPopup();
+                    else if (action.onClick === 'circularModal') setCircularModal({ open: true });
                     else if (action.href) navigate(action.href);
                   }}
-                  className="group bg-white rounded-2xl border border-zinc-200 p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-center"
+                  className="group relative bg-white rounded-2xl border border-zinc-200 p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-center"
                 >
-                  <div className={`w-10 h-10 rounded-xl ${action.color} flex items-center justify-center mx-auto mb-2 shadow-sm group-hover:scale-110 transition-transform duration-200`}>
-                    <action.icon size={18} className="text-white" />
+                  <div className="relative inline-block">
+                    <div className={`w-10 h-10 rounded-xl ${action.color} flex items-center justify-center mx-auto mb-2 shadow-sm group-hover:scale-110 transition-transform duration-200`}>
+                      <action.icon size={18} className="text-white" />
+                    </div>
+                    {action.badge > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center shadow-md animate-pulse border-2 border-white">
+                        {action.badge}
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] font-bold text-zinc-700 leading-tight">{action.label}</p>
                   <p className="text-[9px] text-zinc-400 mt-0.5 hidden sm:block">{action.desc}</p>
@@ -1522,23 +1534,10 @@ export default function PrincipalDashboard() {
             )}
           </div>
 
-          {/* QP Setter Assignment & Department-Wise IA Schedule */}
-          {pendingIACount !== 0 && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2">
-                <FileText size={20} className="text-blue-600" />
-                QP Setter Assignment & IA Schedule (Department-Wise)
-              </h2>
-              <p className="text-xs font-medium text-zinc-500 hidden sm:block">
-                Read-only view of scheduled IA subjects grouped by department
-              </p>
-            </div>
-            <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-5">
-              <PrincipalIAScheduleView hideApproved={true} onPendingCountChange={setPendingIACount} />
-            </div>
+          {/* Background listener for Pending IA Schedule Count */}
+          <div className="hidden">
+            <PrincipalIAScheduleView hideApproved={true} onPendingCountChange={setPendingIACount} />
           </div>
-          )}
 
           {/* Module Overview */}
           <div>
@@ -3667,6 +3666,41 @@ export default function PrincipalDashboard() {
                   {selectedCircular.content}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending IA Schedule Approval Modal */}
+      {showIAScheduleModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-zinc-200 w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gradient-to-r from-[#120c7a] to-blue-900 text-white flex items-center justify-between shadow-md shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center backdrop-blur-md">
+                  <BookOpen size={20} className="text-blue-200" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold">Pending IA Schedule Approval</h2>
+                  <p className="text-xs text-blue-200">Review and approve department-wise exam schedules & QP setter assignments</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowIAScheduleModal(false)}
+                className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto flex-1 bg-zinc-50">
+              <PrincipalIAScheduleView 
+                showApproveButton={true} 
+                hideApproved={false} 
+                onPendingCountChange={setPendingIACount} 
+              />
             </div>
           </div>
         </div>

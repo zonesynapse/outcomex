@@ -3,6 +3,7 @@ import { onSnapshot, doc, setDoc, updateDoc, collection, query, orderBy, serverT
 import { db, auth } from "../../firebase";
 import Layout from "../../components/Layout";
 import AnnaUniversityPhotocopyModal from "../../components/AnnaUniversityPhotocopyModal";
+import AnnaUniversityFeeReportModal from "../../components/AnnaUniversityFeeReportModal";
 import * as XLSX from "xlsx";
 import { formatDepartmentDisplay } from "../../lib/utils";
 import {
@@ -73,6 +74,7 @@ export default function ExamFormSettingPage() {
   const [revoking, setRevoking] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedExportStatuses, setSelectedExportStatuses] = useState(["ALL"]);
+  const [feeReportModalOpen, setFeeReportModalOpen] = useState(false);
 
   const getStatusCount = (statusId) => {
     if (statusId === "ALL") return photocopyApps.length;
@@ -149,11 +151,18 @@ export default function ExamFormSettingPage() {
     return () => unsubs.forEach((u) => u());
   }, []);
 
-  // Realtime sync of submitted photocopy applications
+  // Realtime sync of submitted photocopy applications (Filter out unpaid / Payment Pending applications)
   useEffect(() => {
     const q = query(collection(db, "photocopy_applications"), orderBy("appliedAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const list = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(app => {
+          // Strictly exclude applications with status "Payment Pending" or paymentStatus "Pending"
+          const isPaid = app.paymentStatus === "Paid" || app.billAttached === true || !!app.electronicBill || !!app.transactionId;
+          const isConfirmedStatus = ["Payment Confirmed", "Submitted to HOD", "Recommended by HOD", "Copy Issued", "Closed", "Revoked by HOD", "Revoked by Exam Cell"].includes(app.status);
+          return (isPaid || isConfirmedStatus) && app.status !== "Payment Pending" && app.paymentStatus !== "Pending";
+        });
       setPhotocopyApps(list);
       setLoadingApps(false);
     }, (err) => {
@@ -486,6 +495,14 @@ export default function ExamFormSettingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() => setFeeReportModalOpen(true)}
+                  disabled={photocopyApps.length === 0}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-indigo-500"
+                  title="Generate and print official Department-wise Photocopy Fee Collection Report"
+                >
+                  <FileText size={15} /> Fee Report
+                </button>
+                <button
                   onClick={() => setExportModalOpen(true)}
                   disabled={photocopyApps.length === 0}
                   className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-emerald-500"
@@ -545,11 +562,21 @@ export default function ExamFormSettingPage() {
                               </div>
                             </td>
                             <td className="p-3">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <CheckCircle size={11} /> PAID (₹{app.feeAmount || 400})
-                              </span>
-                              {app.transactionId && (
-                                <div className="text-[9px] font-mono text-zinc-400 mt-0.5">{app.transactionId}</div>
+                              {app.paymentStatus === "Paid" || app.billAttached === true || !!app.electronicBill || !!app.transactionId ? (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <CheckCircle size={11} /> PAID (₹{app.feeAmount || (app.subjectCount * 350)})
+                                  </span>
+                                  {(app.electronicBill?.transactionId || app.transactionId || app.receiptNo || app.orderId) && (
+                                    <div className="text-[9px] font-mono text-zinc-500 mt-0.5 font-semibold">
+                                      {app.electronicBill?.transactionId || app.transactionId || app.receiptNo || app.orderId}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                                  <Clock size={11} /> Payment Pending
+                                </span>
                               )}
                             </td>
                             <td className="p-3">
@@ -829,6 +856,13 @@ export default function ExamFormSettingPage() {
           </div>
         </div>
       )}
+
+      {/* Anna University Photocopy Fee Collection Report Modal */}
+      <AnnaUniversityFeeReportModal
+        isOpen={feeReportModalOpen}
+        onClose={() => setFeeReportModalOpen(false)}
+        applications={photocopyApps}
+      />
     </Layout>
   );
 }

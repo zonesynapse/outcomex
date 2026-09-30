@@ -5,11 +5,20 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, Sparkles,
-  UploadCloud, Paperclip, Check, Loader2, RefreshCw, Layers, Target, TrendingUp, AlertCircle
+  UploadCloud, Paperclip, Check, Loader2, RefreshCw, Layers, Target, TrendingUp, AlertCircle, Upload, X
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
 import { checkAppraisalPortalStatus, parseAppraisalDateTime } from "../utils/appraisalScore";
+
+const normalizeProofs = (item) => {
+  if (!item) return [];
+  if (Array.isArray(item.proofs)) return item.proofs;
+  if (Array.isArray(item.proofFiles)) return item.proofFiles;
+  if (Array.isArray(item)) return item;
+  if (item.fileUrl) return [{ fileUrl: item.fileUrl, fileName: item.fileName || "Proof Attachment" }];
+  return [];
+};
 
 export default function HODAppraisal() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -146,7 +155,7 @@ export default function HODAppraisal() {
             setKra1PassPct(f.kra1.passPct || "");
             setKra1Tier(f.kra1.tier || "");
             setKra1Remarks(f.kra1.remarks || "");
-            setKra1Proof(f.kra1.proof || { fileUrl: "", fileName: "" });
+            setKra1Proof(normalizeProofs(f.kra1.proofs || f.kra1.proof));
           }
 
           if (f.kra2) {
@@ -154,7 +163,11 @@ export default function HODAppraisal() {
               const merged = { ...prev };
               Object.keys(prev).forEach((key) => {
                 if (f.kra2[key]) {
-                  merged[key] = { ...prev[key], ...f.kra2[key] };
+                  merged[key] = {
+                    ...prev[key],
+                    ...f.kra2[key],
+                    proofs: normalizeProofs(f.kra2[key].proofs || f.kra2[key].proof || { fileUrl: f.kra2[key].fileUrl, fileName: f.kra2[key].fileName })
+                  };
                 }
               });
               return merged;
@@ -166,7 +179,11 @@ export default function HODAppraisal() {
               const merged = { ...prev };
               Object.keys(prev).forEach((key) => {
                 if (f.kra3[key]) {
-                  merged[key] = { ...prev[key], ...f.kra3[key] };
+                  merged[key] = {
+                    ...prev[key],
+                    ...f.kra3[key],
+                    proofs: normalizeProofs(f.kra3[key].proofs || f.kra3[key].proof || { fileUrl: f.kra3[key].fileUrl, fileName: f.kra3[key].fileName })
+                  };
                 }
               });
               return merged;
@@ -174,18 +191,29 @@ export default function HODAppraisal() {
           }
 
           if (f.kra4 && Array.isArray(f.kra4) && f.kra4.length > 0) {
-            setKra4Contributions(f.kra4);
+            setKra4Contributions(f.kra4.map(c => ({
+              ...c,
+              proofs: normalizeProofs(c.proofs || c.proof || { fileUrl: c.fileUrl, fileName: c.fileName })
+            })));
           }
 
           if (f.kra5) {
             setKra5ResultTier(f.kra5.resultTier || "");
             setKra5ResultRemarks(f.kra5.resultRemarks || "");
-            setKra5ResultProof(f.kra5.resultProof || { fileUrl: "", fileName: "" });
+            setKra5ResultProof(normalizeProofs(f.kra5.resultProofs || f.kra5.resultProof));
             if (f.kra5.onlineCourse) {
-              setKra5OnlineCourse((prev) => ({ ...prev, ...f.kra5.onlineCourse }));
+              setKra5OnlineCourse((prev) => ({
+                ...prev,
+                ...f.kra5.onlineCourse,
+                proofs: normalizeProofs(f.kra5.onlineCourse.proofs || f.kra5.onlineCourse.proof || { fileUrl: f.kra5.onlineCourse.fileUrl, fileName: f.kra5.onlineCourse.fileName })
+              }));
             }
             if (f.kra5.publication) {
-              setKra5Publication((prev) => ({ ...prev, ...f.kra5.publication }));
+              setKra5Publication((prev) => ({
+                ...prev,
+                ...f.kra5.publication,
+                proofs: normalizeProofs(f.kra5.publication.proofs || f.kra5.publication.proof || { fileUrl: f.kra5.publication.fileUrl, fileName: f.kra5.publication.fileName })
+              }));
             }
           }
           setDeclaration(data.declaration || false);
@@ -266,27 +294,83 @@ export default function HODAppraisal() {
     return kra1Score + kra2Score + kra3Score + kra4Score + kra5Score;
   }, [kra1Score, kra2Score, kra3Score, kra4Score, kra5Score]);
 
-  // File Upload Helper
-  const handleFileUpload = async (file, pathKey, onSuccess) => {
-    if (!file || !currentUser) return;
+  // Multi-File Upload Helper (Each file strictly under 100 KB)
+  const handleMultipleFileUpload = async (files, pathKey, onSuccess) => {
+    if (!files || files.length === 0 || !currentUser) return;
 
-    if (file.size > 100 * 1024) {
-      showToast(`File size is ${(file.size / 1024).toFixed(1)} KB, which exceeds the limit of 100 KB.`, "error");
+    const fileList = Array.from(files);
+    const oversized = fileList.filter(f => f.size > 100 * 1024);
+    if (oversized.length > 0) {
+      showToast(`${oversized.length} file(s) exceed 100 KB limit (${oversized.map(f => `${f.name} - ${(f.size / 1024).toFixed(1)}KB`).join(", ")}). Each file must be under 100 KB.`, "error");
       return;
     }
 
     setUploadingMap(prev => ({ ...prev, [pathKey]: true }));
     try {
-      const storagePath = userStoragePath(currentUser.uid, "hod_appraisals", file.name);
-      const fileUrl = await uploadFile(storagePath, file, file.type);
-      onSuccess(fileUrl, file.name);
-      showToast("File attached successfully!", "success");
+      const uploadedFiles = [];
+      for (const file of fileList) {
+        const storagePath = userStoragePath(currentUser.uid, "hod_appraisals", file.name);
+        const fileUrl = await uploadFile(storagePath, file, file.type);
+        uploadedFiles.push({ fileUrl, fileName: file.name });
+      }
+      onSuccess(uploadedFiles);
+      showToast(`${uploadedFiles.length} file(s) attached successfully!`, "success");
     } catch (err) {
       console.error("Upload error:", err);
-      showToast("Failed to upload file. Please try again.", "error");
+      showToast("Failed to upload file(s). Please try again.", "error");
     } finally {
       setUploadingMap(prev => ({ ...prev, [pathKey]: false }));
     }
+  };
+
+  const renderProofUpload = (proofsSource, pathKey, onAddFiles, onRemoveFile, label = "Attach Proof(s) (Max 100 KB / File)") => {
+    const proofList = normalizeProofs(proofsSource);
+    return (
+      <div className="space-y-1.5 mt-1.5">
+        {proofList.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-1">
+            {proofList.map((p, idx) => (
+              <div key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-lg text-xs font-semibold max-w-[220px]">
+                <Paperclip size={12} className="text-indigo-600 shrink-0" />
+                <a href={p.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate text-[11px]" title={p.fileName}>
+                  {p.fileName || `Attachment ${idx + 1}`}
+                </a>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveFile(idx)}
+                    className="text-rose-500 hover:text-rose-700 ml-0.5 p-0.5"
+                    title="Remove file"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!isReadOnly && (
+          <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all">
+            <UploadCloud size={12} className="text-indigo-600" />
+            <span>{uploadingMap[pathKey] ? "Uploading..." : label}</span>
+            <input
+              type="file"
+              multiple
+              accept="image/*,.pdf"
+              className="hidden"
+              disabled={uploadingMap[pathKey]}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  handleMultipleFileUpload(e.target.files, pathKey, onAddFiles);
+                  e.target.value = "";
+                }
+              }}
+            />
+          </label>
+        )}
+      </div>
+    );
   };
 
   const isReadOnly = useMemo(() => {
@@ -313,6 +397,29 @@ export default function HODAppraisal() {
     setSaving(true);
     const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_hod`;
     const docRef = doc(db, "hod_appraisals", docId);
+
+    const processedKra2 = {};
+    Object.keys(kra2Parameters).forEach((k) => {
+      const p = kra2Parameters[k] || {};
+      processedKra2[k] = {
+        ...p,
+        proofs: normalizeProofs(p)
+      };
+    });
+
+    const processedKra3 = {};
+    Object.keys(kra3Parameters).forEach((k) => {
+      const p = kra3Parameters[k] || {};
+      processedKra3[k] = {
+        ...p,
+        proofs: normalizeProofs(p)
+      };
+    });
+
+    const processedKra4 = kra4Contributions.map((c) => ({
+      ...c,
+      proofs: normalizeProofs(c)
+    }));
 
     const payload = {
       uid: currentUser.uid,
@@ -344,17 +451,23 @@ export default function HODAppraisal() {
           tier: kra1Tier,
           score: kra1Score,
           remarks: kra1Remarks,
-          proof: kra1Proof
+          proof: normalizeProofs(kra1Proof)
         },
-        kra2: kra2Parameters,
-        kra3: kra3Parameters,
-        kra4: kra4Contributions,
+        kra2: processedKra2,
+        kra3: processedKra3,
+        kra4: processedKra4,
         kra5: {
           resultTier: kra5ResultTier,
           resultRemarks: kra5ResultRemarks,
-          resultProof: kra5ResultProof,
-          onlineCourse: kra5OnlineCourse,
-          publication: kra5Publication,
+          resultProof: normalizeProofs(kra5ResultProof),
+          onlineCourse: {
+            ...kra5OnlineCourse,
+            proofs: normalizeProofs(kra5OnlineCourse)
+          },
+          publication: {
+            ...kra5Publication,
+            proofs: normalizeProofs(kra5Publication)
+          },
           score: kra5Score
         }
       },
@@ -679,29 +792,14 @@ export default function HODAppraisal() {
               />
             </div>
 
-            <div className="md:col-span-2 flex items-center gap-3">
-              {kra1Proof.fileUrl ? (
-                <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-700">
-                  <Paperclip size={14} />
-                  <a href={kra1Proof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-xs">{kra1Proof.fileName || "View Attachment"}</a>
-                  {!isReadOnly && (
-                    <button type="button" onClick={() => setKra1Proof({ fileUrl: "", fileName: "" })} className="text-rose-500 hover:text-rose-700 ml-1">
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-              ) : (
-                !isReadOnly && (
-                  <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs rounded-xl cursor-pointer transition-all">
-                    <UploadCloud size={14} />
-                    <span>{uploadingMap["kra1"] ? "Uploading..." : "Attach Proof (PDF / Image - Max 100 KB)"}</span>
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra1", (url, name) => setKra1Proof({ fileUrl: url, fileName: name }))}
-                    />
-                  </label>
-                )
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">Attached Proof Document(s)</label>
+              {renderProofUpload(
+                kra1Proof,
+                "kra1",
+                (newFiles) => setKra1Proof((prev) => [...normalizeProofs(prev), ...newFiles]),
+                (removeIdx) => setKra1Proof((prev) => normalizeProofs(prev).filter((_, i) => i !== removeIdx)),
+                "Attach Proof(s) (PDF / Image - Max 100 KB / File)"
               )}
             </div>
           </div>
@@ -785,30 +883,24 @@ export default function HODAppraisal() {
                       />
                     </div>
                     <div>
-                      {currentData.fileUrl ? (
-                        <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                          <Paperclip size={12} />
-                          <a href={currentData.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{currentData.fileName || "Proof"}</a>
-                          {!isReadOnly && (
-                            <button type="button" onClick={() => setKra2Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: "", fileName: "" } }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        !isReadOnly && (
-                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                            <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra2_${param.key}`] ? "Uploading..." : "Attach Proof (Max 100 KB)"}</span>
-                            <input
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], `kra2_${param.key}`, (url, name) => {
-                                setKra2Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: url, fileName: name } }));
-                              })}
-                            />
-                          </label>
-                        )
+                      {renderProofUpload(
+                        currentData,
+                        `kra2_${param.key}`,
+                        (newFiles) => setKra2Parameters((prev) => ({
+                          ...prev,
+                          [param.key]: {
+                            ...prev[param.key],
+                            proofs: [...normalizeProofs(prev[param.key]), ...newFiles]
+                          }
+                        })),
+                        (removeIdx) => setKra2Parameters((prev) => ({
+                          ...prev,
+                          [param.key]: {
+                            ...prev[param.key],
+                            proofs: normalizeProofs(prev[param.key]).filter((_, i) => i !== removeIdx)
+                          }
+                        })),
+                        "Attach Proof(s)"
                       )}
                     </div>
                   </div>
@@ -841,7 +933,7 @@ export default function HODAppraisal() {
               { key: "onlineCourse", label: "3. Online Course – 1 per faculty / Semester" },
               { key: "publications", label: "4. Publications of Research Papers in reputed Journal / International Conference - 2 per faculty / Semester" }
             ].map((param) => {
-              const currentData = kra3Parameters[param.key] || { tier: "below", remarks: "", fileUrl: "", fileName: "" };
+              const currentData = kra3Parameters[param.key] || { tier: "below", remarks: "", proofs: [] };
               return (
                 <div key={param.key} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -884,30 +976,24 @@ export default function HODAppraisal() {
                       />
                     </div>
                     <div>
-                      {currentData.fileUrl ? (
-                        <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                          <Paperclip size={12} />
-                          <a href={currentData.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{currentData.fileName || "Proof"}</a>
-                          {!isReadOnly && (
-                            <button type="button" onClick={() => setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: "", fileName: "" } }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        !isReadOnly && (
-                          <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                            <UploadCloud size={12} />
-                            <span>{uploadingMap[`kra3_${param.key}`] ? "Uploading..." : "Attach Proof (Max 100 KB)"}</span>
-                            <input
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], `kra3_${param.key}`, (url, name) => {
-                                setKra3Parameters(prev => ({ ...prev, [param.key]: { ...prev[param.key], fileUrl: url, fileName: name } }));
-                              })}
-                            />
-                          </label>
-                        )
+                      {renderProofUpload(
+                        currentData,
+                        `kra3_${param.key}`,
+                        (newFiles) => setKra3Parameters((prev) => ({
+                          ...prev,
+                          [param.key]: {
+                            ...prev[param.key],
+                            proofs: [...normalizeProofs(prev[param.key]), ...newFiles]
+                          }
+                        })),
+                        (removeIdx) => setKra3Parameters((prev) => ({
+                          ...prev,
+                          [param.key]: {
+                            ...prev[param.key],
+                            proofs: normalizeProofs(prev[param.key]).filter((_, i) => i !== removeIdx)
+                          }
+                        })),
+                        "Attach Proof(s)"
                       )}
                     </div>
                   </div>
@@ -980,31 +1066,13 @@ export default function HODAppraisal() {
                     />
                   </div>
 
-                  <div className="sm:col-span-2 flex items-center gap-3">
-                    {contrib.fileUrl ? (
-                      <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1 rounded-xl text-[10px] font-bold text-indigo-700">
-                        <Paperclip size={12} />
-                        <a href={contrib.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-xs">{contrib.fileName || "Proof Attachment"}</a>
-                        {!isReadOnly && (
-                          <button type="button" onClick={() => setKra4Contributions(prev => prev.map((c, i) => i === idx ? { ...c, fileUrl: "", fileName: "" } : c))} className="text-rose-500 hover:text-rose-700 ml-1">
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      !isReadOnly && (
-                        <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all">
-                          <UploadCloud size={12} />
-                          <span>{uploadingMap[`kra4_${idx}`] ? "Uploading..." : "Attach Proof File (Max 100 KB)"}</span>
-                          <input
-                            type="file"
-                            className="hidden"
-                            onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], `kra4_${idx}`, (url, name) => {
-                              setKra4Contributions(prev => prev.map((c, i) => i === idx ? { ...c, fileUrl: url, fileName: name } : c));
-                            })}
-                          />
-                        </label>
-                      )
+                  <div className="sm:col-span-2">
+                    {renderProofUpload(
+                      contrib,
+                      `kra4_${idx}`,
+                      (newFiles) => setKra4Contributions((prev) => prev.map((c, i) => i === idx ? { ...c, proofs: [...normalizeProofs(c), ...newFiles] } : c)),
+                      (removeIdx) => setKra4Contributions((prev) => prev.map((c, i) => i === idx ? { ...c, proofs: normalizeProofs(c).filter((_, j) => j !== removeIdx) } : c)),
+                      "Attach Contribution Proof(s)"
                     )}
                   </div>
                 </div>
@@ -1014,7 +1082,7 @@ export default function HODAppraisal() {
             {!isReadOnly && (
               <button
                 type="button"
-                onClick={() => setKra4Contributions(prev => [...prev, { title: "", description: "", fileUrl: "", fileName: "" }])}
+                onClick={() => setKra4Contributions(prev => [...prev, { title: "", description: "", proofs: [] }])}
                 className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 border border-indigo-200 text-[#120c7a] font-bold text-xs rounded-xl hover:bg-indigo-100 transition-all"
               >
                 <Plus size={14} /> Add Another Contribution
@@ -1080,28 +1148,12 @@ export default function HODAppraisal() {
                   />
                 </div>
                 <div>
-                  {kra5ResultProof.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5ResultProof.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5ResultProof.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5ResultProof({ fileUrl: "", fileName: "" })} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_result"] ? "Uploading..." : "Attach Result Sheet (Max 100 KB)"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_result", (url, name) => setKra5ResultProof({ fileUrl: url, fileName: name }))}
-                        />
-                      </label>
-                    )
+                  {renderProofUpload(
+                    kra5ResultProof,
+                    "kra5_result",
+                    (newFiles) => setKra5ResultProof((prev) => [...normalizeProofs(prev), ...newFiles]),
+                    (removeIdx) => setKra5ResultProof((prev) => normalizeProofs(prev).filter((_, i) => i !== removeIdx)),
+                    "Attach Result Sheet Proof(s)"
                   )}
                 </div>
               </div>
@@ -1150,28 +1202,18 @@ export default function HODAppraisal() {
                   />
                 </div>
                 <div>
-                  {kra5OnlineCourse.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5OnlineCourse.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5OnlineCourse.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5OnlineCourse(prev => ({ ...prev, fileUrl: "", fileName: "" }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_course"] ? "Uploading..." : "Attach Certificate (Max 100 KB)"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_course", (url, name) => setKra5OnlineCourse(prev => ({ ...prev, fileUrl: url, fileName: name })))}
-                        />
-                      </label>
-                    )
+                  {renderProofUpload(
+                    kra5OnlineCourse,
+                    "kra5_course",
+                    (newFiles) => setKra5OnlineCourse((prev) => ({
+                      ...prev,
+                      proofs: [...normalizeProofs(prev), ...newFiles]
+                    })),
+                    (removeIdx) => setKra5OnlineCourse((prev) => ({
+                      ...prev,
+                      proofs: normalizeProofs(prev).filter((_, i) => i !== removeIdx)
+                    })),
+                    "Attach Certificate Proof(s)"
                   )}
                 </div>
               </div>
@@ -1220,28 +1262,18 @@ export default function HODAppraisal() {
                   />
                 </div>
                 <div>
-                  {kra5Publication.fileUrl ? (
-                    <div className="flex items-center gap-2 bg-white border border-zinc-200 px-3 py-1.5 rounded-xl text-[10px] font-bold text-indigo-700">
-                      <Paperclip size={12} />
-                      <a href={kra5Publication.fileUrl} target="_blank" rel="noreferrer" className="hover:underline truncate max-w-[120px]">{kra5Publication.fileName || "Proof"}</a>
-                      {!isReadOnly && (
-                        <button type="button" onClick={() => setKra5Publication(prev => ({ ...prev, fileUrl: "", fileName: "" }))} className="text-rose-500 hover:text-rose-700 ml-auto">
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    !isReadOnly && (
-                      <label className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-zinc-200 hover:bg-zinc-100 text-zinc-700 font-bold text-[10px] rounded-xl cursor-pointer transition-all w-full justify-center">
-                        <UploadCloud size={12} />
-                        <span>{uploadingMap["kra5_pub"] ? "Uploading..." : "Attach Paper Copy (Max 100 KB)"}</span>
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "kra5_pub", (url, name) => setKra5Publication(prev => ({ ...prev, fileUrl: url, fileName: name })))}
-                        />
-                      </label>
-                    )
+                  {renderProofUpload(
+                    kra5Publication,
+                    "kra5_pub",
+                    (newFiles) => setKra5Publication((prev) => ({
+                      ...prev,
+                      proofs: [...normalizeProofs(prev), ...newFiles]
+                    })),
+                    (removeIdx) => setKra5Publication((prev) => ({
+                      ...prev,
+                      proofs: normalizeProofs(prev).filter((_, i) => i !== removeIdx)
+                    })),
+                    "Attach Paper Copy Proof(s)"
                   )}
                 </div>
               </div>

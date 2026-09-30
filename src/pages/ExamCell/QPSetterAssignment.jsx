@@ -438,8 +438,11 @@ export default function QPSetterAssignment() {
 
   const saveDocKey = useMemo(() => {
     if (!batch || !academicYear || !semester) return "";
-    return `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
-  }, [batch, academicYear, semester]);
+    const examKey = selectedExamId ? sanitizeKey(selectedExamId) : "";
+    return examKey 
+      ? `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}_${examKey}`
+      : `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
+  }, [batch, academicYear, semester, selectedExamId]);
 
   useEffect(() => {
     if (!batch || !semester) {
@@ -645,7 +648,7 @@ export default function QPSetterAssignment() {
       const { assignments: _discard, ...cleanDocMeta } = (existingDocData || {});
 
       await setDoc(doc(db, "qp_setter_assignments", targetSaveDocKey), {
-        ...cleanDocMeta, // PRESERVES examId, examName, examWindow, status, etc.!
+        ...cleanDocMeta,
         batch,
         academicYear,
         semester,
@@ -653,7 +656,7 @@ export default function QPSetterAssignment() {
         updatedById: currentUid,
         updatedAt: new Date().toISOString(),
         assignments: payloadAssignments
-      }, { merge: true });
+      });
 
       const uniqueSetters = {};
       notifications.forEach(n => {
