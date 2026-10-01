@@ -66,6 +66,23 @@ export default function AppraisalReviews() {
   const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
 
   const isSectionVisible = (id) => {
+    const coreMainSections = new Set([
+      "sec_roles_department",
+      "sec_professional_memberships",
+      "sec_awards_honors",
+      "sec_academic_nptel",
+      "sec_academic_fdp",
+      "sec_academic_journals",
+      "sec_academic_books",
+      "sec_profile_details",
+      "sec_profile_experience",
+      "sec_profile_workload",
+      "sec_subjects_results",
+      "sec_library_usage",
+      "sec_leave_summary"
+    ]);
+    if (coreMainSections.has(id)) return true;
+
     const field = customFieldsConfig.find(f => f.id === id);
     return field ? field.visible !== false : true;
   };
@@ -2391,12 +2408,12 @@ export default function AppraisalReviews() {
                       <div className="space-y-6">
                         {isSectionVisible("sec_academic_nptel") && (
                           <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_nptel", "3.1 MOOC / Online Courses Completed")}
+                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
+                              {getSectionTitle("sec_academic_nptel", "3.1 NPTEL CERTIFICATIONS COMPLETED")}
                             </span>
-                            {getSectionDescription("sec_academic_nptel") && (
-                              <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_academic_nptel")}</p>
-                            )}
+                            <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
+                              {getSectionDescription("sec_academic_nptel") || "CERTIFICATION DETAILS AND CREDITS EARNED VIA SWAYAM/NPTEL PORTALS."}
+                            </p>
                             <table className="w-full border-collapse border border-zinc-200 text-xs">
                               <tr className="bg-zinc-50 font-bold">
                                 <th className="border border-zinc-200 p-2">Course Title</th>
@@ -2421,52 +2438,21 @@ export default function AppraisalReviews() {
                             </table>
                             {selectedAppraisal.formData?.onlineCoursesOutcome && (
                               <div className="bg-slate-50 border border-zinc-200 p-3 rounded-xl mt-2 text-xs">
-                                <span className="font-bold block mb-1">Outcome/Achievements of Courses:</span>
+                                <span className="font-bold block mb-1 uppercase text-[10px] text-zinc-500 font-serif">* SPECIFY THE OUTCOME AND ACHIEVEMENTS OF 13.A</span>
                                 <p className="text-zinc-600 font-medium">{selectedAppraisal.formData.onlineCoursesOutcome}</p>
                               </div>
                             )}
                           </div>
                         )}
 
-                        {isSectionVisible("sec_academic_fdp") && (
-                          <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_fdp", "3.2 Workshops / Seminars / FDP Participations")}
-                            </span>
-                            {getSectionDescription("sec_academic_fdp") && (
-                              <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_academic_fdp")}</p>
-                            )}
-                            <table className="w-full border-collapse border border-zinc-200 text-xs">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-2 text-left">Program Title</th>
-                                <th className="border border-zinc-200 p-2 text-center">Dates</th>
-                                <th className="border border-zinc-200 p-2 text-center">Days</th>
-                                <th className="border border-zinc-200 p-2 text-left">Organizing Institution</th>
-                                <th className="border border-zinc-200 p-2 text-center">Report?</th>
-                                {renderRowEvidenceHeader("sec_academic_fdp")}
-                              </tr>
-                              {(selectedAppraisal.formData?.workshopsFDPs || []).map((row, i) => (
-                                <tr key={i}>
-                                  <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.dates}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.days}</td>
-                                  <td className="border border-zinc-200 p-2 font-medium text-zinc-650">{row.organization}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.reportSubmitted}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp")}
-                                </tr>
-                              ))}
-                            </table>
-                          </div>
-                        )}
-
                         {isSectionVisible("sec_academic_journals") && (
                           <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_journals", "3.3 Research Publications")}
+                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
+                              {getSectionTitle("sec_academic_journals", "3.3 JOURNAL PUBLICATIONS")}
                             </span>
-                            {getSectionDescription("sec_academic_journals") && (
-                              <p className="text-[10px] text-zinc-400 font-semibold mb-4 uppercase">{getSectionDescription("sec_academic_journals")}</p>
-                            )}
+                            <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
+                              {getSectionDescription("sec_academic_journals") || "DETAILS OF RESEARCH PUBLICATIONS IN INDEXED JOURNALS."}
+                            </p>
                             <table className="w-full border-collapse border border-zinc-200 text-xs">
                               <tr className="bg-zinc-50 font-bold">
                                 <th className="border border-zinc-200 p-2">Paper Title</th>
@@ -2490,9 +2476,41 @@ export default function AppraisalReviews() {
                           </div>
                         )}
 
+                        {isSectionVisible("sec_academic_fdp") && (
+                          <div>
+                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
+                              {getSectionTitle("sec_academic_fdp", "3.2 FDP / SEMINARS ORGANIZED & ATTENDED")}
+                            </span>
+                            <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
+                              {getSectionDescription("sec_academic_fdp") || "LIST OF FACULTY DEVELOPMENT PROGRAMS, SEMINARS, WORKSHOPS PARTICIPATED."}
+                            </p>
+                            <table className="w-full border-collapse border border-zinc-200 text-xs">
+                              <tr className="bg-zinc-50 font-bold">
+                                <th className="border border-zinc-200 p-2 text-left">Program Title</th>
+                                <th className="border border-zinc-200 p-2 text-center">Dates</th>
+                                <th className="border border-zinc-200 p-2 text-center">Days</th>
+                                <th className="border border-zinc-200 p-2 text-left">Organizing Institution</th>
+                                <th className="border border-zinc-200 p-2 text-center">Report?</th>
+                                {renderRowEvidenceHeader("sec_academic_fdp")}
+                              </tr>
+                              {(selectedAppraisal.formData?.workshopsFDPs || []).map((row, i) => (
+                                <tr key={i}>
+                                  <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
+                                  <td className="border border-zinc-200 p-2 text-center">{row.dates}</td>
+                                  <td className="border border-zinc-200 p-2 text-center">{row.days}</td>
+                                  <td className="border border-zinc-200 p-2 font-medium text-zinc-650">{row.organization}</td>
+                                  <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.reportSubmitted}</td>
+                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp")}
+                                </tr>
+                              ))}
+                            </table>
+                          </div>
+                        )}
+
                         {isSectionVisible("sec_academic_nptel") && selectedAppraisal.formData?.improvingQualification && (
                           <div className="bg-[#120c7a]/5 border border-[#120c7a]/15 p-4 rounded-xl">
-                            <span className="block text-[10px] font-black text-zinc-500 uppercase mb-2">Improving Qualification detail</span>
+                            <span className="block text-[11px] font-extrabold text-[#120c7a] uppercase mb-1 tracking-wider">HIGHER STUDIES / PHD UPGRADE</span>
+                            <span className="block text-[10px] font-black text-indigo-900 uppercase mb-2">QUALIFICATION UPGRADE DETAILS</span>
                             <table className="w-full border-collapse border border-zinc-200 text-xs bg-white">
                               <tr className="bg-zinc-50 font-bold">
                                 <th className="border border-zinc-200 p-1.5">Degree</th>
@@ -2523,191 +2541,233 @@ export default function AppraisalReviews() {
                     )}
 
                     {/* Sub-Tab 4: Institutional Roles */}
-                    {activeDetailsTab === 4 && (
-                      <div className="space-y-6">
-                        {isSectionVisible("sec_roles_department") && (
-                          <>
-                            <div className="border-b border-slate-100 pb-2 mb-4">
-                              <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider">
-                                {getSectionTitle("sec_roles_department", "4.1 Department & Institutional contributions")}
-                              </span>
-                              {getSectionDescription("sec_roles_department") && (
-                                <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">{getSectionDescription("sec_roles_department")}</p>
-                              )}
-                            </div>
+                    {activeDetailsTab === 4 && (() => {
+                      const reviewAppInst = selectedAppraisal?.institution || selectedAppraisal?.department || selectedStaff?.institution || selectedStaff?.department || "";
+                      const isCKCOE = isSameInstitution(reviewAppInst, "CKCOE") || getSchoolShortName(reviewAppInst) === "CKCOE" || String(reviewAppInst).toUpperCase().includes("CKCOE") || String(reviewAppInst).toUpperCase().includes("BED") || String(reviewAppInst).toUpperCase().includes("B.ED");
 
-                            {/* Organizing Programs */}
-                            <div>
-                              <span className="text-xs font-black text-slate-800 block mb-2 uppercase">A) Organizing FDP / Conferences / Workshops / Guest Lectures</span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-left">Event Title</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Period</th>
-                                  <th className="border border-zinc-200 p-2 text-left">Resource Details</th>
-                                  <th className="border border-zinc-200 p-2 text-left">Target Audience & Outcome</th>
-                                  {renderRowEvidenceHeader("sec_roles_department")}
-                                </tr>
-                                {(selectedAppraisal.formData?.organizingPrograms || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.period}</td>
-                                    <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.resourcePersonDetails}</td>
-                                    <td className="border border-zinc-200 p-2 text-zinc-600">{row.targetAudience} - {row.outcome}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                  </tr>
-                                ))}
-                              </table>
-                            </div>
-
-                            {/* Funding Proposals */}
-                            <div>
-                              <span className="text-xs font-black text-slate-800 block mb-2 uppercase">B) Contribution towards Funding Proposals / Testing / Consultancy</span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-left">Proposal / Project Title</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Role</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Fund Requested (Rs)</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Agency & Status</th>
-                                  {renderRowEvidenceHeader("sec_roles_department")}
-                                </tr>
-                                {(selectedAppraisal.formData?.fundingProposals || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.role}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.fundRequested}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-medium">{row.fundingAgencyScheme} ({row.status})</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                  </tr>
-                                ))}
-                              </table>
-                            </div>
-
-                            {/* Placement activities */}
-                            {selectedAppraisal.formData?.involvementPlacement && selectedAppraisal.formData.involvementPlacement.length > 0 && (
-                              <div>
-                                <span className="text-xs font-black text-slate-800 block mb-2 uppercase">C) Placement Activities / Mentoring / Counseling</span>
-                                <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                  <tr className="bg-zinc-50 font-bold">
-                                    <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                    <th className="border border-zinc-200 p-2">Role</th>
-                                    <th className="border border-zinc-200 p-2">Outcome</th>
-                                    <th className="border border-zinc-200 p-2 text-center">Records?</th>
-                                    {renderRowEvidenceHeader("sec_roles_department")}
-                                  </tr>
-                                  {selectedAppraisal.formData.involvementPlacement.map((row, i) => (
-                                    <tr key={i}>
-                                      <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.description}</td>
-                                      <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                      <td className="border border-zinc-200 p-2 text-zinc-600">{row.outcome}</td>
-                                      <td className="border border-zinc-200 p-2 text-center font-bold">{row.recordsMaintained}</td>
-                                      {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                    </tr>
-                                  ))}
-                                </table>
-                              </div>
-                            )}
-
-                            {/* Accreditation activities */}
-                            {selectedAppraisal.formData?.accreditationContributions && selectedAppraisal.formData.accreditationContributions.length > 0 && (
-                              <div>
-                                <span className="text-xs font-black text-slate-800 block mb-2 uppercase">D) ISO / NAAC / NBA / Coordinator role</span>
-                                <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                  <tr className="bg-zinc-50 font-bold">
-                                    <th className="border border-zinc-200 p-2 text-left">Role</th>
-                                    <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                    <th className="border border-zinc-200 p-2 text-left">Outcome</th>
-                                    {renderRowEvidenceHeader("sec_roles_department")}
-                                  </tr>
-                                  {selectedAppraisal.formData.accreditationContributions.map((row, i) => (
-                                    <tr key={i}>
-                                      <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                      <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
-                                      <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
-                                      {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                    </tr>
-                                  ))}
-                                </table>
-                              </div>
-                            )}
-
-                            {/* R&D Portfolios */}
-                            {selectedAppraisal.formData?.rdContributions && selectedAppraisal.formData.rdContributions.length > 0 && (
-                              <div>
-                                <span className="text-xs font-black text-slate-800 block mb-2 uppercase">E) R&D / EDC / SIC / Sports Portfolios</span>
-                                <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                  <tr className="bg-zinc-50 font-bold">
-                                    <th className="border border-zinc-200 p-2 text-left">Role</th>
-                                    <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                    <th className="border border-zinc-200 p-2 text-left">Outcome</th>
-                                    {renderRowEvidenceHeader("sec_roles_department")}
-                                  </tr>
-                                  {selectedAppraisal.formData.rdContributions.map((row, i) => (
-                                    <tr key={i}>
-                                      <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                      <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
-                                      <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
-                                      {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                    </tr>
-                                  ))}
-                                </table>
-                              </div>
-                            )}
-
-                            {/* HOD exclusive results */}
-                            {(isSectionVisible("f_resultImprovementHOD") || isSectionVisible("f_deptAdministrationHOD")) && (
-                              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-                                <span className="text-xs font-black text-indigo-950 block uppercase tracking-wider">HOD Exclusive Portfolio Answers</span>
-                                {isSectionVisible("f_resultImprovementHOD") && selectedAppraisal.formData?.resultImprovementHOD && (
-                                  <div>
-                                    <span className="block text-[9px] font-black text-zinc-400 uppercase">
-                                      {getSectionTitle("f_resultImprovementHOD", "Result Improvement & Maintenance")}:
-                                    </span>
-                                    <p className="font-semibold text-slate-800">{selectedAppraisal.formData.resultImprovementHOD}</p>
-                                  </div>
-                                )}
-                                {isSectionVisible("f_deptAdministrationHOD") && selectedAppraisal.formData?.deptAdministrationHOD && (
-                                  <div className="mt-2">
-                                    <span className="block text-[9px] font-black text-zinc-400 uppercase">
-                                      {getSectionTitle("f_deptAdministrationHOD", "Department Administration & Planning")}:
-                                    </span>
-                                    <p className="font-semibold text-slate-800">{selectedAppraisal.formData.deptAdministrationHOD}</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Other roles contribution */}
-                            {isSectionVisible("f_otherRolesContribution") && selectedAppraisal.formData?.otherRolesContribution && (
-                              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                                <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
-                                  {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution")}:
+                      return (
+                        <div className="space-y-6">
+                          {isSectionVisible("sec_roles_department") && (
+                            <>
+                              <div className="border-b border-slate-100 pb-2 mb-4">
+                                <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider">
+                                  {getSectionTitle("sec_roles_department", "4.1 Department & Institutional contributions")}
                                 </span>
-                                <p className="font-semibold text-slate-850">{selectedAppraisal.formData.otherRolesContribution}</p>
+                                {getSectionDescription("sec_roles_department") && (
+                                  <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">{getSectionDescription("sec_roles_department")}</p>
+                                )}
                               </div>
-                            )}
 
-                            {/* Admissions contributed */}
-                            <div>
-                              <span className="text-xs font-black text-slate-800 block mb-2 uppercase">Admissions Contributed (Minimum 5 Admissions)</span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2">Team No / Area</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Admissions Contributed</th>
-                                  <th className="border border-zinc-200 p-2">Name of the Team Leader</th>
-                                  {renderRowEvidenceHeader("sec_roles_department")}
-                                </tr>
-                                {(selectedAppraisal.formData?.admissionContribution || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 font-bold">{row.teamNoArea}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.countContributed}</td>
-                                    <td className="border border-zinc-200 p-2">{row.teamLeaderName}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                  </tr>
-                                ))}
-                              </table>
-                            </div>
-                          </>
-                        )}
+                              {isCKCOE ? (
+                                /* CKCOE SPECIFIC 7 SUB-SECTIONS */
+                                <>
+                                  {/* Organizing Programs */}
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">A) Organizing FDP / Conferences / Workshops / Guest Lectures</span>
+                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                      <tr className="bg-zinc-50 font-bold">
+                                        <th className="border border-zinc-200 p-2 text-left">Event Title</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Period</th>
+                                        <th className="border border-zinc-200 p-2 text-left">Resource Details</th>
+                                        <th className="border border-zinc-200 p-2 text-left">Target Audience & Outcome</th>
+                                        {renderRowEvidenceHeader("sec_roles_department")}
+                                      </tr>
+                                      {(selectedAppraisal.formData?.organizingPrograms || []).map((row, i) => (
+                                        <tr key={i}>
+                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
+                                          <td className="border border-zinc-200 p-2 text-center">{row.period}</td>
+                                          <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.resourcePersonDetails}</td>
+                                          <td className="border border-zinc-200 p-2 text-zinc-600">{row.targetAudience} - {row.outcome}</td>
+                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                        </tr>
+                                      ))}
+                                    </table>
+                                  </div>
+
+                                  {/* Funding Proposals */}
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">B) Contribution towards Funding Proposals / Testing / Consultancy</span>
+                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                      <tr className="bg-zinc-50 font-bold">
+                                        <th className="border border-zinc-200 p-2 text-left">Proposal / Project Title</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Role</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Fund Requested (Rs)</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Agency & Status</th>
+                                        {renderRowEvidenceHeader("sec_roles_department")}
+                                      </tr>
+                                      {(selectedAppraisal.formData?.fundingProposals || []).map((row, i) => (
+                                        <tr key={i}>
+                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
+                                          <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.role}</td>
+                                          <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.fundRequested}</td>
+                                          <td className="border border-zinc-200 p-2 text-center font-medium">{row.fundingAgencyScheme} ({row.status})</td>
+                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                        </tr>
+                                      ))}
+                                    </table>
+                                  </div>
+
+                                  {/* Placement activities */}
+                                  {selectedAppraisal.formData?.involvementPlacement && selectedAppraisal.formData.involvementPlacement.length > 0 && (
+                                    <div>
+                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">C) Placement Activities / Mentoring / Counseling</span>
+                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                        <tr className="bg-zinc-50 font-bold">
+                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
+                                          <th className="border border-zinc-200 p-2">Role</th>
+                                          <th className="border border-zinc-200 p-2">Outcome</th>
+                                          <th className="border border-zinc-200 p-2 text-center">Records?</th>
+                                          {renderRowEvidenceHeader("sec_roles_department")}
+                                        </tr>
+                                        {selectedAppraisal.formData.involvementPlacement.map((row, i) => (
+                                          <tr key={i}>
+                                            <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.description}</td>
+                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
+                                            <td className="border border-zinc-200 p-2 text-zinc-600">{row.outcome}</td>
+                                            <td className="border border-zinc-200 p-2 text-center font-bold">{row.recordsMaintained}</td>
+                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                          </tr>
+                                        ))}
+                                      </table>
+                                    </div>
+                                  )}
+
+                                  {/* Accreditation activities */}
+                                  {selectedAppraisal.formData?.accreditationContributions && selectedAppraisal.formData.accreditationContributions.length > 0 && (
+                                    <div>
+                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">D) ISO / NAAC / NBA / Coordinator role</span>
+                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                        <tr className="bg-zinc-50 font-bold">
+                                          <th className="border border-zinc-200 p-2 text-left">Role</th>
+                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
+                                          <th className="border border-zinc-200 p-2 text-left">Outcome</th>
+                                          {renderRowEvidenceHeader("sec_roles_department")}
+                                        </tr>
+                                        {selectedAppraisal.formData.accreditationContributions.map((row, i) => (
+                                          <tr key={i}>
+                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
+                                            <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
+                                            <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
+                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                          </tr>
+                                        ))}
+                                      </table>
+                                    </div>
+                                  )}
+
+                                  {/* R&D Portfolios */}
+                                  {selectedAppraisal.formData?.rdContributions && selectedAppraisal.formData.rdContributions.length > 0 && (
+                                    <div>
+                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">E) R&D / EDC / SIC / Sports Portfolios</span>
+                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                        <tr className="bg-zinc-50 font-bold">
+                                          <th className="border border-zinc-200 p-2 text-left">Role</th>
+                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
+                                          <th className="border border-zinc-200 p-2 text-left">Outcome</th>
+                                          {renderRowEvidenceHeader("sec_roles_department")}
+                                        </tr>
+                                        {selectedAppraisal.formData.rdContributions.map((row, i) => (
+                                          <tr key={i}>
+                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
+                                            <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
+                                            <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
+                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                          </tr>
+                                        ))}
+                                      </table>
+                                    </div>
+                                  )}
+
+                                  {/* Other roles contribution */}
+                                  {isSectionVisible("f_otherRolesContribution") && selectedAppraisal.formData?.otherRolesContribution && (
+                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                      <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
+                                        {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution Description")}:
+                                      </span>
+                                      <p className="font-semibold text-slate-850 whitespace-pre-line">{selectedAppraisal.formData.otherRolesContribution}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Admissions contributed */}
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">Admissions Contributed</span>
+                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                      <tr className="bg-zinc-50 font-bold">
+                                        <th className="border border-zinc-200 p-2">Team No / Area</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Admissions Contributed</th>
+                                        <th className="border border-zinc-200 p-2">Name of the Team Leader</th>
+                                        {renderRowEvidenceHeader("sec_roles_department")}
+                                      </tr>
+                                      {(selectedAppraisal.formData?.admissionContribution || []).map((row, i) => (
+                                        <tr key={i}>
+                                          <td className="border border-zinc-200 p-2 font-bold">{row.teamNoArea}</td>
+                                          <td className="border border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.countContributed}</td>
+                                          <td className="border border-zinc-200 p-2">{row.teamLeaderName}</td>
+                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                        </tr>
+                                      ))}
+                                    </table>
+                                  </div>
+                                </>
+                              ) : (
+                                /* NON-CKCOE SPECIFIC SUB-SECTIONS */
+                                <>
+                                  <div>
+                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">Department & College Level Roles</span>
+                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
+                                      <tr className="bg-zinc-50 font-bold">
+                                        <th className="border border-zinc-200 p-2 text-left">Title of Workshop / Special Program Organized</th>
+                                        <th className="border border-zinc-200 p-2 text-center">Dates & Duration</th>
+                                        <th className="border border-zinc-200 p-2 text-left">Sponsoring Agency & Grant</th>
+                                        {renderRowEvidenceHeader("sec_roles_department")}
+                                      </tr>
+                                      {(selectedAppraisal.formData?.departmentRoles || []).map((row, i) => (
+                                        <tr key={i}>
+                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.programTitle}</td>
+                                          <td className="border border-zinc-200 p-2 text-center">{row.datesDuration}</td>
+                                          <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.agencyGrant}</td>
+                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                        </tr>
+                                      ))}
+                                    </table>
+                                  </div>
+
+                                  {/* HOD exclusive results */}
+                                  {(isSectionVisible("f_resultImprovementHOD") || isSectionVisible("f_deptAdministrationHOD")) && (
+                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                                      <span className="text-xs font-black text-indigo-950 block uppercase tracking-wider">HOD Exclusive Portfolio Answers</span>
+                                      {isSectionVisible("f_resultImprovementHOD") && selectedAppraisal.formData?.resultImprovementHOD && (
+                                        <div>
+                                          <span className="block text-[9px] font-black text-zinc-400 uppercase">
+                                            {getSectionTitle("f_resultImprovementHOD", "Result Improvement & Maintenance")}:
+                                          </span>
+                                          <p className="font-semibold text-slate-800">{selectedAppraisal.formData.resultImprovementHOD}</p>
+                                        </div>
+                                      )}
+                                      {isSectionVisible("f_deptAdministrationHOD") && selectedAppraisal.formData?.deptAdministrationHOD && (
+                                        <div className="mt-2">
+                                          <span className="block text-[9px] font-black text-zinc-400 uppercase">
+                                            {getSectionTitle("f_deptAdministrationHOD", "Department Administration & Planning")}:
+                                          </span>
+                                          <p className="font-semibold text-slate-800">{selectedAppraisal.formData.deptAdministrationHOD}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Other roles contribution */}
+                                  {isSectionVisible("f_otherRolesContribution") && selectedAppraisal.formData?.otherRolesContribution && (
+                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                      <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
+                                        {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution Description")}:
+                                      </span>
+                                      <p className="font-semibold text-slate-850 whitespace-pre-line">{selectedAppraisal.formData.otherRolesContribution}</p>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </>
+                          )}
 
                         {/* Professional body memberships */}
                         {isSectionVisible("sec_professional_memberships") && selectedAppraisal.formData?.professionalMembership && selectedAppraisal.formData.professionalMembership.length > 0 && (
@@ -2766,7 +2826,8 @@ export default function AppraisalReviews() {
 
                         {renderReviewCustomFields(4, selectedAppraisal.formData?.customFields)}
                       </div>
-                    )}
+                    );
+                  })()}
 
                     {/* Sub-Tab 5: Library & Leaves */}
                     {activeDetailsTab === 5 && (

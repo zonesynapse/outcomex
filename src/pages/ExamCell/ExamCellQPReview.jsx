@@ -11,7 +11,7 @@ import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
 import { getQuestionPaperHTML, buildQuestionPaperPrintShell } from "../../utils/questionPaperUtils";
 import { useRegulations } from "../../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay } from "../../lib/utils";
+import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay, isSameExam, getExamTag } from "../../lib/utils";
 import { typesetMath } from "../../utils/mathJaxUtils";
 
 const timeAgo = (dateStr) => {
@@ -94,12 +94,14 @@ export default function ExamCellQPReview() {
   const [coeSignature, setCoeSignature] = useState("");
   const [usersMap, setUsersMap] = useState({});
   const [ciaConfigs, setCiaConfigs] = useState({});
+  const [academicCalendarExams, setAcademicCalendarExams] = useState([]);
   const [rawQps, setRawQps] = useState({});
   const [allQps, setAllQps] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "pending");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedReviewExamFilter, setSelectedReviewExamFilter] = useState("ALL");
 
   const [selectedQP, setSelectedQP] = useState(null);
   const [showQPModal, setShowQPModal] = useState(false);
@@ -155,6 +157,20 @@ export default function ExamCellQPReview() {
   }, []);
 
   useEffect(() => {
+    const unsub = onSnapshot(collection(db, "academic_calendar_events"), (snap) => {
+      const list = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data && data.type === "Exam" && data.title) {
+          list.push({ id: d.id, ...data });
+        }
+      });
+      setAcademicCalendarExams(list);
+    }, () => setAcademicCalendarExams([]));
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
     const unsub = onSnapshot(collection(db, "generated_qps"), (snap) => {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
@@ -198,21 +214,34 @@ export default function ExamCellQPReview() {
     return () => unsub();
   }, []);
 
+  const [allSyllabusDocs, setAllSyllabusDocs] = useState([]);
   const [syllabusCodeMap, setSyllabusCodeMap] = useState({});
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "syllabus_data"), (snap) => {
+      const docs = [];
       const map = {};
       snap.forEach(d => {
-        const deptRaw = (() => {
-          // parseSyllabusDocId: [prog, dept..., regKey] — e.g. "B_E_CSE_R2021" → dept "CSE"
-          const parts = d.id.split("_");
-          if (parts.length < 3) return "";
+        const parts = d.id.split("_");
+        let regKey = parts[parts.length - 1] || "";
+        let progKey = parts[0] || "";
+        let deptRaw = "";
+        if (parts.length >= 3) {
           let progTake = 1;
           if (["B", "M"].includes(parts[0]) && ["E", "Tech", "Sc", "Com"].includes(parts[1])) progTake = 2;
           const deptTokens = parts.slice(progTake, parts.length - 1);
-          return deptTokens.join("_");
-        })();
+          deptRaw = deptTokens.join("_");
+        }
         const raw = d.data() || {};
+        docs.push({
+          id: d.id,
+          progKey,
+          deptKey: deptRaw,
+          regKey: raw.regulation || regKey,
+          regulation: raw.regulation || regKey,
+          data: raw
+        });
+
         const semKeys = Object.keys(raw).filter(k => !k.startsWith("_"));
         const toArray = (v) => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.values(v) : []);
         semKeys.forEach(sk => {
@@ -227,9 +256,67 @@ export default function ExamCellQPReview() {
       const out = {};
       Object.keys(map).forEach(k => { out[k] = Array.from(map[k]); });
       setSyllabusCodeMap(out);
-    }, () => setSyllabusCodeMap({}));
+      setAllSyllabusDocs(docs);
+    }, () => { setSyllabusCodeMap({}); setAllSyllabusDocs([]); });
     return () => unsub();
   }, []);
+
+  const matchRegulation = useCallback((docReg, targetReg) => {
+    if (!targetReg) return true;
+    if (!docReg) return false;
+    const dNorm = String(docReg).toLowerCase().replace(/[^a-z0-9]/g, "");
+    const tNorm = String(targetReg).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (dNorm === tNorm) return true;
+    const dClean = dNorm.replace(/^au/, "");
+    const tClean = tNorm.replace(/^au/, "");
+    if (dClean === tClean) return true;
+
+    const getRegYear = (str) => {
+      const m = String(str).match(/r\s*(\d{4})/i) || String(str).match(/(19|20)\d{2}/);
+      return m ? m[1] || m[0] : null;
+    };
+    const dYear = getRegYear(docReg);
+    const tYear = getRegYear(targetReg);
+    if (dYear && tYear) return dYear === tYear;
+    return false;
+  }, []);
+
+  const isValidSubjectForBatchSem = useCallback((code, batch, semester) => {
+    if (!code || !batch || !semester || allSyllabusDocs.length === 0) return true;
+
+    const targetReg = getRegulationForBatch("", batch);
+    if (!targetReg) return true;
+
+    const normCode = normCodeKey(code);
+    const extractSemNum = (s) => {
+      if (!s) return "";
+      const m = String(s).match(/(\d+)/);
+      return m ? m[1] : String(s).trim();
+    };
+    const semNum = extractSemNum(semester);
+
+    const matchingDocs = allSyllabusDocs.filter(s => matchRegulation(s.regulation, targetReg));
+    if (matchingDocs.length === 0) return true;
+
+    let foundInSem = false;
+    const toArray = (v) => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.values(v) : []);
+
+    for (const sDoc of matchingDocs) {
+      const semData = sDoc.data?.semesters?.[semNum] || sDoc.data?.[semNum] || [];
+      const subs = toArray(semData);
+      for (const sub of subs) {
+        if (!sub || sub.isNonOBE === true || sub.isActive === false) continue;
+        const c = normCodeKey(sub?.code || sub?.subjectCode || sub?.courseCode || "");
+        if (c && (c === normCode || c.includes(normCode) || normCode.includes(c))) {
+          foundInSem = true;
+          break;
+        }
+      }
+      if (foundInSem) break;
+    }
+
+    return foundInSem;
+  }, [allSyllabusDocs, getRegulationForBatch, matchRegulation]);
 
   const [courseBankDeptMap, setCourseBankDeptMap] = useState({});
   useEffect(() => {
@@ -282,6 +369,66 @@ export default function ExamCellQPReview() {
     return u?.facultyName || u?.displayName || u?.email || (uid ? uid.slice(0, 6) : "-");
   };
 
+  const resolveExamName = useCallback((qp) => {
+    if (!qp) return "";
+    let name = (qp.exam_name || qp.examName || qp.examId || "").toString().trim();
+    if (!name) {
+      const qpaperName = (qp.qpaper_name || "").toString().trim();
+      if (qpaperName && ciaConfigs && ciaConfigs[qpaperName] && ciaConfigs[qpaperName].examName) {
+        name = ciaConfigs[qpaperName].examName;
+      } else {
+        name = qpaperName;
+      }
+    }
+    return name;
+  }, [ciaConfigs]);
+
+  const availableReviewExamEvents = useMemo(() => {
+    const map = new Map();
+    const isRealExamTitle = (title) => {
+      if (!title) return false;
+      const str = String(title).trim().toLowerCase();
+      if (/(assignment|activity|project review|observation|record|survey|viva|rubric)/i.test(str)) {
+        return false;
+      }
+      return true;
+    };
+
+    // 1. Primary Source: Academic Calendar Events created in AcademicCalendar.jsx (where type === 'Exam')
+    if (academicCalendarExams.length > 0) {
+      academicCalendarExams.forEach(ev => {
+        const title = (ev.title || "").trim();
+        if (title && isRealExamTitle(title)) {
+          const tag = getExamTag(title) || title.toLowerCase();
+          if (!map.has(tag)) map.set(tag, title);
+        }
+      });
+    }
+
+    // 2. Secondary Source: Fall back to scheduled & published exam names matching real exam titles
+    scheduleDocs.forEach(s => {
+      const en = (s.examName || s.examId || "").toString().trim();
+      if (en && isRealExamTitle(en)) {
+        const tag = getExamTag(en) || en.toLowerCase();
+        if (academicCalendarExams.length === 0 || map.has(tag)) {
+          if (!map.has(tag)) map.set(tag, en);
+        }
+      }
+    });
+
+    allQps.forEach(q => {
+      const en = resolveExamName(q);
+      if (en && isRealExamTitle(en)) {
+        const tag = getExamTag(en) || en.toLowerCase();
+        if (academicCalendarExams.length === 0 || map.has(tag)) {
+          if (!map.has(tag)) map.set(tag, en);
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [academicCalendarExams, scheduleDocs, allQps, resolveExamName]);
+
   const resolveExamDisplay = (qp) => {
     if (!qp) return "-";
     const examName = (qp.exam_name || "").toString().trim();
@@ -298,8 +445,43 @@ export default function ExamCellQPReview() {
     return `${display} (${setLabel})`;
   };
 
+  const isDateInExamRange = useCallback((dateStr, examFilterName) => {
+    if (!dateStr || !examFilterName || examFilterName === "ALL") return true;
+    const ev = academicCalendarExams.find(e => isSameExam(e.title || e.name || e.examName, examFilterName));
+    if (!ev || !ev.fromDate || !ev.toDate) return true;
+
+    try {
+      const d = new Date(dateStr).getTime();
+      const start = new Date(ev.fromDate).getTime();
+      const end = new Date(ev.toDate).setHours(23, 59, 59, 999);
+      if (isNaN(d) || isNaN(start) || isNaN(end)) return true;
+      return d >= start && d <= end;
+    } catch {
+      return true;
+    }
+  }, [academicCalendarExams]);
+
+  const isExamMatchForDoc = useCallback((docExamName, docExamDate, filterExamName) => {
+    if (!filterExamName || filterExamName === "ALL") return true;
+
+    const cleanExamName = (docExamName || "").toString().trim();
+    if (cleanExamName) {
+      if (isSameExam(cleanExamName, filterExamName)) return true;
+      return false;
+    }
+
+    if (docExamDate) {
+      return isDateInExamRange(docExamDate, filterExamName);
+    }
+
+    return true;
+  }, [isDateInExamRange]);
+
   const filteredPending = useMemo(() => {
     let result = pendingQps;
+    if (selectedReviewExamFilter !== "ALL") {
+      result = result.filter(p => isSameExam(resolveExamName(p), selectedReviewExamFilter));
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(p =>
@@ -310,10 +492,13 @@ export default function ExamCellQPReview() {
       );
     }
     return result;
-  }, [pendingQps, searchQuery]);
+  }, [pendingQps, searchQuery, selectedReviewExamFilter, resolveExamName]);
 
   const filteredPublished = useMemo(() => {
     let result = publishedQps;
+    if (selectedReviewExamFilter !== "ALL") {
+      result = result.filter(p => isSameExam(resolveExamName(p), selectedReviewExamFilter));
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(p =>
@@ -324,7 +509,7 @@ export default function ExamCellQPReview() {
       );
     }
     return result;
-  }, [publishedQps, searchQuery]);
+  }, [publishedQps, searchQuery, selectedReviewExamFilter, resolveExamName]);
 
   const awaitingAllocation = useMemo(() =>
     filteredPublished.filter(q => !q.allocated),
@@ -585,8 +770,13 @@ export default function ExamCellQPReview() {
       return `${c}|${b}|${s}`;
     };
 
-    // 1. Seed from scheduleDocs (qp_setter_assignments) — every scheduled subject
-    scheduleDocs.forEach(s => {
+    // 1. Seed from scheduleDocs (qp_setter_assignments) — filtered for active exam event and valid regulation subject
+    const targetScheduleDocs = (selectedReviewExamFilter === "ALL"
+      ? scheduleDocs
+      : scheduleDocs.filter(s => isExamMatchForDoc(s.examName || s.examId, s.examDate, selectedReviewExamFilter))
+    ).filter(s => isValidSubjectForBatchSem(s.code, s.batch, s.semester));
+
+    targetScheduleDocs.forEach(s => {
       const code = (s.code || "").toString().replace(/\s+/g, "").toUpperCase();
       const key = makeKey(code, s.batch, s.semester);
       if (!groups[key]) {
@@ -620,6 +810,9 @@ export default function ExamCellQPReview() {
       const name = parsedSubj.name || qp.subject_name || "";
       const batch = (qp.batch || "").toString().trim();
       const sem = (qp.semester || "").toString().trim();
+
+      if (!isValidSubjectForBatchSem(code, batch, sem)) return;
+
       const key = makeKey(code, batch, sem);
       if (!groups[key]) {
         groups[key] = {
@@ -661,26 +854,52 @@ export default function ExamCellQPReview() {
       if (deptCmp !== 0) return deptCmp;
       return a.code.localeCompare(b.code);
     });
-  }, [filteredPublished, scheduleDocs, syllabusCodeMap, courseBankDeptMap]);
+  }, [filteredPublished, scheduleDocs, syllabusCodeMap, courseBankDeptMap, selectedReviewExamFilter, isValidSubjectForBatchSem]);
 
   const [pubSearchQuery, setPubSearchQuery] = useState("");
   const [selectedPubExamDateFilter, setSelectedPubExamDateFilter] = useState("ALL");
 
+  const getMatchedScheduleSlot = useCallback((group) => {
+    const firstQp = group.qps[0];
+    const rawAllocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
+    let allocInfo = rawAllocInfo;
+
+    if (allocInfo && selectedReviewExamFilter !== "ALL") {
+      if (!isExamMatchForDoc(allocInfo.examName, allocInfo.examDate, selectedReviewExamFilter)) {
+        allocInfo = null;
+      }
+    }
+
+    const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
+      const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
+      const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
+      const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
+      const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
+      const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
+
+      if (sCode !== group.code || sBatchYr !== gBatchYr || sSemNum !== gSemNum) return false;
+
+      if (selectedReviewExamFilter !== "ALL") {
+        return isExamMatchForDoc(s.examName || s.examId, s.examDate, selectedReviewExamFilter);
+      }
+      return true;
+    }) : null;
+
+    let groupExamDate = group.examDate || "";
+    if (selectedReviewExamFilter !== "ALL") {
+      if (!isExamMatchForDoc(group.examName, groupExamDate, selectedReviewExamFilter)) {
+        groupExamDate = "";
+      }
+    }
+
+    const rawDate = allocInfo?.examDate || matchedSlot?.examDate || groupExamDate || "";
+    return { allocInfo, matchedSlot, rawDate };
+  }, [scheduleDocs, selectedReviewExamFilter, isExamMatchForDoc]);
+
   const availablePublishedExamDates = useMemo(() => {
     const dateMap = new Map();
     publishedBySubject.forEach(group => {
-      const firstQp = group.qps[0];
-      const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
-      const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
-        const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
-        const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
-        const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
-        const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
-        const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
-        return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
-      }) : null;
-
-      const rawDate = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || "";
+      const { rawDate } = getMatchedScheduleSlot(group);
       if (rawDate) {
         const normDate = rawDate.trim();
         if (!dateMap.has(normDate)) {
@@ -691,25 +910,14 @@ export default function ExamCellQPReview() {
     });
 
     return Array.from(dateMap.values()).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
-  }, [publishedBySubject, scheduleDocs]);
+  }, [publishedBySubject, getMatchedScheduleSlot]);
 
   const filteredPublishedSubjects = useMemo(() => {
     let result = publishedBySubject;
 
     if (selectedPubExamDateFilter !== "ALL") {
       result = result.filter(group => {
-        const firstQp = group.qps[0];
-        const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
-        const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
-          const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
-          const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
-          const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
-          const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
-          const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
-          return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
-        }) : null;
-
-        const rawDate = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || "";
+        const { rawDate } = getMatchedScheduleSlot(group);
         return rawDate.trim() === selectedPubExamDateFilter;
       });
     }
@@ -726,7 +934,7 @@ export default function ExamCellQPReview() {
       });
     }
     return result;
-  }, [publishedBySubject, pubSearchQuery, selectedPubExamDateFilter, scheduleDocs]);
+  }, [publishedBySubject, pubSearchQuery, selectedPubExamDateFilter, getMatchedScheduleSlot]);
 
   const renderQpCard = (qp, published) => {
     const name = resolveName(published ? qp.coe_approved_by || qp.forwarded_by : qp.forwarded_by);
@@ -853,9 +1061,9 @@ export default function ExamCellQPReview() {
           </div>
         </div>
 
-        {/* Tabs + Search */}
+        {/* Tabs + Search + Exam Filter */}
         <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-4 mb-6 flex flex-col md:flex-row md:items-center gap-3">
-          <div className="flex bg-zinc-100 rounded-xl p-1 w-fit">
+          <div className="flex bg-zinc-100 rounded-xl p-1 w-fit shrink-0">
             <button
               onClick={() => setActiveTab("review")}
               className={`px-4 py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${activeTab === "review" ? "bg-[#120c7a] text-white shadow" : "text-zinc-500 hover:text-zinc-800"}`}>
@@ -867,6 +1075,21 @@ export default function ExamCellQPReview() {
               Published ({publishedQps.length})
             </button>
           </div>
+
+          {/* Exam Event Dropdown Filter */}
+          <div className="min-w-[180px]">
+            <select
+              value={selectedReviewExamFilter}
+              onChange={(e) => setSelectedReviewExamFilter(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-xs font-bold bg-white text-zinc-800 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer"
+            >
+              <option value="ALL">All Exam Events</option>
+              {availableReviewExamEvents.map(en => (
+                <option key={en} value={en}>{en}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
             <input
@@ -876,9 +1099,9 @@ export default function ExamCellQPReview() {
               className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-200 text-xs font-semibold bg-zinc-50 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
             />
           </div>
-          {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="text-[11px] font-bold text-rose-600 hover:text-rose-700 cursor-pointer">
-              Clear search
+          {(searchQuery || selectedReviewExamFilter !== "ALL") && (
+            <button onClick={() => { setSearchQuery(""); setSelectedReviewExamFilter("ALL"); }} className="text-[11px] font-bold text-rose-600 hover:text-rose-700 cursor-pointer shrink-0">
+              Clear filters
             </button>
           )}
         </div>
@@ -1038,19 +1261,7 @@ export default function ExamCellQPReview() {
                       {filteredPublishedSubjects.map((group, gIdx) => {
                         const allocatedCount = group.qps.filter(q => q.allocated).length;
                         const pendingCount = group.qps.length - allocatedCount;
-                        const firstQp = group.qps[0];
-
-                        const allocInfo = firstQp?.allocatedTo || group.qps.find(q => q.allocatedTo)?.allocatedTo || null;
-                        const matchedSlot = !allocInfo ? scheduleDocs.find(s => {
-                          const sCode = (s.code || "").replace(/\s+/g, "").toUpperCase();
-                          const sBatchYr = (s.batch || "").match(/(\d{4})/)?.[1] || (s.batch || "").trim();
-                          const sSemNum = (s.semester || "").match(/(\d+)/)?.[1] || (s.semester || "").trim();
-                          const gBatchYr = (group.batch || "").match(/(\d{4})/)?.[1] || group.batch;
-                          const gSemNum = (group.semester || "").match(/(\d+)/)?.[1] || group.semester;
-                          return sCode === group.code && sBatchYr === gBatchYr && sSemNum === gSemNum;
-                        }) : null;
-
-                        const examDateRaw = allocInfo?.examDate || matchedSlot?.examDate || group.examDate || null;
+                        const { allocInfo, matchedSlot, rawDate: examDateRaw } = getMatchedScheduleSlot(group);
                         const examDateDisplay = examDateRaw ? fmtDate(examDateRaw) : null;
                         const examSlot = allocInfo?.session || matchedSlot?.slot || matchedSlot?.session || group.slot || "";
                         const startTime = allocInfo?.startTime || matchedSlot?.startTime || group.startTime || "";

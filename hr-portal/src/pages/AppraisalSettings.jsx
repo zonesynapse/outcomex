@@ -187,9 +187,42 @@ export default function AppraisalSettings() {
         fields = snap.data().fields || [];
       }
 
+      // Repair any legacy/overridden NPTEL section title or columns
+      let needsSave = false;
+      fields = fields.map(f => {
+        if (f.id === "sec_academic_nptel" && (f.title?.includes("WORKSHOPS") || f.title?.includes("PARTICIPATION"))) {
+          needsSave = true;
+          return { ...f, title: "3.1 NPTEL Certifications Completed", description: "Certification details and credits earned via SWAYAM/NPTEL portals." };
+        }
+        if (f.id === "f_nptel_title" && (f.title?.includes("Workshop") || f.title?.includes("Program"))) {
+          needsSave = true;
+          return { ...f, title: "Title of the Course", visible: true };
+        }
+        const coreMainSections = new Set([
+          "sec_roles_department",
+          "sec_professional_memberships",
+          "sec_awards_honors",
+          "sec_academic_nptel",
+          "sec_academic_fdp",
+          "sec_academic_journals",
+          "sec_academic_books",
+          "sec_profile_details",
+          "sec_profile_experience",
+          "sec_profile_workload",
+          "sec_subjects_results",
+          "sec_library_usage",
+          "sec_leave_summary"
+        ]);
+        if ((f.id?.startsWith("f_nptel_") || coreMainSections.has(f.id)) && f.visible === false) {
+          needsSave = true;
+          return { ...f, visible: true };
+        }
+        return f;
+      });
+
       const existingIds = new Set(fields.map(f => f.id));
       const missingDefaults = defaultFields.filter(f => !existingIds.has(f.id));
-      if (missingDefaults.length > 0) {
+      if (missingDefaults.length > 0 || needsSave) {
         const merged = [...fields, ...missingDefaults];
         setCustomFields(merged);
         setDoc(docRef, { fields: merged }).catch(err => console.error("Error seeding config:", err));

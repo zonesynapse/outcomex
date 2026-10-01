@@ -612,11 +612,11 @@ export function isWrittenTestQp(qp) {
   if (!qp) return false;
   const at = String(qp.assessment_type || qp.assessmentType || '').toLowerCase();
   if (at) {
-    return at === 'exam' || at === 'written' || at === 'written test';
+    return at === 'exam' || at === 'written' || at === 'written test' || at === 'ia' || at.includes('ia') || at.includes('test');
   }
-  const cat = String(qp.category || qp.selectedCategory || qp.selected_category || qp.exam_name || qp.qpaper_name || '').toLowerCase();
+  const cat = String(qp.category || qp.selectedCategory || qp.selected_category || '').toLowerCase();
   if (cat) {
-    if (/(assignment|activity|project|practical|observation|record|survey|indirect|viva|lab)/.test(cat)) return false;
+    if (/(assignment|activity|project|observation|record|survey|indirect|viva)/.test(cat)) return false;
     return true;
   }
   return true;
@@ -629,4 +629,25 @@ export function isMasterOrAdmin(role, email) {
   if (e && (e.includes('admin') || e.includes('master'))) return true;
   return false;
 }
+
+export function getExamTag(s) {
+  if (!s) return "";
+  const str = String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (str.includes("ia1") || str.includes("cat1") || str.includes("internalassessment1")) return "ia1";
+  if (str.includes("ia2") || str.includes("cat2") || str.includes("internalassessment2")) return "ia2";
+  if (str.includes("ia3") || str.includes("cat3") || str.includes("internalassessment3")) return "ia3";
+  if (str.includes("model")) return "model";
+  if (str.includes("semester") || str.includes("endsem")) return "endsem";
+  return str;
+}
+
+export function isSameExam(e1, e2) {
+  if (!e1 || !e2) return false;
+  if (String(e1).trim() === String(e2).trim()) return true;
+  const tag1 = getExamTag(e1);
+  const tag2 = getExamTag(e2);
+  if (tag1 && tag2 && tag1 === tag2) return true;
+  return false;
+}
+
 

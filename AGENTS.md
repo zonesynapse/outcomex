@@ -1,5 +1,15 @@
 ## Summary of Changes
 
+### 488. Exam Filter Matching & ReferenceError Fix (`ExamCellQPReview.jsx`, `QPSetterAssignment.jsx`, `FacultyDashboard.jsx`, `IAScheduleCreation.jsx`, `utils.js`)
+- **Goal**:
+  1. Fix issue where selecting a past exam event like `IA 1` caused past exam dates and subjects to disappear.
+  2. Fix runtime console error `Uncaught ReferenceError: Cannot access 'isExamMatchForDoc' before initialization` in `ExamCellQPReview.jsx`.
+- **Fix**:
+  - [`src/pages/ExamCell/ExamCellQPReview.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/ExamCellQPReview.jsx): Implemented `isExamMatchForDoc` with date range fallback (`isDateInExamRange`) for older schedule documents lacking root-level `examName`. Hoisted callbacks above `publishedBySubject` `useMemo` hook to fix TDZ ReferenceError.
+  - [`src/pages/ExamCell/QPSetterAssignment.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/ExamCell/QPSetterAssignment.jsx): Updated exam event filtering logic to sync with Academic Calendar exam schedules.
+  - [`src/pages/FacultyDashboard.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/FacultyDashboard.jsx): Updated submission window date formatting to sync dynamically with active IA schedule dates.
+- **Result**: Past and current exam dates display accurately without missing subjects or console errors. Build passes cleanly in 7.01s with 0 errors.
+
 ### 487. Export & Import `getSchoolShortName` Helper Fix (`src/utils/appraisalScore.js`, `src/pages/AppraisalReviews.jsx`)
 - **Goal**: Fix runtime console error `ReferenceError: Can't find variable: getSchoolShortName` when opening or reviewing appraisals on `AppraisalReviews.jsx`.
 - **Fix**:

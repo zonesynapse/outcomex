@@ -11,7 +11,7 @@ import { auth, db } from "../../firebase";
 import { useDepartments } from "../../hooks/useDepartments";
 import { useRegulations } from "../../hooks/useRegulations";
 import { useBatches } from "../../hooks/useBatches";
-import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, parseSubjectField } from "../../lib/utils";
+import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, parseSubjectField, isSameExam, getExamTag } from "../../lib/utils";
 
 const normClean = (s) => String(s || "").replace(/[._\s\-/]/g, "").toLowerCase();
 const normCodeKey = (code) => String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -99,7 +99,11 @@ export default function QPSetterAssignment() {
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
   const [semester, setSemester] = useState("");
+  const [selectedExamId, setSelectedExamId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+
+  const [examEvents, setExamEvents] = useState([]);
+  const [ciaConfigs, setCiaConfigs] = useState([]);
 
   const [assignments, setAssignments] = useState({});
   const [existingDocData, setExistingDocData] = useState({});
@@ -112,6 +116,28 @@ export default function QPSetterAssignment() {
     setToast({ show: true, message, type });
     setTimeout(() => setToast({ show: false, message: "", type: "success" }), 5000);
   };
+
+  useEffect(() => {
+    const unsubEvents = onSnapshot(collection(db, "academic_calendar_events"), (snap) => {
+      const exams = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.type === "Exam") {
+          exams.push({ id: d.id, ...data });
+        }
+      });
+      exams.sort((a, b) => new Date(a.fromDate) - new Date(b.fromDate));
+      setExamEvents(exams);
+    }, (err) => console.warn("QPSetterAssignment academic_calendar_events error:", err));
+
+    const unsubCia = onSnapshot(collection(db, "cia_configs"), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      setCiaConfigs(list);
+    }, (err) => console.warn("QPSetterAssignment cia_configs error:", err));
+
+    return () => { unsubEvents(); unsubCia(); };
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -226,6 +252,66 @@ export default function QPSetterAssignment() {
     const baseProgs = selectedProgramme ? [selectedProgramme] : programmes;
     return baseProgs.filter(p => getActiveBatches(p).includes(batch));
   }, [selectedProgramme, programmes, batch, getActiveBatches]);
+
+  const getFormattedExamTitle = useCallback((rawTitle, batchName) => {
+    if (!rawTitle) return "";
+    const bReg = activeProgrammes[0] ? getRegulationForBatch(activeProgrammes[0], batchName || batch) : "";
+    if (!bReg) return rawTitle;
+    let cleanReg = bReg.trim();
+    const rMatch = cleanReg.match(/R\d{4}/i);
+    if (rMatch) cleanReg = `AU - ${rMatch[0].toUpperCase()}`;
+    const regParenRegex = /\((?:AU\s*-\s*)?R\d{4}\)/i;
+    if (regParenRegex.test(rawTitle)) {
+      return rawTitle.replace(regParenRegex, `(${cleanReg})`);
+    }
+    return `${rawTitle} (${cleanReg})`;
+  }, [batch, activeProgrammes, getRegulationForBatch]);
+
+  const filteredExamEvents = useMemo(() => {
+    if (!batch) return [];
+    const cBatch = normClean(batch);
+    const matching = (examEvents || []).filter(ev => {
+      if (ev.batch) {
+        const eb = normClean(ev.batch);
+        if (cBatch && eb && !eb.includes(cBatch) && !cBatch.includes(eb)) return false;
+      }
+      if (ev.batches && Array.isArray(ev.batches) && ev.batches.length > 0) {
+        const ebs = ev.batches.map(b => normClean(b));
+        if (cBatch && !ebs.some(b => b.includes(cBatch) || cBatch.includes(b))) return false;
+      }
+      if (ev.ciaId && ciaConfigs.length > 0) {
+        const cia = ciaConfigs.find(c => c.id === ev.ciaId);
+        if (cia && cia.batch) {
+          const cb = normClean(cia.batch);
+          if (cBatch && cb && !cb.includes(cBatch) && !cBatch.includes(cb)) return false;
+        }
+      }
+      return ev.fromDate && ev.toDate;
+    });
+
+    const uniqueMap = new Map();
+    matching.forEach(ev => {
+      const displayTitle = getFormattedExamTitle(ev.title, batch);
+      const key = `${normClean(displayTitle)}_${ev.fromDate || ''}_${ev.toDate || ''}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, { ...ev, displayTitle });
+      }
+    });
+    return Array.from(uniqueMap.values());
+  }, [examEvents, ciaConfigs, batch, getFormattedExamTitle]);
+
+  const selectedExam = useMemo(() => {
+    return filteredExamEvents.find(e => e.id === selectedExamId) || null;
+  }, [selectedExamId, filteredExamEvents]);
+
+  useEffect(() => {
+    if (filteredExamEvents.length > 0) {
+      const exists = filteredExamEvents.some(e => e.id === selectedExamId);
+      if (!exists) setSelectedExamId(filteredExamEvents[0].id);
+    } else {
+      setSelectedExamId("");
+    }
+  }, [filteredExamEvents, selectedExamId]);
 
   const syllabusSubjects = useMemo(() => {
     if (!batch || !semester) return [];
@@ -438,11 +524,11 @@ export default function QPSetterAssignment() {
 
   const saveDocKey = useMemo(() => {
     if (!batch || !academicYear || !semester) return "";
-    const examKey = selectedExamId ? sanitizeKey(selectedExamId) : "";
+    const examKey = (selectedExam?.title || selectedExamId) ? sanitizeKey(selectedExam?.title || selectedExamId) : "";
     return examKey 
       ? `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}_${examKey}`
       : `${sanitizeKey(batch)}_${sanitizeKey(academicYear)}_${semester}`;
-  }, [batch, academicYear, semester, selectedExamId]);
+  }, [batch, academicYear, semester, selectedExam, selectedExamId]);
 
   useEffect(() => {
     if (!batch || !semester) {
@@ -453,6 +539,7 @@ export default function QPSetterAssignment() {
     const normB = normClean(batch);
     const normAY = academicYear ? normClean(academicYear) : "";
     const normSem = String(semester).trim();
+    const curExamId = selectedExamId || selectedExam?.id || selectedExam?.title || "";
 
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       let combinedAssignments = {};
@@ -464,6 +551,7 @@ export default function QPSetterAssignment() {
         const normID = normClean(d.id);
         const dSem = String(data.semester || "").trim();
         const dAY = normClean(data.academicYear || "");
+        const dExamId = data.examId || data.examName || "";
 
         const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
         const targetStr = (data.batch || "") + " " + d.id;
@@ -480,7 +568,9 @@ export default function QPSetterAssignment() {
         const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
         const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
 
-        if (isBatchMatch && isSemMatch && isAyMatch) {
+        const isExamMatch = !curExamId || !dExamId || isSameExam(dExamId, curExamId) || isSameExam(dExamId, selectedExam?.title) || normID.includes(normClean(curExamId));
+
+        if (isBatchMatch && isSemMatch && isAyMatch && isExamMatch) {
           docDataCombined = { ...docDataCombined, ...data };
           if (data.assignments && typeof data.assignments === "object") {
             combinedAssignments = { ...combinedAssignments, ...data.assignments };
@@ -492,7 +582,7 @@ export default function QPSetterAssignment() {
       setAssignments(prev => ({ ...prev, ...combinedAssignments }));
     }, (err) => console.warn("QPSetterAssignment qp_setter_assignments listener:", err));
     return () => unsub();
-  }, [batch, academicYear, semester]);
+  }, [batch, academicYear, semester, selectedExamId, selectedExam]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "generated_qps"), (snap) => {
@@ -645,13 +735,14 @@ export default function QPSetterAssignment() {
         }
       });
 
-      const { assignments: _discard, ...cleanDocMeta } = (existingDocData || {});
-
       await setDoc(doc(db, "qp_setter_assignments", targetSaveDocKey), {
         ...cleanDocMeta,
         batch,
         academicYear,
         semester,
+        examId: selectedExam?.id || selectedExamId || "",
+        examName: selectedExam?.displayTitle || selectedExam?.title || "",
+        ciaId: selectedExam?.ciaId || "",
         updatedBy: coeName || auth.currentUser?.email || "Exam Cell",
         updatedById: currentUid,
         updatedAt: new Date().toISOString(),
@@ -963,6 +1054,24 @@ export default function QPSetterAssignment() {
                 className={`${selectCls} w-full ${!academicYear ? "opacity-50 cursor-not-allowed" : ""}`}>
                 <option value="">Select Semester</option>
                 {semesters.map(s => <option key={s} value={s}>Semester {s}</option>)}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1.5 block">
+                Exam Event <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={selectedExamId}
+                onChange={(e) => setSelectedExamId(e.target.value)}
+                disabled={!batch}
+                className={`${selectCls} w-full ${!batch ? "opacity-50 cursor-not-allowed bg-zinc-100" : ""}`}
+              >
+                <option value="">-- Select Exam Event --</option>
+                {filteredExamEvents.map(ev => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.displayTitle || ev.title} ({ev.fromDate ? `${ev.fromDate} to ${ev.toDate}` : "Scheduled"})
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex-[1.5]">

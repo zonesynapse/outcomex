@@ -338,22 +338,36 @@ export default function FacultyDashboard() {
     }
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       const myTasks = [];
-      const normFacultyName = (facultyName || '').trim().toLowerCase();
+      const userEmail = (auth.currentUser?.email || '').trim().toLowerCase();
+      const sanitizeName = (n) => String(n || '').toLowerCase().replace(/^(dr|mr|mrs|prof)\.?\s+/gi, '').replace(/[^a-z0-9]/g, '');
+      const normFacultyName = sanitizeName(facultyName);
 
       snap.forEach(d => {
-        const data = d.data();
+        const data = d.data() || {};
         const assignments = data.assignments || {};
+        const docFromDate = data.fromDate || (data.examWindow ? data.examWindow.split(' to ')?.[0] : '') || '';
+        const docToDate = data.toDate || (data.examWindow ? data.examWindow.split(' to ')?.[1] : '') || '';
+
         Object.values(assignments).forEach(as => {
           if (!as || typeof as !== 'object') return;
           const setterUid = String(as.setterUid || '').trim();
-          const setterName = String(as.setterName || '').trim().toLowerCase();
+          const setterName = String(as.setterName || '').trim();
+          const normSetterName = sanitizeName(setterName);
+          const setterEmail = setterName.toLowerCase();
 
-          const isMyUid = setterUid && setterUid === currentUid;
-          const isMyName = normFacultyName && setterName && setterName === normFacultyName;
+          // Strict & exact assignment check for current user:
+          // 1. If setterUid is populated, it MUST match currentUid or userEmail.
+          // 2. If setterUid is missing, setterName MUST exactly match facultyName or userEmail (exact match, no loose substring).
+          // 3. Unassigned subjects (empty setterUid & empty/unmatched setterName) must NEVER be shown.
+          const isMyUid = setterUid && (setterUid === currentUid || (userEmail && setterUid.toLowerCase() === userEmail));
+          const isMyName = !setterUid && normFacultyName && normSetterName && (normSetterName === normFacultyName || setterEmail === userEmail);
+          const isMyEmail = !setterUid && userEmail && (setterEmail === userEmail);
+
+          const isDraft = data.status === "Draft";
+          const isEligibleStatus = !isDraft;
           const hasExamDate = as.examDate && String(as.examDate).trim().length > 0;
-          const isPrincipalApproved = data.principalApproved === true || data.status === "Approved" || as.approved === true;
 
-          if ((isMyUid || isMyName) && hasExamDate && isPrincipalApproved) {
+          if ((isMyUid || isMyName || isMyEmail) && isEligibleStatus && hasExamDate) {
             myTasks.push({
               docId: d.id,
               batch: data.batch || '',
@@ -361,7 +375,10 @@ export default function FacultyDashboard() {
               semester: data.semester || '',
               examId: data.examId || '',
               examName: data.examName || '',
-              ...as
+              updatedAt: data.updatedAt || '',
+              ...as,
+              fromDate: as.fromDate || docFromDate || '',
+              toDate: as.toDate || docToDate || ''
             });
           }
         });
@@ -1433,22 +1450,9 @@ export default function FacultyDashboard() {
     const normBatch = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     return qpSetterTasks
       .filter((task) => {
-        if (!task.examDate || String(task.examDate).trim().length === 0) return false;
-
-        // Auto-hide task card 2 days after the submission window end date (toDate + 2 days)
-        if (task.toDate) {
-          const match = String(task.toDate).match(/(\d{4})-(\d{2})-(\d{2})/);
-          if (match) {
-            const endDate = new Date(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10), 23, 59, 59, 999);
-            const hideAfterDate = new Date(endDate);
-            hideAfterDate.setDate(hideAfterDate.getDate() + 2);
-            const now = new Date();
-            if (now.getTime() > hideAfterDate.getTime()) {
-              return false;
-            }
-          }
-        }
-
+        // Strictly require an assigned exam date for the subject to show on Faculty Dashboard
+        const hasExamDate = task.examDate && String(task.examDate).trim().length > 0;
+        if (!hasExamDate) return false;
         return true;
       })
       .map(task => {
@@ -1469,6 +1473,7 @@ export default function FacultyDashboard() {
         // Count generated sets by this faculty for this subject code — ONLY written test papers count
         // Match against both old (rawCode) and canonical (canonicalCode) to catch all saved QPs.
         const normClean = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const userEmail = (auth.currentUser?.email || '').trim().toLowerCase();
         const generatedSets = (baseQps || []).filter(qp => {
           const parsedQp = parseSubjectField(qp.subject);
           const rawQpCode = parsedQp.code || qp.subject_code || qp.subject || '';
@@ -1476,7 +1481,7 @@ export default function FacultyDashboard() {
           const rawCodeNorm = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
           const canonicalCodeNorm = String(canonicalCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-          const isMyPaper = qp.created_by === currentUid || !qp.created_by;
+          const isMyPaper = qp.created_by === currentUid || (userEmail && String(qp.created_by || '').toLowerCase() === userEmail) || !qp.created_by;
           if (!isMyPaper) return false;
           if (canonicalCodeNorm) {
             if (qpCodeNorm !== rawCodeNorm && qpCodeNorm !== canonicalCodeNorm) return false;
@@ -1488,7 +1493,22 @@ export default function FacultyDashboard() {
           if (task.examName && qp.exam_name) {
             const taskExamNorm = normClean(task.examName);
             const qpExamNorm = normClean(qp.exam_name);
-            if (taskExamNorm && qpExamNorm && taskExamNorm !== qpExamNorm) return false;
+            if (taskExamNorm && qpExamNorm && taskExamNorm !== qpExamNorm) {
+              const getExamTag = (s) => {
+                const lower = String(s || '').toLowerCase();
+                if (lower.includes('model')) return 'model';
+                if (/\b(ia\s*1|ia1|assessment\s*1|assessment\s*i\b|test\s*1|1st)\b/i.test(lower)) return 'ia1';
+                if (/\b(ia\s*2|ia2|assessment\s*2|assessment\s*ii\b|test\s*2|2nd)\b/i.test(lower)) return 'ia2';
+                if (/\b(ia\s*3|ia3|assessment\s*3|assessment\s*iii\b|test\s*3|3rd)\b/i.test(lower)) return 'ia3';
+                const m = lower.match(/\d+/);
+                return m ? `num_${m[0]}` : lower.replace(/[^a-z0-9]/g, '');
+              };
+              const tag1 = getExamTag(task.examName);
+              const tag2 = getExamTag(qp.exam_name);
+              if (tag1 !== tag2 && !taskExamNorm.includes(qpExamNorm) && !qpExamNorm.includes(taskExamNorm)) {
+                return false;
+              }
+            }
           }
           if (task.batch && qp.batch) {
             if (normClean(task.batch) !== normClean(qp.batch)) return false;
@@ -1557,20 +1577,41 @@ export default function FacultyDashboard() {
           department: (matchingGroup?.department || excelFirstDept?.dept || '')
         };
       })
-      // Deduplicate by course code — prefer the card carrying the most complete navigation info
-      // (progKey + department + academicYear + semester + examDate), so the "Create Question Paper"
-      // button always opens QPG with valid auto-selectable parameters.
+      // Deduplicate using a unique composite key combining document ID, exam ID/name, batch, semester, and course code.
+      // This ensures distinct assigned question papers across different batches/semesters/exams/docs remain separate cards,
+      // while preventing accidental duplicates.
       .reduce((acc, task) => {
-        const dedupCode = String(task.code || '').trim().toUpperCase();
+        const getExamTag = (s) => {
+          const lower = String(s || '').toLowerCase();
+          if (lower.includes('model')) return 'model';
+          if (/\b(ia\s*1|ia1|assessment\s*1|assessment\s*i\b|test\s*1|1st)\b/i.test(lower)) return 'ia1';
+          if (/\b(ia\s*2|ia2|assessment\s*2|assessment\s*ii\b|test\s*2|2nd)\b/i.test(lower)) return 'ia2';
+          if (/\b(ia\s*3|ia3|assessment\s*3|assessment\s*iii\b|test\s*3|3rd)\b/i.test(lower)) return 'ia3';
+          const m = lower.match(/\d+/);
+          return m ? `num_${m[0]}` : lower.replace(/[^a-z0-9]/g, '');
+        };
+        const examTag = getExamTag(task.examName || task.examId);
+        const taskKey = `${normBatch(task.batch)}_${String(task.semester).trim()}_${examTag}_${String(task.rawCode || task.code || '').trim().toUpperCase()}`;
+        const getTaskTimestamp = (t) => {
+          if (!t) return 0;
+          if (t.updatedAt) {
+            const parsed = new Date(t.updatedAt).getTime();
+            if (!isNaN(parsed)) return parsed;
+          }
+          return 0;
+        };
+
         const score = (t) =>
           ((t.progKey ? 1 : 0) + (t.department ? 1 : 0)) * 100 +
           ((t.academicYear && String(t.academicYear).trim()) ? 1 : 0) * 10 +
           ((t.semester && String(t.semester).trim()) ? 1 : 0) * 10 +
-          ((t.examDate && String(t.examDate).trim()) ? 1 : 0);
-        const existing = acc.find(a => String(a.code || '').trim().toUpperCase() === dedupCode);
-        if (!existing || score(task) > score(existing)) {
-          acc = acc.filter(a => String(a.code || '').trim().toUpperCase() !== dedupCode);
-          acc.push(task);
+          ((t.examDate && String(t.examDate).trim()) ? 1 : 0) +
+          ((t.toDate && String(t.toDate).trim()) ? 1 : 0);
+
+        const existing = acc.find(a => a._taskKey === taskKey);
+        if (!existing || score(task) > score(existing) || (score(task) === score(existing) && getTaskTimestamp(task) >= getTaskTimestamp(existing))) {
+          acc = acc.filter(a => a._taskKey !== taskKey);
+          acc.push({ ...task, _taskKey: taskKey });
         }
         return acc;
       }, [])

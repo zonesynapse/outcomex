@@ -92,6 +92,24 @@ const deriveSlotFromTime = (startTimeStr) => {
   return h < 12 ? 'FN' : 'AN';
 };
 
+const isSameExam = (e1, e2) => {
+  if (!e1 || !e2) return true;
+  const n1 = normCodeKey(e1);
+  const n2 = normCodeKey(e2);
+  if (!n1 || !n2 || n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+
+  const getExamTag = (s) => {
+    const lower = String(s || '').toLowerCase();
+    if (lower.includes('model')) return 'model';
+    if (/\b(ia\s*1|ia1|assessment\s*1|assessment\s*i\b|test\s*1|1st)\b/i.test(lower)) return 'ia1';
+    if (/\b(ia\s*2|ia2|assessment\s*2|assessment\s*ii\b|test\s*2|2nd)\b/i.test(lower)) return 'ia2';
+    if (/\b(ia\s*3|ia3|assessment\s*3|assessment\s*iii\b|test\s*3|3rd)\b/i.test(lower)) return 'ia3';
+    const m = lower.match(/\d+/);
+    return m ? `num_${m[0]}` : lower.replace(/[^a-z0-9]/g, '');
+  };
+  return getExamTag(e1) === getExamTag(e2);
+};
+
 // Build complete display string e.g. "FN (09:30 AM - 12:30 PM)"
 const buildTimeSlotString = (startTimeStr, endTimeStr) => {
   if (!startTimeStr) return '';
@@ -1027,9 +1045,9 @@ export default function IAScheduleCreation({ embedded = false }) {
         const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
         const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
 
-        const dExamId = normCodeKey(data.examId || data.examName || "");
-        const curExamKey = normCodeKey(selectedExamId || selectedExam?.title || "");
-        const isExamMatch = !curExamKey || !dExamId || dExamId === curExamKey || dExamId.includes(curExamKey) || curExamKey.includes(dExamId);
+        const dExamId = data.examId || data.examName || "";
+        const curExamId = selectedExamId || selectedExam?.id || selectedExam?.title || "";
+        const isExamMatch = !curExamId || !dExamId || isSameExam(dExamId, curExamId) || normCodeKey(d.id).includes(normCodeKey(curExamId)) || normCodeKey(dExamId).includes(normCodeKey(curExamId));
 
         if (isBatchMatch && isSemMatch && isAyMatch && isExamMatch) {
           if (data.assignments && typeof data.assignments === "object") {
@@ -1038,7 +1056,9 @@ export default function IAScheduleCreation({ embedded = false }) {
               const effectiveDate = getEffectiveExamDate(item);
               const assignObj = {
                 ...item,
-                examDate: effectiveDate || item.examDate || ""
+                examDate: effectiveDate || item.examDate || "",
+                fromDate: item.fromDate || data.fromDate || (data.examWindow ? data.examWindow.split(' to ')?.[0] : '') || "",
+                toDate: item.toDate || data.toDate || (data.examWindow ? data.examWindow.split(' to ')?.[1] : '') || ""
               };
               const rawNorm = normCodeKey(k);
               const canonicalCode = item.code ? getCanonicalCode(item.code, item.name, item.departments?.[0]?.dept) : "";
@@ -1395,8 +1415,8 @@ export default function IAScheduleCreation({ embedded = false }) {
           setterUid: as.setterUid || "",
           setterName: as.setterName || "",
           numSets: as.numSets || 1,
-          fromDate: as.fromDate || "",
-          toDate: as.toDate || "",
+          fromDate: as.fromDate || selectedExam?.fromDate || "",
+          toDate: as.toDate || selectedExam?.toDate || "",
           examDate: as.examDate || "",
           startTime: as.startTime || "",
           endTime: as.endTime || "",
@@ -1413,6 +1433,8 @@ export default function IAScheduleCreation({ embedded = false }) {
         semester,
         examId: selectedExam?.id || "",
         examName: cleanExamName || selectedExam?.title || "",
+        fromDate: selectedExam?.fromDate || "",
+        toDate: selectedExam?.toDate || "",
         examWindow: selectedExam ? `${selectedExam.fromDate} to ${selectedExam.toDate}` : "",
         status: isDraft ? "Draft" : "Pending Principal Approval",
         principalApproved: false,
