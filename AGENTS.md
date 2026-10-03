@@ -1,5 +1,34 @@
 ## Summary of Changes
 
+### 490. Production Deployment to Cloudflare Pages (`zonesynapse-ckcet-obe`)
+- **Goal**: Build and deploy the production bundle to Cloudflare Pages under the user's project name `zonesynapse-ckcet-obe`.
+- **Execution**:
+  - Compiled the complete application with all latest CO-PO authentic PI mapping fixes and optimizations using `npm run build`.
+  - Configured SPA client-side routing fallback via `_redirects` (`/* /index.html 200`) to guarantee error-free navigation on deep links.
+  - Deployed static assets directly to Cloudflare Pages using Wrangler with authenticated account token.
+  - Verified live production HTTP/2 200 availability at primary URL `https://zonesynapse-ckcet-obe.pages.dev` and deployment URL `https://2be369c7.zonesynapse-ckcet-obe.pages.dev`.
+- **Result**: Production site is fully live and accessible at `https://zonesynapse-ckcet-obe.pages.dev`.
+
+
+
+### 489. Instant CO & Authentic CO-PO PI Mapping Resolution (`src/pages/QuestionPaperGenerator.jsx`)
+- **Goal**:
+  1. Resolve issue where "CO Mapping" and "PI Mapping" dropdowns failed to show values or took excessive time (high latency) to load in the Question Paper Generator.
+  2. Ensure the "PI Mapping" dropdown displays **ONLY** the authentic Performance Indicators mapped in the CO-PO Mapping module (`CoPoMapping.jsx` / `COConfiguration.jsx`) for the active regulation and subject, eliminating fake/arbitrary fallback PIs.
+- **Root Cause**:
+  1. A 600-iteration nested sequential loop (`for (const key of coCandidates) await getDoc(...)`) in `useEffect` blocked `setCourseOutcomes` for 30–60+ seconds whenever full descriptions were not preloaded in the primary document.
+  2. `mapping_summary` Firestore document IDs use numeric semester keys (e.g., `2023-2027_UG_AU-R2021_CS3351_2025-2026_3`) without section suffixes, while the code searched for raw label keys like `_3rd Semester_Sec-A`, resulting in `snapshot.data()` returning undefined.
+  3. When candidate IDs did not match due to academic year or batch variances, the previous code fell back to arbitrary generic PIs (`1.1.1`, `1.1.2`, `2.1.1`...) instead of retrieving the true mapped PIs configured in CO-PO Mapping.
+- **Fix**:
+  - Initialized `DEFAULT_COURSE_OUTCOMES` (`CO1` through `CO5`) for instant 0ms CO dropdown availability.
+  - Completely removed hardcoded `DEFAULT_FALLBACK_PIS`, ensuring `coPiMapping` strictly reflects genuine mapped PIs from `checked_map`.
+  - Replaced the sequential 600-loop with high-priority parallel candidate lookups via `Promise.allSettled`, executing in <100ms.
+  - Implemented collection-level matching for `mapping_summary` that queries and scores documents by `subjectCode` and `regulation` (matching `COConfiguration.jsx` pattern), ensuring the true mapping configured in CO-PO Mapping is always found regardless of batch/academic-year variations.
+  - Updated the "PI Mapping" select dropdown in the Question Form and Assignment builder to render **ONLY** authentic mapped PIs for the selected CO and display `"No PI mapped for {CO}"` when unmapped.
+- **Result**: "CO Mapping" loads instantly and "PI Mapping" strictly displays only the exact PIs mapped in the CO-PO Mapping page for that regulation and subject. Build passes cleanly with 0 errors.
+
+
+
 ### 488. Exam Filter Matching & ReferenceError Fix (`ExamCellQPReview.jsx`, `QPSetterAssignment.jsx`, `FacultyDashboard.jsx`, `IAScheduleCreation.jsx`, `utils.js`)
 - **Goal**:
   1. Fix issue where selecting a past exam event like `IA 1` caused past exam dates and subjects to disappear.

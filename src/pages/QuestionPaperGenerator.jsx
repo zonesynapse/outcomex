@@ -742,8 +742,33 @@ export default function QuestionPaperGenerator() {
   const [section, setSection] = useState('');
   const [sectionConfigs, setSectionConfigs] = useState({});
   const [subject, setSubject] = useState('');
-  const [courseOutcomes, setCourseOutcomes] = useState([]);
+  const DEFAULT_COURSE_OUTCOMES = useMemo(() => [
+    { code: 'CO1', description: '' },
+    { code: 'CO2', description: '' },
+    { code: 'CO3', description: '' },
+    { code: 'CO4', description: '' },
+    { code: 'CO5', description: '' }
+  ], []);
+
+  const [courseOutcomes, setCourseOutcomes] = useState([
+    { code: 'CO1', description: '' },
+    { code: 'CO2', description: '' },
+    { code: 'CO3', description: '' },
+    { code: 'CO4', description: '' },
+    { code: 'CO5', description: '' }
+  ]);
+  // coPiMapping stores ONLY the real PIs mapped for each CO in CO-PO Mapping
   const [coPiMapping, setCoPiMapping] = useState({});
+
+  const getAvailablePIs = useCallback((coCode) => {
+    if (!coCode) return [];
+    const normalizedCO = coCode.toUpperCase().startsWith('CO') ? coCode.toUpperCase() : `CO${String(coCode).replace(/\D/g, '')}`;
+    const mapped = coPiMapping[normalizedCO] || coPiMapping[coCode];
+    if (Array.isArray(mapped) && mapped.length > 0) {
+      return mapped;
+    }
+    return [];
+  }, [coPiMapping]);
   const [poSummaryMapping, setPoSummaryMapping] = useState({});
   const [poList, setPoList] = useState([]);
   const [savedExamParts, setSavedExamParts] = useState([]);
@@ -1095,8 +1120,11 @@ export default function QuestionPaperGenerator() {
     const qnoVal = (qbQNo && String(qbQNo).trim()) ? String(qbQNo).trim() : String((qpQuestions && qpQuestions.length) ? qpQuestions.length + 1 : 1);
     const newQ = { qno: qnoVal, question: text, kl: qbKL === 'Select' ? '' : (qbKL || ''), kldomain: domainName || '', co: qbCO || '', pi: qbPI || '', marks };
     // If PI is not explicitly selected but mapping exists for the selected CO, default to first PI
-    if ((!newQ.pi || String(newQ.pi).trim() === '') && qbCO && coPiMapping && Array.isArray(coPiMapping[qbCO]) && coPiMapping[qbCO].length > 0) {
-      newQ.pi = coPiMapping[qbCO][0];
+    if ((!newQ.pi || String(newQ.pi).trim() === '') && qbCO) {
+      const availPis = getAvailablePIs(qbCO);
+      if (availPis && availPis.length > 0) {
+        newQ.pi = availPis[0];
+      }
     }
     const normalize = s => String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/\(([a-z])\)$/i, '$1');
     console.debug('[QB] handleAddQuestion qnoVal ->', qnoVal, 'isEditing ->', isEditingQbRef.current);
@@ -1181,7 +1209,8 @@ export default function QuestionPaperGenerator() {
     setQbKL(q.kl || 'Select');
     setQbCO(q.co || '');
     // If the question has no PI but mapping is present, prefill the first PI option
-    setQbPI(q.pi || ((q.co && coPiMapping[q.co] && coPiMapping[q.co][0]) ? coPiMapping[q.co][0] : ''));
+    const editPis = getAvailablePIs(q.co);
+    setQbPI(q.pi || ((editPis && editPis.length > 0) ? editPis[0] : ''));
     setQbMarks(q.marks || 2);
     setQbQuestion(q.question || '');
     setQbEditorData(q.question || '');
@@ -3652,184 +3681,243 @@ export default function QuestionPaperGenerator() {
   useEffect(() => {
     const progKey = formatProgrammeKey(program);
     const regulation = getRegulationForBatch(progKey, batch);
-    if (!department || !subject || !academicYear || !program || !selectedSemester) {
+    const semNum = String(selectedSemester || '').replace(/\D/g, '');
+    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
+
+    // If subject is selected, always guarantee standard COs exist immediately with zero latency
+    if (subjectCode || subject) {
+      setCourseOutcomes(prev => (prev && prev.length > 0 ? prev : DEFAULT_COURSE_OUTCOMES));
+    }
+
+    if (!department || !subject) {
       return;
     }
 
-    const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
-    const coRef = doc(db, 'course_outcomes', coDocId); // Firestore doc reference
+    let isMounted = true;
+    let unsubPrimaryCO = null;
+    let unsubPrimaryMap = null;
+    let unsubPoPso = null;
 
-    const poPsoDocId = `${progKey}_${sanitizeKey(regulation || '')}__${sanitizeKey(department)}`;
-    const poPsoRef = doc(db, 'po_pso', poPsoDocId); // Firestore doc reference
+    // 1. PO/PSO subscription (if program and regulation present)
+    if (progKey && department) {
+      const poPsoDocId = `${progKey}_${sanitizeKey(regulation || '')}__${sanitizeKey(department)}`;
+      unsubPoPso = onSnapshot(doc(db, 'po_pso', poPsoDocId), (snap) => {
+        if (!isMounted) return;
+        const data = snap.data() || {};
+        setPoList(data.po_statements || []);
+      }, () => {});
+    }
 
-    const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
-    const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}${sectionSuffix}`;
-    const mappingRef = doc(db, 'mapping_summary', mappingDocId); // Firestore doc reference
+    // 2. Ultra-Fast CO Fetching & Real-time Subscription
+    const primaryCoDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear || '')}`;
+    const coRef = doc(db, 'course_outcomes', primaryCoDocId);
 
-    const unsubscribePoPso = onSnapshot(poPsoRef, (snap) => { // Use onSnapshot for real-time updates
-      const data = snap.data() || {}; // Use .data() for Firestore documents
-      setPoList(data.po_statements || []);
+    const parseCoEntries = (obj) => Object.entries(obj || {})
+      .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
+      .map(([code, val]) => ({
+        code: code.toUpperCase().startsWith('CO') ? code.toUpperCase() : `CO${code}`,
+        description: typeof val === 'object' && val !== null ? val.description : val
+      }))
+      .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+
+    const hasRealDesc = (list) => Array.isArray(list) && list.length > 0 && list.some(co => {
+      const d = String(co.description || '').trim();
+      return d && d.toUpperCase() !== String(co.code || '').toUpperCase();
     });
 
-    const unsubscribeCO = onSnapshot(coRef, async (snapshot) => { // Use onSnapshot for real-time updates
-      const data = snapshot.data(); // Use .data() for Firestore documents
+    // Helper to query top candidates concurrently in parallel (NOT 600 sequential loops!)
+    const fetchCoCandidates = async (currentList) => {
+      if (hasRealDesc(currentList)) return;
+      const ayForm = sanitizeKey(academicYear || '');
+      const candidates = [
+        primaryCoDocId,
+        `${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
+        `${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
+        `${sanitizeKey(department)}_${sanitizeKey(subjectCode)}_${ayForm}`,
+        `${sanitizeKey(department)}_${sanitizeKey(subjectCode)}`,
+        `${subjectCode}`
+      ].filter((k, idx, arr) => k && arr.indexOf(k) === idx);
+
+      const courseCandidates = [
+        `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
+        `${progKey}_Overall_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
+        `${progKey}_Overall_${sanitizeKey(subjectCode)}`
+      ].filter((k, idx, arr) => k && arr.indexOf(k) === idx);
+
+      try {
+        // Query course_outcomes candidates in parallel
+        const coSnaps = await Promise.allSettled(candidates.map(k => getDoc(doc(db, 'course_outcomes', k))));
+        for (const res of coSnaps) {
+          if (res.status === 'fulfilled' && res.value.exists()) {
+            const parsed = parseCoEntries(res.value.data());
+            if (parsed.length > 0) {
+              if (isMounted) setCourseOutcomes(parsed);
+              if (hasRealDesc(parsed)) return;
+            }
+          }
+        }
+
+        // Query courses candidates in parallel
+        const courseSnaps = await Promise.allSettled(courseCandidates.map(k => getDoc(doc(db, 'courses', k))));
+        for (const res of courseSnaps) {
+          if (res.status === 'fulfilled' && res.value.exists()) {
+            const bankData = res.value.data();
+            if (bankData && Array.isArray(bankData.co)) {
+              const parsed = bankData.co.map(c => ({
+                code: (c.id || c.code || 'CO1').toUpperCase(),
+                description: c.description || ''
+              })).sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
+              if (parsed.length > 0 && isMounted) {
+                setCourseOutcomes(parsed);
+                return;
+              }
+            }
+          }
+        }
+      } catch (_) { /* ignore */ }
+    };
+
+    unsubPrimaryCO = onSnapshot(coRef, (snapshot) => {
+      if (!isMounted) return;
+      const data = snapshot.data();
       let loadedCOs = [];
       if (data) {
-        loadedCOs = Object.entries(data)
-          .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
-          .map(([code, val]) => ({
-            code,
-            description: typeof val === 'object' && val !== null ? val.description : val
-          }))
-          .sort((a, b) => {
-            const numA = parseInt(a.code.replace(/\D/g, '')) || 0;
-            const numB = parseInt(b.code.replace(/\D/g, '')) || 0;
-            return numA - numB;
-          });
+        loadedCOs = parseCoEntries(data);
       }
-
-      // Comprehensive CO resolution across ALL saved key formats (course_outcomes + courses/CourseBank).
-      // Handles regulation/department format drift: "AU-R2021" vs "AU - R2021", spaces vs underscores, etc.
-      const deptForms = [sanitizeKey(department), sanitizeKeyStrict(department)];
-      const regForms = [
-        regulation,
-        (regulation || '').replace(/-/g, ' '),
-        (regulation || '').replace(/ /g, '-'),
-        sanitizeKeyStrict(regulation),
-        (regulation || '').replace(/[^a-zA-Z0-9]/g, '')
-      ];
-      if (!regulation && Array.isArray(allRegulations)) {
-        for (const kr of allRegulations) {
-          if (kr && !regForms.includes(kr)) regForms.push(kr);
-          if (kr && !regForms.includes(sanitizeKey(kr))) regForms.push(sanitizeKey(kr));
-          if (kr && !regForms.includes(sanitizeKeyStrict(kr))) regForms.push(sanitizeKeyStrict(kr));
+      if (loadedCOs.length > 0) {
+        // Set immediately with zero latency!
+        setCourseOutcomes(loadedCOs);
+        if (!hasRealDesc(loadedCOs)) {
+          fetchCoCandidates(loadedCOs);
         }
+      } else {
+        // If not found in primary doc, check candidates in parallel
+        fetchCoCandidates([]);
       }
-      const subjForms = [sanitizeKey(subjectCode), subjectCode, sanitizeKeyStrict(subjectCode)];
-      const progForms = [progKey, formatProgrammeKey(program)];
-      const ayForm = sanitizeKey(academicYear);
-
-      const parseCoEntries = (obj) => Object.entries(obj || {})
-        .filter(([code]) => code.toUpperCase().startsWith('CO') || !isNaN(parseInt(code.replace(/\D/g, ''))))
-        .map(([code, val]) => ({ code, description: typeof val === 'object' && val !== null ? val.description : val }))
-        .sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
-
-      const hasRealDesc = (list) => Array.isArray(list) && list.length > 0 && list.some(co => {
-        const d = String(co.description || '').trim();
-        return d && d.toUpperCase() !== String(co.code || '').toUpperCase();
-      });
-
-      const coCandidates = [];
-      for (const d of deptForms) {
-        for (const r of regForms) {
-          for (const s of subjForms) {
-            coCandidates.push(`${d}_${r}_${s}_${ayForm}`);
-            coCandidates.push(`${d}_${r}_${s}`);
-            coCandidates.push(`${r}_${s}`);
-            coCandidates.push(`${d}_${s}_${ayForm}`);
-            coCandidates.push(`${d}_${s}`);
-          }
-        }
-        for (const s of subjForms) coCandidates.push(`${s}`);
-      }
-
-      const courseCandidates = [];
-      for (const p of progForms) {
-        for (const d of deptForms) {
-          for (const r of regForms) {
-            for (const s of subjForms) {
-              courseCandidates.push(`${p}_${d}_${r}_${s}`);
-              courseCandidates.push(`${p}_Overall_${r}_${s}`);
-              courseCandidates.push(`${p}_${d}_${s}`);
-            }
-          }
-        }
-      }
-
-      if (!hasRealDesc(loadedCOs)) {
-        for (const key of coCandidates) {
-          try {
-            const altSnap = await getDoc(doc(db, 'course_outcomes', key));
-            if (altSnap.exists()) {
-              const cand = parseCoEntries(altSnap.data());
-              if (cand.length > 0) {
-                if (hasRealDesc(cand)) { loadedCOs = cand; break; }
-                if (loadedCOs.length === 0) loadedCOs = cand;
-              }
-            }
-          } catch (_) { /* skip */ }
-        }
-      }
-
-      if (!hasRealDesc(loadedCOs)) {
-        for (const key of courseCandidates) {
-          try {
-            const snap = await getDoc(doc(db, 'courses', key));
-            if (snap.exists()) {
-              const bankData = snap.data();
-              if (bankData.co && Array.isArray(bankData.co)) {
-                const cand = bankData.co.map(c => ({ code: c.id, description: c.description || '' })).sort((a, b) =>
-                  (parseInt(String(a.code || '').replace(/\D/g, '')) || 0) - (parseInt(String(b.code || '').replace(/\D/g, '')) || 0));
-                if (cand.length > 0) {
-                  if (hasRealDesc(cand)) { loadedCOs = cand; break; }
-                  if (loadedCOs.length === 0) loadedCOs = cand;
-                }
-              }
-            }
-          } catch (_) { /* skip */ }
-        }
-      }
-
-      if (loadedCOs.length === 0) {
-        // Fallback default so the faculty is NEVER blocked — descriptions blank until configured
-        loadedCOs = [
-          { code: 'CO1', description: '' },
-          { code: 'CO2', description: '' },
-          { code: 'CO3', description: '' },
-          { code: 'CO4', description: '' },
-          { code: 'CO5', description: '' }
-        ];
-      }
-
-      setCourseOutcomes(loadedCOs);
-      console.log(`[CO Load] ${subjectCode}: ${loadedCOs.length} COs loaded, sample desc: "${loadedCOs[0]?.description || ''}"`);
-      if (isAssignmentOrProject && loadedCOs.length > 0 && !numParts) {
-        setNumParts(String(loadedCOs.length));
-      }
+    }, () => {
+      fetchCoCandidates([]);
     });
 
-    const unsubscribeMapping = onSnapshot(mappingRef, (snapshot) => { // Use onSnapshot for real-time updates
-      const mappingData = snapshot.data(); // Use .data() for Firestore documents
-      if (mappingData && mappingData.summary) {
-        setPoSummaryMapping(mappingData.summary || {});
-        const newMapping = {};
-        Object.entries(mappingData.summary).forEach(([, poData]) => {
-          if (poData.checked_map) {
-            Object.entries(poData.checked_map).forEach(([coCode, pis]) => {
-              if (!newMapping[coCode]) newMapping[coCode] = new Set();
-              pis.forEach(pi => newMapping[coCode].add(pi));
-            });
-          }
-        });
-        // Convert Sets to Arrays
-        const finalMapping = {};
-        Object.entries(newMapping).forEach(([coCode, piSet]) => {
+    // 3. Ultra-Fast PI / Mapping Summary Fetching & Subscription
+    // Format in Firestore: {batch}_{progKey}_{regulation}_{subjectCode}_{academicYear}_{semNum}
+    const mappingCandidates = [
+      semNum ? `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${semNum}` : null,
+      (semNum && sectionSuffix) ? `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${semNum}${sectionSuffix}` : null,
+      `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`,
+      selectedSemester ? `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${sanitizeKey(selectedSemester)}` : null,
+      semNum ? `${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}_${semNum}` : null,
+      `${sanitizeKey(batch)}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`
+    ].filter(Boolean);
+
+    const applyMappingData = (mappingData) => {
+      if (!mappingData || !mappingData.summary) return false;
+      setPoSummaryMapping(mappingData.summary || {});
+      const newMapping = {};
+      Object.entries(mappingData.summary).forEach(([, poData]) => {
+        if (poData && poData.checked_map) {
+          Object.entries(poData.checked_map).forEach(([coCode, pis]) => {
+            const normalizedCO = coCode.toUpperCase().startsWith('CO') ? coCode.toUpperCase() : `CO${String(coCode).replace(/\D/g, '')}`;
+            if (!newMapping[normalizedCO]) newMapping[normalizedCO] = new Set();
+            if (Array.isArray(pis)) {
+              pis.forEach(pi => {
+                const cleanPi = String(pi || '').trim();
+                if (cleanPi) newMapping[normalizedCO].add(cleanPi);
+              });
+            }
+          });
+        }
+      });
+      // ONLY include genuine PIs mapped in CO-PO Mapping for this subject/regulation - strictly no fake fallbacks!
+      const finalMapping = {};
+      Object.entries(newMapping).forEach(([coCode, piSet]) => {
+        if (piSet.size > 0) {
           finalMapping[coCode] = Array.from(piSet).sort();
-        });
+        }
+      });
+      if (isMounted) {
         setCoPiMapping(finalMapping);
         window.coPiMappingData = finalMapping;
-      } else {
-        // Keep the last known mapping visible while Firestore resolves the next snapshot.
-        // This avoids a blank PI dropdown during transient context changes.
       }
-    });
+      return true;
+    };
+
+    // Concurrently probe candidate mapping doc IDs and fallback to broad subject/regulation lookup
+    const probeMappingCandidates = async () => {
+      try {
+        if (mappingCandidates.length > 0) {
+          const snaps = await Promise.allSettled(mappingCandidates.map(id => getDoc(doc(db, 'mapping_summary', id))));
+          for (const res of snaps) {
+            if (res.status === 'fulfilled' && res.value.exists()) {
+              if (applyMappingData(res.value.data())) {
+                return;
+              }
+            }
+          }
+        }
+
+        // If specific candidate IDs did not match (e.g., mapped under different academic year/batch in COConfiguration):
+        // Scan mapping_summary for this regulation and subject (matching COConfiguration line 913 pattern)
+        const allSnap = await getDocs(collection(db, 'mapping_summary'));
+        if (!allSnap.empty) {
+          const sCode = sanitizeKey(subjectCode).toLowerCase();
+          const rCode = sanitizeKey(regulation || '').toLowerCase();
+          const pCode = (progKey || '').toLowerCase();
+
+          let bestDoc = null;
+          let bestScore = -1;
+
+          allSnap.forEach(docSnap => {
+            const id = docSnap.id.toLowerCase();
+            const data = docSnap.data();
+            if (!data || !data.summary) return;
+
+            // Must match subject code
+            if (!id.includes(sCode)) return;
+
+            let score = 1;
+            if (rCode && id.includes(rCode)) score += 10;
+            if (pCode && id.includes(pCode)) score += 5;
+            if (batch && id.includes(sanitizeKey(batch).toLowerCase())) score += 4;
+            if (academicYear && id.includes(sanitizeKey(academicYear).toLowerCase())) score += 3;
+            if (semNum && id.includes(`_${semNum}`)) score += 2;
+
+            if (score > bestScore) {
+              bestScore = score;
+              bestDoc = data;
+            }
+          });
+
+          if (bestDoc && isMounted) {
+            applyMappingData(bestDoc);
+          }
+        }
+      } catch (_) { /* ignore */ }
+    };
+
+    const primaryMapId = mappingCandidates[0] || `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
+    if (primaryMapId) {
+      unsubPrimaryMap = onSnapshot(doc(db, 'mapping_summary', primaryMapId), (snapshot) => {
+        if (!isMounted) return;
+        const data = snapshot.data();
+        if (data && data.summary) {
+          applyMappingData(data);
+        } else {
+          probeMappingCandidates();
+        }
+      }, () => {
+        probeMappingCandidates();
+      });
+    } else {
+      probeMappingCandidates();
+    }
 
     return () => {
-      unsubscribePoPso();
-      unsubscribeCO();
-      unsubscribeMapping();
+      isMounted = false;
+      if (unsubPoPso) unsubPoPso();
+      if (unsubPrimaryCO) unsubPrimaryCO();
+      if (unsubPrimaryMap) unsubPrimaryMap();
     };
-  }, [department, batch, subject, academicYear, program, selectedSemester, section, getRegulationForBatch, allRegulations]);
+  }, [department, batch, subject, subjectCode, academicYear, program, selectedSemester, section, getRegulationForBatch, allRegulations, DEFAULT_COURSE_OUTCOMES]);
 
   // Edit mode: the clicked paper's set resolved from physical IDs first (they
   // identify exactly which set was clicked, even if stored qp.qp_set predates
@@ -7595,7 +7683,7 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                                   onChange={e => handleAddPIAssignment(qIdx, coIdx, e.target.value)}
                                 >
                                   <option value="">Select PI</option>
-                                  {coPiMapping[mapping.co]?.map(pi => (
+                                  {getAvailablePIs(mapping.co).map(pi => (
                                     <option key={pi} value={pi}>{pi}</option>
                                   ))}
                                 </select>
@@ -7775,11 +7863,16 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                     <div className="relative">
                       <select
                         value={qbCO}
-                        onChange={e => { const v = e.target.value; setQbCO(v); setQbPI((coPiMapping[v] && coPiMapping[v][0]) || ''); }}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setQbCO(v);
+                          const pis = getAvailablePIs(v);
+                          setQbPI((pis && pis.length > 0) ? pis[0] : '');
+                        }}
                         className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                       >
                         <option value="">Select CO</option>
-                        {courseOutcomes && courseOutcomes.map(co => (
+                        {(courseOutcomes && courseOutcomes.length > 0 ? courseOutcomes : DEFAULT_COURSE_OUTCOMES).map(co => (
                           <option key={co.code} value={co.code}>{co.code}</option>
                         ))}
                       </select>
@@ -7833,12 +7926,25 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
                         value={qbPI}
                         onChange={e => setQbPI(e.target.value)}
                         className="w-full appearance-none bg-white border border-slate-200 rounded-xl px-4 py-2 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
-                        disabled={!qbCO}
+                        disabled={!qbCO || (getAvailablePIs(qbCO) || []).length === 0}
                       >
-                        <option value="">Select PI</option>
-                        {(coPiMapping[qbCO] || []).map(pi => (
-                          <option key={pi} value={pi}>{pi}</option>
-                        ))}
+                        {(() => {
+                          const pis = getAvailablePIs(qbCO) || [];
+                          if (pis.length === 0) {
+                            return <option value="">{qbCO ? `No PI mapped for ${qbCO}` : 'Select CO first'}</option>;
+                          }
+                          return (
+                            <>
+                              <option value="">Select PI</option>
+                              {pis.map(pi => (
+                                <option key={pi} value={pi}>{pi}</option>
+                              ))}
+                              {qbPI && !pis.includes(qbPI) && (
+                                <option value={qbPI}>{qbPI}</option>
+                              )}
+                            </>
+                          );
+                        })()}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                     </div>
