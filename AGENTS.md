@@ -28,6 +28,58 @@
 - **Result**: "CO Mapping" loads instantly and "PI Mapping" strictly displays only the exact PIs mapped in the CO-PO Mapping page for that regulation and subject. Build passes cleanly with 0 errors.
 
 
+### 496. Dev Console `default export` Error — Real Cause in `utils.js` + Server Restart (`src/lib/utils.js`)
+- **Symptom**: `Uncaught SyntaxError: ... FacultyDashboard.jsx ... doesn't provide an export named 'default'` on localhost:3000. FacultyDashboard export was intact and `npm run build` passed — stale dev module graph, not a code-export bug.
+- **Root Cause**: `src/lib/utils.js:172/191` assigned to a `const` (`const compactStudents = {}` then `compactStudents = rawStudents` in the else branch) — esbuild dep-scan failed (`Cannot assign to "compactStudents" because it is a constant`), breaking the whole dev module graph downstream.
+- **Fix**: `const` → `let`; killed stale Vite, cleared `node_modules/.vite`, restarted dev (clean `ready in 458 ms`, no scan errors); verified both `FacultyDashboard.jsx` (default export present, HTTP 200) and `utils.js` serve correctly. Hard-refresh browser once. Build passes in 22.78s.
+
+### 495. Remove Forwarded-Stage Pill Badges on FacultyDashboard List (`FacultyDashboard.jsx`)
+- **Request**: Forwarded paper row showed status twice — `Pending Academic Coordinator Review` / `Pending HOD Review` pill badge plus the `Current Status Level` bar. User chose to remove both pills.
+- **Fix**: Status pill in `My Question Papers` rows now renders only when `qp.status !== 'forwarded'`; forwarded papers show only the `Current Status Level` bar (`Waiting for Academic Coordinator Review (name)` / `Waiting for HOD Approval`). Draft/Approved/Recorrection pills unchanged. Build passes in 24.82s.
+
+### 494. AC Forwarded-List Flat-Doc Blind Spot + Routing/Name Fix (`AcademicCoordinatorDashboard.jsx`, `QuestionPaperGenerator.jsx`, `FacultyDashboard.jsx`)
+- **Symptom**: FacultyDashboard showed `Pending Academic Coordinator Review` + `Waiting for Academic Coordinator Review (Sreenivasan R)` for EE25302 IA 2 (Set 1), but AcademicCoordinatorDashboard `Forwarded Question Papers` showed `All caught up!` empty.
+- **Root Cause**: AC task-list flatten (`AcademicCoordinatorDashboard.jsx:1391`) assumed nested-only storage. A forwarded paper in a flat doc (top-level payload after 1MB fallback) shredded into scalar fields — never matched `status === 'forwarded' && forwarded_to === currentUid`. FacultyDashboard already handled flat docs, hence the mismatch. Secondary: forward picked `matchedAc.uid` (stale `uid` field could override doc id) and faculty badge re-resolved AC by dept with different first-match order than forward routing.
+- **Fix**: AC flatten now mirrors FacultyDashboard (flat-doc whole-push + `_isFlatDoc`, nested QP-shape filter) with robust String/trim uid compare; forward pins `allUsers` ids to doc id, prefers `matchedAc.id`, saves `forwarded_to_name` on both savers (draft nulls it); `resolveAcName` displays saved `forwarded_to_name` first so brackets always equal the actual recipient. Build passes in 22.59s.
+
+### 493. Forward Visibility Incident — Twin Cleanup PAUSED + Triage (`QuestionPaperGenerator.jsx`)
+- **Incident**: After clicking Forward to Academic Coordinator, the paper vanished from FacultyDashboard AND never appeared in AcademicCoordinatorDashboard (`status === 'forwarded' && forwarded_to === currentUid` filter at `AcademicCoordinatorDashboard.jsx:1396`).
+- **Safety action**: `ENABLE_STALE_TWIN_CLEANUP = false` gate added at BOTH forward cleanup sites (`QuestionPaperGenerator.jsx` assignment + exam savers) — no record is deleted; same-record reuse (refs + draft lookup) still prevents new duplicates. Build passes in 22.07s.
+- **Suspects (unconfirmed)**: (a) forward modal routed `forwarded_to` to a different AC than the one viewing; (b) `created_by`/`forwarded_by` null-mismatch hiding it on faculty list; (c) stale bundle without the reuse fix. Next: read-only Firestore triage by subject to locate the record before any further change.
+
+### 492. Forward Stale-Duplicate Fix — Same-Record Reuse + Draft Cleanup (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where after clicking Forward to Academic Coordinator, the faculty list still showed the paper as Draft with Edit/Delete buttons, and the `Pending Academic Coordinator Review` status never appeared — while the coordinator DID receive the forwarded paper (duplicate/stale records).
+- **Root Cause**: Draft-save and forward-save each recomputed the storage key (`qpDocId = ${exam}${setSuffix}`) from volatile form state. `exam` drifting between push-ID and name (auto-normalization effect), or `effectiveSetCount` resolving late (`''` → `_Set_Set2` suffix flip), wrote the forwarded paper to a DIFFERENT field/flat doc than the draft — stranding a stale Draft (buttons intact) while the forwarded twin went to the coordinator.
+- **Fix** (all in [`src/pages/QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx)):
+  - Added strict same-paper identity helpers: `flattenQpRecords`, `isSameDraftPaper` (owner + subject + exam tag/regulation + set + kind + batch-year + semester), `isSamePaperIdent`, `findMyDraftLocations` (collection scan), `deleteQPLocation` (flat doc or nested field).
+  - `saveQPToFirestore` now returns the exact stored location (`{compositeKey, fieldId, isFlat}`) instead of `true`.
+  - All 3 save functions pin fresh-flow saves to the exact prior location via `savedLocRef` (identity-checked) → draft lookup fallback (`resolveSaveLocation` refuses to adopt non-draft/approved records, so a forwarded paper can never be overwritten by a later draft).
+  - On successful forward, all OTHER stale drafts of the exact paper are deleted, so the faculty list flips to `Pending Academic Coordinator Review` with no Edit/Delete left behind.
+- **Result**: Draft → Forward always updates ONE record; no stale Draft rows, no missing AC-review status. Build passes cleanly in 16.61s with 0 errors.
+
+### 491. QP Edit Physical-ID Set Resolution Fix (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix persisting issue where EVERY paper's Edit opened with `Set 1` in the dropdown despite entry 490's fix.
+- **Root Cause**: Stored `qp.qp_set` itself is corrupted to `Set 1` for Set-2 papers (the same premature reset fired during creation before config resolved), poisoning the URL param (`formatQPSetDisplay` reads `qp.qp_set` first), the initializer, and entry 490's `qp.qp_set` restore — systematically, for every paper.
+- **Fix**:
+  - [`src/pages/QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx): Added `parseSetNum` (last `set`-anchored number; batch years/semesters can never match) + `editSetTarget` memo resolving `editId` → flat `compositeKey` suffix (after `__` only; parent keys never parsed) → URL param, with stored `qp.qp_set` deliberately distrusted; forcing effect (deps exclude `qpSet` so manual changes still work) sets the resolved set once per paper. Reverted entry 490's `qp.qp_set` restore which would re-apply the corrupted value.
+- **Result**: Clicking Edit on the `...__..._Set_Set2` flat doc forces `Set 2` regardless of stored data quality, and saves route back to Set 2. Build passes cleanly in 17.73s with 0 errors.
+
+### 490. QP Edit Set Restoration Fix (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where clicking Edit on a Set 2 question paper opened `QuestionPaperGenerator.jsx` with all dropdowns autofetched but the "Choose Question Paper Set" dropdown showing `Set 1` instead of `Set 2`.
+- **Root Cause**: (1) The URL `&set=Set 2` auto-select effect skips edit mode (`if (editId || compositeKey) return`); (2) the `effectiveSetCount` reset effect fired at mount while `exam` was still empty (count resolved to 1) and force-overwrote `qpSet` to `Set 1`; (3) `loadSavedPaper` never restored `qpSet` from the paper's own `qp.qp_set` field. Worse, saving in this state would overwrite Set 1 with Set 2's content (data-loss risk).
+- **Fix**:
+  - [`src/pages/QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx): `loadSavedPaper` restores `qpSet` from `qp.qp_set` (digit-normalized to `Set N`); the `effectiveSetCount` auto-reset effect now returns early in edit mode so it can never downgrade the set while config data resolves.
+- **Result**: Editing a Set 2 paper shows `Set 2` selected and saves back to Set 2. Build passes cleanly in 19.08s with 0 errors.
+
+### 489. Flat-Doc QP Edit Autofetch & Save Fix (`QuestionPaperGenerator.jsx`)
+- **Goal**: Fix issue where clicking Edit on an IA 2 question paper (stored as a flat document `...__<setId>` after the 1MB fallback) navigated to `QuestionPaperGenerator.jsx` but left all Assessment & Subject Configuration dropdowns on "Select..." with nothing autofetched.
+- **Root Cause**: `loadSavedPaper` read ONLY `snapshot.data()?.[editId]` (nested field in parent doc). Flat docs store the QP payload at top level, so `qp` resolved to `undefined` and the load block silently skipped — no error toast, blank form. Firestore move was unnecessary (and impossible: 4 sets exceed the 1,048,576-byte doc limit per write test).
+- **Fix**:
+  - [`src/pages/QuestionPaperGenerator.jsx`](file:///Users/ckcollege/Downloads/OBE/outcomex/src/pages/QuestionPaperGenerator.jsx): `loadSavedPaper` falls back to the doc itself when `data?._isFlatDoc` is set (`data?.[editId] || (data?._isFlatDoc ? data : null)`); added visible "not found" error toast instead of silent blank state; added `isFlatEdit` state (reset outside edit mode).
+  - `saveQPToFirestore` gained `flatTopLevel` flag: flat-doc edits overwrite top-level fields via merge (never nest under `editId`, which readers would ignore and make edits look lost); single slim retry on size error instead of broken nested flat-of-flat.
+  - All 3 edit save call sites (`handleSaveAssignment`, `handleSaveQuestionPaper`, draft save) pass `isFlatEdit`.
+- **Result**: Edit on flat-doc papers (e.g. IA 2 Set 1/2) autofetches program/department/batch/year/semester/subject/exam/parts/questions exactly like parent-doc papers, and re-saves to the same flat doc. No Firestore data move needed. Build passes cleanly in 18.20s with 0 errors.
+
 
 ### 488. Exam Filter Matching & ReferenceError Fix (`ExamCellQPReview.jsx`, `QPSetterAssignment.jsx`, `FacultyDashboard.jsx`, `IAScheduleCreation.jsx`, `utils.js`)
 - **Goal**:

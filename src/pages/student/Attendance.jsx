@@ -99,12 +99,19 @@ export default function Attendance() {
         const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
         const batchPrefixEnd = `${batchPrefix}\uf8ff`;
 
-        const [attSnapshot, batchRegSnap, assignSnap, usersSnap] = await Promise.all([
+        const [attSnapshot, batchRegSnap, assignSnap, usersSnap, studentsSnap] = await Promise.all([
           getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
           getDocs(query(collection(db, "subject_assignments"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDocs(collection(db, "users")),
+          getDoc(doc(db, "students", `${batchKey}_${progKey}_${deptKey}`)).catch(() => null),
         ]);
+
+        const joiningDate = studentData.joiningDate ||
+          studentData._joiningDate ||
+          studentsSnap?.data()?._joiningDate?.[regNo] ||
+          (studentData.admissionNo ? studentsSnap?.data()?._joiningDate?.[studentData.admissionNo] : '') ||
+          '';
 
         let regulation = "";
         if (batchRegSnap?.exists()) {
@@ -159,8 +166,23 @@ export default function Attendance() {
           subjectDocMap[id] = subjectCode;
 
           Object.entries(records).forEach(([key, rec]) => {
-            const dateMatch = key.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
-            if (!dateMatch) return;
+            let dateStr = '';
+            let period = 1;
+            const m = key.match(/^(\d{4}-\d{2}-\d{2})_+[pP](\d+)/i);
+            if (m) {
+              dateStr = m[1];
+              period = parseInt(m[2], 10);
+            } else {
+              const dOnly = key.match(/^(\d{4}-\d{2}-\d{2})/);
+              if (dOnly) {
+                dateStr = dOnly[1];
+                period = parseInt(rec?.period, 10) || 1;
+              }
+            }
+            if (!dateStr) return;
+
+            // Lateral entry / joining date check: classes before joining date are skipped
+            if (joiningDate && dateStr < joiningDate) return;
 
             const rawH = getStudentValFromRec(rec?.students, studentIds);
             const parsedVal = parseStudentAttendanceVal(rawH);
@@ -172,12 +194,11 @@ export default function Attendance() {
               status = 'P';
             }
 
-            const [, dateStr, periodStr] = dateMatch;
             rawEntries.push({
               docId: id,
               subjectCode,
               dateStr,
-              period: parseInt(periodStr),
+              period,
               recordKey: key,
               status,
               markedBy: rec?.markedBy || '',

@@ -41,6 +41,57 @@ const fmtDate = (value) => {
 
 const normCodeKey = (s) => String(s || "").toUpperCase().replace(/\s+/g, "");
 
+// Robust QP subject-code extractor. QPs are saved with subject as a JSON string
+// ({"code":"BM3551","name":"..."}), but legacy/plain saves use "BM3551 - Name".
+// parseSubjectField() returns the FULL raw string for plain saves, which breaks
+// group matching (schedule "BM3551" vs qp "BM3551-EMBEDDED..."). This always
+// returns just the code so schedule groups and QPs merge correctly.
+const extractQpCode = (subj, fallback = "") => {
+  if (subj === undefined || subj === null || subj === "") {
+    return String(fallback || "").replace(/\s+/g, "").toUpperCase();
+  }
+  const raw = String(subj).trim();
+  if (raw.startsWith("{")) {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object") {
+        const c = obj.code || obj.CODE || obj.subject_code || obj.courseCode || obj.subjectCode || "";
+        if (c) return String(c).replace(/\s+/g, "").toUpperCase();
+      }
+    } catch { /* fall through to plain parsing */ }
+  }
+  const m = raw.match(/CODE([A-Z0-9]+)NAME/i);
+  if (m) return m[1].toUpperCase();
+  const dash = raw.split(" - ")[0].split(" — ")[0].split(":")[0].trim();
+  const first = dash.split(/\s+/)[0] || "";
+  return first.replace(/\s+/g, "").toUpperCase();
+};
+
+const extractQpName = (qp) => {
+  const raw = qp?.subject;
+  if (typeof raw === "string" && raw.trim().startsWith("{")) {
+    try {
+      const obj = JSON.parse(raw.trim());
+      if (obj && typeof obj === "object" && obj.name) return obj.name;
+    } catch { /* ignore */ }
+  }
+  if (qp?.subject_name) return qp.subject_name;
+  const parts = String(raw || "").split(" - ");
+  return parts.length > 1 ? parts.slice(1).join(" - ").trim() : "";
+};
+
+// Workflow stage for a QP in the Published table (any status, not just COE-approved).
+const getQpStage = (qp) => {
+  if (!qp) return { key: "unknown", label: "Unknown", badge: "bg-zinc-100 text-zinc-500 border-zinc-200" };
+  if (qp.allocated) return { key: "allocated", label: "Allocated", badge: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+  const st = String(qp.status || "draft").toLowerCase().trim();
+  if (st === "approved_by_coe" || st === "approved" || st === "published") return { key: "awaiting", label: "Awaiting allocation", badge: "bg-amber-50 text-amber-700 border-amber-200" };
+  if (st === "approved_by_hod") return { key: "hod", label: "HOD approved · awaiting COE", badge: "bg-blue-50 text-blue-700 border-blue-200" };
+  if (st === "forwarded") return { key: "forwarded", label: "Forwarded · pending review", badge: "bg-violet-50 text-violet-700 border-violet-200" };
+  if (st === "recorrected" || st === "recorrect" || st === "rejected" || st === "revoked") return { key: "recorrect", label: "Sent back for correction", badge: "bg-rose-50 text-rose-700 border-rose-200" };
+  return { key: "draft", label: "Draft with setter", badge: "bg-zinc-100 text-zinc-600 border-zinc-200" };
+};
+
 // Shared guard: assignment/activity/practical-style titles are never exam events.
 const isRealExamTitle = (title) => {
   if (!title) return false;
@@ -766,8 +817,7 @@ export default function ExamCellQPReview() {
   const matchedScheduleSlots = useMemo(() => {
     if (!allocModal.qp) return [];
     const qp = allocModal.qp;
-    const parsedSubj = parseSubjectField(qp.subject);
-    const qpSubjCode = (parsedSubj.code || qp.subject || "").toString().replace(/\s+/g, "").toUpperCase();
+    const qpSubjCode = extractQpCode(qp.subject, qp.subject_code);
     const qpBatch = (qp.batch || "").toString().trim();
     const qpSem = (qp.semester || "").toString().trim();
 
@@ -848,11 +898,26 @@ export default function ExamCellQPReview() {
       }
     });
 
-    // 2. Merge published QPs into their matching scheduled groups
-    filteredPublished.forEach(qp => {
-      const parsedSubj = parseSubjectField(qp.subject);
-      const code = (parsedSubj.code || qp.subject || "").toString().replace(/\s+/g, "").toUpperCase();
-      const name = parsedSubj.name || qp.subject_name || "";
+    // 2. Merge EVERY setter QP (any workflow stage) into its matching scheduled
+    // group — so "Published Question Papers" shows how many papers each setter
+    // took and which end each paper is at (like the Civil reference view),
+    // instead of NIL whenever papers are still draft/forwarded/HOD-approved.
+    // Only the exam-event + top search filters apply here; the per-QP stage is
+    // rendered as a badge on each card below.
+    const groupQps = allQps.filter(qp => {
+      if (selectedReviewExamFilter !== "ALL" &&
+        !isSameExamEvent(resolveExamName(qp), selectedReviewExamFilter)) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const hay = `${qp.subject || ""} ${qp.subject_name || ""} ${resolveName(qp.forwarded_by) || ""} ${resolveExamDisplay(qp) || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    groupQps.forEach(qp => {
+      const code = extractQpCode(qp.subject, qp.subject_code);
+      if (!code) return;
+      const name = extractQpName(qp);
       const batch = (qp.batch || "").toString().trim();
       const sem = (qp.semester || "").toString().trim();
 
@@ -899,7 +964,7 @@ export default function ExamCellQPReview() {
       if (deptCmp !== 0) return deptCmp;
       return a.code.localeCompare(b.code);
     });
-  }, [filteredPublished, scheduleDocs, syllabusCodeMap, courseBankDeptMap, selectedReviewExamFilter, isValidSubjectForBatchSem]);
+  }, [allQps, scheduleDocs, syllabusCodeMap, courseBankDeptMap, selectedReviewExamFilter, searchQuery, resolveExamName, isValidSubjectForBatchSem]);
 
   const [pubSearchQuery, setPubSearchQuery] = useState("");
   const [selectedPubExamDateFilter, setSelectedPubExamDateFilter] = useState("ALL");
@@ -1344,7 +1409,8 @@ export default function ExamCellQPReview() {
                     <tbody className="divide-y divide-slate-200 font-medium">
                       {filteredPublishedSubjects.map((group, gIdx) => {
                         const allocatedCount = group.qps.filter(q => q.allocated).length;
-                        const pendingCount = group.qps.length - allocatedCount;
+                        const awaitingCount = group.qps.filter(q => !q.allocated && String(q.status || "").toLowerCase() === "approved_by_coe").length;
+                        const inReviewCount = group.qps.length - allocatedCount - awaitingCount;
                         const { allocInfo, matchedSlot, rawDate: examDateRaw } = getMatchedScheduleSlot(group);
                         const examDateDisplay = examDateRaw ? fmtDate(examDateRaw) : null;
                         const examSlot = allocInfo?.session || matchedSlot?.slot || matchedSlot?.session || group.slot || "";
@@ -1449,7 +1515,10 @@ export default function ExamCellQPReview() {
                             {/* QP Setter */}
                             <td className="p-3.5 align-top border border-slate-200">
                               {(() => {
-                                const setter = matchedSlot?.setterName || group.setterName || "";
+                                const qpFallback = group.qps.length > 0
+                                  ? resolveName(group.qps[0].forwarded_by || group.qps[0].created_by)
+                                  : "";
+                                const setter = matchedSlot?.setterName || group.setterName || (qpFallback && qpFallback !== "-" ? qpFallback : "");
                                 if (setter) {
                                   return (
                                     <div className="flex items-center gap-1.5">
@@ -1473,46 +1542,65 @@ export default function ExamCellQPReview() {
                               ) : (<>
                               <div className="space-y-2">
                                 {group.qps.map((qp, qIdx) => {
-                                  const qpParsed = parseSubjectField(qp.subject);
                                   const setLabel = formatQPSetDisplay(qp);
                                   const examLabel = resolveExamDisplay(qp);
                                   const isAlloc = !!qp.allocated;
                                   const allocData = qp.allocatedTo;
-                                  const submitter = resolveName(qp.forwarded_by);
+                                  const submitter = resolveName(qp.forwarded_by || qp.created_by);
+                                  const stage = getQpStage(qp);
+                                  const isPublishable = !isAlloc && String(qp.status || "").toLowerCase() === "approved_by_coe";
+                                  const cardTone = isAlloc
+                                    ? "bg-emerald-50/40 border-emerald-200"
+                                    : stage.key === "awaiting"
+                                      ? "bg-amber-50/40 border-amber-200"
+                                      : stage.key === "hod"
+                                        ? "bg-blue-50/40 border-blue-200"
+                                        : stage.key === "forwarded"
+                                          ? "bg-violet-50/40 border-violet-200"
+                                          : stage.key === "recorrect"
+                                            ? "bg-rose-50/40 border-rose-200"
+                                            : "bg-zinc-50/60 border-zinc-200";
+                                  const badgeTone = isAlloc
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : stage.key === "awaiting"
+                                      ? "bg-amber-100 text-amber-700"
+                                      : stage.key === "hod"
+                                        ? "bg-blue-100 text-blue-700"
+                                        : stage.key === "forwarded"
+                                          ? "bg-violet-100 text-violet-700"
+                                          : stage.key === "recorrect"
+                                            ? "bg-rose-100 text-rose-700"
+                                            : "bg-zinc-200 text-zinc-600";
 
                                   return (
                                     <div key={`${qp.compositeKey}-${qp.id}-${qIdx}`}
-                                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${isAlloc ? 'bg-emerald-50/40 border-emerald-200' : 'bg-amber-50/40 border-amber-200'}`}>
+                                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${cardTone}`}>
                                       {/* Set badge */}
-                                      <span className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-lg text-[10px] font-black ${
-                                        isAlloc ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                                      }`}>
+                                      <span className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-lg text-[10px] font-black ${badgeTone}`}>
                                         {setLabel}
                                       </span>
 
                                       {/* Info */}
                                       <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-1.5">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className="text-[11px] font-black text-zinc-800 truncate">{examLabel}</span>
+                                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-extrabold border ${stage.badge}`}>
+                                            {stage.label}
+                                          </span>
                                         </div>
                                         {isAlloc && allocData && (
                                           <span className="text-[9px] font-bold text-emerald-600 block mt-0.5">
                                             Allocated → {fmtDate(allocData.examDate)} ({(allocData.session || "FN").toUpperCase()})
                                           </span>
                                         )}
-                                        {!isAlloc && (
-                                          <span className="text-[9px] font-bold text-amber-600 block mt-0.5">
-                                            Awaiting allocation
-                                          </span>
-                                        )}
                                         <span className="text-[9px] text-zinc-400 font-medium block">
-                                          by {submitter} · {timeAgo(qp.updated_at || qp.coe_approved_at)}
+                                          by {submitter} · {timeAgo(qp.updated_at || qp.coe_approved_at || qp.forwarded_at || qp.saved_at)}
                                         </span>
                                       </div>
 
                                       {/* Actions */}
                                       <div className="flex items-center gap-1 shrink-0">
-                                        {!isAlloc && (
+                                        {isPublishable && (
                                           <button
                                             onClick={() => setAllocModal({ open: true, qp })}
                                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-extrabold transition-all shadow-sm cursor-pointer">
@@ -1547,9 +1635,14 @@ export default function ExamCellQPReview() {
                                     {allocatedCount} Allocated
                                   </span>
                                 )}
-                                {pendingCount > 0 && (
+                                {awaitingCount > 0 && (
                                   <span className="text-[9px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                                    {pendingCount} Pending
+                                    {awaitingCount} Pending
+                                  </span>
+                                )}
+                                {inReviewCount > 0 && (
+                                  <span className="text-[9px] font-black text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                                    {inReviewCount} In review / Draft
                                   </span>
                                 )}
                               </div>

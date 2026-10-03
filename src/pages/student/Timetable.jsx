@@ -406,9 +406,20 @@ export default function Timetable() {
         }
       });
 
+      // Deduplicate: same subject can arrive from multiple qp_setter_assignments
+      // docs (legacy alias keys / overlapping batch-id matches like
+      // "25_Batch_..." vs "25 Batch (2025-29)_..."). Without this every
+      // subject renders twice in the student IA timetable.
+      const seen = new Map();
+      items.forEach((it) => {
+        const codeNorm = String(it.code || "").toUpperCase().replace(/\s+/g, "");
+        const key = `${codeNorm}|${String(it.examDate || "").trim()}|${String(it.examName || "").trim()}|${String(it.batch || "").trim()}|${String(it.semester || "").trim()}`;
+        if (!seen.has(key)) seen.set(key, it);
+      });
+      const uniqueItems = Array.from(seen.values());
       // Sort chronologically by exam date, then subject code
-      items.sort((a, b) => String(a.examDate).localeCompare(String(b.examDate)) || a.code.localeCompare(b.code));
-      setIaSchedules(items);
+      uniqueItems.sort((a, b) => String(a.examDate).localeCompare(String(b.examDate)) || a.code.localeCompare(b.code));
+      setIaSchedules(uniqueItems);
     }, (err) => {
       console.error("[StudentTimetable] Error reading approved IA schedules:", err);
       setIaSchedules([]);

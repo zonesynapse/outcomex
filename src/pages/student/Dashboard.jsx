@@ -125,10 +125,18 @@ export default function StudentDashboard() {
 
         const batchPrefix = (progKey && deptKey && batchKey) ? `${progKey}_${deptKey}_${batchKey}` : '';
 
-        const [attSnapshot, assignSnap] = await Promise.all([
+        const [attSnapshot, assignSnap, studentsSnap] = await Promise.all([
           getDocs(collection(db, "attendance")),
           getDocs(collection(db, "subject_assignments")).catch(() => ({ forEach: () => { } })),
+          (batchKey && progKey && deptKey) ? getDoc(doc(db, "students", `${batchKey}_${progKey}_${deptKey}`)).catch(() => null) : Promise.resolve(null),
         ]);
+
+        const admissionNoForJoin = String(userData.admissionNo || userData.admNo || profData.admissionNo || stuData.admissionNo || '').trim();
+        const joiningDate = userData.joiningDate ||
+          userData._joiningDate ||
+          studentsSnap?.data()?._joiningDate?.[regNo] ||
+          (admissionNoForJoin ? studentsSnap?.data()?._joiningDate?.[admissionNoForJoin] : '') ||
+          '';
 
         const facultyUidMap = {};
         if (assignSnap && assignSnap.forEach) {
@@ -171,8 +179,23 @@ export default function StudentDashboard() {
           const subjectCode = extractSubjectCode(id);
 
           Object.entries(records).forEach(([key, rec]) => {
-            const dateMatch = key.match(/^(\d{4}-\d{2}-\d{2})_P(\d+)$/);
-            if (!dateMatch) return;
+            let dateStr = '';
+            let period = 1;
+            const m = key.match(/^(\d{4}-\d{2}-\d{2})_+[pP](\d+)/i);
+            if (m) {
+              dateStr = m[1];
+              period = parseInt(m[2], 10);
+            } else {
+              const dOnly = key.match(/^(\d{4}-\d{2}-\d{2})/);
+              if (dOnly) {
+                dateStr = dOnly[1];
+                period = parseInt(rec?.period, 10) || 1;
+              }
+            }
+            if (!dateStr) return;
+
+            // Lateral entry / joining date check: classes before joining date are skipped
+            if (joiningDate && dateStr < joiningDate) return;
 
             const rawH = getStudentValFromRec(rec?.students, studentIds);
             const parsedVal = parseStudentAttendanceVal(rawH);

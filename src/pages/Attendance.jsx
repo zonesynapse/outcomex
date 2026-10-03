@@ -14,6 +14,7 @@ import {
   Save,
   Calendar,
   FileText,
+  FileSpreadsheet,
   X
 } from "lucide-react";
 import jsPDF from "jspdf";
@@ -36,7 +37,11 @@ function sanitizeKey(key) {
 function extractPureDate(key) {
   if (!key) return '';
   const str = String(key).trim();
+  const m = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
   if (str.includes('_P')) return str.slice(0, str.lastIndexOf('_P'));
+  if (str.includes('_p')) return str.slice(0, str.lastIndexOf('_p'));
+  if (str.includes('_')) return str.split('_')[0];
   return str;
 }
 
@@ -178,6 +183,73 @@ export default function Attendance() {
     return map;
   }, [sectionIndex, idMapExtra]);
 
+  // Comprehensive alias set for every student in the roster
+  const studentAliasesMap = useMemo(() => {
+    const map = {};
+    const normClean = str => String(str || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+    const addAlias = (canonical, val) => {
+      if (!canonical || !val) return;
+      const s = String(val).trim();
+      if (!s) return;
+      if (!map[canonical]) map[canonical] = new Set();
+      map[canonical].add(s);
+      map[canonical].add(s.toLowerCase());
+      const clean = normClean(s);
+      if (clean) map[canonical].add(clean);
+      const numOnly = s.replace(/\D/g, '');
+      if (numOnly) {
+        map[canonical].add(numOnly);
+        const withoutLeadingZeros = numOnly.replace(/^0+/, '');
+        if (withoutLeadingZeros) map[canonical].add(withoutLeadingZeros);
+      }
+    };
+
+    // 1. Seed with masterList keys and student properties
+    Object.entries(masterList || {}).forEach(([key, val]) => {
+      if (key.startsWith('_')) return;
+      addAlias(key, key);
+      if (val && typeof val === 'object') {
+        const r = val.regNo || val.reg || val.registerNo || val.register_number || val.reg_no;
+        const ad = val.admissionNo || val.admNo || val.adm_no || val.admission_no || val.examNo || val.applicationNo;
+        const ro = val.rollNo || val.roll_no;
+        const nm = val.name || val.studentName;
+        if (r) addAlias(key, r);
+        if (ad) addAlias(key, ad);
+        if (ro) addAlias(key, ro);
+        if (nm) addAlias(key, nm);
+      }
+      if (idMap[key]) addAlias(key, idMap[key]);
+      if (idMapExtra[key]) addAlias(key, idMapExtra[key]);
+    });
+
+    // 2. Correlate with sectionIndex (e.g. admissionNo ↔ regNo)
+    Object.entries(sectionIndex || {}).forEach(([admNo, info]) => {
+      if (info && typeof info === 'object') {
+        const r = info.regNo || info.reg;
+        const ad = info.admissionNo || admNo;
+        const ro = info.rollNo;
+        const nm = info.name;
+        Object.keys(map).forEach(canonical => {
+          const set = map[canonical];
+          if (
+            set.has(String(admNo).trim()) ||
+            set.has(normClean(admNo)) ||
+            (r && (set.has(String(r).trim()) || set.has(normClean(r)))) ||
+            (ad && (set.has(String(ad).trim()) || set.has(normClean(ad))))
+          ) {
+            if (r) addAlias(canonical, r);
+            if (ad) addAlias(canonical, ad);
+            if (ro) addAlias(canonical, ro);
+            if (nm) addAlias(canonical, nm);
+          }
+        });
+      }
+    });
+
+    return map;
+  }, [masterList, idMap, idMapExtra, sectionIndex]);
+
   const getStudentData = useCallback((studentsMap, id) => {
     if (!studentsMap || !id) return undefined;
 
@@ -192,11 +264,12 @@ export default function Attendance() {
     }
 
     const normClean = str => String(str || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-
     const targetId = String(id).trim().toLowerCase();
     const targetClean = normClean(id);
     const altId = idMap[id] ? String(idMap[id]).trim().toLowerCase() : '';
     const altClean = idMap[id] ? normClean(idMap[id]) : '';
+
+    const aliasSet = studentAliasesMap[id] || new Set([targetId, targetClean, altId, altClean].filter(Boolean));
 
     // 1. If studentsMap is an Array: [ { reg, status }, ... ]
     if (Array.isArray(mapObj)) {
@@ -209,9 +282,13 @@ export default function Attendance() {
           item.rollNo || item.roll_no || item.id || ''
         ).trim().toLowerCase();
         const itemClean = normClean(itemReg);
+        const itemName = String(item.name || item.studentName || '').trim().toLowerCase();
+
         return itemReg === targetId || (altId && itemReg === altId) ||
                (targetClean && itemClean === targetClean) ||
-               (altClean && itemClean === altClean);
+               (altClean && itemClean === altClean) ||
+               aliasSet.has(itemReg) || aliasSet.has(itemClean) ||
+               (itemName && aliasSet.has(itemName));
       });
       return match || undefined;
     }
@@ -221,19 +298,42 @@ export default function Attendance() {
       if (mapObj[id] !== undefined) return mapObj[id];
       if (idMap[id] && mapObj[idMap[id]] !== undefined) return mapObj[idMap[id]];
 
+      // Check all aliases
+      for (const a of aliasSet) {
+        if (mapObj[a] !== undefined) return mapObj[a];
+      }
+
       const keys = Object.keys(mapObj);
       const matchedKey = keys.find(k => {
         const normK = String(k).trim().toLowerCase();
         const cleanK = normClean(k);
         return normK === targetId || (altId && normK === altId) ||
                (targetClean && cleanK === targetClean) ||
-               (altClean && cleanK === altClean);
+               (altClean && cleanK === altClean) ||
+               aliasSet.has(normK) || aliasSet.has(cleanK);
       });
       if (matchedKey) return mapObj[matchedKey];
+
+      // Deep value check for object values containing regNo, admissionNo, or name
+      for (const k of keys) {
+        const val = mapObj[k];
+        if (val && typeof val === 'object') {
+          const r = String(val.regNo || val.reg || val.registerNo || '').trim().toLowerCase();
+          const ad = String(val.admissionNo || val.admNo || '').trim().toLowerCase();
+          const nm = String(val.name || val.studentName || '').trim().toLowerCase();
+          if (
+            (r && aliasSet.has(r)) ||
+            (ad && aliasSet.has(ad)) ||
+            (nm && aliasSet.has(nm))
+          ) {
+            return val;
+          }
+        }
+      }
     }
 
     return undefined;
-  }, [idMap]);
+  }, [idMap, studentAliasesMap]);
 
   const findRecordForPeriod = useCallback((recordsObj, dateStr, periodVal) => {
     if (!recordsObj || !dateStr || !periodVal) return null;
@@ -646,6 +746,9 @@ export default function Attendance() {
   }, [programme, department, currentUid, userRole, getRegulationForBatch, getOrdinal, formatBatchDisplay, semesterConfigs, isElevatedRole]);
 
   const handleSubjectChange = (val, keepPeriods = false) => {
+    setReportFromDate("");
+    setReportToDate("");
+    setReportData(null);
     if (!val) {
       setSubject("");
       setBatch("");
@@ -897,7 +1000,19 @@ export default function Attendance() {
           const docRecords = getAttendanceRecords(data);
           Object.entries(docRecords).forEach(([rk, rVal]) => {
             const { nk, isCompound, date } = normRecKey(rk);
-            if (seenNormKeys.has(nk)) return; // same class already merged (Sec-A wins)
+            if (seenNormKeys.has(nk)) {
+              // Same class already merged (Sec-A wins as primary), but preserve any students from base/legacy docs
+              const existingRk = Object.keys(mergedRecords).find(k => normRecKey(k).nk === nk);
+              if (existingRk && mergedRecords[existingRk]) {
+                const existingStu = typeof mergedRecords[existingRk].students === 'object' ? mergedRecords[existingRk].students : {};
+                const newStu = typeof rVal.students === 'object' ? rVal.students : {};
+                mergedRecords[existingRk].students = {
+                  ...newStu,
+                  ...existingStu
+                };
+              }
+              return;
+            }
             if (isCompound) {
               // A period-specific record supersedes any legacy date-only entry for the same date
               if (legacyByDate.has(date)) {
@@ -1077,9 +1192,24 @@ export default function Attendance() {
             const enrolledData = enrolSnap.data();
             const enrolledKeys = new Set(Object.keys(enrolledData).filter(k => enrolledData[k] && !k.startsWith('_')));
             if (enrolledKeys.size > 0) {
-              const filtered = { _meta: rawMaster._meta };
+              const filtered = {
+                _meta: rawMaster._meta,
+                _joiningDate: rawMaster._joiningDate,
+                _joiningAY: rawMaster._joiningAY,
+                _order: rawMaster._order
+              };
               Object.keys(rawMaster).forEach(k => {
-                if (k !== '_meta' && enrolledKeys.has(k)) filtered[k] = rawMaster[k];
+                if (k.startsWith('_')) return;
+                const candVal = rawMaster[k];
+                const candReg = candVal && typeof candVal === 'object' ? (candVal.regNo || candVal.reg || candVal.registerNo) : '';
+                const candAdm = candVal && typeof candVal === 'object' ? (candVal.admissionNo || candVal.admNo || candVal.admission_no) : '';
+                const isEnrolled = enrolledKeys.has(k) ||
+                  (candReg && enrolledKeys.has(candReg)) ||
+                  (candAdm && enrolledKeys.has(candAdm)) ||
+                  (secIdxData[k] && (enrolledKeys.has(secIdxData[k].regNo) || enrolledKeys.has(secIdxData[k].admissionNo)));
+                if (isEnrolled) {
+                  filtered[k] = rawMaster[k];
+                }
               });
               rawMaster = filtered;
             }
@@ -1100,9 +1230,21 @@ export default function Attendance() {
           if (key.startsWith('_') || !val || typeof val !== 'object') return;
           const candReg = val.regNo || val.reg || val.registerNo || val.register_number || val.reg_no;
           const candAdm = val.admissionNo || val.admNo || val.adm_no || val.admission_no || val.examNo || val.exam_no || val.applicationNo;
-          if (candReg && candAdm) pairUp(candAdm, candReg);
-          else if (candReg) pairUp(key, candReg);
-          else if (candAdm) pairUp(key, candAdm);
+          const candRoll = val.rollNo || val.roll_no;
+          if (candReg && candAdm) {
+            pairUp(candAdm, candReg);
+            pairUp(key, candReg);
+            pairUp(key, candAdm);
+          } else if (candReg) {
+            pairUp(key, candReg);
+          } else if (candAdm) {
+            pairUp(key, candAdm);
+          }
+          if (candRoll) {
+            pairUp(key, candRoll);
+            if (candReg) pairUp(candReg, candRoll);
+            if (candAdm) pairUp(candAdm, candRoll);
+          }
         });
         try {
           if (!apprIndexCache.current) {
@@ -1226,7 +1368,10 @@ export default function Attendance() {
       let stuMethod = parsedVal ? parsedVal.teachingMethodology : '';
       let storedStatus = parsedVal ? parsedVal.status : '';
 
-      let status = studentExists ? storedStatus : '';
+      let status = studentExists ? storedStatus : (dateRecord ? 'P' : '');
+      if (!studentExists && dateRecord && status === 'P') {
+        hours = totalH;
+      }
 
       let isConflict = false;
       const rawConflictVal = getStudentData(periodConflict?.record, reg);
@@ -1303,6 +1448,105 @@ export default function Attendance() {
     return () => { cancelled = true; };
   }, [period, attendanceDate, batch, academicYear, semester, programme, department, subject, masterList]);
 
+  // ─── Centralized, Unified Student Attendance Statistics Engine ───
+  const calculateStudentStats = useCallback((reg, keysList, recordsObj, joiningDateMap) => {
+    let attended = 0;
+    let odCount = 0;
+    let absent = 0;
+    let totalClasses = 0;
+    const dailyRecords = {};
+
+    // Robust joining date resolution across all student ID aliases
+    let jd = '';
+    const jdSources = [joiningDateMap, masterList?._joiningDate].filter(Boolean);
+    for (const src of jdSources) {
+      if (src[reg]) { jd = src[reg]; break; }
+      if (idMap[reg] && src[idMap[reg]]) { jd = src[idMap[reg]]; break; }
+      if (idMapExtra[reg] && src[idMapExtra[reg]]) { jd = src[idMapExtra[reg]]; break; }
+      const aliases = studentAliasesMap[reg];
+      if (aliases) {
+        for (const a of aliases) {
+          if (src[a]) { jd = src[a]; break; }
+        }
+      }
+      if (jd) break;
+    }
+    if (!jd && masterList?.[reg] && typeof masterList[reg] === 'object') {
+      jd = masterList[reg].joiningDate || masterList[reg]._joiningDate || '';
+    }
+
+    keysList.forEach(key => {
+      const rec = recordsObj[key];
+      if (!rec) return;
+
+      const recordDate = extractPureDate(key);
+      const isEvent = rec.isEvent;
+
+      // Lateral entry / joining date check: classes before joining date are skipped
+      if (jd && recordDate && recordDate < jd) {
+        dailyRecords[key] = '—';
+        return;
+      }
+
+      const rawVal = getStudentData(rec.students, reg);
+      const parsedVal = parseStudentAttendanceVal(rawVal);
+
+      if (isEvent) {
+        const isPresent = parsedVal ? (parsedVal.status === 'P' || parsedVal.hours > 0) : true;
+        dailyRecords[key] = parsedVal ? parsedVal.status : (isPresent ? 'P' : '—');
+        return;
+      }
+
+      // Non-event class conducted while student was enrolled
+      totalClasses++;
+
+      let status = 'P';
+      if (parsedVal) {
+        if (parsedVal.status === 'OD' || parsedVal.hours === -1) {
+          odCount++;
+          status = 'OD';
+        } else if (parsedVal.status === 'A' || (parsedVal.hours <= 0 && parsedVal.status !== 'OD')) {
+          absent++;
+          status = 'A';
+        } else if (parsedVal.status === 'P' || parsedVal.hours > 0) {
+          attended++;
+          status = 'P';
+        } else {
+          attended++;
+          status = 'P';
+        }
+      } else {
+        // System standard: unmarked students default to Present 'P'
+        attended++;
+        status = 'P';
+      }
+
+      dailyRecords[key] = status;
+    });
+
+    const effectiveClasses = Math.max(0, totalClasses - odCount);
+    const percentage = effectiveClasses > 0
+      ? ((attended / effectiveClasses) * 100).toFixed(2)
+      : (odCount > 0 ? "100.00" : "0.00");
+    const pctNum = parseFloat(percentage) || 0;
+    const odPercentage = totalClasses > 0
+      ? ((odCount / totalClasses) * 100).toFixed(2)
+      : "0.00";
+    const odPctNum = parseFloat(odPercentage) || 0;
+
+    return {
+      totalClasses,
+      attended,
+      absent,
+      odCount,
+      percentage,
+      pctNum,
+      odPercentage,
+      odPctNum,
+      dailyRecords
+    };
+  }, [getStudentData, masterList, idMap, idMapExtra, studentAliasesMap]);
+
   const handleGenerateReport = () => {
     const allRecords = getAttendanceRecords(attendanceData);
     if (!reportFromDate || !reportToDate || !Object.keys(allRecords).length) {
@@ -1338,9 +1582,7 @@ export default function Attendance() {
       }
     });
 
-    const order = masterList._order;
     const joiningAY = masterList._joiningAY || {};
-
     const studentMap = {};
     Object.entries(masterList)
       .filter(([key]) => !key.startsWith('_'))
@@ -1356,51 +1598,17 @@ export default function Attendance() {
 
     const joiningDateMap = masterList?._joiningDate || {};
     const studentStats = Object.keys(studentMap).map(reg => {
-      let attended = 0, markedClasses = 0, odCount = 0;
-      const dailyRecords = {};
-      const jd = joiningDateMap[reg];
-      allKeys.forEach(key => {
-        const rec = allRecords[key];
-        const recordDate = extractPureDate(key);
-        if (jd && recordDate && recordDate < jd) return; // before joining — skip
-        const rawVal = getStudentData(rec?.students, reg);
-        const parsedVal = parseStudentAttendanceVal(rawVal);
-
-        if (rec?.isEvent) {
-          const isPresent = parsedVal ? (parsedVal.status === 'P' || parsedVal.hours > 0) : true;
-          dailyRecords[key] = parsedVal ? parsedVal.status : (isPresent ? 'P' : '—');
-          return;
-        }
-
-        let statusStr = 'P';
-        if (parsedVal) {
-          const isOd = parsedVal.status === 'OD' || parsedVal.hours === -1;
-          if (isOd) {
-            odCount++;
-            statusStr = 'OD';
-          } else if (parsedVal.status === 'P' || parsedVal.hours > 0) {
-            attended++;
-            statusStr = 'P';
-          } else if (parsedVal.status === 'A' || parsedVal.hours <= 0) {
-            statusStr = 'A';
-          }
-        } else {
-          // Student not recorded for this date — skip entirely
-          return;
-        }
-        markedClasses++;
-        dailyRecords[key] = statusStr;
-      });
-      const classesForPct = markedClasses - odCount;
+      const sStats = calculateStudentStats(reg, allKeys, allRecords, joiningDateMap);
       return {
         reg,
         name: studentMap[reg],
-        attended,
-        totalClasses: markedClasses,
-        odCount,
-        percentage: classesForPct > 0 ? ((attended / classesForPct) * 100).toFixed(2) : (markedClasses > 0 ? "0.00" : "0.00"),
-        odPercentage: markedClasses > 0 ? ((odCount / markedClasses) * 100).toFixed(2) : "0.00",
-        dailyRecords
+        attended: sStats.attended,
+        totalClasses: sStats.totalClasses,
+        absent: sStats.absent,
+        odCount: sStats.odCount,
+        percentage: sStats.percentage,
+        odPercentage: sStats.odPercentage,
+        dailyRecords: sStats.dailyRecords
       };
     });
 
@@ -1488,7 +1696,7 @@ export default function Attendance() {
     headers.push('Total', 'Attended', 'Absent', 'OD', '%', 'OD%');
 
     const rows = reportData.students.map(s => {
-      const absent = s.totalClasses - s.attended - s.odCount;
+      const absent = s.absent !== undefined ? s.absent : Math.max(0, s.totalClasses - s.attended - s.odCount);
       const row = [s.reg, s.name];
       reportData.dates.forEach(d => row.push(s.dailyRecords[d] || '—'));
       row.push(String(s.totalClasses), String(s.attended), String(absent), String(s.odCount), `${s.percentage}%`, `${s.odPercentage}%`);
@@ -1521,6 +1729,51 @@ export default function Attendance() {
     });
 
     doc.save(`Attendance_Report_${batchLabel || "Report"}_${subjectCode || "Subject"}.pdf`);
+  };
+
+  const handleExportReportExcel = () => {
+    if (!reportData || !reportData.students.length) return;
+
+    let subjectCode = '', subjectName = '', batchLabel = '', semLabel = '', sectionLabel = '';
+    try {
+      const parsed = JSON.parse(subject);
+      subjectCode = parsed.code || '';
+      batchLabel = parsed.batch || '';
+      semLabel = parsed.sem || '';
+      sectionLabel = parsed.section || '';
+      const match = subjects.find(s => s.value === subject);
+      if (match) {
+        subjectName = match.text
+          .replace(`${subjectCode} - `, '')
+          .replace(/\s*\(.*\)\s*$/, '')
+          .trim();
+      }
+    } catch { /* keep defaults */ }
+
+    const excelRows = reportData.students.map((s, idx) => {
+      const absent = s.absent !== undefined ? s.absent : Math.max(0, s.totalClasses - s.attended - s.odCount);
+      const row = {
+        'S.No': idx + 1,
+        'Reg No': s.reg,
+        'Student Name': s.name,
+        'Total Classes': s.totalClasses,
+        'Attended': s.attended,
+        'Absent': absent,
+        'OD': s.odCount,
+        'Attendance %': `${s.percentage}%`,
+        'OD %': `${s.odPercentage}%`,
+      };
+      reportData.dates.forEach(d => {
+        const label = reportData.keyLabels?.[d] || d;
+        row[label] = s.dailyRecords[d] || '—';
+      });
+      return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(excelRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Attendance Report");
+    XLSX.writeFile(wb, `Attendance_Report_${batchLabel || "Batch"}_${subjectCode || "Subject"}.xlsx`);
   };
 
   const filteredStudents = students.filter(s =>
@@ -1731,83 +1984,50 @@ export default function Attendance() {
     }));
   };
 
-  // ─── cumulative attendance from all records (date-scoped by _joiningDate) ───
-  const cumulativeAttended = useMemo(() => {
+  // ─── non-event keys and record count (global) ───
+  const nonEventKeys = useMemo(() => {
     const recordsMap = getAttendanceRecords(attendanceData);
-    if (!Object.keys(recordsMap).length) return {};
-    const counts = {};
-    const joiningDateMap = masterList?._joiningDate || {};
-    Object.entries(recordsMap).forEach(([recordKey, record]) => {
-      if (record.isEvent) return;
-      const recordDate = extractPureDate(recordKey);
-      const studentsObj = record.students || {};
-      Object.keys(masterList || {}).forEach(reg => {
-        if (reg.startsWith('_')) return;
-        const jd = joiningDateMap[reg];
-        if (jd && recordDate && recordDate < jd) return; // before joining — skip
-        const rawVal = getStudentData(studentsObj, reg);
-        const parsedVal = parseStudentAttendanceVal(rawVal);
-        if (parsedVal) {
-          if (parsedVal.status !== 'OD' && parsedVal.status !== 'A') {
-            counts[reg] = (counts[reg] || 0) + 1;
-          }
-        }
-      });
-    });
-    return counts;
-  }, [attendanceData, masterList, getStudentData]);
-
-  // ─── cumulative OD count (date-scoped) ───
-  const cumulativeOD = useMemo(() => {
-    const recordsMap = getAttendanceRecords(attendanceData);
-    if (!Object.keys(recordsMap).length) return {};
-    const counts = {};
-    const joiningDateMap = masterList?._joiningDate || {};
-    Object.entries(recordsMap).forEach(([recordKey, record]) => {
-      if (record.isEvent) return;
-      const recordDate = extractPureDate(recordKey);
-      const studentsObj = record.students || {};
-      Object.keys(masterList || {}).forEach(reg => {
-        if (reg.startsWith('_')) return;
-        const jd = joiningDateMap[reg];
-        if (jd && recordDate && recordDate < jd) return;
-        const rawVal = getStudentData(studentsObj, reg);
-        const parsedVal = parseStudentAttendanceVal(rawVal);
-        if (parsedVal && (parsedVal.status === 'OD' || parsedVal.hours === -1)) {
-          counts[reg] = (counts[reg] || 0) + 1;
-        }
-      });
-    });
-    return counts;
-  }, [attendanceData, masterList, getStudentData]);
-
-  // ─── non-event record count (global + per-student date-scoped) ───
-  const nonEventRecordCount = useMemo(() => {
-    const recordsMap = getAttendanceRecords(attendanceData);
-    if (!Object.keys(recordsMap).length) return 0;
-    return Object.values(recordsMap).filter(r => !r.isEvent).length;
+    return Object.entries(recordsMap).filter(([, r]) => !r.isEvent).map(([k]) => k).sort();
   }, [attendanceData]);
 
-  const effectiveTotalPerStudent = useMemo(() => {
+  const nonEventRecordCount = nonEventKeys.length;
+
+  // ─── unified cumulative attendance stats map (100% synchronized with reports) ───
+  const cumulativeStatsMap = useMemo(() => {
     const recordsMap = getAttendanceRecords(attendanceData);
     if (!Object.keys(recordsMap).length) return {};
-    const joiningDateMap = masterList?._joiningDate || {};
-    const nonEventKeys = Object.entries(recordsMap).filter(([, r]) => !r.isEvent).map(([k]) => k);
     const map = {};
+    const joiningDateMap = masterList?._joiningDate || {};
     Object.keys(masterList || {}).forEach(reg => {
       if (reg.startsWith('_')) return;
-      const jd = joiningDateMap[reg];
-      if (!jd) {
-        map[reg] = nonEventKeys.length;
-      } else {
-        map[reg] = nonEventKeys.filter(k => {
-          const rd = extractPureDate(k);
-          return !rd || rd >= jd;
-        }).length;
-      }
+      map[reg] = calculateStudentStats(reg, nonEventKeys, recordsMap, joiningDateMap);
     });
     return map;
-  }, [attendanceData, masterList]);
+  }, [attendanceData, masterList, nonEventKeys, calculateStudentStats]);
+
+  const cumulativeAttended = useMemo(() => {
+    const counts = {};
+    Object.entries(cumulativeStatsMap).forEach(([reg, stats]) => {
+      counts[reg] = stats.attended;
+    });
+    return counts;
+  }, [cumulativeStatsMap]);
+
+  const cumulativeOD = useMemo(() => {
+    const counts = {};
+    Object.entries(cumulativeStatsMap).forEach(([reg, stats]) => {
+      counts[reg] = stats.odCount;
+    });
+    return counts;
+  }, [cumulativeStatsMap]);
+
+  const effectiveTotalPerStudent = useMemo(() => {
+    const map = {};
+    Object.entries(cumulativeStatsMap).forEach(([reg, stats]) => {
+      map[reg] = stats.totalClasses;
+    });
+    return map;
+  }, [cumulativeStatsMap]);
 
   // ─── derived stats ───
   const activeStudents = students.filter(s => !s._conflict);
@@ -2154,13 +2374,16 @@ export default function Attendance() {
                     alert("Please select a subject first.");
                     return;
                   }
-                  setShowReportModal(true);
-                  if (recordDates.length > 0) {
-                    const minD = extractPureDate(recordDates[0]);
-                    const maxD = extractPureDate(recordDates[recordDates.length - 1]);
-                    if (!reportFromDate) setReportFromDate(minD);
-                    if (!reportToDate) setReportToDate(maxD);
+                  const allRecords = getAttendanceRecords(attendanceData);
+                  const recordKeys = Object.keys(allRecords);
+                  if (recordKeys.length > 0) {
+                    const pureDates = recordKeys.map(k => extractPureDate(k)).filter(Boolean).sort();
+                    if (pureDates.length > 0) {
+                      setReportFromDate(pureDates[0]);
+                      setReportToDate(pureDates[pureDates.length - 1]);
+                    }
                   }
+                  setShowReportModal(true);
                 }}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-500/25"
                 title="Generate Attendance Report"
@@ -2232,30 +2455,37 @@ export default function Attendance() {
                           })}
                         </div>
                       </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center justify-center">
-                          <span className="text-xs font-black text-indigo-600">
-                            {cumulativeAttended[s.reg] || 0}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <div className="flex items-center justify-center gap-2.5">
-                          {(() => {
-                            const pct = ((cumulativeAttended[s.reg] || 0) / ((effectiveTotalPerStudent[s.reg] ?? nonEventRecordCount) || 1)) * 100;
-                            return (<>
-                              <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                                <div className={`h-full rounded-full transition-all duration-700 ${pct < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
-                                  }`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                      {(() => {
+                        const stats = cumulativeStatsMap[s.reg] || { attended: 0, totalClasses: nonEventRecordCount, odCount: 0, percentage: "0.00", pctNum: 0 };
+                        return (
+                          <>
+                            <td className="px-5 py-3.5">
+                              <div className="flex flex-col items-center justify-center">
+                                <span className="text-xs font-black text-indigo-600">
+                                  {stats.attended} <span className="text-[10px] font-bold text-slate-400">/ {stats.totalClasses}</span>
+                                </span>
+                                {stats.odCount > 0 && (
+                                  <span className="text-[9px] font-bold text-blue-500 font-mono">
+                                    {stats.odCount} OD
+                                  </span>
+                                )}
                               </div>
-                              <span className={`text-xs font-black min-w-[46px] text-right ${pct < 75 ? 'text-rose-600' : 'text-emerald-600'
-                                }`}>
-                                {pct.toFixed(1)}%
-                              </span>
-                            </>);
-                          })()}
-                        </div>
-                      </td>
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center justify-center gap-2.5">
+                                <div className="w-full max-w-[100px] h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                  <div className={`h-full rounded-full transition-all duration-700 ${stats.pctNum < 75 ? 'bg-gradient-to-r from-rose-400 to-rose-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+                                    }`} style={{ width: `${Math.min(stats.pctNum, 100)}%` }} />
+                                </div>
+                                <span className={`text-xs font-black min-w-[46px] text-right ${stats.pctNum < 75 ? 'text-rose-600' : 'text-emerald-600'
+                                  }`}>
+                                  {stats.pctNum.toFixed(1)}%
+                                </span>
+                              </div>
+                            </td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   ))}
                 </tbody>
@@ -2371,8 +2601,15 @@ export default function Attendance() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button onClick={handleExportReportExcel}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-sm"
+                    title="Export Report as Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet size={15} /> Export Excel
+                  </button>
                   <button onClick={handleExportReport}
                     className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-sm"
+                    title="Export Report as PDF"
                   >
                     <Download size={15} /> Export PDF
                   </button>
@@ -2420,7 +2657,7 @@ export default function Attendance() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {reportData.students.map(s => {
-                        const absent = s.totalClasses - s.attended - s.odCount;
+                        const absent = s.absent !== undefined ? s.absent : Math.max(0, s.totalClasses - s.attended - s.odCount);
                         return (
                           <tr key={s.reg} className="hover:bg-amber-50/40 transition-all duration-150">
                             <td className="px-5 py-3.5"><span className="text-xs font-bold text-slate-500 font-mono">{s.reg}</span></td>
@@ -2509,6 +2746,41 @@ export default function Attendance() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all"
                     />
                   </div>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex items-center gap-2 pt-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allRecords = getAttendanceRecords(attendanceData);
+                      const recordKeys = Object.keys(allRecords);
+                      if (recordKeys.length > 0) {
+                        const pureDates = recordKeys.map(k => extractPureDate(k)).filter(Boolean).sort();
+                        if (pureDates.length > 0) {
+                          setReportFromDate(pureDates[0]);
+                          setReportToDate(pureDates[pureDates.length - 1]);
+                        }
+                      }
+                    }}
+                    className="px-2.5 py-1 text-[10px] font-bold bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-all"
+                  >
+                    All Dates (Full Subject)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      const y = now.getFullYear();
+                      const m = String(now.getMonth() + 1).padStart(2, '0');
+                      const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+                      setReportFromDate(`${y}-${m}-01`);
+                      setReportToDate(`${y}-${m}-${String(lastDay).padStart(2, '0')}`);
+                    }}
+                    className="px-2.5 py-1 text-[10px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg transition-all"
+                  >
+                    This Month
+                  </button>
                 </div>
 
                 {/* Warning/Info */}
