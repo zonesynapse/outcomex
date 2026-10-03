@@ -11,7 +11,7 @@ import { auth, db } from "../../firebase";
 import { useDepartments } from "../../hooks/useDepartments";
 import { useRegulations } from "../../hooks/useRegulations";
 import { useBatches } from "../../hooks/useBatches";
-import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, parseSubjectField, isSameExam, getExamTag } from "../../lib/utils";
+import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, parseSubjectField, matchRegulation, isSameExamEvent } from "../../lib/utils";
 
 const normClean = (s) => String(s || "").replace(/[._\s\-/]/g, "").toLowerCase();
 const normCodeKey = (code) => String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -78,7 +78,12 @@ export default function QPSetterAssignment() {
   }, []);
 
   const getCanonicalCode = useCallback((rawCode, name, deptKey) => {
-    if (!name && !rawCode) return rawCode || "";
+    // Timetable authority: the regulation/syllabus code saved in the IA timetable
+    // always wins, so this page shows the EXACT code seen in IAScheduleCreation.
+    // CourseBank is consulted ONLY when no raw code exists (name-only subjects).
+    const rawTrimmed = String(rawCode || "").trim();
+    if (rawTrimmed) return rawTrimmed;
+    if (!name) return "";
     const nameMap = courseBankMap._nameMap || {};
     const normName = String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     if (deptKey && normName) {
@@ -90,11 +95,7 @@ export default function QPSetterAssignment() {
     if (normName && nameMap[normName]) {
       return nameMap[normName];
     }
-    const normC = normCodeKey(rawCode);
-    if (courseBankMap[normC]?.canonicalCode) {
-      return courseBankMap[normC].canonicalCode;
-    }
-    return rawCode || "";
+    return "";
   }, [courseBankMap]);
   const [batch, setBatch] = useState("");
   const [academicYear, setAcademicYear] = useState("");
@@ -122,7 +123,7 @@ export default function QPSetterAssignment() {
       const exams = [];
       snap.forEach((d) => {
         const data = d.data();
-        if (data.type === "Exam") {
+        if (data && String(data.type || "").trim().toLowerCase() === "exam") {
           exams.push({ id: d.id, ...data });
         }
       });
@@ -320,8 +321,9 @@ export default function QPSetterAssignment() {
       const progKey = formatProgrammeKey(prog);
       const regulation = getRegulationForBatch(progKey, batch);
       if (!regulation) return;
-      const regNorm = normClean(regulation);
-      const matching = allSyllabus.filter(s => s.progKey === progKey && normClean(s.regKey) === regNorm);
+      // Strict shared regulation match (same as IAScheduleCreation) so only the
+      // batch's regulation subjects appear — no multi-regulation code mixing.
+      const matching = allSyllabus.filter(s => s.progKey === progKey && matchRegulation(s.regKey, regulation));
       matching.forEach(sDoc => {
         const subs = sDoc.data?.semesters?.[semester] || [];
         if (!Array.isArray(subs)) return;
@@ -411,7 +413,11 @@ export default function QPSetterAssignment() {
   const rows = useMemo(() => {
     if (!syllabusSubjects.length) return [];
     return syllabusSubjects.map(s => {
-      const handlers = (codeHandlers[s.code] || []).map(h => ({
+      // Normalized handler lookup ("BM 3352" matches "BM3352") so handling
+      // faculty resolve exactly like in IAScheduleCreation.
+      const sNorm = normCodeKey(s.code);
+      const handlerList = codeHandlers[sNorm] || codeHandlers[s.code] || [];
+      const handlers = handlerList.map(h => ({
         uid: h.uid,
         label: `${getFacultyName(h.uid)}${s.departments.length > 1 || h.dept ? ` (${formatDepartmentDisplay(h.dept, h.progKey)})` : ""}`
       }));
@@ -539,7 +545,8 @@ export default function QPSetterAssignment() {
     const normB = normClean(batch);
     const normAY = academicYear ? normClean(academicYear) : "";
     const normSem = String(semester).trim();
-    const curExamId = selectedExamId || selectedExam?.id || selectedExam?.title || "";
+    const curExamId = selectedExamId || "";
+    const curExamTitle = selectedExam?.displayTitle || selectedExam?.title || "";
 
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       let combinedAssignments = {};
@@ -551,7 +558,8 @@ export default function QPSetterAssignment() {
         const normID = normClean(d.id);
         const dSem = String(data.semester || "").trim();
         const dAY = normClean(data.academicYear || "");
-        const dExamId = data.examId || data.examName || "";
+        const dExamId = data.examId || "";
+        const dExamName = data.examName || "";
 
         const startYr1 = batch.match(/20\d{2}/)?.[0] || batch.match(/\b\d{2}\b/)?.[0] || "";
         const targetStr = (data.batch || "") + " " + d.id;
@@ -568,7 +576,16 @@ export default function QPSetterAssignment() {
         const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
         const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
 
-        const isExamMatch = !curExamId || !dExamId || isSameExam(dExamId, curExamId) || isSameExam(dExamId, selectedExam?.title) || normID.includes(normClean(curExamId));
+        // Match by EXAM NAME (tag + regulation), never by calendar push-id alone.
+        const hasCurExam = Boolean(curExamId || curExamTitle);
+        const idHit = curExamId && (
+          normID.includes(normClean(curExamId)) ||
+          (dExamId && normClean(dExamId).includes(normClean(curExamId)))
+        );
+        const nameHit = dExamName && curExamTitle
+          ? isSameExamEvent(dExamName, curExamTitle)
+          : false;
+        const isExamMatch = !hasCurExam || !dExamName || nameHit || idHit;
 
         if (isBatchMatch && isSemMatch && isAyMatch && isExamMatch) {
           docDataCombined = { ...docDataCombined, ...data };

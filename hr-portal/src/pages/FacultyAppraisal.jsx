@@ -193,9 +193,13 @@ export default function FacultyAppraisal() {
     return unsub;
   }, []);
 
-  // Live performance evaluation criteria for auto-scoring on submit
+  // Live performance evaluation criteria for auto-scoring on submit.
+  // CKCOE users validate against appraisal_config/criteria_CKCOE;
+  // CKSPK / CKSPE users keep validating against appraisal_config/criteria.
+  const userInstitution = userProfile?.institution || "";
+  const isCKCOEUser = String(userInstitution).toUpperCase().includes("CKCOE");
   useEffect(() => {
-    const docRef = doc(db, "appraisal_config", "criteria");
+    const docRef = doc(db, "appraisal_config", isCKCOEUser ? "criteria_CKCOE" : "criteria");
     const unsub = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -208,7 +212,7 @@ export default function FacultyAppraisal() {
       console.error("Error loading appraisal criteria:", err);
     });
     return unsub;
-  }, []);
+  }, [isCKCOEUser]);
 
   useEffect(() => {
     if (!currentUser || !academicYear) return;
@@ -615,15 +619,20 @@ export default function FacultyAppraisal() {
     // Auto-evaluate against Performance Evaluation Criteria on submit
     const scoreResult = isSubmit ? evaluateAppraisal(formData, evalCriteria) : null;
 
+    // Institution tag drives AppraisalReviews segregation so the CKCOE
+    // Principal / HR sees CKCOE faculty forms (same pattern as NonTeachingAppraisal)
+    const userInst = userProfile?.institution || "";
+
     const rawPayload = {
       uid: currentUser.uid,
       facultyName: formData.name || currentUser.displayName || "",
       facultyEmail: currentUser.email || "",
       department: formData.department || userProfile?.department || "",
       designation: formData.designation || userProfile?.designation || "",
+      institution: userInst,
       academicYear: academicYear || "2025-2026",
       status,
-      formData: formData || {},
+      formData: { ...(formData || {}), institution: userInst },
       submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
       updatedAt: new Date().toISOString(),
       hodReview: existingAppraisal?.hodReview || null,

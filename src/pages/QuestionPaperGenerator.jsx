@@ -5,14 +5,14 @@ import Layout from '../components/Layout';
 import MathTemplateToolbar from '../components/MathTemplateToolbar';
 import { auth, db } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth'; // Firebase Auth
-import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, query, where, addDoc, serverTimestamp } from 'firebase/firestore'; // Firestore imports
+import { doc, collection, getDoc, setDoc, onSnapshot, getDocs, updateDoc, deleteDoc, deleteField, query, where, addDoc, serverTimestamp } from 'firebase/firestore'; // Firestore imports
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { uploadFile, userStoragePath } from '../utils/fileUpload'; // Import the utility function
 import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
 import { useSemesterType } from '../hooks/useSemesterType';
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay } from '../lib/utils';
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay, isSameExamEvent } from '../lib/utils';
 import useUnsavedChanges from '../hooks/useUnsavedChanges';
 import { typesetMath } from '../utils/mathJaxUtils';
 
@@ -64,6 +64,124 @@ function deriveSemesterNumber(semStr) {
   if (!semStr) return '';
   const m = String(semStr).match(/(\d+)/);
   return m ? m[1] : '';
+};
+
+// Extract a question-paper set number from IDs/params. Uses the LAST
+// "set"-anchored number, so composite keys like `...__-OsX_Set_Set2` resolve
+// to 2 — while batch years (2025-2029), semesters and sections never match
+// (no "set" prefix). Returns null when no set info is present.
+const parseSetNum = (s) => {
+  if (!s) return null;
+  const matches = String(s).match(/set[\s_\-]*(\d+)/gi);
+  if (!matches || matches.length === 0) return null;
+  const m = matches[matches.length - 1].match(/(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return (n >= 1 && n <= 99) ? n : null;
+};
+
+const normSubjCode = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const batchStartYear = (s) => {
+  const m = String(s || '').match(/(19|20)\d{2}/);
+  return m ? m[0] : '';
+};
+const semDigits = (s) => {
+  const m = String(s || '').match(/(\d+)/);
+  return m ? m[1] : '';
+};
+const flatSuffixOf = (compositeKey) => {
+  if (!compositeKey || !compositeKey.includes('__')) return '';
+  return compositeKey.split('__').slice(1).join('__');
+};
+
+// Flatten a generated_qps snapshot ({docId: data}) into stored records:
+// [{ qp, compositeKey, fieldId|null, isFlat }]. Mirrors the dashboard readers
+// so save-time identity checks see exactly what the UI lists.
+const flattenQpRecords = (allDocs) => {
+  const out = [];
+  Object.entries(allDocs || {}).forEach(([docId, docData]) => {
+    if (!docData || typeof docData !== 'object') return;
+    const isFlat = !!(docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name);
+    if (isFlat) {
+      out.push({ qp: docData, compositeKey: docId, fieldId: null, isFlat: true });
+    } else {
+      Object.entries(docData).forEach(([fId, qp]) => {
+        if (qp && typeof qp === 'object' && !Array.isArray(qp) &&
+          (qp.subject || qp.subject_code || qp.parts || qp.assignment_config || qp.status || qp.created_by)) {
+          out.push({ qp, compositeKey: docId, fieldId: fId, isFlat: false });
+        }
+      });
+    }
+  });
+  return out;
+};
+
+// Strict same-paper match for DRAFT records owned by the saver.
+// Identity = owner + subject code + exam (tag+regulation) + set + kind +
+// batch-year + semester. Anything less risks hijacking another paper.
+const isSameDraftPaper = (qp, loc, ident) => {
+  if (!qp || typeof qp !== 'object' || Array.isArray(qp)) return false;
+  if (String(qp.status || 'draft').toLowerCase().trim() !== 'draft') return false;
+  if (!ident.uid || qp.created_by !== ident.uid) return false;
+  const code = parseSubjectCodeKey(qp.subject || qp.subject_code || '');
+  if (!code || !ident.subjectCode || normSubjCode(code) !== normSubjCode(ident.subjectCode)) return false;
+  const recExam = qp.exam_name || qp.qpaper_name || '';
+  if (!recExam || !ident.examDisplay || !isSameExamEvent(recExam, ident.examDisplay)) {
+    if (recExam || ident.examDisplay) return false; // one side named, other not → different
+  }
+  const rSet = parseSetNum(qp.qp_set) ?? parseSetNum(loc.fieldId) ?? parseSetNum(flatSuffixOf(loc.compositeKey));
+  if (rSet === null || ident.setNum === null || rSet !== ident.setNum) return false;
+  if (ident.kind && qp.assessment_type &&
+    String(qp.assessment_type).toLowerCase() !== String(ident.kind).toLowerCase()) return false;
+  const rY = batchStartYear(qp.batch), iY = batchStartYear(ident.batch);
+  if (rY && iY && rY !== iY) return false;
+  const rS = semDigits(qp.semester), iS = semDigits(ident.semester);
+  if (rS && iS && rS !== iS) return false;
+  return true;
+};
+
+// Find all stored locations of MY draft of this exact paper (adoption target
+// + stale twins). Never throws — returns [] on any read failure.
+const findMyDraftLocations = async (ident) => {
+  try {
+    if (!ident || !ident.uid) return [];
+    const snap = await getDocs(collection(db, 'generated_qps'));
+    const all = {};
+    snap.forEach(d => { all[d.id] = d.data(); });
+    return flattenQpRecords(all)
+      .filter(r => isSameDraftPaper(r.qp, r, ident))
+      .map(r => ({ compositeKey: r.compositeKey, fieldId: r.fieldId, isFlat: r.isFlat }));
+  } catch (e) {
+    console.warn('[findMyDraftLocations] scan failed, saving fresh:', e);
+    return [];
+  }
+};
+
+// Delete one stored location (flat doc or nested parent field). Best-effort.
+const deleteQPLocation = async (loc) => {
+  if (!loc) return;
+  if (loc.isFlat || !loc.fieldId) {
+    await deleteDoc(doc(db, 'generated_qps', loc.compositeKey));
+  } else {
+    await updateDoc(doc(db, 'generated_qps', loc.compositeKey), { [loc.fieldId]: deleteField() });
+  }
+};
+
+// Identity equality for two paperIdent objects (session-ref fast path).
+const isSamePaperIdent = (a, b) => {
+  if (!a || !b) return false;
+  if ((a.uid || null) !== (b.uid || null)) return false;
+  if (!a.subjectCode || !b.subjectCode || normSubjCode(a.subjectCode) !== normSubjCode(b.subjectCode)) return false;
+  if (!a.examDisplay || !b.examDisplay) {
+    if (a.examDisplay || b.examDisplay) return false;
+  } else if (!isSameExamEvent(a.examDisplay, b.examDisplay)) return false;
+  if (a.setNum === null || a.setNum === undefined || b.setNum === null || b.setNum === undefined || a.setNum !== b.setNum) return false;
+  if (a.kind && b.kind && String(a.kind).toLowerCase() !== String(b.kind).toLowerCase()) return false;
+  const aY = batchStartYear(a.batch), bY = batchStartYear(b.batch);
+  if (aY && bY && aY !== bY) return false;
+  const aS = semDigits(a.semester), bS = semDigits(b.semester);
+  if (aS && bS && aS !== bS) return false;
+  return true;
 };
 
 const sanitizeKey = (key) => {
@@ -194,7 +312,7 @@ const optimizeHtmlImages = async (html) => {
   return cleanHtml;
 };
 
-const saveQPToFirestore = async (targetCompositeKey, setDocId, payload, defaultKey = '', defaultQpDocId = '') => {
+const saveQPToFirestore = async (targetCompositeKey, setDocId, payload, defaultKey = '', defaultQpDocId = '', flatTopLevel = false) => {
   const compKey = targetCompositeKey || defaultKey;
   const sId = setDocId || defaultQpDocId;
 
@@ -224,13 +342,29 @@ const saveQPToFirestore = async (targetCompositeKey, setDocId, payload, defaultK
   }
 
   try {
+    if (flatTopLevel) {
+      // Editing a flat doc: overwrite its top-level QP fields (never nest a
+      // field inside a flat doc — readers would ignore it and edits look lost).
+      await setDoc(doc(db, 'generated_qps', compKey), payload, { merge: true });
+      return { compositeKey: compKey, fieldId: null, isFlat: true };
+    }
     await setDoc(doc(db, 'generated_qps', compKey), { [sId]: payload }, { merge: true });
-    return true;
+    return { compositeKey: compKey, fieldId: sId, isFlat: false };
   } catch (err) {
     const errStr = String(err?.message || err || '');
     const isSizeError = errStr.includes('exceeds the maximum allowed size') || errStr.includes('size') || errStr.includes('1,048,576') || errStr.includes('bytes');
     if (!isSizeError) {
       throw err;
+    }
+    if (flatTopLevel) {
+      // Retry once without regenerable HTML strings, then fail loudly instead
+      // of creating a broken nested flat-of-flat document.
+      console.warn(`[saveQPToFirestore] Flat document ${compKey} size limit reached. Retrying slimmed...`);
+      const slim = { ...payload };
+      delete slim.qp_html;
+      delete slim.draft_html;
+      await setDoc(doc(db, 'generated_qps', compKey), slim, { merge: true });
+      return { compositeKey: compKey, fieldId: null, isFlat: true };
     }
     console.warn(`[saveQPToFirestore] Parent document ${compKey} size limit reached (${errStr}). Saving set ${sId} as flat document.`);
   }
@@ -266,7 +400,7 @@ const saveQPToFirestore = async (targetCompositeKey, setDocId, payload, defaultK
     // Ignore: Parent doc update error is harmless as flat doc was created
   }
 
-  return true;
+  return { compositeKey: flatDocId, fieldId: null, isFlat: true };
 };
 
 const fetchCOsWithFallback = async (department, regulation, subjectCode, academicYear, progKey, parseFn, hasDescFn, knownRegulations, fullSubjectName) => {
@@ -570,6 +704,31 @@ export default function QuestionPaperGenerator() {
   const editId = searchParams.get('id');
   const compositeKey = searchParams.get('compositeKey');
   const editorRef = useRef(null);
+  // Exact storage location of this session's last successful save
+  // ({loc: {compositeKey, fieldId|null, isFlat}, ident}) — reused so a later
+  // save/forward can never strand a stale duplicate draft at a recomputed key.
+  const savedLocRef = useRef(null);
+
+  // Resolve where a fresh-flow save must land: same-session record (only if it
+  // is STILL a draft/recorrected — never overwrite a forwarded/approved paper),
+  // else a previously saved draft of this exact paper, else null (save fresh).
+  const resolveSaveLocation = useCallback(async (paperIdent) => {
+    const stored = savedLocRef.current;
+    if (stored && isSamePaperIdent(stored.ident, paperIdent)) {
+      try {
+        const s = await getDoc(doc(db, 'generated_qps', stored.loc.compositeKey));
+        const rec = (stored.loc.isFlat || !stored.loc.fieldId)
+          ? s.data()
+          : s.data()?.[stored.loc.fieldId];
+        const st = String(rec?.status || 'draft').toLowerCase().trim();
+        if (s.exists() && rec && (st === 'draft' || st === 'recorrected')) {
+          return stored.loc;
+        }
+      } catch (e) { /* fall through to draft lookup */ }
+    }
+    const found = await findMyDraftLocations(paperIdent);
+    return found.length > 0 ? found[0] : null;
+  }, []);
   const [currentUserId, setCurrentUserId] = useState(null);
   const [currentUserSignatureUrl, setCurrentUserSignatureUrl] = useState('');
   const hasLoadedRef = useRef(false);
@@ -1057,6 +1216,9 @@ export default function QuestionPaperGenerator() {
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [loadedPaperStatus, setLoadedPaperStatus] = useState('');
+  // True when the paper being edited lives in a flat doc (top-level payload).
+  // Saves must overwrite top-level fields instead of nesting under editId.
+  const [isFlatEdit, setIsFlatEdit] = useState(false);
 
   // Trigger MathJax typesetting whenever question list, editor, or preview state changes
   useEffect(() => {
@@ -1644,10 +1806,13 @@ export default function QuestionPaperGenerator() {
   }, [exam, ciaConfigs, program, batch, getExamConfig, getEffectiveNumSets, subjectAssignmentSetCount, getRegulationForBatch]);
 
   useEffect(() => {
+    // In edit mode the loaded paper's own set (or URL param) is authoritative —
+    // never auto-downgrade to Set 1 while config data is still resolving.
+    if (editId || compositeKey) return;
     if (effectiveSetCount <= 1 && qpSet !== 'Set 1') {
       setQpSet('Set 1');
     }
-  }, [effectiveSetCount, qpSet]);
+  }, [effectiveSetCount, qpSet, editId, compositeKey]);
 
   // Fetch course_type_weightage for regulation-based dynamic exam categories
   useEffect(() => {
@@ -3488,9 +3653,6 @@ export default function QuestionPaperGenerator() {
     const progKey = formatProgrammeKey(program);
     const regulation = getRegulationForBatch(progKey, batch);
     if (!department || !subject || !academicYear || !program || !selectedSemester) {
-      setCourseOutcomes([]);
-      setCoPiMapping({});
-      window.coPiMappingData = {};
       return;
     }
 
@@ -3657,9 +3819,8 @@ export default function QuestionPaperGenerator() {
         setCoPiMapping(finalMapping);
         window.coPiMappingData = finalMapping;
       } else {
-        setPoSummaryMapping({});
-        setCoPiMapping({});
-        window.coPiMappingData = {};
+        // Keep the last known mapping visible while Firestore resolves the next snapshot.
+        // This avoids a blank PI dropdown during transient context changes.
       }
     });
 
@@ -3670,8 +3831,36 @@ export default function QuestionPaperGenerator() {
     };
   }, [department, batch, subject, academicYear, program, selectedSemester, section, getRegulationForBatch, allRegulations]);
 
+  // Edit mode: the clicked paper's set resolved from physical IDs first (they
+  // identify exactly which set was clicked, even if stored qp.qp_set predates
+  // fixes), then the URL param. Stored qp.qp_set is intentionally NOT trusted.
+  // - editId (nested field key) encodes the set for parent-doc papers.
+  // - compositeKey carries set info ONLY after '__' (flat docs); a parent key
+  //   itself (batch years etc.) must never be parsed.
+  const editSetTarget = useMemo(() => {
+    if (!editId && !compositeKey) return null;
+    const flatSuffix = compositeKey && compositeKey.includes('__')
+      ? compositeKey.split('__').slice(1).join('__')
+      : '';
+    const fromIds = parseSetNum(editId) ?? parseSetNum(flatSuffix);
+    if (fromIds) return `Set ${fromIds}`;
+    const u = searchParams.get('set') || searchParams.get('qpSet') || searchParams.get('setNumber');
+    const um = u ? parseSetNum(u) : null;
+    return um ? `Set ${um}` : null;
+  }, [editId, compositeKey, searchParams]);
+
+  // Force the resolved set once per paper. Deps deliberately exclude qpSet so
+  // manual dropdown changes by the user are never fought.
+  useEffect(() => {
+    if ((!editId && !compositeKey) || !editSetTarget) return;
+    setQpSet(prev => (prev === editSetTarget ? prev : editSetTarget));
+  }, [editId, compositeKey, searchParams, editSetTarget]);
+
   useEffect(() => {
     hasLoadedRef.current = false;
+    // A different paper context invalidates the last-saved location (prevents
+    // one paper's save location being reused for another paper's save).
+    savedLocRef.current = null;
     // Clear previous paper states when configuration changes. `qpSet` is included so
     // switching from Set 1 to Set 2 (dropdown or URL) starts a fresh paper instead of
     // showing the previous set's questions.
@@ -3807,7 +3996,11 @@ export default function QuestionPaperGenerator() {
         hasLoadedRef.current = true; // Mark as loaded
         const qpRef = doc(db, 'generated_qps', compositeKey); // Parent doc path
         const snapshot = await getDoc(qpRef); // Use getDoc for Firestore
-        const qp = snapshot.data()?.[editId]; // Read from field in parent doc
+        const data = snapshot.data();
+        // Flat docs (1MB-fallback saves, doc id like `...__<setId>`) store the QP
+        // payload at the TOP LEVEL, not nested under editId. Fall back to the
+        // doc itself so Edit autofetch works for flat-doc papers (e.g. IA 2 sets).
+        const qp = data?.[editId] || (data?._isFlatDoc ? data : null);
 
         if (qp) {
           setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
@@ -3821,6 +4014,9 @@ export default function QuestionPaperGenerator() {
           setLoadedExamName(qp.exam_name || ''); // Preserve the human name from DB
           setHodComments(qp.hod_comments || ''); // Load HOD comments
           setExam(qp.qpaper_name || '');
+          // NOTE: qpSet is owned by the editSetTarget forcing effect below
+          // (physical IDs → URL → stored qp.qp_set, last resort). Do NOT set it
+          // from qp.qp_set here — stored values may predate fixes.
 
           if (qp.assessment_type === 'Assignment' || qp.assessment_type === 'Project' || qp.assessment_type === 'Practical') {
             setNumParts(String(qp.assignment_config?.length || ''));
@@ -3867,6 +4063,7 @@ export default function QuestionPaperGenerator() {
             setQpQuestions(qList);
           }
           setShowParts(true);
+          setIsFlatEdit(!!(data?._isFlatDoc && !data?.[editId]));
 
           // Fetch COs explicitly for loading (comprehensive fallback)
           const lProgKey = formatProgrammeKey(qp.programme);
@@ -3887,6 +4084,9 @@ export default function QuestionPaperGenerator() {
               showToast("Saved question paper loaded successfully.", "success");
             }
           }, 500);
+        } else {
+          // Visible failure instead of the previous silent blank-dropdown state
+          showToast("Saved question paper not found for editing.", "error");
         }
       } catch (error) {
         console.error("Error loading saved paper:", error);
@@ -3896,6 +4096,12 @@ export default function QuestionPaperGenerator() {
 
     loadSavedPaper();
   }, [editId, compositeKey, getQuestionPaperHTML, getRegulationForBatch]);
+
+  // Flat-edit flag is only meaningful in edit mode — reset it for fresh papers
+  // so a stale true can never redirect a new save into a top-level merge.
+  useEffect(() => {
+    if (!editId || !compositeKey) setIsFlatEdit(false);
+  }, [editId, compositeKey]);
 
   // Auto-select dropdowns from URL params or single option defaults
   useEffect(() => {
@@ -5184,7 +5390,7 @@ export default function QuestionPaperGenerator() {
     };
   }, [refreshOutcomesSummary]);
 
-  const handleSaveAssignment = async (status = 'draft', forwardedToUid = null) => {
+  const handleSaveAssignment = async (status = 'draft', forwardedToUid = null, forwardedToName = null) => {
     const isFieldsValid = program && department && batch && academicYear && selectedSemester && subject && exam;
     if (!isFieldsValid) {
       showToast("Please fill in all required fields before saving.", "error");
@@ -5271,6 +5477,7 @@ export default function QuestionPaperGenerator() {
       updated_at: new Date().toISOString(),
       status: status,
       forwarded_to: forwardedToUid,
+      forwarded_to_name: forwardedToName,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
       faculty_signature_url: currentUserSignatureUrl || null,
@@ -5279,11 +5486,41 @@ export default function QuestionPaperGenerator() {
       course_outcomes: courseOutcomes || [],
     };
 
+    // Fresh flow: pin to this paper's exact stored location (same-session save
+    // or a previously saved draft) so a recomputed key can never strand a
+    // stale duplicate draft with Edit/Delete left behind after forward.
+    const paperIdent = {
+      uid: auth.currentUser?.uid || null,
+      subjectCode,
+      examDisplay,
+      setNum: parseSetNum(qpSet),
+      kind: assessmentType,
+      batch,
+      semester: deriveSemesterNumber(selectedSemester),
+    };
+    const adoptLoc = (!editId && !compositeKey) ? await resolveSaveLocation(paperIdent) : null;
+
     try {
+      let savedLoc = null;
       if (editId && compositeKey) {
-        await saveQPToFirestore(compositeKey, editId, payload, key, qpId);
+        savedLoc = await saveQPToFirestore(compositeKey, editId, payload, key, qpId, isFlatEdit);
+      } else if (adoptLoc) {
+        savedLoc = await saveQPToFirestore(adoptLoc.compositeKey, adoptLoc.fieldId || '', payload, key, qpId, adoptLoc.isFlat);
       } else {
-        await saveQPToFirestore(key, qpId, payload, key, qpId);
+        savedLoc = await saveQPToFirestore(key, qpId, payload, key, qpId);
+      }
+      if (savedLoc) savedLocRef.current = { loc: savedLoc, ident: paperIdent };
+      // PAUSED (493): stale-twin auto-delete disabled pending forward-visibility
+      // investigation — same-record reuse above already prevents new duplicates.
+      const ENABLE_STALE_TWIN_CLEANUP = false;
+      if (status === 'forwarded' && savedLoc && ENABLE_STALE_TWIN_CLEANUP) {
+        try {
+          const twins = await findMyDraftLocations(paperIdent);
+          for (const t of twins) {
+            if (t.compositeKey === savedLoc.compositeKey && (t.fieldId || null) === (savedLoc.fieldId || null)) continue;
+            await deleteQPLocation(t);
+          }
+        } catch (e) { console.warn('Stale draft cleanup skipped:', e); }
       }
       setSavedAssignmentConfig(assignmentConfig || []);
       showToast(`Assignment Saved!`, "success");
@@ -5295,7 +5532,7 @@ export default function QuestionPaperGenerator() {
     }
   };
 
-  const handleSaveQuestionPaper = async (silentArg = false, status = 'draft', forwardedToUid = null) => {
+  const handleSaveQuestionPaper = async (silentArg = false, status = 'draft', forwardedToUid = null, forwardedToName = null) => {
     const silent = silentArg === true;
     if (!program || !department || !batch || !academicYear || !selectedSemester || !subject || !exam || !numParts) {
       if (!silent) showToast("Please fill in all required fields before saving.", "error");
@@ -5665,6 +5902,7 @@ export default function QuestionPaperGenerator() {
       updated_at: new Date().toISOString(),
       status: status,
       forwarded_to: forwardedToUid,
+      forwarded_to_name: forwardedToName,
       forwarded_by: status === 'forwarded' ? auth.currentUser?.uid : null,
       forwarded_at: status === 'forwarded' ? new Date().toISOString() : null,
       faculty_signature_url: currentUserSignatureUrl || null,
@@ -5679,11 +5917,41 @@ export default function QuestionPaperGenerator() {
       end_time: scheduledExamInfo.endTime || '',
     };
 
+    // Fresh flow: pin to this paper's exact stored location (same-session save
+    // or a previously saved draft) so a recomputed key can never strand a
+    // stale duplicate draft with Edit/Delete left behind after forward.
+    const paperIdent = {
+      uid: auth.currentUser?.uid || null,
+      subjectCode,
+      examDisplay,
+      setNum: parseSetNum(qpSet),
+      kind: assessmentType,
+      batch,
+      semester: deriveSemesterNumber(selectedSemester),
+    };
+    const adoptLoc = (!editId && !compositeKey) ? await resolveSaveLocation(paperIdent) : null;
+
     try {
+      let savedLoc = null;
       if (editId && compositeKey) {
-        await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId);
+        savedLoc = await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId, isFlatEdit);
+      } else if (adoptLoc) {
+        savedLoc = await saveQPToFirestore(adoptLoc.compositeKey, adoptLoc.fieldId || '', payload, key, qpDocId, adoptLoc.isFlat);
       } else {
-        await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
+        savedLoc = await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
+      }
+      if (savedLoc) savedLocRef.current = { loc: savedLoc, ident: paperIdent };
+      // PAUSED (493): stale-twin auto-delete disabled pending forward-visibility
+      // investigation — same-record reuse above already prevents new duplicates.
+      const ENABLE_STALE_TWIN_CLEANUP = false;
+      if (status === 'forwarded' && savedLoc && ENABLE_STALE_TWIN_CLEANUP) {
+        try {
+          const twins = await findMyDraftLocations(paperIdent);
+          for (const t of twins) {
+            if (t.compositeKey === savedLoc.compositeKey && (t.fieldId || null) === (savedLoc.fieldId || null)) continue;
+            await deleteQPLocation(t);
+          }
+        } catch (e) { console.warn('Stale draft cleanup skipped:', e); }
       }
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);
@@ -6008,6 +6276,7 @@ export default function QuestionPaperGenerator() {
         status: 'draft',
         is_draft: true,
         forwarded_to: null,
+        forwarded_to_name: null,
         forwarded_by: null,
         forwarded_at: null,
         faculty_signature_url: currentUserSignatureUrl || null,
@@ -6024,11 +6293,36 @@ export default function QuestionPaperGenerator() {
         course_outcomes: courseOutcomes || [],
       };
 
-      if (editId && compositeKey) {
-        await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId);
-      } else {
-        await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
+      // Fresh flow: pin to this paper's exact stored location so repeated
+      // draft saves update one record instead of scattering duplicates.
+      const paperIdent = {
+        uid: auth.currentUser?.uid || null,
+        subjectCode,
+        examDisplay,
+        setNum: parseSetNum(qpSet),
+        kind: assessmentType,
+        batch,
+        semester: deriveSemesterNumber(selectedSemester),
+      };
+      let adoptLoc = null;
+      if (!editId && !compositeKey) {
+        if (savedLocRef.current && isSamePaperIdent(savedLocRef.current.ident, paperIdent)) {
+          adoptLoc = savedLocRef.current.loc;
+        } else {
+          const found = await findMyDraftLocations(paperIdent);
+          if (found.length > 0) adoptLoc = found[0];
+        }
       }
+
+      let savedLoc = null;
+      if (editId && compositeKey) {
+        savedLoc = await saveQPToFirestore(compositeKey, editId, payload, key, qpDocId, isFlatEdit);
+      } else if (adoptLoc) {
+        savedLoc = await saveQPToFirestore(adoptLoc.compositeKey, adoptLoc.fieldId || '', payload, key, qpDocId, adoptLoc.isFlat);
+      } else {
+        savedLoc = await saveQPToFirestore(key, qpDocId, payload, key, qpDocId);
+      }
+      if (savedLoc) savedLocRef.current = { loc: savedLoc, ident: paperIdent };
 
       if (assessmentType === 'Exam') {
         setSavedExamParts(partsForPayload || []);
@@ -6138,13 +6432,14 @@ export default function QuestionPaperGenerator() {
 
     // 2. Find Academic Coordinator for the paper (department-based for non-common, setter-based for common)
     let acUid = null;
+    let acName = '';
     let targetDept = department;
     try {
       const usersRef = collection(db, 'users');
       const usersSnapshot = await getDocs(usersRef);
       if (!usersSnapshot.empty) {
         const allUsers = {};
-        usersSnapshot.forEach(d => { allUsers[d.id] = { uid: d.id, ...d.data() }; });
+        usersSnapshot.forEach(d => { allUsers[d.id] = { ...d.data(), uid: d.id, id: d.id }; });
         const norm = (v) => String(v || '').toLowerCase().replace(/[._\s\-]+/g, ' ').trim();
 
         // Common subjects (shared across departments in IAScheduleCreation) route to the
@@ -6189,7 +6484,8 @@ export default function QuestionPaperGenerator() {
           (acs.length === 1 ? acs[0] : null);
 
         if (matchedAc) {
-          acUid = matchedAc.uid || matchedAc.id;
+          acUid = matchedAc.id || matchedAc.uid;
+          acName = matchedAc.facultyName || matchedAc.displayName || matchedAc.name || matchedAc.email || '';
         }
       }
     } catch (error) {
@@ -6207,7 +6503,7 @@ export default function QuestionPaperGenerator() {
     if (window.CKEDITOR && window.CKEDITOR.instances.questionEditor) {
       window.CKEDITOR.instances.questionEditor.setData(contentWithSignature, async () => {
         // 4. Save the paper with 'forwarded' status
-        const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid) : await handleSaveQuestionPaper(true, 'forwarded', acUid);
+        const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid, acName) : await handleSaveQuestionPaper(true, 'forwarded', acUid, acName);
         if (isSaved) {
           try {
             await addDoc(collection(db, 'notifications'), {
@@ -6231,7 +6527,7 @@ export default function QuestionPaperGenerator() {
         }
       });
     } else {
-      const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid) : await handleSaveQuestionPaper(true, 'forwarded', acUid);
+      const isSaved = isAssignmentOrProject ? await handleSaveAssignment('forwarded', acUid, acName) : await handleSaveQuestionPaper(true, 'forwarded', acUid, acName);
       if (isSaved) {
         showToast("Question paper forwarded to Academic Coordinator successfully!", "success");
       } else {

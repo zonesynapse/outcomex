@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   Calendar, Loader2, Save, Play, XCircle, Settings, Plus, Trash2, Edit2,
   Sparkles, CheckCircle2, AlertTriangle, Clock, ShieldAlert, X, Lock, Table
@@ -22,6 +23,32 @@ const DEFAULT_CRITERIA = {
     { id: "p2_2f", sNo: "2f", kra: "Contribution for the Development of the Department / Institution", particulars: "Contibution towards Admission (Minimum of 5 admission)", maxMarks: 10, type: "admissions", targetCount: 5, marksPerUnit: 2 }
   ]
 };
+
+// CKCOE-only Performance Evaluation Criteria — exact mirror of the main
+// project's AppraisalSettings (src/pages/AppraisalSettings.jsx). Stored in
+// Firestore doc appraisal_config/criteria_CKCOE so CKSPK/CKSPE's shared
+// appraisal_config/criteria document is never disturbed.
+const CKCOE_CRITERIA = {
+  part1: [
+    { id: "p1_s1", sNo: 1, kra: "Pass Percentage", particulars: "Practicals/ Projects Handled", maxMarks: 5, type: "practical_pass", rules: [{ min: 95, max: 100, rating: 1, marks: 5 }, { min: 0, max: 94.99, rating: 0, marks: 0 }] },
+    { id: "p1_s2", sNo: 2, kra: "Pass Percentage", particulars: "Theory Subjects Handled", maxMarks: 40, type: "theory_pass", rules: [{ min: 91, max: 100, rating: 5, marks: 40 }, { min: 81, max: 90.99, rating: 4, marks: 32 }, { min: 71, max: 80.99, rating: 3, marks: 24 }, { min: 61, max: 70.99, rating: 2, marks: 16 }, { min: 51, max: 60.99, rating: 1, marks: 8 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] },
+    { id: "p1_s3", sNo: 3, kra: "Students Feedback", particulars: "Based on the evaluation of feedback received from the students", maxMarks: 5, type: "student_feedback", rules: [{ min: 91, max: 100, rating: 5, marks: 5 }, { min: 81, max: 90.99, rating: 4, marks: 4 }, { min: 71, max: 80.99, rating: 3, marks: 3 }, { min: 61, max: 70.99, rating: 2, marks: 2 }, { min: 51, max: 60.99, rating: 1, marks: 1 }, { min: 0, max: 50.99, rating: 0, marks: 0 }] }
+  ],
+  part2: [
+    { id: "p2_1a", sNo: "1a", kra: "Investing in Yourself", particulars: "Completion of Online Courses with its Outcome (Two course)", maxMarks: 5, type: "online_courses", targetCount: 2, marksPerUnit: 2.5 },
+    { id: "p2_1b", sNo: "1b", kra: "Investing in Yourself", particulars: "Publication of Research Papers/Patents in reputed Journal/ International Conference (One Paper)", maxMarks: 5, type: "publications", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_1c", sNo: "1c", kra: "Investing in Yourself", particulars: "Participation in Workshops, Conferences, FDP's, STTP's, Seminars and Special Programs, if any (Two Workshop)", maxMarks: 5, type: "workshops", targetCount: 2, marksPerUnit: 2.5 },
+    { id: "p2_1d", sNo: "1d", kra: "Investing in Yourself", particulars: "Improvements in Qualification (Ph.D) / Interaction with Outside World (One program)", maxMarks: 5, type: "qualification_upgrade", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2a", sNo: "2a", kra: "Contribution for the Development of the Department / Institution", particulars: "Organizing Workshops / Conferences / Seminars / Guest Lectures / Symposium / Special Programs, if any (Two program)", maxMarks: 5, type: "organizing_events", targetCount: 2, marksPerUnit: 2.5 },
+    { id: "p2_2b", sNo: "2b", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Submission of Funding Proposal / Testing and Consultancy (One Proposal / Testing / Consultancy)", maxMarks: 5, type: "funding_proposals", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2c", sNo: "2c", kra: "Contribution for the Development of the Department / Institution", particulars: "Involvement in Placement Activities / Department Development / Student Welfare / Mentoring / Counseling / Special efforts, if any", maxMarks: 5, type: "placement_mentoring", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2d", sNo: "2d", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards ISO / NAAC / NBA / Lab Development / R&D / EDC / SIC / Alumni / IIPC / Sports / NSS / Special efforts as a Class Advisor / Academic Coordinator / Faculty", maxMarks: 5, type: "accreditation_rd", targetCount: 1, marksPerUnit: 5 },
+    { id: "p2_2f", sNo: "2f", kra: "Contribution for the Development of the Department / Institution", particulars: "Contribution towards Admission (Minimum of 5 admission)", maxMarks: 10, type: "admissions", targetCount: 5, marksPerUnit: 2 }
+  ]
+};
+
+const criteriaDocIdForScope = (scope) => scope === "CKCOE" ? "criteria_CKCOE" : "criteria";
+const criteriaSeedForScope = (scope) => scope === "CKCOE" ? CKCOE_CRITERIA : DEFAULT_CRITERIA;
 
 const defaultFields = [
   // Tab 1: Profile & Workload
@@ -169,6 +196,31 @@ export default function AppraisalSettings() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [activePart, setActivePart] = useState("part1"); // part1 or part2
   const [editingItem, setEditingItem] = useState(null);
+  // Institution scope for Performance Evaluation Criteria:
+  // "DEFAULT" = shared CKSPK / CKSPE criteria (appraisal_config/criteria),
+  // "CKCOE" = engineering criteria (appraisal_config/criteria_CKCOE).
+  const [criteriaScope, setCriteriaScope] = useState("DEFAULT");
+  const [scopeAutoResolved, setScopeAutoResolved] = useState(false);
+
+  // Auto-default the scope from the logged-in user's institution (once)
+  useEffect(() => {
+    if (scopeAutoResolved) return;
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const snap = await getDoc(doc(db, "users", user.uid));
+          const inst = snap.exists() ? (snap.data().institution || "") : "";
+          if (String(inst).toUpperCase().includes("CKCOE")) {
+            setCriteriaScope("CKCOE");
+          }
+        } catch (e) {
+          console.warn("Criteria scope auto-resolve notice:", e);
+        }
+        setScopeAutoResolved(true);
+      }
+    });
+    return unsub;
+  }, [scopeAutoResolved]);
 
   // --- Dynamic Form Config States ---
   const [customFields, setCustomFields] = useState([]);
@@ -261,21 +313,26 @@ export default function AppraisalSettings() {
     return unsub;
   }, []);
 
-  // --- Listen to Criteria Config ---
+  // --- Listen to Criteria Config (institution-scoped) ---
   useEffect(() => {
-    const docRef = doc(db, "appraisal_config", "criteria");
+    setCriteriaLoading(true);
+    const docRef = doc(db, "appraisal_config", criteriaDocIdForScope(criteriaScope));
+    const seed = criteriaSeedForScope(criteriaScope);
     const unsub = onSnapshot(docRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (data.criteriaVersion !== "2026_v2") {
+        if (criteriaScope === "CKCOE") {
+          // CKCOE scope: never touch the shared DEFAULT criteria document
+          setCriteria({ part1: data.part1 || [], part2: data.part2 || [] });
+        } else if (data.criteriaVersion !== "2026_v2") {
           // Overwrite old criteria in Firestore with new Image 1 & 2 criteria
           setDoc(docRef, DEFAULT_CRITERIA).then(() => setCriteria(DEFAULT_CRITERIA));
         } else {
           setCriteria(data);
         }
       } else {
-        // Seed default values
-        setDoc(docRef, DEFAULT_CRITERIA).then(() => setCriteria(DEFAULT_CRITERIA));
+        // Seed scoped default values (CKCOE gets the engineering criteria set)
+        setDoc(docRef, seed).then(() => setCriteria(seed));
       }
       setCriteriaLoading(false);
     }, (err) => {
@@ -283,7 +340,7 @@ export default function AppraisalSettings() {
       setCriteriaLoading(false);
     });
     return unsub;
-  }, []);
+  }, [criteriaScope]);
 
   // --- Compute Live Status Badge ---
   useEffect(() => {
@@ -377,14 +434,14 @@ export default function AppraisalSettings() {
     setSavingSchedule(false);
   };
 
-  // --- Actions: Criteria Tab ---
+  // --- Actions: Criteria Tab (institution-scoped save) ---
   const handleSaveCriteria = async (updatedCriteria) => {
     setSavingCriteria(true);
     try {
-      const docRef = doc(db, "appraisal_config", "criteria");
+      const docRef = doc(db, "appraisal_config", criteriaDocIdForScope(criteriaScope));
       await setDoc(docRef, updatedCriteria);
       setCriteria(updatedCriteria);
-      showToast("Appraisal criteria configuration successfully saved!", "success");
+      showToast(`Appraisal criteria configuration successfully saved (${criteriaScope === "CKCOE" ? "CKCOE" : "CKSPK / CKSPE"})!`, "success");
     } catch (err) {
       console.error("Error saving appraisal criteria:", err);
       showToast("Failed to save criteria configuration.", "error");
@@ -846,6 +903,33 @@ export default function AppraisalSettings() {
             {/* ═══ TAB 2: CRITERIA CONFIGURATION ═══ */}
             {activeTab === "criteria" && (
               <div className="space-y-8">
+
+                {/* Institution Criteria Scope Selector */}
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-[#120c7a]">
+                      <ShieldAlert size={18} />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                        Institution Criteria Scope: {criteriaScope === "CKCOE" ? "CKCOE" : "CKSPK / CKSPE (Shared Default)"}
+                      </h2>
+                      <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
+                        {criteriaScope === "CKCOE"
+                          ? "Engineering criteria (Theory 40 + Feedback + 9 contribution items). Edits here never affect CKSPK / CKSPE."
+                          : "School criteria shared by CKSPK & CKSPE. Edits here never affect CKCOE."}
+                      </p>
+                    </div>
+                  </div>
+                  <select
+                    value={criteriaScope}
+                    onChange={(e) => setCriteriaScope(e.target.value)}
+                    className="px-4 py-2.5 rounded-xl border border-zinc-200 font-bold text-xs text-slate-800 outline-none focus:border-indigo-600 bg-white cursor-pointer"
+                  >
+                    <option value="DEFAULT">Default — CKSPK / CKSPE</option>
+                    <option value="CKCOE">CKCOE (Engineering)</option>
+                  </select>
+                </div>
 
                 {/* Part 1 Table */}
                 <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">

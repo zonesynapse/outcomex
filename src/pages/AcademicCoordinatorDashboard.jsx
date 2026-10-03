@@ -1388,13 +1388,32 @@ export default function AcademicCoordinatorDashboard() {
         const data = {};
         snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         const all = [];
-        Object.entries(data).forEach(([compositeKey, versions]) => {
-          Object.entries(versions || {}).forEach(([id, qp]) => {
-            all.push({ ...(qp || {}), id, compositeKey });
-          });
+        Object.entries(data).forEach(([compositeKey, docData]) => {
+          if (!docData || typeof docData !== 'object') return;
+          // Flat-doc QP (top-level payload after 1MB fallback): push the whole
+          // doc — mirroring FacultyDashboard. Without this the forwarded paper
+          // fragments into scalar fields and never matches the filter below.
+          const isFlatDoc = docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name;
+          if (isFlatDoc) {
+            all.push({
+              ...docData,
+              id: docData.id || docData.qpId || 'Exam',
+              compositeKey,
+              _isFlatDoc: true
+            });
+          } else {
+            Object.entries(docData).forEach(([vId, qp]) => {
+              if (qp && typeof qp === 'object' && !Array.isArray(qp)) {
+                if (qp.subject || qp.subject_code || qp.parts || qp.assignment_config || qp.status || qp.created_by) {
+                  all.push({ ...qp, id: vId, compositeKey, _isFlatDoc: false });
+                }
+              }
+            });
+          }
         });
+        const myUid = String(currentUid || '').trim();
         const forwarded = all
-          .filter((qp) => qp?.status === "forwarded" && qp?.forwarded_to === currentUid)
+          .filter((qp) => String(qp?.status || '').toLowerCase().trim() === "forwarded" && qp?.forwarded_to && String(qp.forwarded_to).trim() === myUid)
           .sort((a, b) => {
             const at = new Date(a.forwarded_at || a.saved_at || 0).getTime();
             const bt = new Date(b.forwarded_at || b.saved_at || 0).getTime();

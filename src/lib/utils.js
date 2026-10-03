@@ -169,7 +169,7 @@ export function compactAttendanceRecords(records) {
     const parentMethod = (recVal.teachingMethodology || '').trim();
 
     const rawStudents = recVal.students || {};
-    const compactStudents = {};
+    let compactStudents = {};
 
     if (rawStudents && typeof rawStudents === 'object' && !Array.isArray(rawStudents)) {
       for (const [sKey, sVal] of Object.entries(rawStudents)) {
@@ -647,6 +647,71 @@ export function isSameExam(e1, e2) {
   const tag1 = getExamTag(e1);
   const tag2 = getExamTag(e2);
   if (tag1 && tag2 && tag1 === tag2) return true;
+  return false;
+}
+
+// Extract the regulation year embedded in an exam label, e.g.
+// "IA 2 (AU - R2025)" → "2025". Returns "" when no regulation is present.
+export function getExamRegYear(s) {
+  const m = String(s || "").match(/R\s*(\d{4})/i);
+  return m ? m[1] : "";
+}
+
+// Strict grouping key for an exam event: base tag + regulation year, e.g.
+// "IA 2 (AU - R2025)" → "ia2__2025", "IA 2" → "ia2".
+// Used so "IA 2 (AU - R2021)" and "IA 2 (AU - R2025)" NEVER collapse into one.
+export function getExamGroupKey(s) {
+  const tag = getExamTag(s) || String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const y = getExamRegYear(s);
+  return y ? `${tag}__${y}` : tag;
+}
+
+// Strict exam-event matcher for the whole IA/QP flow (timetable authority).
+// Same exam tag AND same regulation year when BOTH sides carry a regulation
+// ("IA 2 (AU - R2021)" vs "IA 2 (AU - R2025)" → false: different exams).
+// When EITHER side lacks a regulation (legacy docs / raw "IA 2"), falls back
+// to base-tag equality so old saved timetables keep loading.
+// Raw Firestore push-ids NEVER match each other (they carry no exam meaning);
+// match by exam NAME, not by calendar event id.
+export function isSameExamEvent(e1, e2) {
+  if (!e1 || !e2) return false;
+  if (String(e1).trim() === String(e2).trim()) return true;
+  const y1 = getExamRegYear(e1);
+  const y2 = getExamRegYear(e2);
+  if (y1 && y2 && y1 !== y2) return false;
+  const tag1 = getExamTag(e1);
+  const tag2 = getExamTag(e2);
+  if (tag1 && tag2 && tag1 === tag2) return true;
+  return false;
+}
+
+// Single shared strict regulation matcher for the whole IA/QP flow.
+// A syllabus/schedule document belongs to the target batch regulation when:
+// exact match → AU-prefix-insensitive match → regulation-year match (R2025 vs R2021).
+// Used by IAScheduleCreation, QPSetterAssignment, ExamCellQPReview and
+// PrincipalIAScheduleView so every page resolves the SAME regulation subjects
+// and no multi-regulation codes leak into one timetable.
+export function matchRegulation(docReg, targetReg) {
+  if (!targetReg) return true;
+  if (!docReg) return false;
+
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const dNorm = norm(docReg);
+  const tNorm = norm(targetReg);
+  if (dNorm === tNorm) return true;
+
+  const dClean = dNorm.replace(/^au/, "");
+  const tClean = tNorm.replace(/^au/, "");
+  if (dClean === tClean) return true;
+
+  const getRegYear = (str) => {
+    const m = String(str).match(/R\s*(\d{4})/i) || String(str).match(/(19|20)\d{2}/);
+    return m ? m[1] || m[0] : null;
+  };
+  const dYear = getRegYear(docReg);
+  const tYear = getRegYear(targetReg);
+  if (dYear && tYear) return dYear === tYear;
+
   return false;
 }
 

@@ -12,7 +12,7 @@ import {
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey, isSameExamEvent } from "../lib/utils";
 import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
 import { typesetMath } from "../utils/mathJaxUtils";
 import { useRegulations } from "../hooks/useRegulations";
@@ -293,6 +293,7 @@ export default function FacultyDashboard() {
   const [allStudentNames, setAllStudentNames] = useState({});
   const [codeOwners, setCodeOwners] = useState({});   // code → [uid, ...]
   const [facultyNames, setFacultyNames] = useState({}); // uid → display name
+  const [usersInfoMap, setUsersInfoMap] = useState({}); // uid → { name, role, department }
   const [draftActivities, setDraftActivities] = useState([]);
 
   const [showQPModal, setShowQPModal] = useState(false);
@@ -850,17 +851,24 @@ export default function FacultyDashboard() {
     return () => unsub();
   }, [currentUid]);
 
-  // Fetch faculty names for UIDs
+  // Fetch faculty names (+ role/department for Academic Coordinator resolution) for UIDs
   useEffect(() => {
     const fetchNames = async () => {
       try {
         const snap = await getDocs(collection(db, 'users'));
         const map = {};
+        const info = {};
         snap.forEach(d => {
           const data = d.data();
           map[d.id] = data.facultyName || data.displayName || data.email || d.id;
+          info[d.id] = {
+            name: map[d.id],
+            role: data.role || "",
+            department: data.department || ""
+          };
         });
         setFacultyNames(map);
+        setUsersInfoMap(info);
       } catch (e) { console.warn('Failed to fetch faculty names:', e); }
     };
     fetchNames();
@@ -931,18 +939,26 @@ export default function FacultyDashboard() {
             // 1. My Drafts: owned by me OR (no created_by AND subject is assigned to me)
             const isMyDraft = status === "draft" && (isOwnedByMe || (!createdBy && isAssignedToMe));
 
-            // 2. Awaiting HOD Review: status forwarded AND (forwarded by me OR created by me OR (isAssignedToMe AND forwardedBy))
-            const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy) || isAssignedToMe);
+            // 2. Awaiting HOD Review: ONLY my own forwarded papers (forwarded by me /
+            // created by me). Another setter's forwarded papers stay hidden — I only
+            // ever see their ALLOCATED set, and only after its exam start time.
+            const isAwaitingHODReview = status === "forwarded" && (forwardedBy === currentUid || (isOwnedByMe && !forwardedBy));
 
             // 3. Sent back for recorrection: status recorrected AND (forwarded to me OR created by me OR forwarded by me)
             const isSentBackForRecorrection = status === "recorrected" && (forwardedTo === currentUid || isOwnedByMe || forwardedBy === currentUid);
 
             // 4. Approved or Allocated papers
-            // Owned by me or forwarded by me: show any approved/allocated status
-            // NOT owned by me (common setter paper): show if assigned to me and approved/allocated/released
+            // Owned by me or forwarded by me: show any approved/allocated status (unchanged).
+            // NOT owned by me (other setter's paper): show ONLY the allocated set AND
+            // ONLY after its exam start datetime (isExamTimeReached). Approved-but-
+            // unallocated papers and unreleased allocated sets of others never show.
             const isApprovedOrAllocated = (isOwnedByMe || forwardedBy === currentUid)
               ? isApprovedOrAllocatedStatus(status)
-              : (isAssignedToMe && (isApprovedOrAllocatedStatus(status) || isAllocatedAndReleasedStatus(qp)));
+              : (isAssignedToMe && isAllocatedAndReleasedStatus(qp) && isExamTimeReached(
+                qp.allocatedTo?.examDate,
+                qp.allocatedTo?.startTime,
+                qp.allocatedTo?.session
+              ));
 
             return isMyDraft || isAwaitingHODReview || isSentBackForRecorrection || isApprovedOrAllocated;
           })
@@ -1034,6 +1050,28 @@ export default function FacultyDashboard() {
       exam: examDisplay,
     };
   }, []);
+
+  // Resolve the Academic Coordinator handling a QP's department, shown in brackets
+  // next to "Waiting for Academic Coordinator Review" so faculty know exactly
+  // whom to approach for approval.
+  const resolveAcName = useCallback((qp) => {
+    if (!qp) return "";
+    if (qp.forwarded_to_name) return String(qp.forwarded_to_name).trim();
+    if (qp.ac_approved_by_name) return String(qp.ac_approved_by_name).trim();
+    if (qp.ac_approved_by && facultyNames[qp.ac_approved_by]) return facultyNames[qp.ac_approved_by];
+    const normD = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const qpDept = normD(qp.department);
+    const acUser = Object.values(usersInfoMap || {}).find(u => {
+      const r = normD(u.role);
+      const isAc = r === 'academiccoordinator' ||
+        (r.includes('coordinator') && !r.includes('hod') && !r.includes('principal') && !r.includes('admin'));
+      if (!isAc) return false;
+      if (!qpDept) return true;
+      const ud = normD(u.department);
+      return ud && (ud === qpDept || ud.includes(qpDept) || qpDept.includes(ud));
+    });
+    return acUser ? acUser.name : "";
+  }, [facultyNames, usersInfoMap]);
 
   const baseQps = useMemo(() => {
     return semesterTab === "current" ? currentSemesterQps : pendingQps;
@@ -1457,9 +1495,10 @@ export default function FacultyDashboard() {
       })
       .map(task => {
         const rawCode = String(task.code || '').trim().toUpperCase();
-        // Resolve to CourseBank canonical code using subject name when available.
-        // This ensures tasks saved with old/legacy codes (e.g. CS342) display the
-        // current CourseBank code (e.g. CCS342) and navigate QPG correctly.
+        // Timetable authority: display + navigate with the EXACT code saved in the
+        // IA timetable (qp_setter_assignments), identical to IAScheduleCreation.
+        // CourseBank variants are used ONLY for matching (below), never display,
+        // so a wrong/replaced code can never show on the dashboard.
         const taskName = String(task.name || '').trim();
         const normTaskName = taskName.toLowerCase().replace(/[^a-z0-9]/g, '');
         const codeFromName = (normTaskName && courseBankNameMap?.nameMap?.[normTaskName]) || '';
@@ -1468,7 +1507,7 @@ export default function FacultyDashboard() {
         const normRawCode = rawCode.replace(/[^A-Z0-9]/g, '');
         const codeFromCode = (courseBankNameMap?.codeToCanonical?.[normRawCode]) || '';
         const canonicalCode = codeFromName || codeFromCode || '';
-        const code = canonicalCode || rawCode;
+        const code = rawCode;
 
         // Count generated sets by this faculty for this subject code — ONLY written test papers count
         // Match against both old (rawCode) and canonical (canonicalCode) to catch all saved QPs.
@@ -1489,25 +1528,11 @@ export default function FacultyDashboard() {
             if (qpCodeNorm !== rawCodeNorm) return false;
           }
 
-          // Match exam name / exam ID or batch + semester so past exam QPs don't inflate sets for a new exam
+          // Match exam name / exam ID or batch + semester so past exam QPs don't inflate sets for a new exam.
+          // Strict (tag + regulation): an "IA 2 (AU - R2021)" paper never counts toward an "IA 2 (AU - R2025)" task.
           if (task.examName && qp.exam_name) {
-            const taskExamNorm = normClean(task.examName);
-            const qpExamNorm = normClean(qp.exam_name);
-            if (taskExamNorm && qpExamNorm && taskExamNorm !== qpExamNorm) {
-              const getExamTag = (s) => {
-                const lower = String(s || '').toLowerCase();
-                if (lower.includes('model')) return 'model';
-                if (/\b(ia\s*1|ia1|assessment\s*1|assessment\s*i\b|test\s*1|1st)\b/i.test(lower)) return 'ia1';
-                if (/\b(ia\s*2|ia2|assessment\s*2|assessment\s*ii\b|test\s*2|2nd)\b/i.test(lower)) return 'ia2';
-                if (/\b(ia\s*3|ia3|assessment\s*3|assessment\s*iii\b|test\s*3|3rd)\b/i.test(lower)) return 'ia3';
-                const m = lower.match(/\d+/);
-                return m ? `num_${m[0]}` : lower.replace(/[^a-z0-9]/g, '');
-              };
-              const tag1 = getExamTag(task.examName);
-              const tag2 = getExamTag(qp.exam_name);
-              if (tag1 !== tag2 && !taskExamNorm.includes(qpExamNorm) && !qpExamNorm.includes(taskExamNorm)) {
-                return false;
-              }
+            if (!isSameExamEvent(task.examName, qp.exam_name)) {
+              return false;
             }
           }
           if (task.batch && qp.batch) {
@@ -3004,9 +3029,11 @@ export default function FacultyDashboard() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`inline-flex items-center gap-1 rounded-lg ${stat.bg} ${stat.text} px-2 py-0.5 text-[10px] font-bold border border-transparent`}>
-                            <StatusIcon size={10} /> {stat.label}
-                          </span>
+                          {qp.status !== 'forwarded' && (
+                            <span className={`inline-flex items-center gap-1 rounded-lg ${stat.bg} ${stat.text} px-2 py-0.5 text-[10px] font-bold border border-transparent`}>
+                              <StatusIcon size={10} /> {stat.label}
+                            </span>
+                          )}
                           <span className="inline-flex items-center gap-1 rounded-lg bg-blue-50 text-blue-700 px-2 py-0.5 text-[10px] font-bold border border-blue-100">
                             <FileText size={10} /> {qp.exam_name || qp.qpaper_name} ({formatQPSetDisplay(qp)})
                           </span>
@@ -3050,7 +3077,7 @@ export default function FacultyDashboard() {
                             ) : (
                               <span className="text-blue-700 font-bold flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-                                Waiting for Academic Coordinator Review
+                                Waiting for Academic Coordinator Review{(() => { const acName = resolveAcName(qp); return acName ? ` (${acName})` : ''; })()}
                               </span>
                             )}
                           </div>

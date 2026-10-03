@@ -11,7 +11,7 @@ import Layout from "../../components/Layout";
 import { auth, db } from "../../firebase";
 import { getQuestionPaperHTML, buildQuestionPaperPrintShell } from "../../utils/questionPaperUtils";
 import { useRegulations } from "../../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay, isSameExam, getExamTag } from "../../lib/utils";
+import { sanitizeKey, formatProgrammeKey, parseSubjectField, formatQPSetDisplay, formatDepartmentDisplay, isSameExamEvent, getExamGroupKey } from "../../lib/utils";
 import { typesetMath } from "../../utils/mathJaxUtils";
 
 const timeAgo = (dateStr) => {
@@ -40,6 +40,16 @@ const fmtDate = (value) => {
 };
 
 const normCodeKey = (s) => String(s || "").toUpperCase().replace(/\s+/g, "");
+
+// Shared guard: assignment/activity/practical-style titles are never exam events.
+const isRealExamTitle = (title) => {
+  if (!title) return false;
+  const str = String(title).trim().toLowerCase();
+  if (/(assignment|activity|project review|observation|record|survey|viva|rubric)/i.test(str)) {
+    return false;
+  }
+  return true;
+};
 
 const formatDeptBadge = (raw) => {
   if (!raw) return "";
@@ -161,7 +171,9 @@ export default function ExamCellQPReview() {
       const list = [];
       snap.forEach(d => {
         const data = d.data();
-        if (data && data.type === "Exam" && data.title) {
+        // Tolerant type compare (trims stray spaces/case) so a mistyped event
+        // can never silently vanish from this page while showing elsewhere.
+        if (data && String(data.type || "").trim().toLowerCase() === "exam" && data.title) {
           list.push({ id: d.id, ...data });
         }
       });
@@ -186,8 +198,13 @@ export default function ExamCellQPReview() {
       snap.forEach(d => {
         const data = d.data();
         if (!data?.assignments) return;
+        // Skip work-in-progress drafts; legacy docs without a status still count.
+        if (data.status === "Draft") return;
         Object.entries(data.assignments).forEach(([code, as]) => {
-          if (!as?.examDate) return;
+          // Seed slots with an exam date AND assigned-but-undated slots, so every
+          // programme timetabled in IAScheduleCreation appears in Published even
+          // before its exam dates are assigned. Undated rows render "Not allocated yet".
+          if (!as?.examDate && !as?.setterUid) return;
           const depts = (as.departments && as.departments.length > 0)
             ? as.departments
             : (data.departments && data.departments.length > 0 ? data.departments : []);
@@ -281,10 +298,14 @@ export default function ExamCellQPReview() {
     return false;
   }, []);
 
-  const isValidSubjectForBatchSem = useCallback((code, batch, semester) => {
+  // Programme-aware: resolves the batch regulation via the slot's own programme
+  // (not "") so PG / other-programme subjects are validated against THEIR
+  // regulation instead of being filtered out — every programme timetabled in
+  // IAScheduleCreation stays visible in Published.
+  const isValidSubjectForBatchSem = useCallback((code, batch, semester, progKey) => {
     if (!code || !batch || !semester || allSyllabusDocs.length === 0) return true;
 
-    const targetReg = getRegulationForBatch("", batch);
+    const targetReg = getRegulationForBatch(progKey || "", batch);
     if (!targetReg) return true;
 
     const normCode = normCodeKey(code);
@@ -385,44 +406,39 @@ export default function ExamCellQPReview() {
 
   const availableReviewExamEvents = useMemo(() => {
     const map = new Map();
-    const isRealExamTitle = (title) => {
-      if (!title) return false;
-      const str = String(title).trim().toLowerCase();
-      if (/(assignment|activity|project review|observation|record|survey|viva|rubric)/i.test(str)) {
-        return false;
-      }
-      return true;
+    // Raw Firestore push-ids (e.g. "-OaBcDeF...") carry no exam meaning and must
+    // never surface as dropdown options.
+    const isRawQpKey = (s) => {
+      const t = String(s || "").trim();
+      return !!t && (t.startsWith("-") || (/^[A-Za-z0-9_-]{16,}$/.test(t) && !/\s/.test(t)));
     };
 
-    // 1. Primary Source: Academic Calendar Events created in AcademicCalendar.jsx (where type === 'Exam')
+    // 1. Primary Source: Academic Calendar Events created in AcademicCalendar.jsx
+    // (where type === 'Exam') — ONLY these appear in the dropdown.
+    // Strict group key (tag + regulation year) so "IA 2 (AU - R2021)" and
+    // "IA 2 (AU - R2025)" stay SEPARATE options instead of collapsing into one.
     if (academicCalendarExams.length > 0) {
       academicCalendarExams.forEach(ev => {
         const title = (ev.title || "").trim();
         if (title && isRealExamTitle(title)) {
-          const tag = getExamTag(title) || title.toLowerCase();
+          const tag = getExamGroupKey(title);
           if (!map.has(tag)) map.set(tag, title);
         }
       });
     }
 
-    // 2. Secondary Source: Fall back to scheduled & published exam names matching real exam titles
+    // 2. Secondary Source: distinct TIMETABLE exam names (qp_setter_assignments)
+    // whose strict key is not covered by any calendar event. A scheduled exam
+    // is always real — e.g. timetables saved as "IA 2 (AU - R2025)" (or legacy
+    // plain "IA 2") appear even when their calendar event is missing/renamed,
+    // so no regulation's exam ever goes missing from this page.
+    // QP / cia-derived names are deliberately excluded (they were never
+    // scheduled — that is where junk like "Unit Test - 1" came from).
     scheduleDocs.forEach(s => {
-      const en = (s.examName || s.examId || "").toString().trim();
-      if (en && isRealExamTitle(en)) {
-        const tag = getExamTag(en) || en.toLowerCase();
-        if (academicCalendarExams.length === 0 || map.has(tag)) {
-          if (!map.has(tag)) map.set(tag, en);
-        }
-      }
-    });
-
-    allQps.forEach(q => {
-      const en = resolveExamName(q);
-      if (en && isRealExamTitle(en)) {
-        const tag = getExamTag(en) || en.toLowerCase();
-        if (academicCalendarExams.length === 0 || map.has(tag)) {
-          if (!map.has(tag)) map.set(tag, en);
-        }
+      const en = (s.examName || "").toString().trim();
+      if (en && !isRawQpKey(en) && isRealExamTitle(en)) {
+        const tag = getExamGroupKey(en);
+        if (!map.has(tag)) map.set(tag, en);
       }
     });
 
@@ -447,7 +463,8 @@ export default function ExamCellQPReview() {
 
   const isDateInExamRange = useCallback((dateStr, examFilterName) => {
     if (!dateStr || !examFilterName || examFilterName === "ALL") return true;
-    const ev = academicCalendarExams.find(e => isSameExam(e.title || e.name || e.examName, examFilterName));
+    // Strict event resolution: the OTHER regulation's window must never validate dates.
+    const ev = academicCalendarExams.find(e => isSameExamEvent(e.title || e.name || e.examName, examFilterName));
     if (!ev || !ev.fromDate || !ev.toDate) return true;
 
     try {
@@ -455,7 +472,21 @@ export default function ExamCellQPReview() {
       const start = new Date(ev.fromDate).getTime();
       const end = new Date(ev.toDate).setHours(23, 59, 59, 999);
       if (isNaN(d) || isNaN(start) || isNaN(end)) return true;
-      return d >= start && d <= end;
+      if (d < start || d > end) return false;
+      // Past-data guard: an exam-NAMELESS slot belongs to THIS exam only when its
+      // date is not claimed by a DIFFERENT real exam's window (otherwise IA 1's
+      // September slots leak into an IA 2-October filter and inflate counters).
+      const claimedElsewhere = academicCalendarExams.some(e => {
+        if (e === ev) return false;
+        const otherTitle = e.title || e.name || e.examName;
+        if (!isRealExamTitle(otherTitle)) return false;
+        if (isSameExamEvent(otherTitle, examFilterName)) return false;
+        if (!e.fromDate || !e.toDate) return false;
+        const s = new Date(e.fromDate).getTime();
+        const en = new Date(e.toDate).setHours(23, 59, 59, 999);
+        return !isNaN(s) && !isNaN(en) && d >= s && d <= en;
+      });
+      return !claimedElsewhere;
     } catch {
       return true;
     }
@@ -466,7 +497,10 @@ export default function ExamCellQPReview() {
 
     const cleanExamName = (docExamName || "").toString().trim();
     if (cleanExamName) {
-      if (isSameExam(cleanExamName, filterExamName)) return true;
+      // Strict: same tag AND same regulation ("IA 2 (AU - R2021)" never
+      // matches "IA 2 (AU - R2025)"). Legacy names without a regulation tag
+      // still match by base tag so old timetables keep working.
+      if (isSameExamEvent(cleanExamName, filterExamName)) return true;
       return false;
     }
 
@@ -477,10 +511,21 @@ export default function ExamCellQPReview() {
     return true;
   }, [isDateInExamRange]);
 
+  // Raw calendar Exam titles actually detected from Firestore — rendered under
+  // the filter bar. Separates "code bug" from "data bug" instantly: if
+  // "IA 2 (AU - R2025)" is missing HERE too, its calendar event is absent /
+  // mistyped (not a dropdown bug) — recreate it in Academic Calendar.
+  const detectedCalendarTitles = useMemo(() => {
+    return academicCalendarExams
+      .map(e => (e.title || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }, [academicCalendarExams]);
+
   const filteredPending = useMemo(() => {
     let result = pendingQps;
     if (selectedReviewExamFilter !== "ALL") {
-      result = result.filter(p => isSameExam(resolveExamName(p), selectedReviewExamFilter));
+      result = result.filter(p => isSameExamEvent(resolveExamName(p), selectedReviewExamFilter));
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -497,7 +542,7 @@ export default function ExamCellQPReview() {
   const filteredPublished = useMemo(() => {
     let result = publishedQps;
     if (selectedReviewExamFilter !== "ALL") {
-      result = result.filter(p => isSameExam(resolveExamName(p), selectedReviewExamFilter));
+      result = result.filter(p => isSameExamEvent(resolveExamName(p), selectedReviewExamFilter));
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -774,7 +819,7 @@ export default function ExamCellQPReview() {
     const targetScheduleDocs = (selectedReviewExamFilter === "ALL"
       ? scheduleDocs
       : scheduleDocs.filter(s => isExamMatchForDoc(s.examName || s.examId, s.examDate, selectedReviewExamFilter))
-    ).filter(s => isValidSubjectForBatchSem(s.code, s.batch, s.semester));
+    ).filter(s => isValidSubjectForBatchSem(s.code, s.batch, s.semester, s.departments?.[0]?.progKey));
 
     targetScheduleDocs.forEach(s => {
       const code = (s.code || "").toString().replace(/\s+/g, "").toUpperCase();
@@ -811,7 +856,7 @@ export default function ExamCellQPReview() {
       const batch = (qp.batch || "").toString().trim();
       const sem = (qp.semester || "").toString().trim();
 
-      if (!isValidSubjectForBatchSem(code, batch, sem)) return;
+      if (!isValidSubjectForBatchSem(code, batch, sem, formatProgrammeKey(qp.programme))) return;
 
       const key = makeKey(code, batch, sem);
       if (!groups[key]) {
@@ -898,19 +943,48 @@ export default function ExamCellQPReview() {
 
   const availablePublishedExamDates = useMemo(() => {
     const dateMap = new Map();
+    const pushDate = (raw) => {
+      if (!raw) return;
+      const normDate = String(raw).trim();
+      if (!normDate) return;
+      if (!dateMap.has(normDate)) {
+        dateMap.set(normDate, { rawDate: normDate, displayDate: fmtDate(normDate), count: 0 });
+      }
+      dateMap.get(normDate).count += 1;
+    };
     publishedBySubject.forEach(group => {
       const { rawDate } = getMatchedScheduleSlot(group);
-      if (rawDate) {
-        const normDate = rawDate.trim();
-        if (!dateMap.has(normDate)) {
-          dateMap.set(normDate, { rawDate: normDate, displayDate: fmtDate(normDate), count: 0 });
-        }
-        dateMap.get(normDate).count += 1;
-      }
+      pushDate(rawDate);
     });
 
+    // Fallback: when groups carry no dates (QP-only groups with no resolved slot),
+    // derive pills straight from THIS exam's timetable slots so the date bar never
+    // goes missing for the chosen exam. Past-exam slots never enter (exam match).
+    if (dateMap.size === 0 && selectedReviewExamFilter !== "ALL") {
+      scheduleDocs
+        .filter(s => isExamMatchForDoc(s.examName || s.examId, s.examDate, selectedReviewExamFilter))
+        .filter(s => isValidSubjectForBatchSem(s.code, s.batch, s.semester, s.departments?.[0]?.progKey))
+        .forEach(s => pushDate(s.examDate));
+    }
+
     return Array.from(dateMap.values()).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
-  }, [publishedBySubject, getMatchedScheduleSlot]);
+  }, [publishedBySubject, getMatchedScheduleSlot, scheduleDocs, selectedReviewExamFilter, isValidSubjectForBatchSem, isExamMatchForDoc]);
+
+  // If the exam filter changes and the picked date pill no longer belongs to this
+  // exam, reset to ALL instead of showing an empty list.
+  useEffect(() => {
+    if (selectedPubExamDateFilter === "ALL") return;
+    const stillValid = availablePublishedExamDates.some(d => d.rawDate === selectedPubExamDateFilter);
+    if (!stillValid) setSelectedPubExamDateFilter("ALL");
+  }, [selectedReviewExamFilter, availablePublishedExamDates, selectedPubExamDateFilter]);
+
+  // Slots hidden purely by the exam-event filter (they belong to other exams /
+  // programmes' timetables). Shown as a hint so "where is my programme?" is
+  // always answerable from the UI itself.
+  const hiddenByExamFilterCount = useMemo(() => {
+    if (selectedReviewExamFilter === "ALL") return 0;
+    return scheduleDocs.filter(s => !isExamMatchForDoc(s.examName || s.examId, s.examDate, selectedReviewExamFilter)).length;
+  }, [scheduleDocs, selectedReviewExamFilter, isExamMatchForDoc]);
 
   const filteredPublishedSubjects = useMemo(() => {
     let result = publishedBySubject;
@@ -1106,6 +1180,11 @@ export default function ExamCellQPReview() {
           )}
         </div>
 
+        <div className="px-1 -mt-2 mb-4 text-[10px] font-semibold text-zinc-400">
+          Calendar Exam events detected ({detectedCalendarTitles.length}):{" "}
+          {detectedCalendarTitles.length ? detectedCalendarTitles.join(" · ") : "none — create Type = Exam events in Academic Calendar"}
+        </div>
+
         <div className="mb-4 flex items-center gap-2 px-1">
           <Sparkles size={14} className="text-amber-500" />
           <p className="text-xs font-bold text-zinc-600">
@@ -1169,6 +1248,11 @@ export default function ExamCellQPReview() {
                   </div>
                   <span className="text-xs font-extrabold text-zinc-400 shrink-0">
                     {filteredPublishedSubjects.length} Subject{filteredPublishedSubjects.length !== 1 ? "s" : ""} · {filteredPublished.length} Total QPs
+                    {hiddenByExamFilterCount > 0 && (
+                      <span className="ml-1 text-amber-600">
+                        · {hiddenByExamFilterCount} slot{hiddenByExamFilterCount !== 1 ? "s" : ""} under other exams (switch to All Exam Events to see all programmes)
+                      </span>
+                    )}
                   </span>
                 </div>
 

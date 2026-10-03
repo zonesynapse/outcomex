@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import { doc, collection, onSnapshot, setDoc, getDoc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
@@ -14,7 +14,7 @@ import Layout from "../components/Layout";
 import { useBatches } from "../hooks/useBatches";
 import { useRegulations } from "../hooks/useRegulations";
 import { useDepartments } from "../hooks/useDepartments";
-import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey } from "../lib/utils";
+import { formatBatchDisplay, formatDepartmentDisplay, getAcademicYears, formatProgrammeKey, sanitizeKey, isSameExamEvent } from "../lib/utils";
 
 const cleanStr = (s) => (s || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
 const normClean = (s) => String(s || "").replace(/[._\s\-/]/g, "").toLowerCase();
@@ -90,24 +90,6 @@ const deriveSlotFromTime = (startTimeStr) => {
   const h = parseInt(hStr, 10);
   if (isNaN(h)) return '';
   return h < 12 ? 'FN' : 'AN';
-};
-
-const isSameExam = (e1, e2) => {
-  if (!e1 || !e2) return true;
-  const n1 = normCodeKey(e1);
-  const n2 = normCodeKey(e2);
-  if (!n1 || !n2 || n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
-
-  const getExamTag = (s) => {
-    const lower = String(s || '').toLowerCase();
-    if (lower.includes('model')) return 'model';
-    if (/\b(ia\s*1|ia1|assessment\s*1|assessment\s*i\b|test\s*1|1st)\b/i.test(lower)) return 'ia1';
-    if (/\b(ia\s*2|ia2|assessment\s*2|assessment\s*ii\b|test\s*2|2nd)\b/i.test(lower)) return 'ia2';
-    if (/\b(ia\s*3|ia3|assessment\s*3|assessment\s*iii\b|test\s*3|3rd)\b/i.test(lower)) return 'ia3';
-    const m = lower.match(/\d+/);
-    return m ? `num_${m[0]}` : lower.replace(/[^a-z0-9]/g, '');
-  };
-  return getExamTag(e1) === getExamTag(e2);
 };
 
 // Build complete display string e.g. "FN (09:30 AM - 12:30 PM)"
@@ -275,6 +257,11 @@ export default function IAScheduleCreation({ embedded = false }) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [firestoreAssignLoaded, setFirestoreAssignLoaded] = useState(false);
+  // Diagnostic: why saved dates do / don't show for the current filter
+  const [loadInfo, setLoadInfo] = useState({ batchSemCount: 0, examCount: 0, ignoredExample: "" });
+  // Live ref of current rows for the snapshot callback (keeps the listener
+  // subscribed ONCE per filter — no resubscribe churn on every rows recompute)
+  const rowsRef = useRef([]);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -900,6 +887,9 @@ export default function IAScheduleCreation({ embedded = false }) {
     });
   }, [syllabusSubjects, codeHandlers, usersMap, selectedCourseTypes, getCanonicalCode]);
 
+  // Keep the live rows ref in sync for the Firestore snapshot callback above
+  rowsRef.current = rows;
+
   // Fuzzy assignment lookup: exact key → exact normalized → guarded substring (prevents
   // short-code false positives like "BM3" matching "BM3352").
   const getAssignmentForCode = useCallback((code, assignObj) => {
@@ -1006,10 +996,23 @@ export default function IAScheduleCreation({ embedded = false }) {
     return rawStr;
   }, []);
 
+  // Stable exam identity string — changing the Exam Event MUST reload saved
+  // dates instantly (this was missing, so switching exams showed stale/blank).
+  const examKey = `${selectedExamId}||${selectedExam?.displayTitle || selectedExam?.title || ""}`;
+
   // 9. Load Saved QP Setter Assignments from Firestore
+  // Instant + clean: previous batch/sem assignments are cleared immediately so
+  // stale exam dates / submission windows never flash, and the snapshot result
+  // REPLACES (not merges) local state so other-batch data can never leak in.
+  // NOTE: `rows` is deliberately NOT a dep (rowsRef is used instead) so the
+  // listener subscribes exactly once per filter change — no clear+reload churn
+  // every time a master collection arrives.
   useEffect(() => {
+    // Clear stale data the moment filters change — user sees fresh state instantly
+    setAssignments({});
+    setFirestoreAssignLoaded(false);
+    setLoadInfo({ batchSemCount: 0, examCount: 0, ignoredExample: "" });
     if (!batch || !semester) {
-      setAssignments({});
       return;
     }
     const normB = normCodeKey(batch);
@@ -1019,6 +1022,9 @@ export default function IAScheduleCreation({ embedded = false }) {
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       let combinedAssignments = {};
       let foundExamId = "";
+      let batchSemCount = 0;
+      let examCount = 0;
+      let ignoredExample = "";
 
       snap.forEach(d => {
         const data = d.data() || {};
@@ -1045,9 +1051,33 @@ export default function IAScheduleCreation({ embedded = false }) {
         const isSemMatch = dSem === normSem || d.id.endsWith(`_${normSem}`);
         const isAyMatch = !normAY || !dAY || dAY === normAY || dAY.includes(normAY) || normAY.includes(dAY);
 
-        const dExamId = data.examId || data.examName || "";
-        const curExamId = selectedExamId || selectedExam?.id || selectedExam?.title || "";
-        const isExamMatch = !curExamId || !dExamId || isSameExam(dExamId, curExamId) || normCodeKey(d.id).includes(normCodeKey(curExamId)) || normCodeKey(dExamId).includes(normCodeKey(curExamId));
+        // Match by EXAM NAME (tag + regulation), never by calendar push-id: the
+        // same "IA 2 (AU - R2025)" stays matched even if its calendar event was
+        // recreated with a new id, while "IA 2 (AU - R2021)" never leaks in.
+        const dExamId = data.examId || "";
+        const dExamName = data.examName || "";
+        const curExamId = selectedExamId || "";
+        const curExamTitle = selectedExam?.displayTitle || selectedExam?.title || "";
+        const hasCurExam = Boolean(curExamId || curExamTitle);
+        const idHit = curExamId && (
+          normCodeKey(d.id).includes(normCodeKey(curExamId)) ||
+          (dExamId && normCodeKey(dExamId).includes(normCodeKey(curExamId)))
+        );
+        const nameHit = dExamName && curExamTitle
+          ? isSameExamEvent(dExamName, curExamTitle)
+          : false;
+        const isExamMatch = !hasCurExam || !dExamName || nameHit || idHit;
+
+        // Diagnostic counters: docs matching batch/sem/AY at all, and of those
+        // how many also match the selected exam (reason shown in UI hint).
+        if (isBatchMatch && isSemMatch && isAyMatch) {
+          batchSemCount++;
+          if (isExamMatch) {
+            examCount++;
+          } else if (!ignoredExample) {
+            ignoredExample = data.examName || data.examId || d.id;
+          }
+        }
 
         if (isBatchMatch && isSemMatch && isAyMatch && isExamMatch) {
           if (data.assignments && typeof data.assignments === "object") {
@@ -1078,8 +1108,23 @@ export default function IAScheduleCreation({ embedded = false }) {
         }
       });
 
-      setAssignments(prev => ({ ...prev, ...combinedAssignments }));
+      // Replace Firestore keys, but preserve unsaved local entries that belong to
+      // the CURRENT rows (user-typed dates/setters not saved yet). Keys from
+      // other batches/semesters are dropped so stale dates never leak across.
+      const liveRows = rowsRef.current || [];
+      setAssignments(prev => {
+        const next = { ...combinedAssignments };
+        const rowNorms = new Set(liveRows.map(r => normCodeKey(r.code)));
+        Object.entries(prev).forEach(([k, v]) => {
+          if (!v || typeof v !== "object") return;
+          const kNorm = normCodeKey(k);
+          const inCombined = Object.keys(combinedAssignments).some(ck => normCodeKey(ck) === kNorm);
+          if (!inCombined && rowNorms.has(kNorm)) next[k] = v;
+        });
+        return next;
+      });
       setFirestoreAssignLoaded(true);
+      setLoadInfo({ batchSemCount, examCount, ignoredExample });
 
       if (foundExamId) {
         setSelectedExamId(prev => prev || foundExamId);
@@ -1088,7 +1133,9 @@ export default function IAScheduleCreation({ embedded = false }) {
       console.warn("Error listening to qp_setter_assignments:", err);
     });
     return () => unsub();
-  }, [batch, academicYear, semester, getEffectiveExamDate]);
+    // examKey (not the selectedExam object) keeps the dep stable: switching the
+    // Exam Event reloads instantly, anything else never resubscribes.
+  }, [batch, academicYear, semester, getEffectiveExamDate, examKey]);
 
   // 10. Filtered Rows by Search Query
   const filteredRows = useMemo(() => {
@@ -1104,10 +1151,17 @@ export default function IAScheduleCreation({ embedded = false }) {
     );
   }, [rows, searchQuery]);
 
-  // Stats calculation
+  // Stats calculation (distinct normalized codes — alias keys like raw/canonical
+  // variants of the same subject must not triple-count setters)
   const totalSubjects = rows.length;
   const commonCount = rows.filter(r => r.departments.length > 1).length;
-  const assignedCount = Object.values(assignments).filter(a => a.setterUid).length;
+  const assignedCount = useMemo(() => {
+    const codes = new Set();
+    Object.entries(assignments).forEach(([k, a]) => {
+      if (a && a.setterUid) codes.add(normCodeKey(k));
+    });
+    return codes.size;
+  }, [assignments]);
 
   const handleAssignmentChange = (code, field, value) => {
     setAssignments(prev => {
@@ -1825,6 +1879,28 @@ export default function IAScheduleCreation({ embedded = false }) {
                 Showing {filteredRows.length} of {rows.length} Subjects
               </span>
             </div>
+
+            {/* Saved-data diagnostic: tells EXACTLY why dates show / don't show */}
+            {batch && academicYear && semester && firestoreAssignLoaded && rows.length > 0 && (
+              loadInfo.batchSemCount > 0 && loadInfo.examCount === 0 ? (
+                <div className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                  <p className="text-xs font-semibold leading-relaxed">
+                    Saved timetable found for this batch &amp; semester, but under a <strong>different exam{loadInfo.ignoredExample ? ` ("${loadInfo.ignoredExample}")` : ""}</strong> — so dates stay blank here.
+                    Select the matching <strong>Exam Event</strong> above to load its dates instantly.
+                  </p>
+                </div>
+              ) : loadInfo.batchSemCount === 0 ? (
+                <div className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600">
+                  <Info size={16} className="shrink-0 mt-0.5 text-slate-400" />
+                  <p className="text-xs font-semibold leading-relaxed">
+                    No saved timetable yet for {formatBatchDisplay(batch)} • Semester {semester}
+                    {selectedExam?.displayTitle || selectedExam?.title ? ` • ${selectedExam.displayTitle || selectedExam.title}` : ""}.
+                    Assign exam dates, submission windows &amp; timings below, then click <strong>Save &amp; Notify QP Setters</strong>.
+                  </p>
+                </div>
+              ) : null
+            )}
 
             {filteredRows.length === 0 ? (
               <div className="py-16 text-center text-slate-400 text-xs font-semibold space-y-2">

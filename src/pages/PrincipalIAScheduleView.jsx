@@ -1090,10 +1090,12 @@ export default function PrincipalIAScheduleView({
   };
 
   const getCanonicalCode = (code, name, deptKey, semNum, batch) => {
+    // Timetable authority: always display the exact code saved in the IA
+    // timetable (qp_setter_assignments). Regulation-name lookup runs ONLY
+    // when no code was saved, so wrong CourseBank codes can never appear.
     const cleanCode = String(code || "").trim();
     if (cleanCode && cleanCode !== 'undefined' && cleanCode !== 'null') {
-      const isModernCode = /^[A-Z]{2}\d{2}[A-Z]\d{2}/i.test(cleanCode) || /^[A-Z]{2}\d{4}/i.test(cleanCode);
-      if (isModernCode) return cleanCode;
+      return cleanCode;
     }
 
     if (name && allSyllabus.length > 0) {
