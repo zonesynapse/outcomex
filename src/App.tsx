@@ -119,6 +119,8 @@ import ResourceBooking from "./pages/resourceHub/ResourceBooking";
 import MyBookings from "./pages/resourceHub/MyBookings";
 import ResourceApprovals from "./pages/resourceHub/ResourceApprovals";
 import StudentResourceHub from "./pages/student/ResourceHub";
+import CoeDashboard from "./pages/COE/CoeDashboard";
+import ExternalSetterWorkbench from "./pages/COE/ExternalSetterWorkbench";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -158,6 +160,10 @@ export default function App() {
         {/* Public Routes */}
         <Route path="/login" element={<Auth />} />
         <Route path="/signup" element={<Auth />} />
+        <Route path="/coe-setter-login" element={<ExternalSetterWorkbench />} />
+        <Route path="/coe-setter-login/*" element={<ExternalSetterWorkbench />} />
+        <Route path="/coe-external-setter" element={<ExternalSetterWorkbench />} />
+        <Route path="/coe-external-setter/*" element={<ExternalSetterWorkbench />} />
 
         {/* Protected Routes */}
         <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
@@ -212,6 +218,7 @@ export default function App() {
         <Route path="/exam-payment/reports" element={<ProtectedRoute><PaymentReports /></ProtectedRoute>} />
 
         {/* COE Routes */}
+        <Route path="/coe" element={<ProtectedRoute><CoeDashboard /></ProtectedRoute>} />
         <Route path="/qp-converter" element={<ProtectedRoute><QPConverter /></ProtectedRoute>} />
         <Route path="/step-points" element={<ProtectedRoute><StepPoints /></ProtectedRoute>} />
         <Route path="/step-analytics" element={<ProtectedRoute><StepAnalytics /></ProtectedRoute>} />

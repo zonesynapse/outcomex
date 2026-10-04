@@ -116,6 +116,7 @@ const allPossibleItems = [
   { id: "payment-reports", icon: BarChart3, label: "Payment Reports", path: "/exam-payment/reports" },
 
   // COE Module
+  { id: "coe-dashboard", icon: ShieldCheck, label: "Controller of Examinations (COE)", path: "/coe" },
   { id: "qp-converter", icon: FileText, label: "Question Paper Converter", path: "/qp-converter" },
   { id: "timetable", icon: Calendar, label: "Time Table Config", path: "/tt" },
   { id: "step-points", icon: Award, label: "STEP Activity Claims", path: "/step-points" },

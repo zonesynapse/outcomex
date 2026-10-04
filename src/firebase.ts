@@ -28,6 +28,7 @@ const app = initializeApp(firebaseConfig);
 
 // Enable IndexedDB persistent local caching for instant sub-10ms reads across tabs
 export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager()
   })
