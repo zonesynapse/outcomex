@@ -29,6 +29,7 @@ function QuestionCKEditor({ id, value, onChange, placeholder }) {
             window.CKEDITOR.config.versionCheck = false;
             window.CKEDITOR.config.font_defaultLabel = 'Times New Roman';
             window.CKEDITOR.config.fontSize_defaultLabel = '12pt';
+            window.CKEDITOR.config.removePlugins = 'exportpdf';
             setupEditor();
           }
         };
@@ -100,6 +101,21 @@ function QuestionCKEditor({ id, value, onChange, placeholder }) {
     </div>
   );
 }
+
+// Helper to recursively remove undefined properties before saving objects to Firestore
+const removeUndefinedFields = (obj) => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(removeUndefinedFields);
+
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = removeUndefinedFields(value);
+    }
+  }
+  return cleaned;
+};
 
 export default function ExternalSetterWorkbench() {
   const location = useLocation();
@@ -309,15 +325,18 @@ export default function ExternalSetterWorkbench() {
                 const count = sec.count || 5;
                 const questions = Array.from({ length: count }, (_, i) => {
                   const qNo = currentQNo++;
-                  return {
+                  const qObj = {
                     qNo,
                     text: "",
-                    optionB: sec.choiceType === "either_or" ? "" : undefined,
                     marks: sec.marksPerQ || 2,
                     blooms: `K${(i % 4) + 1}`,
                     co: `CO${(i % 5) + 1}`,
                     pi: `1.1.${(i % 3) + 1}`
                   };
+                  if (sec.choiceType === "either_or") {
+                    qObj.optionB = "";
+                  }
+                  return qObj;
                 });
 
                 return {
@@ -586,12 +605,12 @@ export default function ExternalSetterWorkbench() {
 
     setUploadingSig(true);
     try {
-      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), {
+      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), removeUndefinedFields({
         acceptanceStatus: interestStatus,
         signatureUrl: signatureUrl || null,
         status: interestStatus === "Interested" ? "accepted" : "declined",
         updatedAt: serverTimestamp()
-      });
+      }));
 
       setAcceptanceSubmitted(true);
       if (interestStatus === "Interested") {
@@ -632,18 +651,22 @@ export default function ExternalSetterWorkbench() {
   const handleFinalSubmitToCoe = async () => {
     setSubmittingToCoe(true);
     try {
+      const sanitizedPaper = removeUndefinedFields(qpData);
+      const sanitizedChecklist = removeUndefinedFields(checklistResponses);
+      const sanitizedClaimBill = removeUndefinedFields({
+        ...claimBillData,
+        subjectCode: assignment?.subjectCode || "",
+        subjectTitle: assignment?.subjectTitle || "",
+        submissionDate: new Date().toLocaleDateString("en-IN")
+      });
+
       await updateDoc(doc(db, "coe_setter_assignments", assignment.id), {
         status: "submitted",
-        submittedPaper: qpData,
+        submittedPaper: sanitizedPaper,
         checklistVerified: true,
-        checklistResponses: checklistResponses,
-        examMonthYear: examMonthYear,
-        claimBillData: {
-          ...claimBillData,
-          subjectCode: assignment?.subjectCode,
-          subjectTitle: assignment?.subjectTitle,
-          submissionDate: new Date().toLocaleDateString("en-IN")
-        },
+        checklistResponses: sanitizedChecklist,
+        examMonthYear: examMonthYear || "",
+        claimBillData: sanitizedClaimBill,
         submittedAt: serverTimestamp()
       });
 
@@ -801,6 +824,7 @@ export default function ExternalSetterWorkbench() {
                       <div className="relative">
                         <input
                           type="email"
+                          autoComplete="username email"
                           placeholder="professor@iitm.ac.in / name@institution.edu"
                           value={loginEmail}
                           onChange={(e) => setLoginEmail(e.target.value)}
@@ -820,6 +844,7 @@ export default function ExternalSetterWorkbench() {
                       <div className="relative">
                         <input
                           type="password"
+                          autoComplete="current-password"
                           placeholder="Enter password sent in official invitation"
                           value={loginPassword}
                           onChange={(e) => setLoginPassword(e.target.value)}
