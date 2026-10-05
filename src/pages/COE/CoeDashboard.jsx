@@ -7,7 +7,7 @@ import {
 import { 
   Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon, 
   Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle, 
-  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3
+  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
@@ -2141,31 +2141,81 @@ export default function CoeDashboard() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 pt-2">
-                      <button
-                        onClick={() => {
-                          const pubUrl = `https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}`;
-                          navigator.clipboard.writeText(pubUrl);
-                          alert("Public Access Link copied to clipboard:\n" + pubUrl);
-                        }}
-                        className="py-3 px-3 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>Copy Public Link</span>
-                      </button>
+                    <div className="mt-4 p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3">
+                      <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                        <div className="flex items-center gap-2 text-indigo-900 font-extrabold text-xs">
+                          <Mail className="h-4 w-4 text-indigo-700" />
+                          <span>Official Email Invitation Draft</span>
+                        </div>
+                        <span className="text-[10px] font-black bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full border border-indigo-300">
+                          Ready to Dispatch
+                        </span>
+                      </div>
 
-                      <button
-                        onClick={() => {
-                          const pubUrl = `https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}`;
-                          const msg = `Dear ${generatedAssignment.setterName},\n\nYou have been assigned as the External Question Paper Setter for ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}.\n\nAccess Link: ${pubUrl}\nEmail: ${generatedAssignment.setterEmail}\nPassword: ${generatedAssignment.setterPassword}\n\nPlease click the link to log in, view the appointment order, and submit the acceptance form.\n\nRegards,\nController of Examinations (COE)`;
-                          navigator.clipboard.writeText(msg);
-                          alert("Full Invitation Message copied to clipboard!");
-                        }}
-                        className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>Copy Invitation Msg</span>
-                      </button>
+                      {/* Email Subject Line */}
+                      <div className="bg-white p-2.5 rounded-xl border border-indigo-100 text-xs">
+                        <span className="text-zinc-400 text-[10px] uppercase font-black tracking-wider block mb-0.5">Subject:</span>
+                        <span className="font-bold text-zinc-900">
+                          Appointment Order & Access Link for ESE Question Paper Framing - {generatedAssignment.subjectCode} ({generatedAssignment.subjectTitle})
+                        </span>
+                      </div>
+
+                      {/* Email Body Preview */}
+                      <div className="bg-white p-3 rounded-xl border border-indigo-100 text-[11px] text-zinc-800 font-mono leading-relaxed max-h-56 overflow-y-auto whitespace-pre-wrap select-all">
+{`Dear Prof. ${generatedAssignment.setterName},
+
+Greetings from C.K. College of Engineering & Technology (Autonomous)!
+
+We are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).
+
+📌 ASSIGNMENT DETAILS:
+• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}
+• Institution: ${generatedAssignment.setterCollege || "External Institution"}
+
+🔐 ACCESS PORTAL & CREDENTIALS:
+• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}
+• User ID / Email: ${generatedAssignment.setterEmail}
+• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}
+
+📋 NEXT STEPS:
+1. Click the Access Link above to log in to the COE External Setter Workbench.
+2. View and download your Appointment / Subject Order Copy.
+3. Complete and submit the Acceptance / Remuneration Form online.
+4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.
+
+For any technical assistance, please reply to this email or contact the Office of the Controller of Examinations.
+
+Warm Regards,
+Office of the Controller of Examinations (COE)
+C.K. College of Engineering & Technology, Cuddalore
+Website: https://zonesynapse-ckcet-obe.pages.dev`}
+                      </div>
+
+                      {/* Email Action Buttons */}
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const emailText = `Subject: Appointment Order & Access Link for ESE Question Paper Framing - ${generatedAssignment.subjectCode} (${generatedAssignment.subjectTitle})\n\nDear Prof. ${generatedAssignment.setterName},\n\nGreetings from C.K. College of Engineering & Technology (Autonomous)!\n\nWe are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).\n\n📌 ASSIGNMENT DETAILS:\n• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}\n• Institution: ${generatedAssignment.setterCollege || "External Institution"}\n\n🔐 ACCESS PORTAL & CREDENTIALS:\n• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID / Email: ${generatedAssignment.setterEmail}\n• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}\n\n📋 NEXT STEPS:\n1. Click the Access Link above to log in to the COE External Setter Workbench.\n2. View and download your Appointment / Subject Order Copy.\n3. Complete and submit the Acceptance / Remuneration Form online.\n4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.\n\nWarm Regards,\nOffice of the Controller of Examinations (COE)\nC.K. College of Engineering & Technology, Cuddalore`;
+                            navigator.clipboard.writeText(emailText);
+                            alert("Official Email Draft copied to clipboard!");
+                          }}
+                          className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy Email Draft</span>
+                        </button>
+
+                        <a
+                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`Appointment Order & Access Link for ESE Question Paper Framing - ${generatedAssignment.subjectCode} (${generatedAssignment.subjectTitle})`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName},\n\nGreetings from C.K. College of Engineering & Technology (Autonomous)!\n\nWe are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).\n\n📌 ASSIGNMENT DETAILS:\n• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}\n• Institution: ${generatedAssignment.setterCollege || "External Institution"}\n\n🔐 ACCESS PORTAL & CREDENTIALS:\n• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID / Email: ${generatedAssignment.setterEmail}\n• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}\n\n📋 NEXT STEPS:\n1. Click the Access Link above to log in to the COE External Setter Workbench.\n2. View and download your Appointment / Subject Order Copy.\n3. Complete and submit the Acceptance / Remuneration Form online.\n4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.\n\nWarm Regards,\nOffice of the Controller of Examinations (COE)\nC.K. College of Engineering & Technology, Cuddalore`)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all text-center inline-flex items-center justify-center"
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                          <span>Send Email (Mailto)</span>
+                        </a>
+                      </div>
                     </div>
                   </div>
                 ) : (
