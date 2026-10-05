@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { db } from "../../firebase";
 import { 
@@ -7,7 +7,7 @@ import {
 import { 
   Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon, 
   Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle, 
-  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail
+  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
@@ -57,6 +57,147 @@ export default function CoeDashboard() {
     });
     return Array.from(set).sort((a, b) => b.localeCompare(a));
   }, [selectedProgramme, programmes, getActiveBatches]);
+
+  // DYNAMIC ACADEMIC YEARS DERIVED FROM ACTIVE BATCHES (ZERO HARDCODING)
+  const availableAcademicYears = useMemo(() => {
+    const aySet = new Set();
+    availableBatches.forEach(b => {
+      const parts = String(b).split("-");
+      if (parts.length === 2) {
+        const start = parseInt(parts[0], 10);
+        const end = parseInt(parts[1], 10);
+        if (!isNaN(start) && !isNaN(end) && end > start) {
+          for (let y = start; y < end; y++) {
+            aySet.add(`${y}-${y + 1}`);
+          }
+        }
+      }
+    });
+    if (aySet.size === 0) {
+      const currentYear = new Date().getFullYear();
+      for (let y = currentYear - 3; y <= currentYear + 3; y++) {
+        aySet.add(`${y}-${y + 1}`);
+      }
+    }
+    return Array.from(aySet).sort((a, b) => a.localeCompare(b));
+  }, [availableBatches]);
+
+  // --------------------------------------------------------------------------
+  // EXAM SESSION / EVENT MANAGEMENT STATE & DYNAMIC FIRESTORE LISTENER
+  // --------------------------------------------------------------------------
+  const [examSessions, setExamSessions] = useState([]);
+  const [selectedExamSession, setSelectedExamSession] = useState("");
+  const [showAddSessionModal, setShowAddSessionModal] = useState(false);
+  const [newSessionName, setNewSessionName] = useState("");
+  const [newAcademicYear, setNewAcademicYear] = useState("");
+
+  useEffect(() => {
+    if (availableAcademicYears.length > 0 && !newAcademicYear) {
+      setNewAcademicYear(availableAcademicYears[0]);
+    }
+  }, [availableAcademicYears, newAcademicYear]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "coe_exam_sessions"), (snap) => {
+      const list = [];
+      snap.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      setExamSessions(list);
+      if (list.length > 0) {
+        setSelectedExamSession(prev => {
+          if (prev && list.some(s => s.sessionName === prev)) return prev;
+          const active = list.find(s => s.isCurrent) || list[0];
+          return active ? active.sessionName : "";
+        });
+      } else {
+        setSelectedExamSession("");
+      }
+    }, (err) => {
+      console.warn("Firestore listener coe_exam_sessions error:", err);
+      setExamSessions([]);
+      setSelectedExamSession("");
+    });
+    return () => unsub();
+  }, []);
+
+  const formatExamSessionName = (prefix, academicYear) => {
+    if (!prefix || !prefix.trim()) return "";
+    const raw = prefix.trim();
+    if (/\b20\d{2}\b/.test(raw)) {
+      return raw; // Already has a year (e.g. "Nov. / Dec. 2026")
+    }
+    const ay = academicYear || (availableAcademicYears[0] || "2026-2027");
+    const parts = ay.split("-");
+    const startYear = parts[0] ? parts[0].trim() : "2026";
+    const endYear = parts[1] ? parts[1].trim() : "2027";
+
+    const lower = raw.toLowerCase();
+    if (lower.includes("apr") || lower.includes("may") || lower.includes("even")) {
+      return `${raw} ${endYear}`;
+    } else {
+      return `${raw} ${startYear}`;
+    }
+  };
+
+  const handleCreateExamSession = async (e) => {
+    e.preventDefault();
+    if (!newSessionName.trim()) {
+      alert("Please enter an Examination Session Name (e.g. 'Nov. / Dec.' or 'April / May').");
+      return;
+    }
+
+    const rawName = newSessionName.trim();
+    const selectedAY = newAcademicYear || (availableAcademicYears[0] || "2026-2027");
+    const finalSessionName = formatExamSessionName(rawName, selectedAY);
+
+    try {
+      const sessionId = `coe_session_${Date.now()}`;
+      const sessionData = {
+        id: sessionId,
+        sessionName: finalSessionName,
+        rawPrefix: rawName,
+        academicYear: selectedAY,
+        isCurrent: true,
+        createdAt: serverTimestamp()
+      };
+
+      // Mark other sessions as non-current in Firestore if needed
+      for (const s of examSessions) {
+        if (s.isCurrent) {
+          try {
+            await updateDoc(doc(db, "coe_exam_sessions", s.id), { isCurrent: false });
+          } catch (err) {
+            console.warn("Update prior session error:", err);
+          }
+        }
+      }
+
+      await setDoc(doc(db, "coe_exam_sessions", sessionId), sessionData);
+      setSelectedExamSession(finalSessionName);
+      setShowAddSessionModal(false);
+      setNewSessionName("");
+      alert(`Exam Session "${finalSessionName}" created and set as Active Session!`);
+    } catch (err) {
+      alert("Failed to create Exam Session: " + err.message);
+    }
+  };
+
+  const handleDeleteExamSession = async (sessionObj) => {
+    if (!sessionObj) return;
+    if (window.confirm(`Are you sure you want to delete Exam Session "${sessionObj.sessionName}"?`)) {
+      try {
+        await deleteDoc(doc(db, "coe_exam_sessions", sessionObj.id));
+        if (selectedExamSession === sessionObj.sessionName) {
+          const remaining = examSessions.filter(s => s.id !== sessionObj.id);
+          setSelectedExamSession(remaining.length > 0 ? remaining[0].sessionName : "");
+        }
+        alert(`Exam Session "${sessionObj.sessionName}" deleted successfully!`);
+      } catch (err) {
+        alert("Failed to delete exam session: " + err.message);
+      }
+    }
+  };
 
   // AUTO-SELECTED REGULATION BASED ON BATCH & PROGRAMME (READ-ONLY / DISABLED)
   const autoRegulation = useMemo(() => {
@@ -736,6 +877,7 @@ export default function CoeDashboard() {
 
       const assignmentData = {
         id: assignmentId,
+        examSession: selectedExamSession,
         programme: selectedSubjectObj?.programme || (selectedProgramme !== "ALL" ? selectedProgramme : "B.E."),
         batch: assignBatch,
         semester: assignSemester !== "ALL" ? assignSemester : (selectedSubjectObj?.semester || "III"),
@@ -791,6 +933,11 @@ export default function CoeDashboard() {
     });
     return () => unsub();
   }, []);
+
+  const filteredAssignments = useMemo(() => {
+    if (!selectedExamSession || selectedExamSession === "ALL") return assignments;
+    return assignments.filter(a => !a.examSession || a.examSession === selectedExamSession);
+  }, [assignments, selectedExamSession]);
 
   const inputCls = "w-full bg-white border border-zinc-200 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer";
   const labelCls = "text-[11px] font-black text-zinc-500 uppercase tracking-wider mb-1 block";
@@ -915,15 +1062,63 @@ export default function CoeDashboard() {
               </div>
             </div>
 
-            {/* Quick Stats Badges */}
-            <div className="flex items-center gap-3">
-              <div className="bg-white/10 backdrop-blur border border-white/20 px-4 py-2.5 rounded-2xl text-center">
-                <span className="text-[10px] font-bold text-blue-200 uppercase tracking-wider block">Active Setters</span>
-                <span className="text-xl font-black text-emerald-300">{setters.filter(s => s.status === "active").length}</span>
+            {/* Active Examination Session Selector Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="bg-white/10 backdrop-blur border border-white/20 p-2.5 rounded-2xl flex items-center gap-2.5 shadow-sm">
+                <div className="p-2 rounded-xl bg-amber-400 text-amber-950 font-black shrink-0">
+                  <Calendar className="h-4 w-4" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-200 block">
+                    Active Examination Session
+                  </span>
+                  <select
+                    value={selectedExamSession}
+                    onChange={(e) => setSelectedExamSession(e.target.value)}
+                    className="bg-white/95 text-[#120c7a] font-black text-xs px-2.5 py-1 rounded-lg border border-white/30 focus:outline-none cursor-pointer mt-0.5"
+                  >
+                    {examSessions.length === 0 ? (
+                      <option value="" className="text-zinc-500 italic">-- No Exam Session Created Yet --</option>
+                    ) : (
+                      examSessions.map((s) => (
+                        <option key={s.id} value={s.sessionName} className="text-zinc-900 font-bold">
+                          {s.sessionName} {s.isCurrent ? "(Active Session)" : ""}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                {selectedExamSession && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sessionObj = examSessions.find(s => s.sessionName === selectedExamSession);
+                      if (sessionObj) handleDeleteExamSession(sessionObj);
+                    }}
+                    className="p-1.5 rounded-xl bg-white/10 hover:bg-rose-500/30 text-rose-200 hover:text-rose-100 border border-white/20 cursor-pointer transition-all ml-1 shrink-0"
+                    title="Delete Selected Exam Session"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
-              <div className="bg-white/10 backdrop-blur border border-white/20 px-4 py-2.5 rounded-2xl text-center">
+
+              <button
+                type="button"
+                onClick={() => setShowAddSessionModal(true)}
+                className="px-3.5 py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-300 text-amber-950 font-black text-xs inline-flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all shrink-0"
+              >
+                <Plus className="h-4 w-4" />
+                <span>+ New Exam Session</span>
+              </button>
+
+              <div className="bg-white/10 backdrop-blur border border-white/20 px-3.5 py-2 rounded-2xl text-center min-w-[85px]">
+                <span className="text-[10px] font-bold text-blue-200 uppercase tracking-wider block">Active Setters</span>
+                <span className="text-lg font-black text-emerald-300">{setters.filter(s => s.status === "active").length}</span>
+              </div>
+              <div className="bg-white/10 backdrop-blur border border-white/20 px-3.5 py-2 rounded-2xl text-center min-w-[85px]">
                 <span className="text-[10px] font-bold text-blue-200 uppercase tracking-wider block">Assignments</span>
-                <span className="text-xl font-black text-white">{assignments.length}</span>
+                <span className="text-lg font-black text-white">{filteredAssignments.length}</span>
               </div>
             </div>
           </div>
@@ -2158,7 +2353,7 @@ export default function CoeDashboard() {
                       <div className="bg-white p-2.5 rounded-xl border border-indigo-100 text-xs">
                         <span className="text-zinc-400 text-[10px] uppercase font-black tracking-wider block mb-0.5">Subject:</span>
                         <span className="font-bold text-zinc-900">
-                          End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
+                          End Semester Examinations – {generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
                         </span>
                       </div>
 
@@ -2169,9 +2364,9 @@ Good Morning!
 
 Greetings from C.K. College of Engineering & Technology, Cuddalore!
 
-Sub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
+Sub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
 
-I am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.
+I am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.
 
 The details of the question paper assignment are as follows:
 
@@ -2190,7 +2385,7 @@ SUBJECT DETAILS:
 • Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}
 
 NEXT-GENERATION DIGITAL QP SETTING PLATFORM:
-As part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the Nov./Dec. 2026 End Semester Examinations.
+As part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} End Semester Examinations.
 
 You are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.
 
@@ -2231,8 +2426,9 @@ Contact: 94884 93434`}
                         <button
                           type="button"
                           onClick={() => {
-                            const emailSubject = `End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
-                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the Nov./Dec. 2026 End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\nThe remuneration for setting the question paper is Rs. 2,000/- per question paper.\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
+                            const sessName = generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026";
+                            const emailSubject = `End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
+                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\nThe remuneration for setting the question paper is Rs. 2,000/- per question paper.\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
                             
                             navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                             alert("Official Email Draft copied to clipboard!");
@@ -2244,7 +2440,7 @@ Contact: 94884 93434`}
                         </button>
 
                         <a
-                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below.\n\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nWith regards,\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology`)}`}
+                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below.\n\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nWith regards,\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all text-center inline-flex items-center justify-center"
@@ -2293,11 +2489,11 @@ Contact: 94884 93434`}
                 <RefreshCw className="h-6 w-6 animate-spin text-[#120c7a]" />
                 <span className="text-xs font-bold">Loading assignments & submitted papers...</span>
               </div>
-            ) : assignments.length === 0 ? (
+            ) : filteredAssignments.length === 0 ? (
               <div className="py-12 text-center border-2 border-dashed border-zinc-200 rounded-2xl p-6 text-zinc-500">
                 <FileCheck className="h-10 w-10 mx-auto mb-2 text-zinc-400" />
-                <p className="font-extrabold text-zinc-800 text-sm">No Assignments Recorded Yet</p>
-                <p className="text-xs text-zinc-500 mt-1">Assign subjects to external setters under Tab 3 to get started.</p>
+                <p className="font-extrabold text-zinc-800 text-sm">No Assignments for {selectedExamSession}</p>
+                <p className="text-xs text-zinc-500 mt-1">Assign subjects to external setters under Tab 3 for this examination session.</p>
               </div>
             ) : (
               <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
@@ -2312,7 +2508,7 @@ Contact: 94884 93434`}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {assignments.map((ass) => (
+                    {filteredAssignments.map((ass) => (
                       <tr key={ass.id} className="hover:bg-blue-50/30 transition-colors">
                         <td className="py-3.5 px-4">
                           <div className="font-extrabold text-[#120c7a] text-xs">{ass.subjectCode}</div>
@@ -2386,6 +2582,24 @@ Contact: 94884 93434`}
                                 <Eye className="h-3.5 w-3.5" /> Review Paper
                               </button>
                             )}
+
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (window.confirm(`Are you sure you want to delete assignment for ${ass.subjectCode} (${ass.setterName})?`)) {
+                                  try {
+                                    await deleteDoc(doc(db, "coe_setter_assignments", ass.id));
+                                    alert("Assignment deleted successfully!");
+                                  } catch (err) {
+                                    alert("Failed to delete assignment: " + err.message);
+                                  }
+                                }
+                              }}
+                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold inline-flex items-center gap-1 cursor-pointer transition-all"
+                              title="Delete Assignment"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -2635,46 +2849,158 @@ Contact: 94884 93434`}
                   </div>
                 )}
 
-                {/* Submitted Questions Content */}
+                {/* Submitted Questions Content - Official ESE QP Table Template */}
                 {selectedReviewAssignment.submittedPaper ? (
-                  <div className="p-6 rounded-2xl bg-white text-zinc-900 border border-zinc-200 shadow-sm font-serif space-y-6">
-                    <div className="text-center border-b pb-4">
-                      <h2 className="font-extrabold text-lg uppercase tracking-wide">End Semester Examination</h2>
-                      <h3 className="font-bold text-base">{selectedReviewAssignment.subjectCode} - {selectedReviewAssignment.subjectTitle}</h3>
-                      <div className="flex justify-between text-xs mt-2 font-sans font-medium text-zinc-600">
-                        <span>Regulation: {selectedReviewAssignment.regulation}</span>
-                        <span>Duration: 3 Hours</span>
-                        <span>Max Marks: 100</span>
+                  <div className="p-8 rounded-2xl bg-white text-zinc-900 border border-zinc-300 shadow-md font-serif space-y-6">
+                    
+                    {/* Header Block */}
+                    <div className="text-center border-b-2 border-black pb-4 space-y-1">
+                      <h1 className="text-2xl font-bold uppercase tracking-wide font-serif text-black">
+                        END SEMESTER EXAMINATION
+                      </h1>
+                      <h2 className="text-xl font-bold text-zinc-900 font-serif">
+                        {selectedReviewAssignment.subjectCode} - {selectedReviewAssignment.subjectTitle}
+                      </h2>
+                      <div className="flex justify-between text-xs mt-3 font-sans font-medium text-zinc-800 px-2">
+                        <span>Batch: {selectedReviewAssignment.batch || "2023-2027"}</span>
+                        <span>Regulation: R-{selectedReviewAssignment.regulation || "AU - R2021"}</span>
+                        <span>Max Marks: {selectedReviewAssignment.submittedPaper.maxMarks || 100}</span>
+                        <span>Duration: {selectedReviewAssignment.submittedPaper.duration || "3 Hours"}</span>
                       </div>
                     </div>
 
+                    {/* Question Paper Sections & Tables */}
                     {selectedReviewAssignment.submittedPaper.sections?.map((sec) => (
-                      <div key={sec.id} className="space-y-3">
-                        <h4 className="font-bold border-b pb-1 text-sm font-sans uppercase text-zinc-900">
-                          {sec.name} ({sec.instructions})
-                        </h4>
-
-                        <div className="space-y-3 text-sm">
-                          {sec.questions?.map((q, qIdx) => (
-                            <div key={qIdx} className="flex items-start justify-between gap-4">
-                              <div className="flex-1">
-                                <span className="font-bold mr-2">{qIdx + 1}.</span>
-                                <span>{q.text}</span>
-                                {q.optionB && (
-                                  <div className="mt-1.5 pl-6 text-xs text-zinc-700 italic">
-                                    <span className="font-bold font-sans not-italic block my-1">OR</span>
-                                    <span>(b) {q.optionB}</span>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-right text-xs font-sans text-zinc-600 shrink-0">
-                                [{q.marks || 2} Marks]
-                              </div>
-                            </div>
-                          ))}
+                      <div key={sec.id || sec.name} className="space-y-2 my-6">
+                        <div className="border-b-2 border-black pb-1">
+                          <h3 className="font-bold text-base uppercase font-sans text-black tracking-wide">
+                            {sec.name}
+                          </h3>
+                          <p className="text-xs italic text-zinc-700 font-sans">
+                            {sec.instructions || (sec.name?.includes("A") ? "Answer ALL Questions (10 x 2 = 20 Marks)" : "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)")}
+                          </p>
                         </div>
+
+                        <table className="w-full border-collapse border border-black text-xs font-serif my-2">
+                          <thead>
+                            <tr className="bg-zinc-200 border-b border-black text-center font-bold font-sans text-black">
+                              <th className="border border-black p-2 w-16 text-center">Q. No.</th>
+                              <th className="border border-black p-2 text-center">Question</th>
+                              <th className="border border-black p-2 w-16 text-center">Marks</th>
+                              <th className="border border-black p-2 w-20 text-center">K-Level</th>
+                              <th className="border border-black p-2 w-16 text-center">CO</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sec.questions?.map((q, qIdx) => {
+                              const isEitherOr = q.optionB !== undefined || q.type === "either_or";
+                              const isPartA = !isEitherOr && (q.marks === 2 || !q.marks);
+                              const qNoNum = q.qNo || (qIdx + 1);
+                              const qNoDisplay = isPartA ? (String(qNoNum).padStart(2, '0') + '.') : String(qNoNum);
+
+                              if (!isEitherOr) {
+                                return (
+                                  <tr key={qIdx} className="border-b border-black">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {qNoDisplay}
+                                    </td>
+                                    <td className="border border-black p-2.5 align-middle">
+                                      <div
+                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                        dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
+                                      />
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-sans font-bold align-middle">
+                                      {q.marks || 2}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.blooms || q.kLevel || "K1"}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.co || "CO1"}
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              return (
+                                <Fragment key={qIdx}>
+                                  {/* Option A Row */}
+                                  <tr className="border-b border-black">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {qNoNum}(a)
+                                    </td>
+                                    <td className="border border-black p-2.5 align-middle">
+                                      <div
+                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                        dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
+                                      />
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-sans font-bold align-middle">
+                                      {q.marks || 16}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.blooms || q.kLevel || "K1"}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.co || "CO1"}
+                                    </td>
+                                  </tr>
+
+                                  {/* Centered (OR) Divider Row */}
+                                  <tr className="border-b border-black">
+                                    <td className="border border-black p-1 bg-zinc-50"></td>
+                                    <td className="border border-black p-1.5 text-center font-bold font-sans text-xs tracking-widest text-zinc-900 bg-zinc-50">
+                                      (OR)
+                                    </td>
+                                    <td className="border border-black p-1 bg-zinc-50"></td>
+                                    <td className="border border-black p-1 bg-zinc-50"></td>
+                                    <td className="border border-black p-1 bg-zinc-50"></td>
+                                  </tr>
+
+                                  {/* Option B Row */}
+                                  <tr className="border-b border-black">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {qNoNum}(b)
+                                    </td>
+                                    <td className="border border-black p-2.5 align-middle">
+                                      <div
+                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                        dangerouslySetInnerHTML={{ __html: q.optionB || "(Option b text pending)" }}
+                                      />
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-sans font-bold align-middle">
+                                      {q.marks || 16}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.optionBBlooms || q.blooms || q.kLevel || "K1"}
+                                    </td>
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                      {q.optionBCo || q.co || "CO1"}
+                                    </td>
+                                  </tr>
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     ))}
+
+                    {/* Footer Block */}
+                    <div className="pt-8 border-t border-zinc-300 flex items-end justify-between text-xs font-sans text-zinc-600">
+                      <div>
+                        <span className="block font-bold">External Setter Signature:</span>
+                        {selectedReviewAssignment.signatureUrl ? (
+                          <img src={selectedReviewAssignment.signatureUrl} alt="Signature" className="h-10 object-contain mt-1" />
+                        ) : (
+                          <span className="text-zinc-400 italic text-[11px] block mt-1">(Digital Signature On File)</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="font-semibold text-zinc-500">Submitted to COE</span>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="p-8 text-center text-zinc-500">
@@ -2912,6 +3238,104 @@ Contact: 94884 93434`}
                   Close Pattern Details
                 </button>
               </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* CREATE NEW EXAM SESSION MODAL */}
+        {showAddSessionModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl border border-zinc-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+              
+              {/* Modal Header */}
+              <div className="p-6 bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-950 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-white/10 backdrop-blur border border-white/20 text-white">
+                    <Calendar className="h-6 w-6 text-amber-300" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black text-white">Create New Exam Session</h2>
+                    <p className="text-[11px] font-semibold text-blue-200">Set up new semester exam event (e.g. Nov/Dec or Apr/May)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAddSessionModal(false)}
+                  className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all cursor-pointer"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Form Body */}
+              <form onSubmit={handleCreateExamSession} className="p-6 space-y-4">
+                <div>
+                  <label className={labelCls}>Exam Session Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Nov./Dec. or April/May"
+                    value={newSessionName}
+                    onChange={(e) => setNewSessionName(e.target.value)}
+                    className={inputCls}
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1 font-semibold">
+                    Enter session prefix (e.g. Nov./Dec. or April/May). The selected Academic Year will be automatically joined!
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelCls}>Academic Year *</label>
+                  <select
+                    value={newAcademicYear}
+                    onChange={(e) => setNewAcademicYear(e.target.value)}
+                    className={inputCls}
+                  >
+                    {availableAcademicYears.map(ay => (
+                      <option key={ay} value={ay}>{ay}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-zinc-500 mt-1 font-semibold">
+                    Dynamically derived from active batches in current academic calendar.
+                  </p>
+                </div>
+
+                {/* Live Session Name Preview Badge */}
+                {newSessionName.trim() && (
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs">
+                    <span className="text-[10px] uppercase font-black tracking-wider text-blue-700 block mb-0.5">
+                      Live Exam Session Name Preview:
+                    </span>
+                    <span className="font-extrabold text-[#120c7a] font-mono text-sm">
+                      {formatExamSessionName(newSessionName, newAcademicYear)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-start gap-2.5">
+                  <Sparkles className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    Creating this new session will automatically switch your COE dashboard to manage question papers for the upcoming semester!
+                  </span>
+                </div>
+
+                <div className="pt-3 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSessionModal(false)}
+                    className="px-4 py-2.5 rounded-xl border border-zinc-200 text-zinc-600 font-extrabold text-xs hover:bg-zinc-100 transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Create & Set Active</span>
+                  </button>
+                </div>
+              </form>
 
             </div>
           </div>

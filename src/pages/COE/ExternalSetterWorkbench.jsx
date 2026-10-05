@@ -135,6 +135,27 @@ export default function ExternalSetterWorkbench() {
   const [assignment, setAssignment] = useState(null);
   const [loadingAssignment, setLoadingAssignment] = useState(true);
 
+  // Active Exam Session fallback from coe_exam_sessions
+  const [activeExamSessionName, setActiveExamSessionName] = useState("Nov./Dec. 2026");
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "coe_exam_sessions"), (snap) => {
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.isCurrent && data.sessionName) {
+          setActiveExamSessionName(data.sessionName);
+        }
+      });
+    }, (err) => {
+      console.warn("coe_exam_sessions listener note:", err?.message || err);
+    });
+    return () => unsub();
+  }, []);
+
+  const effectiveExamSession = useMemo(() => {
+    return assignment?.examSession || activeExamSessionName || "Nov./Dec. 2026";
+  }, [assignment?.examSession, activeExamSessionName]);
+
   // Acceptance Form State
   const [interestStatus, setInterestStatus] = useState("Interested");
   const [signatureFile, setSignatureFile] = useState(null);
@@ -164,7 +185,13 @@ export default function ExternalSetterWorkbench() {
   ], []);
 
   const [checklistResponses, setChecklistResponses] = useState({});
-  const [examMonthYear, setExamMonthYear] = useState("April / May 2026");
+  const [examMonthYear, setExamMonthYear] = useState("Nov./Dec. 2026");
+
+  useEffect(() => {
+    if (effectiveExamSession) {
+      setExamMonthYear(effectiveExamSession);
+    }
+  }, [effectiveExamSession]);
 
   const isChecklistComplete = useMemo(() => {
     return CHECKLIST_ITEMS.every(item => checklistResponses[item.id] === "YES");
@@ -731,7 +758,7 @@ export default function ExternalSetterWorkbench() {
                   <ShieldCheck className="h-4 w-4 text-blue-700" />
                   Office of the Controller of Examinations
                 </span>
-                <span className="text-xs text-slate-500 font-semibold mt-0.5">End Semester Examinations Division</span>
+                <span className="text-xs text-slate-500 font-semibold mt-0.5">End Semester Examinations {effectiveExamSession} Division</span>
               </div>
               <div className="h-10 w-px bg-slate-200/80 hidden lg:block" />
               <div className="px-4 py-2.5 rounded-2xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-2 shadow-2xs whitespace-nowrap">
@@ -758,7 +785,7 @@ export default function ExternalSetterWorkbench() {
 
               <div className="space-y-3">
                 <h2 className="text-3xl md:text-5xl font-black text-[#120c7a] leading-tight tracking-tight">
-                  Next-Gen <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#120c7a] via-blue-700 to-indigo-800">Autonomous Evaluation</span> & Question Portal
+                  Next-Gen <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#120c7a] via-blue-700 to-indigo-800">Autonomous Examination</span> & Question Portal
                 </h2>
                 <p className="text-slate-700 text-sm md:text-base leading-relaxed font-medium max-w-2xl">
                   Welcome, Honorable External Expert. Access C.K.C.E.T's confidential Outcome-Based Education (OBE) question paper framing system with integrated CO-PO mapping, Bloom's Taxonomy analytics, and instant verification claim workflows.
@@ -774,7 +801,7 @@ export default function ExternalSetterWorkbench() {
                   C.K. College of Engineering & Technology
                 </span>
                 <span>•</span>
-                <span>Autonomous Evaluation Portal</span>
+                <span>Autonomous Examination Portal</span>
                 <span>•</span>
                 <span className="text-blue-800">Cuddalore, Tamil Nadu</span>
               </div>
@@ -896,7 +923,7 @@ export default function ExternalSetterWorkbench() {
         <footer className="relative z-20 border-t border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-3 text-center text-xs text-slate-600 font-semibold">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>© {new Date().getFullYear()} C.K. College of Engineering & Technology. All rights reserved.</span>
-            <span className="text-slate-500 text-[11px]">Designed for End Semester Autonomous Examination Framing</span>
+            <span className="text-slate-500 text-[11px]">Designed for End Semester Examinations ({effectiveExamSession}) Autonomous Framing</span>
           </div>
         </footer>
       </div>
@@ -1027,7 +1054,7 @@ export default function ExternalSetterWorkbench() {
             <div className="space-y-3 relative z-10 max-w-3xl">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider text-blue-100 bg-white/10 rounded-full border border-white/20">
-                  <Award className="h-3.5 w-3.5 text-amber-300" /> End Semester Examination (ESE)
+                  <Award className="h-3.5 w-3.5 text-amber-300" /> End Semester Examination {effectiveExamSession}
                 </span>
                 <span className="inline-flex items-center gap-1 px-3 py-1 text-[10px] font-extrabold uppercase tracking-wider text-blue-100 bg-white/10 rounded-full border border-white/20">
                   Batch: {assignment.batch}
@@ -1087,7 +1114,7 @@ export default function ExternalSetterWorkbench() {
               <div>
                 <h2 className="text-xl font-black text-[#120c7a] flex items-center gap-2.5">
                   <FileText className="h-6 w-6 text-indigo-600" />
-                  End Semester Examination Question Setter Acceptance Form
+                  End Semester Examination ({effectiveExamSession}) Question Setter Acceptance Form
                 </h2>
                 <p className="text-zinc-500 text-xs font-semibold mt-1">
                   Please review the assignment details, upload your signature, and confirm your interest.
@@ -1116,7 +1143,7 @@ export default function ExternalSetterWorkbench() {
                 <p>
                   I, <strong className="text-zinc-900 font-semibold">{authenticatedSetter.name}</strong>,
                   working as Faculty at <strong className="text-zinc-900 font-semibold">{authenticatedSetter.collegeName || "Invited Institution"}</strong>,
-                  hereby acknowledge receipt of the appointment order for setting the End Semester Examination (ESE) Question Paper
+                  hereby acknowledge receipt of the appointment order for setting the End Semester Examination ({effectiveExamSession}) Question Paper
                   for the course <strong className="text-zinc-900 font-semibold">{assignment.subjectCode} - {assignment.subjectTitle}</strong>
                   (Regulation R-{assignment.regulation}, Batch {assignment.batch}).
                 </p>
@@ -1145,7 +1172,7 @@ export default function ExternalSetterWorkbench() {
                       disabled={acceptanceSubmitted}
                       className="text-emerald-600 focus:ring-emerald-500"
                     />
-                    <span>Yes, I am Interested to set the ESE Question Paper</span>
+                    <span>Yes, I am Interested to set the End Semester Examination ({effectiveExamSession}) Question Paper</span>
                   </label>
 
                   <label className={`flex items-center gap-3 p-3.5 rounded-xl border cursor-pointer transition-all flex-1 text-xs font-bold ${interestStatus === "Not Interested"
@@ -1600,7 +1627,7 @@ export default function ExternalSetterWorkbench() {
                 {/* 5 Lines of Satisfying, Inspiring Gratitude Text */}
                 <div className="relative z-10 max-w-3xl mx-auto space-y-3 font-serif text-sm sm:text-base leading-relaxed text-blue-100/90 italic border-t border-b border-white/15 py-5 my-2">
                   <p>
-                    We extend our deepest gratitude to you for setting the End Semester Examination question paper for <strong className="text-amber-300 not-italic font-sans font-black">{assignment?.subjectCode} - {assignment?.subjectTitle}</strong>.
+                    We extend our deepest gratitude to you for setting the End Semester Examination ({effectiveExamSession}) question paper for <strong className="text-amber-300 not-italic font-sans font-black">{assignment?.subjectCode} - {assignment?.subjectTitle}</strong>.
                   </p>
                   <p>
                     Your distinguished academic expertise, meticulous Bloom's Taxonomy alignment, and dedication to assessment excellence are deeply appreciated.
@@ -1637,7 +1664,7 @@ export default function ExternalSetterWorkbench() {
             {/* Official Print/Preview Layout Document */}
             <div className="bg-white text-zinc-900 rounded-2xl p-8 sm:p-12 shadow-md font-serif space-y-6 w-full max-w-7xl mx-auto border border-zinc-300">
               <div className="text-center border-b pb-4">
-                <h1 className="text-xl font-bold uppercase tracking-wider text-[#120c7a]">End Semester Examination</h1>
+                <h1 className="text-xl font-bold uppercase tracking-wider text-[#120c7a]">End Semester Examination – {effectiveExamSession}</h1>
                 <h2 className="text-base font-bold mt-1 text-zinc-800">{assignment.subjectCode} - {assignment.subjectTitle}</h2>
                 <div className="flex justify-between text-xs mt-3 font-sans font-medium text-zinc-700 px-4">
                   <span>Batch: {assignment.batch}</span>
@@ -1850,7 +1877,7 @@ export default function ExternalSetterWorkbench() {
                       OFFICE OF THE CONTROLLER OF EXAMINATIONS
                     </h2>
                     <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-600 font-sans">
-                      CONFIDENTIAL APPOINTMENT ORDER • END SEMESTER EXAMINATIONS
+                      CONFIDENTIAL APPOINTMENT ORDER • END SEMESTER EXAMINATIONS – {effectiveExamSession.toUpperCase()}
                     </h3>
                     <div className="flex justify-between text-[11px] font-sans text-zinc-600 pt-3 border-t">
                       <span><strong>Ref:</strong> COE/ESE-QP/2026/SEC-{assignment?.id?.slice(0, 6).toUpperCase() || "88412"}</span>
@@ -1871,7 +1898,7 @@ export default function ExternalSetterWorkbench() {
                     <p>Sir / Madam,</p>
                     <p>
                       I am pleased to inform you that you have been appointed as the <strong>External Question Paper Setter</strong> for the
-                      End Semester Examinations (ESE). The details of the subject assigned to you are given below:
+                      End Semester Examinations ({effectiveExamSession}). The details of the subject assigned to you are given below:
                     </p>
                   </div>
 
@@ -2065,7 +2092,7 @@ export default function ExternalSetterWorkbench() {
               <div className="text-center space-y-1 border-b pb-4">
                 <h2 className="text-sm font-bold tracking-wider uppercase text-zinc-900">Office of the Controller of Examinations</h2>
                 <h1 className="text-base font-black uppercase tracking-wider text-[#120c7a]">QUESTION PAPER SETTING – CHECK LIST</h1>
-                <p className="text-xs font-bold text-zinc-700">B.E. / B.Tech. / M.E.– End Semester Examinations</p>
+                <p className="text-xs font-bold text-zinc-700">B.E. / B.Tech. / M.E.– End Semester Examinations {effectiveExamSession}</p>
               </div>
 
               {/* Header Fields Table */}
