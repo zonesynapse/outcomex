@@ -2156,39 +2156,72 @@ export default function CoeDashboard() {
                       <div className="bg-white p-2.5 rounded-xl border border-indigo-100 text-xs">
                         <span className="text-zinc-400 text-[10px] uppercase font-black tracking-wider block mb-0.5">Subject:</span>
                         <span className="font-bold text-zinc-900">
-                          Appointment Order & Access Link for ESE Question Paper Framing - {generatedAssignment.subjectCode} ({generatedAssignment.subjectTitle})
+                          End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
                         </span>
                       </div>
 
                       {/* Email Body Preview */}
-                      <div className="bg-white p-3 rounded-xl border border-indigo-100 text-[11px] text-zinc-800 font-mono leading-relaxed max-h-56 overflow-y-auto whitespace-pre-wrap select-all">
-{`Dear Prof. ${generatedAssignment.setterName},
+                      <div className="bg-white p-3.5 rounded-xl border border-indigo-100 text-[11px] text-zinc-800 font-mono leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap select-all">
+{`Dear Prof. ${generatedAssignment.setterName || "Faculty"},
+Good Morning!
 
-Greetings from C.K. College of Engineering & Technology (Autonomous)!
+Greetings from C.K. College of Engineering & Technology, Cuddalore!
 
-We are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).
+Sub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
 
-📌 ASSIGNMENT DETAILS:
-• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}
-• Institution: ${generatedAssignment.setterCollege || "External Institution"}
+I am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.
 
-🔐 ACCESS PORTAL & CREDENTIALS:
-• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}
-• User ID / Email: ${generatedAssignment.setterEmail}
-• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}
+The details of the question paper assignment are as follows:
 
-📋 NEXT STEPS:
-1. Click the Access Link above to log in to the COE External Setter Workbench.
-2. View and download your Appointment / Subject Order Copy.
-3. Complete and submit the Acceptance / Remuneration Form online.
-4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.
+QUESTION PAPER DETAILS:
+• Degree: ${generatedAssignment.degree || "B.E."}
+• Programme: ${generatedAssignment.programme || "ECE"}
+• Regulations: ${generatedAssignment.regulation || "R2025"}
+• Semester: ${generatedAssignment.semester || "III"}
+• Duration: ${generatedAssignment.duration || "3 Hours"}
+• Max. Marks: ${generatedAssignment.maxMarks || "100"}
 
-For any technical assistance, please reply to this email or contact the Office of the Controller of Examinations.
+SUBJECT DETAILS:
+• Subject Code: ${generatedAssignment.subjectCode}
+• Subject Name: ${generatedAssignment.subjectTitle}
+• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}
+• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}
 
-Warm Regards,
-Office of the Controller of Examinations (COE)
-C.K. College of Engineering & Technology, Cuddalore
-Website: https://zonesynapse-ckcet-obe.pages.dev`}
+NEXT-GENERATION DIGITAL QP SETTING PLATFORM:
+As part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the Nov./Dec. 2026 End Semester Examinations.
+
+You are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.
+
+• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}
+• User ID: ${generatedAssignment.setterEmail}
+• Password: ${generatedAssignment.setterPassword || "••••••••"}
+
+KEY FEATURES OF THE DIGITAL PLATFORM:
+• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.
+• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.
+• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.
+• 📤 Secure Digital Submission – Direct submission through the portal.
+• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.
+
+A copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.
+
+The question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.
+
+If any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.
+
+The remuneration for setting the question paper is Rs. 2,000/- per question paper.
+
+The appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.
+
+We sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.
+
+With regards,
+
+Dr. N. Kamalakannan
+Controller of Examinations
+C.K. College of Engineering & Technology
+Cuddalore – 607 003
+Contact: 94884 93434`}
                       </div>
 
                       {/* Email Action Buttons */}
@@ -2196,8 +2229,10 @@ Website: https://zonesynapse-ckcet-obe.pages.dev`}
                         <button
                           type="button"
                           onClick={() => {
-                            const emailText = `Subject: Appointment Order & Access Link for ESE Question Paper Framing - ${generatedAssignment.subjectCode} (${generatedAssignment.subjectTitle})\n\nDear Prof. ${generatedAssignment.setterName},\n\nGreetings from C.K. College of Engineering & Technology (Autonomous)!\n\nWe are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).\n\n📌 ASSIGNMENT DETAILS:\n• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}\n• Institution: ${generatedAssignment.setterCollege || "External Institution"}\n\n🔐 ACCESS PORTAL & CREDENTIALS:\n• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID / Email: ${generatedAssignment.setterEmail}\n• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}\n\n📋 NEXT STEPS:\n1. Click the Access Link above to log in to the COE External Setter Workbench.\n2. View and download your Appointment / Subject Order Copy.\n3. Complete and submit the Acceptance / Remuneration Form online.\n4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.\n\nWarm Regards,\nOffice of the Controller of Examinations (COE)\nC.K. College of Engineering & Technology, Cuddalore`;
-                            navigator.clipboard.writeText(emailText);
+                            const emailSubject = `End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
+                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Degree: ${generatedAssignment.degree || "B.E."}\n• Programme: ${generatedAssignment.programme || "ECE"}\n• Regulations: ${generatedAssignment.regulation || "R2025"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the Nov./Dec. 2026 End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\nThe remuneration for setting the question paper is Rs. 2,000/- per question paper.\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
+                            
+                            navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                             alert("Official Email Draft copied to clipboard!");
                           }}
                           className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all"
@@ -2207,7 +2242,7 @@ Website: https://zonesynapse-ckcet-obe.pages.dev`}
                         </button>
 
                         <a
-                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`Appointment Order & Access Link for ESE Question Paper Framing - ${generatedAssignment.subjectCode} (${generatedAssignment.subjectTitle})`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName},\n\nGreetings from C.K. College of Engineering & Technology (Autonomous)!\n\nWe are pleased to appoint you as the External Question Paper Setter for the upcoming End Semester Examination (ESE).\n\n📌 ASSIGNMENT DETAILS:\n• Subject Code & Name: ${generatedAssignment.subjectCode} - ${generatedAssignment.subjectTitle}\n• Institution: ${generatedAssignment.setterCollege || "External Institution"}\n\n🔐 ACCESS PORTAL & CREDENTIALS:\n• Access Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID / Email: ${generatedAssignment.setterEmail}\n• Security Access Key: ${generatedAssignment.setterPassword || "••••••••"}\n\n📋 NEXT STEPS:\n1. Click the Access Link above to log in to the COE External Setter Workbench.\n2. View and download your Appointment / Subject Order Copy.\n3. Complete and submit the Acceptance / Remuneration Form online.\n4. Frame and upload the Question Paper adhering to the COE ESE Guidelines & Blooms Taxonomy.\n\nWarm Regards,\nOffice of the Controller of Examinations (COE)\nC.K. College of Engineering & Technology, Cuddalore`)}`}
+                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – Nov./Dec. 2026 – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in Nov./Dec. 2026, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below.\n\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nWith regards,\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all text-center inline-flex items-center justify-center"
