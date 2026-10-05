@@ -235,6 +235,8 @@ export default function ExternalSetterWorkbench() {
         });
         setBloomsLevels(unique);
       }
+    }, (err) => {
+      console.warn("blooms_taxonomy listener note:", err?.message || err);
     });
 
     return () => unsub();
@@ -255,6 +257,8 @@ export default function ExternalSetterWorkbench() {
       });
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       setQpGuidelines(list);
+    }, (err) => {
+      console.warn("coe_qp_guidelines listener note:", err?.message || err);
     });
     return () => unsub();
   }, []);
@@ -338,6 +342,9 @@ export default function ExternalSetterWorkbench() {
       } else {
         setAssignment(null);
       }
+      setLoadingAssignment(false);
+    }, (err) => {
+      console.warn("coe_setter_assignments listener note:", err?.message || err);
       setLoadingAssignment(false);
     });
 

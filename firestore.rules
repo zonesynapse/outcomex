@@ -83,7 +83,27 @@ service cloud.firestore {
     }
 
     match /blooms_taxonomy/{domainId} {
-      allow read: if isApproved();
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_external_setters/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_setter_assignments/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /coe_qp_guidelines/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_patterns/{docId} {
+      allow read: if true;
       allow write: if isApproved();
     }
 

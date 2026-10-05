@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { getSchoolShortName, isSameInstitution } from "../utils/appraisalScore";
+import { loadAppraisalEvidences } from "../utils/appraisalStorage";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
@@ -530,8 +531,13 @@ export default function AppraisalReviews() {
 
   const availableDepts = [...new Set(appraisals.filter(a => isSameInstitution(userInstitution, a.institution || a.formData?.institution)).map((a) => a.department))].filter(Boolean);
 
-  const handleOpenDetails = (app) => {
-    setSelectedAppraisal(app);
+  const handleOpenDetails = async (app) => {
+    let appWithEvidences = app;
+    if (app && app.id) {
+      const targetColl = app.formType === "non_teaching" ? "non_teaching_appraisals" : app.formType === "hod" ? "hod_appraisals" : app.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
+      appWithEvidences = await loadAppraisalEvidences(db, targetColl, app.id, app);
+    }
+    setSelectedAppraisal(appWithEvidences);
     setActiveDetailsTab(1);
 
     // Initialize reviewer criteria scores map (HOD / Coordinator editable column).

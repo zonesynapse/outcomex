@@ -3,6 +3,7 @@ import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import evaluateAppraisal, { checkAppraisalPortalStatus, parseAppraisalDateTime, getSchoolBannerTitle, getSchoolShortName, normalizeInstitution } from "../utils/appraisalScore";
+import { saveFacultyAppraisal, loadFacultyAppraisalEvidences } from "../utils/appraisalStorage";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
@@ -217,9 +218,10 @@ export default function FacultyAppraisal() {
   useEffect(() => {
     if (!currentUser || !academicYear) return;
     const docId = `appraisal_${currentUser.uid}_${academicYear}`;
-    const unsub = onSnapshot(doc(db, "faculty_appraisals", docId), (snap) => {
+    const unsub = onSnapshot(doc(db, "faculty_appraisals", docId), async (snap) => {
       if (snap.exists()) {
-        const data = snap.data();
+        const rawData = snap.data();
+        const data = await loadFacultyAppraisalEvidences(db, docId, rawData);
         setExistingAppraisal(data);
         const savedForm = data.formData || data;
         setFormData(prev => ({
@@ -655,7 +657,7 @@ export default function FacultyAppraisal() {
     );
 
     try {
-      await setDoc(doc(db, "faculty_appraisals", docId), cleanPayload);
+      await saveFacultyAppraisal(db, docId, rawPayload);
       showToast(isSubmit ? "Appraisal Request Submitted Successfully!" : "Draft Saved Successfully!", "success");
       setIsEditingSubmitted(false);
       // Popup the criteria-wise score, then route to HOD Dashboard for department review
