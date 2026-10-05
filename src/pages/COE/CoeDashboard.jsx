@@ -199,6 +199,25 @@ export default function CoeDashboard() {
     }
   };
 
+  const handleSelectExamSession = async (newSessionName) => {
+    setSelectedExamSession(newSessionName);
+    if (!newSessionName) return;
+
+    const selectedObj = examSessions.find(s => s.sessionName === newSessionName);
+    if (!selectedObj) return;
+
+    try {
+      for (const s of examSessions) {
+        const isTarget = s.id === selectedObj.id;
+        if (Boolean(s.isCurrent) !== isTarget) {
+          await updateDoc(doc(db, "coe_exam_sessions", s.id), { isCurrent: isTarget });
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to update active exam session in Firestore:", err);
+    }
+  };
+
   // AUTO-SELECTED REGULATION BASED ON BATCH & PROGRAMME (READ-ONLY / DISABLED)
   const autoRegulation = useMemo(() => {
     if (!assignBatch) return "";
@@ -601,7 +620,7 @@ export default function CoeDashboard() {
       const map = {};
       snap.forEach((doc) => {
         const data = doc.data();
-        if (data.subjectCode && data.patternId) {
+        if (data.subjectCode && data.patternId && (!data.examSession || data.examSession === selectedExamSession)) {
           map[data.subjectCode] = data.patternId;
         }
       });
@@ -613,7 +632,12 @@ export default function CoeDashboard() {
       unsubP();
       unsubM();
     };
-  }, []);
+  }, [selectedExamSession]);
+
+  const filteredPatterns = useMemo(() => {
+    if (!selectedExamSession) return patterns;
+    return patterns.filter(p => !p.examSession || p.examSession === selectedExamSession);
+  }, [patterns, selectedExamSession]);
 
   const handleAddSection = () => {
     const nextChar = String.fromCharCode(65 + newPatternSections.length);
@@ -682,6 +706,7 @@ export default function CoeDashboard() {
         duration: newPatternDuration,
         totalMarks: Number(calculatedTotalMarks),
         sections: newPatternSections,
+        examSession: selectedExamSession,
         updatedAt: serverTimestamp(),
         ...(editingPatternId ? {} : { createdAt: serverTimestamp() })
       };
@@ -710,8 +735,9 @@ export default function CoeDashboard() {
     setAssigningPatternToCourses(true);
     try {
       const promises = selectedCoursesToAssign.map(courseCode => {
-        const mapDocId = `map_${assignBatch}_${autoRegulation}_${courseCode}`;
+        const mapDocId = `map_${selectedExamSession}_${assignBatch}_${autoRegulation}_${courseCode}`;
         return setDoc(doc(db, "coe_course_patterns", mapDocId), {
+          examSession: selectedExamSession,
           batch: assignBatch,
           regulation: autoRegulation,
           subjectCode: courseCode,
@@ -936,8 +962,12 @@ export default function CoeDashboard() {
 
   const filteredAssignments = useMemo(() => {
     if (!selectedExamSession || selectedExamSession === "ALL") return assignments;
-    return assignments.filter(a => !a.examSession || a.examSession === selectedExamSession);
+    return assignments.filter(a => a.examSession === selectedExamSession);
   }, [assignments, selectedExamSession]);
+
+  const filteredSubmittedAssignments = useMemo(() => {
+    return filteredAssignments.filter(a => a.submittedPaper || a.status === "submitted");
+  }, [filteredAssignments]);
 
   const inputCls = "w-full bg-white border border-zinc-200 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer";
   const labelCls = "text-[11px] font-black text-zinc-500 uppercase tracking-wider mb-1 block";
@@ -979,6 +1009,7 @@ export default function CoeDashboard() {
       await setDoc(doc(db, "coe_qp_guidelines", gId), {
         text: newGuidelineText.trim(),
         category: newGuidelineCategory,
+        examSession: selectedExamSession,
         order: guidelines.length + 1,
         createdAt: serverTimestamp()
       });
@@ -1017,6 +1048,7 @@ export default function CoeDashboard() {
         const gId = "g_default_" + (i + 1);
         await setDoc(doc(db, "coe_qp_guidelines", gId), {
           ...item,
+          examSession: selectedExamSession,
           order: i + 1,
           createdAt: serverTimestamp()
         });
@@ -1074,7 +1106,7 @@ export default function CoeDashboard() {
                   </span>
                   <select
                     value={selectedExamSession}
-                    onChange={(e) => setSelectedExamSession(e.target.value)}
+                    onChange={(e) => handleSelectExamSession(e.target.value)}
                     className="bg-white/95 text-[#120c7a] font-black text-xs px-2.5 py-1 rounded-lg border border-white/30 focus:outline-none cursor-pointer mt-0.5"
                   >
                     {examSessions.length === 0 ? (
@@ -1156,7 +1188,7 @@ export default function CoeDashboard() {
             <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
               activeTab === "patterns" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
             }`}>
-              {patterns.length}
+              {filteredPatterns.length}
             </span>
           </button>
 
@@ -1170,6 +1202,11 @@ export default function CoeDashboard() {
           >
             <LinkIcon className="h-4 w-4" />
             <span>Assign Subject & Order Copy</span>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
+              activeTab === "assignment" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+            }`}>
+              {filteredAssignments.length}
+            </span>
           </button>
 
           <button
@@ -1183,7 +1220,7 @@ export default function CoeDashboard() {
             <FileCheck className="h-4 w-4" />
             <span>Submitted Question Papers</span>
             <span className="ml-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
-              {assignments.filter(a => a.status === "submitted").length}
+              {filteredSubmittedAssignments.length}
             </span>
           </button>
 
@@ -1200,7 +1237,7 @@ export default function CoeDashboard() {
             <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
               activeTab === "guidelines" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
             }`}>
-              {guidelines.length}
+              {filteredGuidelines.length}
             </span>
           </button>
         </div>
@@ -1650,19 +1687,19 @@ export default function CoeDashboard() {
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4 text-[#120c7a]" />
                     <h3 className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                      Created Patterns Directory ({patterns.length})
+                      Created Patterns Directory ({filteredPatterns.length})
                     </h3>
                   </div>
                   <span className="text-[10px] text-zinc-500 font-bold">Click pattern to view details</span>
                 </div>
 
-                {patterns.length === 0 ? (
+                {filteredPatterns.length === 0 ? (
                   <div className="p-4 text-center border border-dashed border-zinc-200 rounded-2xl bg-zinc-50 text-zinc-500 text-xs">
-                    No patterns created yet. Create your first pattern above.
+                    No patterns created yet for {selectedExamSession || "active session"}. Create your first pattern above.
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                    {patterns.map((p) => {
+                    {filteredPatterns.map((p) => {
                       const mappedCount = Object.values(coursePatternMap).filter(id => id === p.id).length;
                       return (
                         <div
@@ -1753,12 +1790,12 @@ export default function CoeDashboard() {
                     onChange={(e) => setSelectedPatternForAssign(e.target.value)}
                     className={inputCls}
                   >
-                    {patterns.length === 0 ? (
-                      <option value="">-- No ESE Patterns Created Yet (Create one on the left) --</option>
+                    {filteredPatterns.length === 0 ? (
+                      <option value="">-- No ESE Patterns Created Yet for Active Session --</option>
                     ) : (
                       <>
                         <option value="">-- Choose Pattern --</option>
-                        {patterns.map(p => (
+                        {filteredPatterns.map(p => (
                           <option key={p.id} value={p.id}>
                             {p.title} ({p.totalMarks} Marks - {p.duration})
                           </option>
@@ -2715,7 +2752,7 @@ Contact: 94884 93434`}
                   </p>
                 </div>
                 <span className="text-xs font-mono bg-blue-50 text-[#120c7a] border border-blue-200 px-3 py-1 rounded-xl font-extrabold">
-                  {guidelines.length} Active Rules
+                  {filteredGuidelines.length} Active Rules
                 </span>
               </div>
 
@@ -2723,17 +2760,17 @@ Contact: 94884 93434`}
                 <div className="py-12 text-center text-zinc-400 text-xs font-semibold">
                   Loading guidelines configuration...
                 </div>
-              ) : guidelines.length === 0 ? (
+              ) : filteredGuidelines.length === 0 ? (
                 <div className="py-12 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-200 p-8 space-y-3">
                   <BookOpen className="h-10 w-10 text-zinc-300 mx-auto" />
-                  <h3 className="font-bold text-zinc-700 text-sm">No Custom Guidelines Configured</h3>
+                  <h3 className="font-bold text-zinc-700 text-sm">No Custom Guidelines Configured for {selectedExamSession || "Active Session"}</h3>
                   <p className="text-xs text-zinc-500 max-w-sm mx-auto">
                     Click &quot;Load Standard ESE Guidelines&quot; on the left to populate standard rules or add custom ones above.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {guidelines.map((g, idx) => (
+                  {filteredGuidelines.map((g, idx) => (
                     <div key={g.id} className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 flex items-start justify-between gap-4 transition-all hover:bg-white hover:shadow-xs">
                       <div className="flex items-start gap-3">
                         <div className="h-6 w-6 rounded-full bg-[#120c7a] text-white flex items-center justify-center font-black text-[11px] shrink-0 mt-0.5">
