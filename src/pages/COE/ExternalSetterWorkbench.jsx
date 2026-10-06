@@ -8,9 +8,76 @@ import {
   Lock, Eye, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
   Send, Edit3, BookOpen, Layers, RefreshCw, ChevronRight, Landmark, X, Printer,
   ShieldCheck, Award, FileCheck, Building2, Check, ArrowLeft, Info, HelpCircle,
-  ClipboardCheck, Mail
+  ClipboardCheck, Mail, Camera, ExternalLink
 } from "lucide-react";
 import { uploadFile } from "../../utils/fileUpload";
+import MathTemplateToolbar from "../../components/MathTemplateToolbar";
+
+const optimizeBase64Image = (base64Str, maxTargetKB = 30) => {
+  return new Promise((resolve) => {
+    if (!base64Str || typeof base64Str !== 'string') return resolve(base64Str);
+    const sizeInKB = Math.round((base64Str.length * 3) / 4) / 1024;
+    if (sizeInKB <= maxTargetKB) {
+      return resolve(base64Str);
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      const maxDim = 600;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(80, width);
+      canvas.height = Math.max(80, height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      let quality = 0.70;
+      let compressed = canvas.toDataURL('image/jpeg', quality);
+      let compSizeKB = Math.round((compressed.length * 3) / 4) / 1024;
+
+      while (compSizeKB > maxTargetKB && quality > 0.20) {
+        quality -= 0.10;
+        compressed = canvas.toDataURL('image/jpeg', quality);
+        compSizeKB = Math.round((compressed.length * 3) / 4) / 1024;
+      }
+
+      resolve(compressed.length < base64Str.length ? compressed : base64Str);
+    };
+    img.onerror = () => resolve(base64Str);
+    img.src = base64Str;
+  });
+};
+
+const optimizeHtmlImages = async (html) => {
+  if (!html || typeof html !== 'string') return html;
+  const imgRegex = /src=["'](data:image\/[^"']+)["']/gi;
+  const matches = [...html.matchAll(imgRegex)];
+  if (matches.length === 0) return html;
+
+  let updatedHtml = html;
+  for (const m of matches) {
+    const rawSrc = m[1];
+    const optSrc = await optimizeBase64Image(rawSrc, 30);
+    if (optSrc !== rawSrc) {
+      updatedHtml = updatedHtml.replace(rawSrc, optSrc);
+    }
+  }
+  return updatedHtml;
+};
 
 // Reusable CKEditor component for rich question paper text editing
 function QuestionCKEditor({ id, value, onChange, placeholder }) {
@@ -53,16 +120,22 @@ function QuestionCKEditor({ id, value, onChange, placeholder }) {
       containerRef.current.appendChild(textarea);
 
       const editor = window.CKEDITOR.replace(id, {
-        height: 120,
+        height: 140,
         removePlugins: 'elementspath',
         resize_enabled: false,
         extraPlugins: 'uploadimage,mathjax',
         mathJaxLib: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML',
         toolbar: [
-          { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Subscript', 'Superscript', '-', 'RemoveFormat'] },
-          { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight'] },
-          { name: 'insert', items: ['Image', 'Table', 'SpecialChar', 'Mathjax'] },
-          { name: 'styles', items: ['FontSize', 'TextColor'] }
+          { name: 'document', items: ['Source'] },
+          { name: 'clipboard', items: ['Cut', 'Copy', 'Paste', 'Undo', 'Redo'] },
+          { name: 'editing', items: ['Find', 'Replace', 'SelectAll'] },
+          { name: 'basicstyles', items: ['Bold', 'Italic', 'Underline', 'Strike', 'Subscript', 'Superscript', '-', 'RemoveFormat'] },
+          { name: 'paragraph', items: ['NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-', 'Blockquote', '-', 'JustifyLeft', 'JustifyCenter', 'JustifyRight', 'JustifyBlock'] },
+          { name: 'links', items: ['Link', 'Unlink'] },
+          { name: 'insert', items: ['Image', 'Table', 'HorizontalRule', 'SpecialChar', 'Mathjax'] },
+          { name: 'styles', items: ['Styles', 'Format', 'Font', 'FontSize'] },
+          { name: 'colors', items: ['TextColor', 'BGColor'] },
+          { name: 'tools', items: ['Maximize'] }
         ],
         contentsStyle: `body { font-family: 'Times New Roman', Times, serif; font-size: 11pt; line-height: 1.4; padding: 6px; } p { margin: 0 0 4px 0; } img { max-width: 100%; height: auto; }`
       });
@@ -75,10 +148,11 @@ function QuestionCKEditor({ id, value, onChange, placeholder }) {
         } catch (e) { }
       });
 
-      editor.on('change', () => {
+      editor.on('change', async () => {
         try {
           const rawData = editor.getData();
-          onChange(rawData);
+          const optData = await optimizeHtmlImages(rawData);
+          onChange(optData);
         } catch (e) { }
       });
     };
@@ -96,8 +170,9 @@ function QuestionCKEditor({ id, value, onChange, placeholder }) {
   }, [id]);
 
   return (
-    <div className="w-full rounded-xl overflow-hidden border border-zinc-200 bg-white" ref={containerRef}>
-      <textarea id={id} defaultValue={value || ""} placeholder={placeholder} className="w-full hidden" />
+    <div className="w-full rounded-xl overflow-hidden border border-zinc-200 bg-white">
+      <MathTemplateToolbar editorId={id} />
+      <div ref={containerRef} />
     </div>
   );
 }
@@ -166,7 +241,28 @@ export default function ExternalSetterWorkbench() {
   // Modal & Drawer States
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [showSyllabusDrawer, setShowSyllabusDrawer] = useState(false);
+  const [showQbDrawer, setShowQbDrawer] = useState(false);
+  const [showGuidelinesDrawer, setShowGuidelinesDrawer] = useState(false);
   const [showChecklistModal, setShowChecklistModal] = useState(false);
+
+  // Fetch Session Guidelines PDF Document from Firestore coe_session_guidelines_doc
+  const [sessionGuidelinesPdf, setSessionGuidelinesPdf] = useState(null);
+
+  useEffect(() => {
+    if (!effectiveExamSession) return;
+    const sanitizeKey = (str) => String(str || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const docId = sanitizeKey(effectiveExamSession);
+    const unsub = onSnapshot(doc(db, "coe_session_guidelines_doc", docId), (docSnap) => {
+      if (docSnap.exists()) {
+        setSessionGuidelinesPdf(docSnap.data());
+      } else {
+        setSessionGuidelinesPdf(null);
+      }
+    }, (err) => {
+      console.warn("coe_session_guidelines_doc listener note:", err?.message || err);
+    });
+    return () => unsub();
+  }, [effectiveExamSession]);
 
   // Question Paper Setting Checklist Items (Matching COE Official Document)
   const CHECKLIST_ITEMS = useMemo(() => [
@@ -788,10 +884,9 @@ export default function ExternalSetterWorkbench() {
                   Next-Gen <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#120c7a] via-blue-700 to-indigo-800">Autonomous Examination</span> & Question Portal
                 </h2>
                 <p className="text-slate-700 text-sm md:text-base leading-relaxed font-medium max-w-2xl">
-                  Welcome, Honorable External Expert. Access C.K.C.E.T's confidential Outcome-Based Education (OBE) question paper framing system with integrated CO-PO mapping, Bloom's Taxonomy analytics, and instant verification claim workflows.
+                  Welcome, Honorable External Expert. Access CKCET confidential Outcome-Based Education (OBE) question paper framing system with integrated CO-PO mapping, Bloom's Taxonomy analytics, and instant verification claim workflows.
                 </p>
               </div>
-
 
 
               {/* INSTITUTION FOOTER BADGES */}
@@ -965,11 +1060,29 @@ export default function ExternalSetterWorkbench() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Quick Guidelines Drawer Button */}
+            <button
+              onClick={() => setShowGuidelinesDrawer(true)}
+              className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 text-xs font-bold flex items-center gap-2 border border-purple-200 transition-all cursor-pointer shadow-2xs"
+            >
+              <ShieldCheck className="h-4 w-4 text-purple-700" />
+              <span className="hidden md:inline">View Guidelines</span>
+            </button>
+
+            {/* Quick Question Bank Drawer Button */}
+            <button
+              onClick={() => setShowQbDrawer(true)}
+              className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-2 border border-amber-200 transition-all cursor-pointer shadow-2xs"
+            >
+              <FileText className="h-4 w-4 text-amber-700" />
+              <span className="hidden md:inline">View Question Bank</span>
+            </button>
+
             {/* Quick Syllabus Drawer Button */}
             <button
               onClick={() => setShowSyllabusDrawer(true)}
-              className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#120c7a] text-xs font-bold flex items-center gap-2 border border-blue-200 transition-all cursor-pointer shadow-xs"
+              className="px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#120c7a] text-xs font-bold flex items-center gap-2 border border-blue-200 transition-all cursor-pointer shadow-2xs"
             >
               <BookOpen className="h-4 w-4 text-[#120c7a]" />
               <span className="hidden md:inline">View Syllabus & Outcomes</span>
@@ -1132,7 +1245,7 @@ export default function ExternalSetterWorkbench() {
             <div className="bg-white text-zinc-900 rounded-2xl p-6 sm:p-10 shadow-md border border-zinc-300 font-serif max-w-3xl mx-auto space-y-6 relative overflow-hidden">
 
               <div className="text-center border-b border-zinc-200 pb-5 space-y-1">
-                <h3 className="text-lg font-bold uppercase tracking-wide text-zinc-900 font-serif">Controller of Examinations</h3>
+                <h3 className="text-lg font-bold uppercase tracking-wide text-zinc-900 font-serif">Office of The Controller of Examinations</h3>
                 <h4 className="text-xs font-bold text-zinc-600 font-sans">Question Paper Setter Willingness & Acceptance Declaration</h4>
                 <p className="font-sans text-[11px] text-zinc-400 pt-1">
                   Ref No: <span className="font-mono text-zinc-700">COE/ESE-QP/2026/ACC-{assignment.id?.slice(0, 8).toUpperCase() || "78912"}</span>
@@ -1217,7 +1330,11 @@ export default function ExternalSetterWorkbench() {
                         <span>Upload Signature</span>
                       </label>
 
-                      <p className="text-[11px] text-zinc-500 font-semibold italic mt-1.5 flex items-center justify-between">
+                      <p className="text-[11px] text-slate-500 font-medium mt-1">
+                        Supports PNG, JPG and JPEG formats only
+                      </p>
+
+                      <p className="text-[11px] text-zinc-500 font-semibold italic mt-1 flex items-center justify-between">
                         <span>It is used for question paper purpose only</span>
                         <span className="text-amber-700 font-bold not-italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Max size: 30 KB</span>
                       </p>
@@ -1305,7 +1422,28 @@ export default function ExternalSetterWorkbench() {
                 </span>
               </div>
 
-              {syllabusData ? (
+              {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? (
+                <div className="space-y-3">
+                  <div className="p-2.5 bg-blue-50 border border-blue-200/90 rounded-2xl text-[11px] font-bold text-[#120c7a] flex items-center justify-between">
+                    <span className="truncate max-w-[170px]">📄 {assignment.syllabusFileName || "Course Syllabus PDF"}</span>
+                    <a
+                      href={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-700 underline font-extrabold hover:text-blue-900 shrink-0"
+                    >
+                      Fullscreen
+                    </a>
+                  </div>
+                  <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner h-[620px]">
+                    <iframe
+                      src={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                      title="Uploaded Course Syllabus PDF"
+                      className="w-full h-full border-none"
+                    />
+                  </div>
+                </div>
+              ) : syllabusData ? (
                 <div className="space-y-3 max-h-[75vh] overflow-y-auto pr-1">
                   {syllabusData.units?.map((u, idx) => (
                     <div key={idx} className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-1">
@@ -1320,7 +1458,7 @@ export default function ExternalSetterWorkbench() {
                 </div>
               ) : (
                 <div className="py-8 text-center text-zinc-500 text-xs font-semibold">
-                  Loading syllabus details...
+                  No syllabus document or unit details available.
                 </div>
               )}
             </div>
@@ -1383,6 +1521,16 @@ export default function ExternalSetterWorkbench() {
               </div>
 
               <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm space-y-6">
+                {/* Image Limit Guideline Banner matching Image 1 */}
+                <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200/90 text-blue-900 text-xs font-semibold flex items-center gap-2.5 shadow-2xs">
+                  <div className="p-1.5 rounded-lg bg-blue-600 text-white shrink-0">
+                    <Camera className="h-4 w-4" />
+                  </div>
+                  <span>
+                    <strong>Image Limit Guideline:</strong> Question diagrams & images are automatically optimized to <strong>≤30KB</strong> per image to keep paper generation fast and reliable.
+                  </span>
+                </div>
+
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
                   <div>
                     <h2 className="text-lg font-black text-[#120c7a] flex items-center gap-2">
@@ -1852,12 +2000,42 @@ export default function ExternalSetterWorkbench() {
 
               {assignment?.orderCopyUrl ? (
                 /* If orderCopyUrl is provided in Firestore */
-                assignment.orderCopyUrl.endsWith(".pdf") ? (
-                  <iframe
-                    src={assignment.orderCopyUrl}
-                    className="w-full h-[65vh] rounded-2xl border border-zinc-300 bg-white shadow-md"
-                    title="Appointment Order Copy PDF"
-                  />
+                (assignment.orderCopyUrl.startsWith("data:application/pdf") || assignment.orderCopyUrl.includes(".pdf") || assignment.orderCopyUrl.includes("pdf")) ? (
+                  <div className="w-full space-y-3">
+                    <div className="flex justify-end">
+                      <a
+                        href={assignment.orderCopyUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3.5 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open Document in New Tab
+                      </a>
+                    </div>
+                    <object
+                      data={assignment.orderCopyUrl}
+                      type="application/pdf"
+                      className="w-full h-[65vh] rounded-2xl border border-zinc-300 bg-white shadow-md"
+                    >
+                      <iframe
+                        src={assignment.orderCopyUrl}
+                        className="w-full h-full rounded-2xl border-none"
+                        title="Appointment Order Copy PDF"
+                      >
+                        <div className="p-6 text-center space-y-3 bg-white rounded-2xl border border-zinc-200">
+                          <p className="text-xs text-zinc-700 font-bold">Document preview restricted by browser settings.</p>
+                          <a
+                            href={assignment.orderCopyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold inline-block"
+                          >
+                            Click to View / Download Appointment Order Copy
+                          </a>
+                        </div>
+                      </iframe>
+                    </object>
+                  </div>
                 ) : (
                   <div className="flex justify-center bg-white p-4 rounded-2xl border border-zinc-200 shadow-md">
                     <img
@@ -1978,29 +2156,205 @@ export default function ExternalSetterWorkbench() {
       {/* ========================================================================= */}
       {/* 5. FLOATING QUICK SYLLABUS DRAWER */}
       {/* ========================================================================= */}
-      {showSyllabusDrawer && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/50 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-6 overflow-y-auto animate-in slide-in-from-right duration-300">
+      {/* ========================================================================= */}
+      {/* 3. FLOATING GUIDELINES DRAWER / PDF VIEWER */}
+      {/* ========================================================================= */}
+      {showGuidelinesDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-2xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
 
-            <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
-              <div className="flex items-center gap-2 text-[#120c7a] font-black text-sm">
-                <BookOpen className="h-5 w-5 text-[#120c7a]" />
-                <span>Subject Syllabus Quick Reference</span>
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
+              <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
+                <ShieldCheck className="h-5 w-5 text-purple-700" />
+                <span>Question Setting Guidelines & Regulations</span>
               </div>
-              <button
-                onClick={() => setShowSyllabusDrawer(false)}
-                className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {sessionGuidelinesPdf?.url && (
+                  <a
+                    href={sessionGuidelinesPdf.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-purple-50 text-purple-900 border border-purple-200 hover:bg-purple-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-purple-700" />
+                    Open PDF in New Tab
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowGuidelinesDrawer(false)}
+                  className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
-            {syllabusData ? (
-              <div className="space-y-4 flex-1 overflow-y-auto pr-1">
-                <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-2xl text-xs font-bold text-[#120c7a]">
-                  {syllabusData.subjectCode} - {syllabusData.subjectTitle}
-                </div>
+            {/* Session Title Badge */}
+            <div className="p-3 bg-purple-50 border border-purple-200/90 rounded-2xl text-xs font-bold text-purple-900 flex items-center justify-between shrink-0">
+              <span>{effectiveExamSession} - Official Question Setting Guidelines</span>
+              <span className="text-[10px] bg-purple-200/80 text-purple-950 font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider">
+                {sessionGuidelinesPdf?.url ? "Official Guidelines PDF" : "Configured Rules"}
+              </span>
+            </div>
 
+            {/* Content Display: PDF Viewer if uploaded, or rules list */}
+            {sessionGuidelinesPdf?.url ? (
+              <div className="flex-1 flex flex-col space-y-2 min-h-0">
+                <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
+                  <iframe
+                    src={sessionGuidelinesPdf.url}
+                    title="Uploaded Guidelines PDF Document"
+                    className="w-full h-full flex-1 border-none min-h-[550px]"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 flex-1 overflow-y-auto pr-1">
+                {qpGuidelines && qpGuidelines.length > 0 ? (
+                  qpGuidelines.map((g, idx) => (
+                    <div key={g.id || idx} className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-purple-900 text-xs block">
+                          Rule #{idx + 1}
+                        </span>
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-purple-100 text-purple-900">
+                          {g.category || "Mandatory"}
+                        </span>
+                      </div>
+                      <p className="text-zinc-700 text-xs leading-relaxed font-medium">
+                        {g.text}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-16 text-center text-zinc-500 text-xs font-semibold flex flex-col items-center justify-center gap-2">
+                    <ShieldCheck className="h-10 w-10 text-zinc-300 stroke-1" />
+                    <p>No guidelines PDF or custom rules uploaded yet for this session.</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. FLOATING QUESTION BANK DRAWER / PDF VIEWER */}
+      {/* ========================================================================= */}
+      {showQbDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-2xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
+              <div className="flex items-center gap-2 text-amber-900 font-black text-sm">
+                <FileText className="h-5 w-5 text-amber-700" />
+                <span>Question Bank Reference PDF</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {(assignment?.qbUrl || assignment?.qbFileUrl) && (
+                  <a
+                    href={assignment.qbUrl || assignment.qbFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-amber-700" />
+                    Open PDF in New Tab
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowQbDrawer(false)}
+                  className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Course Title Badge */}
+            <div className="p-3 bg-amber-50 border border-amber-200/90 rounded-2xl text-xs font-bold text-amber-900 flex items-center justify-between shrink-0">
+              <span>{assignment?.subjectCode} - {assignment?.subjectTitle || "Course Question Bank"}</span>
+              <span className="text-[10px] bg-amber-200/80 text-amber-950 font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider">
+                {(assignment?.qbUrl || assignment?.qbFileUrl) ? "Official QB Document" : "No Document"}
+              </span>
+            </div>
+
+            {/* Content Display: QB PDF Viewer or Empty State */}
+            {(assignment?.qbUrl || assignment?.qbFileUrl) ? (
+              <div className="flex-1 flex flex-col space-y-2 min-h-0">
+                <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
+                  <iframe
+                    src={assignment.qbUrl || assignment.qbFileUrl}
+                    title="Uploaded Question Bank PDF"
+                    className="w-full h-full flex-1 border-none min-h-[550px]"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="py-16 text-center text-zinc-500 text-xs font-semibold flex flex-col items-center justify-center gap-2">
+                <FileText className="h-10 w-10 text-zinc-300 stroke-1" />
+                <p>No Question Bank PDF uploaded for this assignment.</p>
+                <p className="text-[11px] text-zinc-400">COE Admin can upload the Question Bank PDF during assignment creation.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. FLOATING QUICK SYLLABUS & OUTCOMES DRAWER / PDF VIEWER */}
+      {/* ========================================================================= */}
+      {showSyllabusDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-2xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
+              <div className="flex items-center gap-2 text-[#120c7a] font-black text-sm">
+                <BookOpen className="h-5 w-5 text-[#120c7a]" />
+                <span>Subject Syllabus & Outcomes Reference</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) && (
+                  <a
+                    href={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-blue-50 text-[#120c7a] border border-blue-200 hover:bg-blue-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open PDF in New Tab
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowSyllabusDrawer(false)}
+                  className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Course Title Badge */}
+            <div className="p-3 bg-blue-50 border border-blue-200/90 rounded-2xl text-xs font-bold text-[#120c7a] flex items-center justify-between shrink-0">
+              <span>{assignment?.subjectCode || syllabusData?.subjectCode} - {assignment?.subjectTitle || syllabusData?.subjectTitle || "Course Syllabus"}</span>
+              <span className="text-[10px] bg-blue-200/80 text-blue-900 font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider">
+                {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? "Official PDF Document" : "Standard Syllabus"}
+              </span>
+            </div>
+
+            {/* Content Display: PDF Viewer or Unit List */}
+            {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? (
+              <div className="flex-1 flex flex-col space-y-2 min-h-0">
+                <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
+                  <iframe
+                    src={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                    title="Uploaded Course Syllabus PDF"
+                    className="w-full h-full flex-1 border-none min-h-[550px]"
+                  />
+                </div>
+              </div>
+            ) : syllabusData ? (
+              <div className="space-y-4 flex-1 overflow-y-auto pr-1">
                 {syllabusData.units?.map((u, idx) => (
                   <div key={idx} className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2">
                     <span className="font-extrabold text-[#120c7a] text-xs block">
@@ -2013,8 +2367,10 @@ export default function ExternalSetterWorkbench() {
                 ))}
               </div>
             ) : (
-              <div className="py-12 text-center text-zinc-500 text-xs font-semibold">
-                No syllabus details available.
+              <div className="py-16 text-center text-zinc-500 text-xs font-semibold flex flex-col items-center justify-center gap-2">
+                <BookOpen className="h-10 w-10 text-zinc-300 stroke-1" />
+                <p>No syllabus PDF document or unit details uploaded yet for this assignment.</p>
+                <p className="text-[11px] text-zinc-400">COE Admin can upload the PDF syllabus during assignment creation.</p>
               </div>
             )}
           </div>

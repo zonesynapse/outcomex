@@ -1745,13 +1745,46 @@ const isDeptMatch = (docDept, targetDept) => {
         const data = {};
         snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         const all = [];
-        Object.entries(data).forEach(([compositeKey, versions]) => {
-          Object.entries(versions || {}).forEach(([id, qp]) => {
-            all.push({ ...(qp || {}), id, compositeKey });
-          });
+        Object.entries(data).forEach(([compositeKey, docData]) => {
+          if (!docData || typeof docData !== 'object') return;
+          const isFlatDoc = docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name;
+          if (isFlatDoc) {
+            all.push({
+              ...docData,
+              id: docData.id || docData.qpId || 'Exam',
+              compositeKey,
+              _isFlatDoc: true
+            });
+          } else {
+            Object.entries(docData).forEach(([vId, qp]) => {
+              if (qp && typeof qp === 'object' && !Array.isArray(qp)) {
+                if (qp.subject || qp.subject_code || qp.parts || qp.assignment_config || qp.status || qp.created_by) {
+                  all.push({ ...qp, id: vId, compositeKey, _isFlatDoc: false });
+                }
+              }
+            });
+          }
         });
+        const myUid = String(currentUid || '').trim();
+        const hodDeptClean = hodDepartment ? sanitizeKey(hodDepartment).toLowerCase().replace(/[_ ]+/g, '') : '';
+
         const forwarded = all
-          .filter((qp) => qp?.status === "forwarded" && qp?.forwarded_to === currentUid)
+          .filter((qp) => {
+            const st = String(qp?.status || '').toLowerCase().trim();
+            if (st !== "forwarded") return false;
+
+            const targetUid = String(qp?.forwarded_to || '').trim();
+            if (targetUid && targetUid === myUid) return true;
+
+            if (qp?.ac_approved && hodDeptClean) {
+              const paperDeptRaw = qp?.department || (qp?.compositeKey ? qp.compositeKey.split('_20')[0] : '');
+              const paperDeptClean = sanitizeKey(paperDeptRaw || '').toLowerCase().replace(/[_ ]+/g, '');
+              if (paperDeptClean && (paperDeptClean === hodDeptClean || paperDeptClean.includes(hodDeptClean) || hodDeptClean.includes(paperDeptClean))) {
+                return true;
+              }
+            }
+            return false;
+          })
           .sort((a, b) => {
             const at = new Date(a.forwarded_at || a.saved_at || 0).getTime();
             const bt = new Date(b.forwarded_at || b.saved_at || 0).getTime();
@@ -1763,7 +1796,7 @@ const isDeptMatch = (docDept, targetDept) => {
       () => { setTasks([]); setTasksLoading(false); }
     );
     return () => unsub();
-  }, [currentUid]);
+  }, [currentUid, hodDepartment]);
 
   useEffect(() => {
     if (!hodDepartment) {

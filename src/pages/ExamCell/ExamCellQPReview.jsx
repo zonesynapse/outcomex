@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, collection, getDoc, onSnapshot, setDoc, deleteField } from "firebase/firestore";
 import {
   FileText, Eye, X, CheckCircle2, Edit2, Loader2, Search, Landmark,
   Clock, CalendarCheck2, ShieldCheck, Sparkles, ArrowLeft, BookOpen,
@@ -135,10 +135,22 @@ const flattenQps = (data) => {
     const isFlat = !!(docData && typeof docData === 'object' && (docData.subject || docData.subject_code || docData.parts || docData.assignment_config || docData.qpaper_name));
     const deptFromKey = formatDeptBadge(extractDeptFromCompositeKey(compositeKey));
     if (isFlat) {
-      all.push({ ...docData, id: compositeKey, compositeKey, department: docData.department || deptFromKey });
+      all.push({
+        ...docData,
+        id: docData.id || docData.qpId || compositeKey,
+        compositeKey,
+        department: docData.department || deptFromKey,
+        _isFlatDoc: true
+      });
     } else {
       Object.entries(docData || {}).forEach(([id, qp]) => {
-        all.push({ ...(qp || {}), id, compositeKey, department: qp.department || deptFromKey });
+        all.push({
+          ...(qp || {}),
+          id,
+          compositeKey,
+          department: qp.department || deptFromKey,
+          _isFlatDoc: false
+        });
       });
     }
   });
@@ -726,19 +738,28 @@ export default function ExamCellQPReview() {
       return;
     }
     try {
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, {
-        [selectedQP.id]: {
-          status: 'approved_by_coe',
-          coe_signature_url: coeSignature,
-          coe_approved_by: coeName,
-          coe_approved_at: now,
-          coe_comments: null,
-          forwarded_to: null,
-          updated_at: now
+      const updates = {
+        status: 'approved_by_coe',
+        coe_signature_url: coeSignature,
+        coe_approved_by: coeName,
+        coe_approved_at: now,
+        coe_comments: null,
+        forwarded_to: null,
+        updated_at: now
+      };
+      const isFlat = selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__')) || selectedQP.compositeKey.includes('__');
+      if (isFlat) {
+        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
+        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
+        if (selectedQP.id && selectedQP.id !== docId && selectedQP.id !== 'Exam') {
+          try {
+            await setDoc(doc(db, 'generated_qps', docId), { [selectedQP.id]: deleteField() }, { merge: true });
+          } catch { /* ignore if not present */ }
         }
-      }, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
+      }
       showToast("Question paper approved and published by the Exam Cell.", "success");
       setShowQPModal(false);
       setSelectedQP(null);
@@ -754,18 +775,22 @@ export default function ExamCellQPReview() {
       return;
     }
     try {
-      const qpRef = doc(db, 'generated_qps', selectedQP.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, {
-        [selectedQP.id]: {
-          status: 'recorrected',
-          forwarded_to: selectedQP.forwarded_by,
-          forwarded_by: null,
-          coe_comments: recorrectComments.trim(),
-          coe_signature_url: null,
-          updated_at: now
-        }
-      }, { merge: true });
+      const updates = {
+        status: 'recorrected',
+        forwarded_to: selectedQP.forwarded_by,
+        forwarded_by: null,
+        coe_comments: recorrectComments.trim(),
+        coe_signature_url: null,
+        updated_at: now
+      };
+      const isFlat = selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__')) || selectedQP.compositeKey.includes('__');
+      if (isFlat) {
+        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
+        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
+      }
       showToast("Question paper sent back for recorrection.", "success");
       setShowRecorrectModal(false);
       setShowQPModal(false);
@@ -782,28 +807,33 @@ export default function ExamCellQPReview() {
     setAllocating(true);
     try {
       const qp = allocModal.qp;
-      const qpRef = doc(db, 'generated_qps', qp.compositeKey);
       const now = new Date().toISOString();
-      await setDoc(qpRef, {
-        [qp.id]: {
-          allocated: true,
-          allocatedTo: {
-            examDate: scheduleSlot.examDate,
-            session: scheduleSlot.slot || "",
-            startTime: scheduleSlot.startTime || "",
-            endTime: scheduleSlot.endTime || "",
-            subjectCode: scheduleSlot.code,
-            batch: scheduleSlot.batch,
-            semester: scheduleSlot.semester,
-            academicYear: scheduleSlot.academicYear,
-            examName: scheduleSlot.examName || "",
-            allocatedBy: coeName,
-            allocatedByUid: currentUid,
-            allocatedAt: now
-          },
-          updated_at: now
-        }
-      }, { merge: true });
+      const updates = {
+        allocated: true,
+        allocatedTo: {
+          examDate: scheduleSlot.examDate,
+          session: scheduleSlot.slot || "",
+          startTime: scheduleSlot.startTime || "",
+          endTime: scheduleSlot.endTime || "",
+          subjectCode: scheduleSlot.code,
+          batch: scheduleSlot.batch,
+          semester: scheduleSlot.semester,
+          academicYear: scheduleSlot.academicYear,
+          examName: scheduleSlot.examName || "",
+          allocatedBy: coeName,
+          allocatedByUid: currentUid,
+          allocatedAt: now
+        },
+        status: 'approved_by_coe',
+        updated_at: now
+      };
+      const isFlat = qp._isFlatDoc || (qp.id && qp.id.includes('__')) || qp.compositeKey.includes('__');
+      if (isFlat) {
+        const docId = qp.compositeKey.includes('__') ? qp.compositeKey : `${qp.compositeKey}__${qp.id}`;
+        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
+      } else {
+        await setDoc(doc(db, 'generated_qps', qp.compositeKey), { [qp.id]: updates }, { merge: true });
+      }
       showToast(`QP allocated to ${scheduleSlot.examDate} (${scheduleSlot.slot || "FN"}) successfully!`, "success");
       setAllocModal({ open: false, qp: null });
     } catch (error) {

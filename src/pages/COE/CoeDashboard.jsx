@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { db } from "../../firebase";
-import { 
-  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp 
+import {
+  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp
 } from "firebase/firestore";
-import { 
-  Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon, 
-  Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle, 
+import {
+  Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon,
+  Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle,
   Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar
 } from "lucide-react";
 import Layout from "../../components/Layout";
@@ -291,7 +291,7 @@ export default function CoeDashboard() {
     activeProgs.forEach(prog => {
       const pKey = formatProgrammeKey(prog);
       const regForProg = getRegulationForBatch(pKey, assignBatch) || autoRegulation;
-      
+
       allSyllabusDocs.forEach(sDoc => {
         const docIdLower = sDoc.id.toLowerCase();
         // Check if doc matches programme and regulation
@@ -301,7 +301,7 @@ export default function CoeDashboard() {
         if (regMatches || progMatches) {
           const sems = sDoc.data?.semesters || {};
           const docDept = sDoc.data?.department || sDoc.data?.dept || "CSE";
-          
+
           Object.entries(sems).forEach(([semKey, subList]) => {
             if (assignSemester && String(semKey) !== String(assignSemester)) return;
             if (Array.isArray(subList)) {
@@ -345,7 +345,7 @@ export default function CoeDashboard() {
       const title = String(docData.subjectTitle || docData.courseName || docData.subjectName || "").trim();
       const sem = String(docData.semester || "1");
       const docDept = docData.department || docData.dept || "CSE";
-      
+
       if (code && !code.includes("_")) {
         if (assignSemester && sem !== String(assignSemester)) return;
         if (!byCode[code]) {
@@ -418,7 +418,7 @@ export default function CoeDashboard() {
     const subjectList = Object.values(byCode).map(s => {
       const depts = s.departments.filter(Boolean);
       const isCommon = depts.length > 1 || depts.includes("Overall") || s.department === "Overall";
-      
+
       const shortDepts = Array.from(new Set(depts.map(getDeptShortCode))).filter(Boolean);
       const deptDisplay = isCommon
         ? (shortDepts.length > 0 ? `COMMON (${shortDepts.join(", ")})` : "COMMON (All Depts)")
@@ -445,8 +445,8 @@ export default function CoeDashboard() {
   const filteredSubjects = useMemo(() => {
     if (!courseSearchQuery.trim()) return fetchedSubjects;
     const q = courseSearchQuery.toLowerCase().replace(/\s+/g, "").trim();
-    return fetchedSubjects.filter(s => 
-      s.code.toLowerCase().replace(/\s+/g, "").includes(q) || 
+    return fetchedSubjects.filter(s =>
+      s.code.toLowerCase().replace(/\s+/g, "").includes(q) ||
       s.title.toLowerCase().includes(q) ||
       s.department.toLowerCase().includes(q) ||
       s.deptDisplay.toLowerCase().includes(q) ||
@@ -511,9 +511,9 @@ export default function CoeDashboard() {
         createdAt: serverTimestamp(),
       });
 
-      setSetterFeedback({ 
-        type: "success", 
-        message: `External Setter ${newSetterName} created successfully with password: ${pwdToSave}` 
+      setSetterFeedback({
+        type: "success",
+        message: `External Setter ${newSetterName} created successfully with password: ${pwdToSave}`
       });
 
       setNewSetterName("");
@@ -550,7 +550,7 @@ export default function CoeDashboard() {
   };
 
   const filteredSetters = useMemo(() => {
-    return setters.filter(s => 
+    return setters.filter(s =>
       s.name?.toLowerCase().includes(setterSearch.toLowerCase()) ||
       s.collegeName?.toLowerCase().includes(setterSearch.toLowerCase()) ||
       s.email?.toLowerCase().includes(setterSearch.toLowerCase())
@@ -567,7 +567,7 @@ export default function CoeDashboard() {
   // Dynamic Pattern Creator Form State
   const [newPatternTitle, setNewPatternTitle] = useState("");
   const [newPatternDuration, setNewPatternDuration] = useState("3 Hours");
-  
+
   const [newPatternSections, setNewPatternSections] = useState([
     { id: "part_a", name: "Part A", count: 10, marksPerQ: 2, choiceType: "compulsory", instructions: "Answer ALL Questions (10 x 2 = 20 Marks)" },
     { id: "part_b", name: "Part B", count: 5, marksPerQ: 13, choiceType: "either_or", instructions: "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)" }
@@ -643,16 +643,16 @@ export default function CoeDashboard() {
     const nextChar = String.fromCharCode(65 + newPatternSections.length);
     const secId = `part_${nextChar.toLowerCase()}`;
     const secName = `Part ${nextChar}`;
-    
+
     setNewPatternSections([
       ...newPatternSections,
-      { 
-        id: secId, 
-        name: secName, 
-        count: 5, 
-        marksPerQ: 10, 
-        choiceType: "either_or", 
-        instructions: `Answer ALL Questions in ${secName}` 
+      {
+        id: secId,
+        name: secName,
+        count: 5,
+        marksPerQ: 10,
+        choiceType: "either_or",
+        instructions: `Answer ALL Questions in ${secName}`
       }
     ]);
   };
@@ -734,8 +734,9 @@ export default function CoeDashboard() {
 
     setAssigningPatternToCourses(true);
     try {
+      const sanitizeKey = (str) => String(str || "").replace(/[^a-zA-Z0-9_-]/g, "_");
       const promises = selectedCoursesToAssign.map(courseCode => {
-        const mapDocId = `map_${selectedExamSession}_${assignBatch}_${autoRegulation}_${courseCode}`;
+        const mapDocId = `map_${sanitizeKey(selectedExamSession)}_${sanitizeKey(assignBatch)}_${sanitizeKey(autoRegulation)}_${sanitizeKey(courseCode)}`;
         return setDoc(doc(db, "coe_course_patterns", mapDocId), {
           examSession: selectedExamSession,
           batch: assignBatch,
@@ -762,12 +763,24 @@ export default function CoeDashboard() {
   const [assSubjectCode, setAssSubjectCode] = useState("");
   const [assSetterId, setAssSetterId] = useState("");
 
-  // Order Copy Upload
+  // Order Copy Upload (<= 30 KB)
   const [orderFile, setOrderFile] = useState(null);
   const [orderFileBase64, setOrderFileBase64] = useState("");
   const [orderFileSizeKb, setOrderFileSizeKb] = useState(0);
   const [orderSizeError, setOrderSizeError] = useState("");
   const [uploadingOrder, setUploadingOrder] = useState(false);
+
+  // Question Bank PDF Upload (<= 300 KB)
+  const [qbFile, setQbFile] = useState(null);
+  const [qbFileBase64, setQbFileBase64] = useState("");
+  const [qbFileSizeKb, setQbFileSizeKb] = useState(0);
+  const [qbSizeError, setQbSizeError] = useState("");
+
+  // Syllabus PDF Upload (<= 100 KB)
+  const [syllabusFile, setSyllabusFile] = useState(null);
+  const [syllabusFileBase64, setSyllabusFileBase64] = useState("");
+  const [syllabusFileSizeKb, setSyllabusFileSizeKb] = useState(0);
+  const [syllabusSizeError, setSyllabusSizeError] = useState("");
 
   // Link Generation Result
   const [generatedAssignment, setGeneratedAssignment] = useState(null);
@@ -801,7 +814,7 @@ export default function CoeDashboard() {
 
     if (file.size > 30 * 1024) {
       setOrderSizeError(`File size is ${sizeKb} KB. Required maximum size is 30 KB! Attempting auto-compression for image...`);
-      
+
       if (file.type.startsWith("image/")) {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -855,6 +868,72 @@ export default function CoeDashboard() {
     }
   };
 
+  const handleQbFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setQbSizeError("Only PDF format is supported! Please select a valid .pdf file.");
+      setQbFile(null);
+      setQbFileBase64("");
+      setQbFileSizeKb(0);
+      return;
+    }
+
+    const sizeKb = (file.size / 1024).toFixed(1);
+    if (file.size > 500 * 1024) {
+      setQbSizeError(`Question Bank PDF size is ${sizeKb} KB. Strict maximum limit is 300 KB!`);
+      setQbFile(null);
+      setQbFileBase64("");
+      setQbFileSizeKb(Number(sizeKb));
+      return;
+    }
+
+    setQbSizeError("");
+    setQbFile(file);
+    setQbFileSizeKb(Number(sizeKb));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setQbFileBase64(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSyllabusFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setSyllabusSizeError("Only PDF format is supported! Please select a valid .pdf file.");
+      setSyllabusFile(null);
+      setSyllabusFileBase64("");
+      setSyllabusFileSizeKb(0);
+      return;
+    }
+
+    const sizeKb = (file.size / 1024).toFixed(1);
+    if (file.size > 100 * 1024) {
+      setSyllabusSizeError(`Syllabus PDF size is ${sizeKb} KB. Strict maximum limit is 100 KB!`);
+      setSyllabusFile(null);
+      setSyllabusFileBase64("");
+      setSyllabusFileSizeKb(Number(sizeKb));
+      return;
+    }
+
+    setSyllabusSizeError("");
+    setSyllabusFile(file);
+    setSyllabusFileSizeKb(Number(sizeKb));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSyllabusFileBase64(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleGenerateAssignmentLink = async () => {
     if (!assSubjectCode) {
       alert("Please select a Course / Subject.");
@@ -876,6 +955,14 @@ export default function CoeDashboard() {
       alert(`Order Copy size is ${orderFileSizeKb} KB. Maximum allowed size is 30 KB.`);
       return;
     }
+    if (qbFileSizeKb > 300) {
+      alert(`Question Bank PDF size is ${qbFileSizeKb} KB. Maximum allowed limit is 300 KB.`);
+      return;
+    }
+    if (syllabusFileSizeKb > 100) {
+      alert(`Syllabus PDF size is ${syllabusFileSizeKb} KB. Maximum allowed limit is 100 KB.`);
+      return;
+    }
 
     const setterObj = setters.find(s => s.id === assSetterId);
     if (!setterObj) {
@@ -886,14 +973,32 @@ export default function CoeDashboard() {
     setUploadingOrder(true);
     try {
       const assignmentId = `coe_assign_${Date.now()}`;
-      
+
       let orderUrl = orderFileBase64;
       try {
         if (orderFile && orderFile.size <= 30 * 1024) {
           orderUrl = await uploadFile(`coe_orders/${assignmentId}_order.png`, orderFile);
         }
       } catch (e) {
-        console.warn("Storage upload fallback to Base64:", e);
+        console.warn("Storage upload fallback to Base64 for Order Copy:", e);
+      }
+
+      let qbUrl = qbFileBase64 || null;
+      try {
+        if (qbFile) {
+          qbUrl = await uploadFile(`coe_question_banks/${assignmentId}_qb.pdf`, qbFile, "application/pdf");
+        }
+      } catch (e) {
+        console.warn("Storage upload fallback to Base64 for Question Bank:", e);
+      }
+
+      let syllabusUrl = syllabusFileBase64 || null;
+      try {
+        if (syllabusFile) {
+          syllabusUrl = await uploadFile(`coe_syllabi/${assignmentId}_syllabus.pdf`, syllabusFile, "application/pdf");
+        }
+      } catch (e) {
+        console.warn("Storage upload fallback to Base64 for Syllabus:", e);
       }
 
       const baseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
@@ -918,6 +1023,12 @@ export default function CoeDashboard() {
         setterEmail: setterObj.email,
         orderCopyUrl: orderUrl,
         orderFileSizeKb: orderFileSizeKb,
+        qbUrl: qbUrl || null,
+        qbFileName: qbFile ? qbFile.name : null,
+        qbFileSizeKb: qbFileSizeKb || 0,
+        syllabusUrl: syllabusUrl || null,
+        syllabusFileName: syllabusFile ? syllabusFile.name : null,
+        syllabusFileSizeKb: syllabusFileSizeKb || 0,
         accessLink: generatedUrl,
         status: "assigned",
         acceptanceStatus: null,
@@ -982,6 +1093,112 @@ export default function CoeDashboard() {
   const [guidelineFeedback, setGuidelineFeedback] = useState({ type: "", message: "" });
   const [savingGuideline, setSavingGuideline] = useState(false);
 
+  // Guidelines Document PDF Upload (<= 40 KB)
+  const [guidelinesPdfFile, setGuidelinesPdfFile] = useState(null);
+  const [guidelinesPdfBase64, setGuidelinesPdfBase64] = useState("");
+  const [guidelinesPdfSizeKb, setGuidelinesPdfSizeKb] = useState(0);
+  const [guidelinesPdfError, setGuidelinesPdfError] = useState("");
+  const [uploadingGuidelinesPdf, setUploadingGuidelinesPdf] = useState(false);
+  const [sessionGuidelinesDoc, setSessionGuidelinesDoc] = useState(null);
+
+  useEffect(() => {
+    if (!selectedExamSession) return;
+    const docId = sanitizeKey(selectedExamSession);
+    const unsub = onSnapshot(doc(db, "coe_session_guidelines_doc", docId), (docSnap) => {
+      if (docSnap.exists()) {
+        setSessionGuidelinesDoc(docSnap.data());
+      } else {
+        setSessionGuidelinesDoc(null);
+      }
+    });
+    return () => unsub();
+  }, [selectedExamSession]);
+
+  const handleGuidelinesPdfChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setGuidelinesPdfError("Only PDF format is supported! Please select a .pdf file.");
+      setGuidelinesPdfFile(null);
+      setGuidelinesPdfBase64("");
+      setGuidelinesPdfSizeKb(0);
+      return;
+    }
+
+    const sizeKb = (file.size / 1024).toFixed(1);
+    if (file.size > 40 * 1024) {
+      setGuidelinesPdfError(`Guidelines PDF size is ${sizeKb} KB. Strict maximum limit is 40 KB!`);
+      setGuidelinesPdfFile(null);
+      setGuidelinesPdfBase64("");
+      setGuidelinesPdfSizeKb(Number(sizeKb));
+      return;
+    }
+
+    setGuidelinesPdfError("");
+    setGuidelinesPdfFile(file);
+    setGuidelinesPdfSizeKb(Number(sizeKb));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setGuidelinesPdfBase64(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUploadGuidelinesPdf = async () => {
+    if (!guidelinesPdfBase64) {
+      alert("Please select a Guidelines PDF file (<= 40 KB).");
+      return;
+    }
+    if (guidelinesPdfSizeKb > 40) {
+      alert(`Guidelines PDF size is ${guidelinesPdfSizeKb} KB. Strict maximum allowed limit is 40 KB.`);
+      return;
+    }
+
+    setUploadingGuidelinesPdf(true);
+    try {
+      const docId = sanitizeKey(selectedExamSession);
+      let pdfUrl = guidelinesPdfBase64;
+      try {
+        if (guidelinesPdfFile) {
+          pdfUrl = await uploadFile(`coe_guidelines_docs/${docId}_guidelines.pdf`, guidelinesPdfFile, "application/pdf");
+        }
+      } catch (e) {
+        console.warn("Storage upload fallback to Base64 for Guidelines PDF:", e);
+      }
+
+      await setDoc(doc(db, "coe_session_guidelines_doc", docId), {
+        examSession: selectedExamSession,
+        url: pdfUrl,
+        fileName: guidelinesPdfFile ? guidelinesPdfFile.name : "QP_Guidelines.pdf",
+        fileSizeKb: guidelinesPdfSizeKb,
+        updatedAt: serverTimestamp()
+      });
+
+      alert("Guidelines PDF document uploaded successfully!");
+      setGuidelinesPdfFile(null);
+      setGuidelinesPdfBase64("");
+      setGuidelinesPdfSizeKb(0);
+    } catch (err) {
+      alert("Failed to upload Guidelines PDF: " + err.message);
+    } finally {
+      setUploadingGuidelinesPdf(false);
+    }
+  };
+
+  const handleDeleteGuidelinesPdf = async () => {
+    if (!window.confirm("Are you sure you want to remove the Guidelines PDF document for this session?")) return;
+    try {
+      const docId = sanitizeKey(selectedExamSession);
+      await deleteDoc(doc(db, "coe_session_guidelines_doc", docId));
+      alert("Guidelines PDF document deleted.");
+    } catch (err) {
+      alert("Failed to delete Guidelines PDF: " + err.message);
+    }
+  };
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "coe_qp_guidelines"), (snap) => {
       const list = [];
@@ -994,6 +1211,11 @@ export default function CoeDashboard() {
     });
     return () => unsub();
   }, []);
+
+  const filteredGuidelines = useMemo(() => {
+    if (!selectedExamSession) return guidelines;
+    return guidelines.filter(g => !g.examSession || g.examSession === selectedExamSession);
+  }, [guidelines, selectedExamSession]);
 
   const handleAddGuideline = async (e) => {
     e.preventDefault();
@@ -1064,15 +1286,15 @@ export default function CoeDashboard() {
   return (
     <Layout title="Controller of Examinations (COE)">
       <div className="min-h-screen bg-gradient-to-br from-[#f0f0fa] to-[#BBDEFB] p-4 md:p-6 font-sans">
-        
+
         {/* Header Banner - Matches Global Application Theme */}
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-800 via-[#120c7a] to-indigo-950 p-6 md:p-8 text-white shadow-2xl mb-6">
           <div className="absolute -top-10 -right-10 w-48 h-48 rounded-full bg-white/10 blur-2xl"></div>
           <div className="absolute -bottom-16 -left-10 w-56 h-56 rounded-full bg-white/5 blur-2xl"></div>
-          
+
           <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div className="flex items-center gap-4">
-              <button 
+              <button
                 onClick={() => navigate("/exam-cell")}
                 className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center transition-all cursor-pointer text-white"
               >
@@ -1160,62 +1382,55 @@ export default function CoeDashboard() {
         <div className="bg-white rounded-2xl border border-zinc-200/80 p-1.5 shadow-sm mb-6 flex flex-wrap gap-2">
           <button
             onClick={() => setActiveTab("users")}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-              activeTab === "users"
-                ? "bg-[#120c7a] text-white shadow-md"
-                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
-            }`}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "users"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
           >
             <Users className="h-4 w-4" />
             <span>User Management</span>
-            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
-              activeTab === "users" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "users" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+              }`}>
               {setters.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab("patterns")}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-              activeTab === "patterns"
-                ? "bg-[#120c7a] text-white shadow-md"
-                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
-            }`}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "patterns"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
           >
             <Layers className="h-4 w-4" />
             <span>Question Paper Patterns</span>
-            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
-              activeTab === "patterns" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "patterns" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+              }`}>
               {filteredPatterns.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab("assignment")}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-              activeTab === "assignment"
-                ? "bg-[#120c7a] text-white shadow-md"
-                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
-            }`}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "assignment"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
           >
             <LinkIcon className="h-4 w-4" />
             <span>Assign Subject & Order Copy</span>
-            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
-              activeTab === "assignment" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "assignment" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+              }`}>
               {filteredAssignments.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab("submitted")}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-              activeTab === "submitted"
-                ? "bg-[#120c7a] text-white shadow-md"
-                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
-            }`}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "submitted"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
           >
             <FileCheck className="h-4 w-4" />
             <span>Submitted Question Papers</span>
@@ -1226,17 +1441,15 @@ export default function CoeDashboard() {
 
           <button
             onClick={() => setActiveTab("guidelines")}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-              activeTab === "guidelines"
-                ? "bg-[#120c7a] text-white shadow-md"
-                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
-            }`}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "guidelines"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
           >
             <BookOpen className="h-4 w-4" />
             <span>QP Guidelines Config</span>
-            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${
-              activeTab === "guidelines" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
-            }`}>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "guidelines" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
+              }`}>
               {filteredGuidelines.length}
             </span>
           </button>
@@ -1260,11 +1473,10 @@ export default function CoeDashboard() {
               </div>
 
               {setterFeedback.message && (
-                <div className={`p-3 rounded-xl mb-4 text-xs font-bold border flex items-start gap-2 ${
-                  setterFeedback.type === "success" 
-                    ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
-                    : "bg-rose-50 border-rose-200 text-rose-800"
-                }`}>
+                <div className={`p-3 rounded-xl mb-4 text-xs font-bold border flex items-start gap-2 ${setterFeedback.type === "success"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-rose-50 border-rose-200 text-rose-800"
+                  }`}>
                   {setterFeedback.type === "success" ? <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" /> : <AlertCircle className="h-4 w-4 text-rose-600 mt-0.5 shrink-0" />}
                   <div className="break-all">{setterFeedback.message}</div>
                 </div>
@@ -1423,11 +1635,10 @@ export default function CoeDashboard() {
                           <td className="py-3.5 px-4 text-center">
                             <button
                               onClick={() => handleToggleSetterStatus(s)}
-                              className={`px-3 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer border ${
-                                s.status === "active"
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                                  : "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
-                              }`}
+                              className={`px-3 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer border ${s.status === "active"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                : "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
+                                }`}
                             >
                               {s.status === "active" ? (
                                 <>
@@ -1446,11 +1657,10 @@ export default function CoeDashboard() {
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 onClick={() => handleToggleSetterStatus(s)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
-                                  s.status === "active"
-                                    ? "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                                    : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                                }`}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${s.status === "active"
+                                  ? "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                  }`}
                               >
                                 {s.status === "active" ? "Disable" : "Enable"}
                               </button>
@@ -1706,7 +1916,7 @@ export default function CoeDashboard() {
                           key={p.id}
                           className="p-3.5 rounded-2xl border border-zinc-200 bg-white hover:border-[#120c7a]/40 transition-all flex items-center justify-between gap-3 shadow-2xs group"
                         >
-                          <div 
+                          <div
                             onClick={() => setViewPatternDetailsModal(p)}
                             className="min-w-0 flex-1 cursor-pointer"
                           >
@@ -1925,11 +2135,10 @@ export default function CoeDashboard() {
                         return (
                           <label
                             key={subj.code}
-                            className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl border text-xs cursor-pointer transition-all gap-3 ${
-                              isSelected 
-                                ? "bg-blue-50/80 border-[#120c7a] text-zinc-900 shadow-xs" 
-                                : "bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-100/80"
-                            }`}
+                            className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl border text-xs cursor-pointer transition-all gap-3 ${isSelected
+                              ? "bg-blue-50/80 border-[#120c7a] text-zinc-900 shadow-xs"
+                              : "bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-100/80"
+                              }`}
                           >
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <input
@@ -2025,7 +2234,7 @@ export default function CoeDashboard() {
                   <LinkIcon className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-black text-[#120c7a]">Subject Setter Assignment & Link Generator</h2>
+                  <h2 className="text-base font-black text-[#120c7a]">Question Paper Setter Assignment & Link Generator</h2>
                   <p className="text-[11px] font-semibold text-zinc-500">Assign external setter and generate secure access order link</p>
                 </div>
               </div>
@@ -2142,11 +2351,10 @@ export default function CoeDashboard() {
 
                 {/* Pattern Check Status Banner */}
                 {assSubjectCode && (
-                  <div className={`p-3.5 rounded-2xl border text-xs font-semibold flex items-center justify-between ${
-                    currentSubjectPatternObj
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                      : "bg-rose-50 border-rose-200 text-rose-800"
-                  }`}>
+                  <div className={`p-3.5 rounded-2xl border text-xs font-semibold flex items-center justify-between ${currentSubjectPatternObj
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    : "bg-rose-50 border-rose-200 text-rose-800"
+                    }`}>
                     <div className="flex items-center gap-2">
                       {currentSubjectPatternObj ? (
                         <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
@@ -2206,6 +2414,82 @@ export default function CoeDashboard() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Question Bank PDF File Upload (PDF Only, Max 300 KB) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={labelCls}>
+                      Upload Question Bank <span className="text-zinc-400 font-normal">(Optional)</span>
+                    </label>
+                    <span className="text-[11px] font-extrabold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      Supports PDF format only (Max 500 KB)
+                    </span>
+                  </div>
+
+                  <div className="border-2 border-dashed border-amber-200/90 rounded-2xl p-3 bg-amber-50/30 text-center hover:border-[#120c7a] transition-all">
+                    <input
+                      type="file"
+                      id="qb-pdf-upload"
+                      accept="application/pdf,.pdf"
+                      onChange={handleQbFileChange}
+                      className="hidden"
+                    />
+                    <label htmlFor="qb-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
+                      <FileText className="h-5 w-5 text-amber-700" />
+                      <span className="text-xs font-bold text-zinc-800">
+                        {qbFile ? qbFile.name : "Click to upload Question Bank (PDF format only)"}
+                      </span>
+                      <span className="text-[10px] font-semibold text-zinc-500">
+                        {qbFileSizeKb > 0 ? `Selected size: ${qbFileSizeKb} KB` : "Supports PDF format only (Max 300 KB)"}
+                      </span>
+                    </label>
+                  </div>
+
+                  {qbSizeError && (
+                    <p className="text-[11px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      {qbSizeError}
+                    </p>
+                  )}
+                </div>
+
+                {/* Syllabus PDF File Upload (PDF Only, Max 100 KB) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={labelCls}>
+                      Upload Syllabus <span className="text-zinc-400 font-normal">(Optional)</span>
+                    </label>
+                    <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                      Supports PDF format only (Max 100 KB)
+                    </span>
+                  </div>
+
+                  <div className="border-2 border-dashed border-blue-200/90 rounded-2xl p-3 bg-blue-50/30 text-center hover:border-[#120c7a] transition-all">
+                    <input
+                      type="file"
+                      id="syllabus-pdf-upload"
+                      accept="application/pdf,.pdf"
+                      onChange={handleSyllabusFileChange}
+                      className="hidden"
+                    />
+                    <label htmlFor="syllabus-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
+                      <BookOpen className="h-5 w-5 text-[#120c7a]" />
+                      <span className="text-xs font-bold text-zinc-800">
+                        {syllabusFile ? syllabusFile.name : "Click to upload Course Syllabus (PDF format only)"}
+                      </span>
+                      <span className="text-[10px] font-semibold text-zinc-500">
+                        {syllabusFileSizeKb > 0 ? `Selected size: ${syllabusFileSizeKb} KB` : "Supports PDF format only (Max 100 KB)"}
+                      </span>
+                    </label>
+                  </div>
+
+                  {syllabusSizeError && (
+                    <p className="text-[11px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      {syllabusSizeError}
+                    </p>
+                  )}
                 </div>
 
                 {/* Appointment / Order Copy File Upload (<= 30KB) */}
@@ -2396,7 +2680,7 @@ export default function CoeDashboard() {
 
                       {/* Email Body Preview */}
                       <div className="bg-white p-3.5 rounded-xl border border-indigo-100 text-[11px] text-zinc-800 font-mono leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap select-all">
-{`Dear Prof. ${generatedAssignment.setterName || "Faculty"},
+                        {`Dear Prof. ${generatedAssignment.setterName || "Faculty"},
 Good Morning!
 
 Greetings from C.K. College of Engineering & Technology, Cuddalore!
@@ -2466,7 +2750,7 @@ Contact: 94884 93434`}
                             const sessName = generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026";
                             const emailSubject = `End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
                             const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\nThe remuneration for setting the question paper is Rs. 2,000/- per question paper.\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
-                            
+
                             navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                             alert("Official Email Draft copied to clipboard!");
                           }}
@@ -2668,11 +2952,10 @@ Contact: 94884 93434`}
               </div>
 
               {guidelineFeedback.message && (
-                <div className={`p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2 ${
-                  guidelineFeedback.type === "success" 
-                    ? "bg-emerald-50 text-emerald-900 border border-emerald-200" 
-                    : "bg-rose-50 text-rose-900 border border-rose-200"
-                }`}>
+                <div className={`p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2 ${guidelineFeedback.type === "success"
+                  ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
+                  : "bg-rose-50 text-rose-900 border border-rose-200"
+                  }`}>
                   {guidelineFeedback.type === "success" ? (
                     <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                   ) : (
@@ -2734,11 +3017,94 @@ Contact: 94884 93434`}
                   type="button"
                   onClick={handleSeedDefaultGuidelines}
                   disabled={savingGuideline}
-                  className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center gap-2 cursor-pointer mb-4"
                 >
                   <Sparkles className="h-4 w-4 text-amber-600" />
                   <span>Load Standard ESE Guidelines</span>
                 </button>
+
+                {/* Guidelines PDF Upload (Max 40 KB) */}
+                <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#120c7a] flex items-center gap-1.5">
+                      <FileText className="h-4 w-4 text-[#120c7a]" />
+                      Upload Guidelines PDF Document
+                    </span>
+                    <span className="text-[10px] font-extrabold text-blue-800 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-md">
+                      Max 40 KB
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 font-semibold leading-tight">
+                    Upload official PDF guidelines document for {selectedExamSession || "Active Session"}.
+                  </p>
+
+                  <div className="border-2 border-dashed border-slate-300 rounded-xl p-3 bg-white text-center hover:border-[#120c7a] transition-all">
+                    <input
+                      type="file"
+                      id="guidelines-pdf-upload"
+                      accept="application/pdf,.pdf"
+                      onChange={handleGuidelinesPdfChange}
+                      className="hidden"
+                    />
+                    <label htmlFor="guidelines-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
+                      <Upload className="h-5 w-5 text-[#120c7a]" />
+                      <span className="text-xs font-bold text-zinc-800">
+                        {guidelinesPdfFile ? guidelinesPdfFile.name : (sessionGuidelinesDoc?.fileName || "Click to upload Guidelines PDF")}
+                      </span>
+                      <span className="text-[10px] font-semibold text-zinc-500">
+                        {guidelinesPdfSizeKb > 0 ? `Selected size: ${guidelinesPdfSizeKb} KB` : "Supports PDF format only (Max 40 KB)"}
+                      </span>
+                    </label>
+                  </div>
+
+                  {guidelinesPdfError && (
+                    <p className="text-[11px] text-rose-600 font-bold flex items-center gap-1">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      {guidelinesPdfError}
+                    </p>
+                  )}
+
+                  {sessionGuidelinesDoc && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between">
+                      <div className="flex items-center gap-2 truncate">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                        <span className="truncate">{sessionGuidelinesDoc.fileName} ({sessionGuidelinesDoc.fileSizeKb} KB)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          href={sessionGuidelinesDoc.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-blue-700 underline font-extrabold hover:text-blue-900"
+                        >
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={handleDeleteGuidelinesPdf}
+                          className="text-rose-600 hover:text-rose-800 p-1"
+                          title="Delete PDF"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleUploadGuidelinesPdf}
+                    disabled={uploadingGuidelinesPdf || !guidelinesPdfBase64}
+                    className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-2.5 px-3 rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {uploadingGuidelinesPdf ? (
+                      <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                    ) : (
+                      <Upload className="h-4 w-4 text-amber-300" />
+                    )}
+                    <span>Save Guidelines PDF</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2889,7 +3255,7 @@ Contact: 94884 93434`}
                 {/* Submitted Questions Content - Official ESE QP Table Template */}
                 {selectedReviewAssignment.submittedPaper ? (
                   <div className="p-8 rounded-2xl bg-white text-zinc-900 border border-zinc-300 shadow-md font-serif space-y-6">
-                    
+
                     {/* Header Block */}
                     <div className="text-center border-b-2 border-black pb-4 space-y-1">
                       <h1 className="text-2xl font-bold uppercase tracking-wide font-serif text-black">
@@ -3051,7 +3417,7 @@ Contact: 94884 93434`}
                   onClick={() => setSelectedReviewAssignment(null)}
                   className="px-5 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold text-xs cursor-pointer shadow-sm"
                 >
-                  Close Review
+                  Move to Scrutiny
                 </button>
               </div>
             </div>
@@ -3062,7 +3428,7 @@ Contact: 94884 93434`}
         {viewPatternDetailsModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl border border-zinc-200 shadow-2xl max-w-5xl lg:max-w-6xl w-full max-h-[92vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-              
+
               {/* Modal Header */}
               <div className="p-6 bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-950 text-white flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -3099,7 +3465,7 @@ Contact: 94884 93434`}
 
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-zinc-50/50">
-                
+
                 {/* Key Metrics Bar */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="bg-white p-3.5 rounded-2xl border border-zinc-200 text-center shadow-xs">
@@ -3150,8 +3516,8 @@ Contact: 94884 93434`}
                           const choiceLabel = sec.choiceType === "either_or"
                             ? "Either-OR (Internal)"
                             : sec.choiceType === "any_n"
-                            ? "Choice of N"
-                            : "Compulsory";
+                              ? "Choice of N"
+                              : "Compulsory";
 
                           return (
                             <tr key={idx} className="hover:bg-blue-50/20 transition-colors">
@@ -3165,11 +3531,10 @@ Contact: 94884 93434`}
                                 {sec.marksPerQ} Marks
                               </td>
                               <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${
-                                  sec.choiceType === "either_or"
-                                    ? "bg-purple-50 text-purple-700 border-purple-200"
-                                    : "bg-blue-50 text-blue-700 border-blue-200"
-                                }`}>
+                                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${sec.choiceType === "either_or"
+                                  ? "bg-purple-50 text-purple-700 border-purple-200"
+                                  : "bg-blue-50 text-blue-700 border-blue-200"
+                                  }`}>
                                   {choiceLabel}
                                 </span>
                               </td>
@@ -3284,7 +3649,7 @@ Contact: 94884 93434`}
         {showAddSessionModal && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl border border-zinc-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-              
+
               {/* Modal Header */}
               <div className="p-6 bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-950 text-white flex items-center justify-between">
                 <div className="flex items-center gap-3">

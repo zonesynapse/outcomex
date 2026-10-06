@@ -330,6 +330,85 @@ export default function FacultyDashboard() {
   }, [currentUid]);
 
   const [qpSetterTasks, setQpSetterTasks] = useState([]);
+  const [allSyllabusDocs, setAllSyllabusDocs] = useState([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "syllabus_data"), (snap) => {
+      const docs = [];
+      snap.forEach(d => {
+        const parts = d.id.split("_");
+        let regKey = parts[parts.length - 1] || "";
+        let progKey = parts[0] || "";
+        let deptRaw = "";
+        if (parts.length >= 3) {
+          let progTake = 1;
+          if (["B", "M"].includes(parts[0]) && ["E", "Tech", "Sc", "Com"].includes(parts[1])) progTake = 2;
+          const deptTokens = parts.slice(progTake, parts.length - 1);
+          deptRaw = deptTokens.join("_");
+        }
+        const raw = d.data() || {};
+        docs.push({
+          id: d.id,
+          progKey,
+          deptKey: deptRaw,
+          regKey: raw.regulation || regKey,
+          regulation: raw.regulation || regKey,
+          data: raw
+        });
+      });
+      setAllSyllabusDocs(docs);
+    }, (err) => console.warn("[FacultyDashboard] Error fetching syllabus_data:", err));
+    return () => unsub();
+  }, []);
+
+  const matchRegulation = useCallback((reg1, reg2) => {
+    if (!reg1 || !reg2) return false;
+    const norm = (r) => String(r).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const n1 = norm(reg1);
+    const n2 = norm(reg2);
+    if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+    const rMatch1 = String(reg1).match(/R\d{4}/i);
+    const rMatch2 = String(reg2).match(/R\d{4}/i);
+    if (rMatch1 && rMatch2 && rMatch1[0].toUpperCase() === rMatch2[0].toUpperCase()) return true;
+    return false;
+  }, []);
+
+  const isValidSubjectForBatchSem = useCallback((code, batch, semester, progKey) => {
+    if (!code || !batch || !semester || allSyllabusDocs.length === 0) return true;
+
+    const targetReg = getRegulationForBatch(progKey || "", batch);
+    if (!targetReg) return true;
+
+    const normCode = String(code || "").toUpperCase().replace(/\s+/g, "");
+    const extractSemNum = (s) => {
+      if (!s) return "";
+      const m = String(s).match(/(\d+)/);
+      return m ? m[1] : String(s).trim();
+    };
+    const semNum = extractSemNum(semester);
+
+    const matchingDocs = allSyllabusDocs.filter(s => matchRegulation(s.regulation, targetReg));
+    if (matchingDocs.length === 0) return true;
+
+    let foundInSem = false;
+    const toArray = (v) => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.values(v) : []);
+
+    for (const sDoc of matchingDocs) {
+      const semData = sDoc.data?.semesters?.[semNum] || sDoc.data?.[semNum] || [];
+      const subs = toArray(semData);
+      for (const sub of subs) {
+        if (!sub || sub.isNonOBE === true || sub.isActive === false) continue;
+        const c = String(sub?.code || sub?.subjectCode || sub?.courseCode || "").toUpperCase().replace(/\s+/g, "");
+        if (c && (c === normCode || c.includes(normCode) || normCode.includes(c))) {
+          foundInSem = true;
+          break;
+        }
+      }
+      if (foundInSem) break;
+    }
+
+    return foundInSem;
+  }, [allSyllabusDocs, getRegulationForBatch, matchRegulation]);
 
   // Fetch QP Setter assignments for current user
   useEffect(() => {
@@ -886,6 +965,41 @@ export default function FacultyDashboard() {
     const unsub = onSnapshot(
       qpRef,
       (snapshot) => {
+        // Auto-heal legacy CME document (B.E._Mechanical Engineering_2026-2027_CME_Sec-A) to CME 338 and CME338
+        snapshot.forEach(d => {
+          if (d.id === "B.E._Mechanical Engineering_2026-2027_CME_Sec-A" || d.id.startsWith("B.E._Mechanical Engineering_2026-2027_CME_Sec-A__")) {
+            const data = d.data();
+            if (data && typeof data === 'object') {
+              const suffix = d.id.includes('__') ? `__${d.id.split('__').slice(1).join('__')}` : '';
+              const targetSpaceId = `B.E._Mechanical Engineering_2026-2027_CME 338_Sec-A${suffix}`;
+              const targetNoSpaceId = `B.E._Mechanical Engineering_2026-2027_CME338_Sec-A${suffix}`;
+
+              const fixSubjectFields = (obj, targetCode) => {
+                if (!obj || typeof obj !== 'object') return;
+                for (const k of Object.keys(obj)) {
+                  if (k === 'subject_code' || k === 'subjectCode' || k === 'code') {
+                    if (obj[k] === 'CME' || obj[k] === 'CME ') obj[k] = targetCode;
+                  }
+                  if (k === 'subject' && typeof obj[k] === 'string') {
+                    if (obj[k].startsWith('CME -') || obj[k] === 'CME') {
+                      obj[k] = obj[k].replace(/^CME\b/, targetCode);
+                    }
+                  }
+                  if (typeof obj[k] === 'object') fixSubjectFields(obj[k], targetCode);
+                }
+              };
+
+              const dataSpace = JSON.parse(JSON.stringify(data));
+              const dataNoSpace = JSON.parse(JSON.stringify(data));
+              fixSubjectFields(dataSpace, "CME 338");
+              fixSubjectFields(dataNoSpace, "CME338");
+
+              setDoc(doc(db, "generated_qps", targetSpaceId), dataSpace, { merge: true }).catch(() => {});
+              setDoc(doc(db, "generated_qps", targetNoSpaceId), dataNoSpace, { merge: true }).catch(() => {});
+            }
+          }
+        });
+
         const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); });
         const all = [];
         Object.entries(data).forEach(([compositeKey, docData]) => {
@@ -1491,6 +1605,13 @@ export default function FacultyDashboard() {
         // Strictly require an assigned exam date for the subject to show on Faculty Dashboard
         const hasExamDate = task.examDate && String(task.examDate).trim().length > 0;
         if (!hasExamDate) return false;
+
+        // Filter out obsolete/superseded subject codes that do not belong to the batch's regulation curriculum
+        const excelFirstDept = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments[0] : null;
+        const progKey = task.progKey || excelFirstDept?.progKey || excelFirstDept?.prog || 'UG';
+        const isValidInSyllabus = isValidSubjectForBatchSem(task.code, task.batch, task.semester, progKey);
+        if (!isValidInSyllabus) return false;
+
         return true;
       })
       .map(task => {
@@ -1602,9 +1723,9 @@ export default function FacultyDashboard() {
           department: (matchingGroup?.department || excelFirstDept?.dept || '')
         };
       })
-      // Deduplicate using a unique composite key combining document ID, exam ID/name, batch, semester, and course code.
+      // Deduplicate using a unique composite key combining document ID, exam ID/name, batch, semester, and course code/name.
       // This ensures distinct assigned question papers across different batches/semesters/exams/docs remain separate cards,
-      // while preventing accidental duplicates.
+      // while preventing accidental duplicates or obsolete old-code assignments from leaking through.
       .reduce((acc, task) => {
         const getExamTag = (s) => {
           const lower = String(s || '').toLowerCase();
@@ -1617,6 +1738,9 @@ export default function FacultyDashboard() {
         };
         const examTag = getExamTag(task.examName || task.examId);
         const taskKey = `${normBatch(task.batch)}_${String(task.semester).trim()}_${examTag}_${String(task.rawCode || task.code || '').trim().toUpperCase()}`;
+        const normCourseName = String(task.name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        const courseNameKey = normCourseName ? `${normBatch(task.batch)}_${String(task.semester).trim()}_${examTag}_name_${normCourseName}` : taskKey;
+
         const getTaskTimestamp = (t) => {
           if (!t) return 0;
           if (t.updatedAt) {
@@ -1633,10 +1757,10 @@ export default function FacultyDashboard() {
           ((t.examDate && String(t.examDate).trim()) ? 1 : 0) +
           ((t.toDate && String(t.toDate).trim()) ? 1 : 0);
 
-        const existing = acc.find(a => a._taskKey === taskKey);
+        const existing = acc.find(a => a._taskKey === taskKey || (a._courseNameKey && a._courseNameKey === courseNameKey));
         if (!existing || score(task) > score(existing) || (score(task) === score(existing) && getTaskTimestamp(task) >= getTaskTimestamp(existing))) {
-          acc = acc.filter(a => a._taskKey !== taskKey);
-          acc.push({ ...task, _taskKey: taskKey });
+          acc = acc.filter(a => a._taskKey !== taskKey && (!courseNameKey || a._courseNameKey !== courseNameKey));
+          acc.push({ ...task, _taskKey: taskKey, _courseNameKey: courseNameKey });
         }
         return acc;
       }, [])
@@ -1646,7 +1770,7 @@ export default function FacultyDashboard() {
         if (ka !== kb) return ka.localeCompare(kb);
         return String(b.academicYear || '').localeCompare(String(a.academicYear || ''));
       });
-  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap]);
+  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap, allSyllabusDocs, isValidSubjectForBatchSem]);
 
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },

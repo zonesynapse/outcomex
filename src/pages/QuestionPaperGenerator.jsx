@@ -37,11 +37,10 @@ const parseSubjectCodeKey = (raw) => {
     } catch { /* non-critical */ }
   }
 
-  const m = s.match(/CODE([A-Z0-9]+)NAME/i);
+  const m = s.match(/CODE([A-Z0-9\s_\-]+)NAME/i);
   if (m) s = m[1];
   else {
     s = s.split(' - ')[0].split(' — ')[0].split(':')[0].trim();
-    s = s.split(/\s+/)[0];
   }
 
   const clean = s.toUpperCase().trim();
@@ -212,7 +211,7 @@ const extractCleanSubjectTitle = (input) => {
     const parts = str.split('-');
     const codePart = parts[0].trim();
     const titlePart = parts.slice(1).join('-').trim();
-    if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
+    if (/^[A-Z0-9\s_\-\.\/]+$/i.test(codePart) && titlePart) {
       return titlePart;
     }
   }
@@ -408,6 +407,13 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
   const hasDesc = hasDescFn || hasRealDesc;
   const lc = (v) => String(v || '').toLowerCase();
 
+  const normClean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const parsedCode = parseSubjectCodeKey(subjectCode) || subjectCode;
+  const compactCode = parsedCode.replace(/[^a-zA-Z0-9]/g, '');
+  const spacedCode = parsedCode.replace(/\s+/g, ' ').trim();
+  const underscoreCode = parsedCode.replace(/[^a-zA-Z0-9]/g, '_');
+  const targetNorm = normClean(parsedCode || subjectCode);
+
   const coDocId = `${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}_${sanitizeKey(academicYear)}`;
   let loadedCOs = [];
   try {
@@ -416,7 +422,7 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
   } catch (_) { /* skip */ }
 
   if (!hasDesc(loadedCOs)) {
-    const deptForms = [...new Set([sanitizeKey(department), sanitizeKeyStrict(department), lc(sanitizeKey(department)), lc(sanitizeKeyStrict(department))].filter(Boolean))];
+    const deptForms = [...new Set([department, sanitizeKey(department), sanitizeKeyStrict(department), lc(sanitizeKey(department)), lc(sanitizeKeyStrict(department)), 'Overall'].filter(Boolean))];
     const regBase = regulation || '';
     const regFormsRaw = [
       regBase, regBase.replace(/-/g, ' '), regBase.replace(/ /g, '-'),
@@ -432,7 +438,11 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
         }
       }
     }
-    const subjFormsRaw = [sanitizeKey(subjectCode), subjectCode, sanitizeKeyStrict(subjectCode), lc(subjectCode), lc(sanitizeKey(subjectCode)), lc(sanitizeKeyStrict(subjectCode))];
+    const subjFormsRaw = [
+      subjectCode, parsedCode, compactCode, spacedCode, underscoreCode,
+      sanitizeKey(subjectCode), sanitizeKeyStrict(subjectCode),
+      lc(subjectCode), lc(parsedCode), lc(compactCode), lc(spacedCode)
+    ];
     const subjForms = [...new Set(subjFormsRaw.filter(Boolean))];
     const ayForm = sanitizeKey(academicYear);
     const ayLc = lc(ayForm);
@@ -442,7 +452,7 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
           for (const key of [
             `${d}_${r}_${s}_${ayForm}`, `${d}_${r}_${s}_${ayLc}`,
             `${d}_${r}_${s}`, `${r}_${s}`,
-            `${d}_${s}_${ayForm}`, `${d}_${s}_${ayLc}`, `${d}_${s}`
+            `${d}_${s}_${ayForm}`, `${d}_${s}_${ayLc}`, `${d}_${s}`, s
           ]) {
             try {
               const altSnap = await getDoc(doc(db, 'course_outcomes', key));
@@ -460,6 +470,25 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
     }
   }
 
+  // Scanning collection course_outcomes for matching code if direct keys missed
+  if (!hasDesc(loadedCOs) && targetNorm) {
+    try {
+      const coSnap = await getDocs(collection(db, 'course_outcomes'));
+      coSnap.forEach(d => {
+        const dNorm = normClean(d.id);
+        const data = d.data();
+        const codeFieldNorm = normClean(data?.subjectCode || data?.subject || data?.code || '');
+        if (dNorm.includes(targetNorm) || (codeFieldNorm && (codeFieldNorm === targetNorm || codeFieldNorm.includes(targetNorm)))) {
+          const cand = parse(data);
+          if (cand.length > 0) {
+            if (hasDesc(cand)) { loadedCOs = cand; }
+            else if (loadedCOs.length === 0) loadedCOs = cand;
+          }
+        }
+      });
+    } catch (_) { /* skip */ }
+  }
+
   // Search syllabus_data collection for COs defined inside curriculum documents
   if (!hasDesc(loadedCOs)) {
     try {
@@ -469,7 +498,8 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
         const sems = data.semesters || data.curriculum || [];
         const processSubj = (subj) => {
           const sCode = String(subj?.code || subj?.subjectCode || '').trim();
-          if (lc(sCode) === lc(subjectCode) || lc(sCode).includes(lc(subjectCode))) {
+          const sCodeNorm = normClean(sCode);
+          if (sCodeNorm === targetNorm || sCodeNorm.includes(targetNorm) || targetNorm.includes(sCodeNorm)) {
             const rawCOs = subj?.co || subj?.outcomes || subj?.course_outcomes || subj?.courseOutcomes;
             if (Array.isArray(rawCOs) && rawCOs.length > 0) {
               const cand = rawCOs.map((c, i) => ({
@@ -496,15 +526,19 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
   if (!hasDesc(loadedCOs)) {
     // Try courses collection — include regulation in key (UG_Overall_AU_-_R2025_cs25c08 pattern)
     const progForms = [...new Set([progKey, lc(progKey)].filter(Boolean))];
-    const deptCourseForms = [...new Set([sanitizeKey(department), sanitizeKeyStrict(department), 'Overall', 'overall', lc(sanitizeKey(department))].filter(Boolean))];
+    const deptCourseForms = [...new Set([department, sanitizeKey(department), sanitizeKeyStrict(department), 'Overall', 'overall', lc(sanitizeKey(department))].filter(Boolean))];
     if (!deptCourseForms.includes('Overall')) deptCourseForms.push('Overall');
-    const regCourseForms = [...new Set([sanitizeKey(regulation || ''), sanitizeKeyStrict(regulation || ''), lc(sanitizeKey(regulation || '')), lc(sanitizeKeyStrict(regulation || ''))].filter(Boolean))];
+    const regCourseForms = [...new Set([regulation, sanitizeKey(regulation || ''), sanitizeKeyStrict(regulation || ''), lc(sanitizeKey(regulation || '')), lc(sanitizeKeyStrict(regulation || ''))].filter(Boolean))];
     if (!regulation && Array.isArray(knownRegulations)) {
       for (const kr of knownRegulations) {
-        for (const v of [sanitizeKey(kr), sanitizeKeyStrict(kr), lc(sanitizeKey(kr))]) if (v && !regCourseForms.includes(v)) regCourseForms.push(v);
+        for (const v of [kr, sanitizeKey(kr), sanitizeKeyStrict(kr), lc(sanitizeKey(kr))]) if (v && !regCourseForms.includes(v)) regCourseForms.push(v);
       }
     }
-    const codeForms = [...new Set([subjectCode, sanitizeKey(subjectCode), lc(subjectCode), lc(sanitizeKey(subjectCode))].filter(Boolean))];
+    const codeForms = [...new Set([
+      subjectCode, parsedCode, compactCode, spacedCode, underscoreCode,
+      sanitizeKey(subjectCode), lc(subjectCode), lc(compactCode)
+    ].filter(Boolean))];
+
     const courseCandidates = [];
     for (const pg of progForms) {
       for (const d of deptCourseForms) {
@@ -549,20 +583,18 @@ const fetchCOsWithFallback = async (department, regulation, subjectCode, academi
       } catch (_) { /* skip */ }
       if (hasDesc(loadedCOs)) break;
     }
-    if (!hasDesc(loadedCOs)) {
+    if (!hasDesc(loadedCOs) && targetNorm) {
       try {
         const snapAll = await getDocs(collection(db, 'courses'));
         let best = null;
         snapAll.forEach(d => {
           const data = d.data();
-          const codeField = String(data?.code || '').trim();
-          if (lc(codeField) === lc(subjectCode) || lc(d.id).endsWith('_' + lc(subjectCode)) || lc(d.id) === lc(subjectCode)) {
-            const progMatch = !progKey || lc(data.programme || '') === lc(progKey) || lc(d.id).startsWith(lc(progKey) + '_');
-            const regMatch = !regulation || lc(data.regulation || '') === lc(regulation) || lc(d.id).includes(lc(sanitizeKey(regulation))) || lc(d.id).includes(lc(sanitizeKeyStrict(regulation)));
-            const deptMatch = !department || lc(data.department || '') === lc(department) || lc(data.department || '') === 'overall' || lc(d.id).includes(lc(sanitizeKey(department))) || lc(d.id).includes('overall');
+          const codeField = normClean(data?.code || '');
+          const dIdNorm = normClean(d.id);
+          if (codeField === targetNorm || codeField.includes(targetNorm) || dIdNorm.includes(targetNorm)) {
             if (data.co && Array.isArray(data.co) && data.co.length > 0) {
               const cand = data.co.map(c => ({ code: c.id, description: c.description || '' }));
-              if (hasDesc(cand) && (progMatch || regMatch || deptMatch)) {
+              if (hasDesc(cand)) {
                 if (!best || hasDesc(cand)) best = cand.sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, '')) || 0) - (parseInt(String(b.code || '').replace(/\D/g, '')) || 0));
               } else if (!best && cand.length > 0) {
                 best = cand;
@@ -3728,50 +3760,99 @@ export default function QuestionPaperGenerator() {
     // Helper to query top candidates concurrently in parallel (NOT 600 sequential loops!)
     const fetchCoCandidates = async (currentList) => {
       if (hasRealDesc(currentList)) return;
+      const normClean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const ayForm = sanitizeKey(academicYear || '');
-      const candidates = [
-        primaryCoDocId,
-        `${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
-        `${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
-        `${sanitizeKey(department)}_${sanitizeKey(subjectCode)}_${ayForm}`,
-        `${sanitizeKey(department)}_${sanitizeKey(subjectCode)}`,
-        `${subjectCode}`
-      ].filter((k, idx, arr) => k && arr.indexOf(k) === idx);
+      const parsedSubjCode = parseSubjectCodeKey(subjectCode) || subjectCode;
+      const compactSubjCode = parsedSubjCode.replace(/[^a-zA-Z0-9]/g, '');
+      const spacedSubjCode = parsedSubjCode.replace(/\s+/g, ' ').trim();
+      const underscoreSubjCode = parsedSubjCode.replace(/[^a-zA-Z0-9]/g, '_');
+      const targetSubjNorm = normClean(parsedSubjCode || subjectCode);
 
-      const courseCandidates = [
-        `${progKey}_${sanitizeKey(department)}_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
-        `${progKey}_Overall_${sanitizeKey(regulation || '')}_${sanitizeKey(subjectCode)}`,
-        `${progKey}_Overall_${sanitizeKey(subjectCode)}`
-      ].filter((k, idx, arr) => k && arr.indexOf(k) === idx);
+      const deptForms = [...new Set([department, sanitizeKey(department), sanitizeKeyStrict(department), 'Overall'].filter(Boolean))];
+      const regForms = [...new Set([regulation, sanitizeKey(regulation || ''), sanitizeKeyStrict(regulation || '')].filter(Boolean))];
+      const codeForms = [...new Set([subjectCode, parsedSubjCode, compactSubjCode, spacedSubjCode, underscoreSubjCode].filter(Boolean))];
+
+      const candidates = [primaryCoDocId];
+      for (const d of deptForms) {
+        for (const r of regForms) {
+          for (const c of codeForms) {
+            if (r) candidates.push(`${d}_${r}_${c}_${ayForm}`);
+            if (r) candidates.push(`${d}_${r}_${c}`);
+            candidates.push(`${d}_${c}_${ayForm}`);
+            candidates.push(`${d}_${c}`);
+            candidates.push(`${c}`);
+          }
+        }
+      }
+      const uniqCandidates = [...new Set(candidates.filter(Boolean))];
+
+      const courseCandidates = [];
+      for (const d of deptForms) {
+        for (const r of regForms) {
+          for (const c of codeForms) {
+            if (r) courseCandidates.push(`${progKey}_${d}_${r}_${c}`);
+            courseCandidates.push(`${progKey}_${d}_${c}`);
+          }
+        }
+      }
+      const uniqCourseCandidates = [...new Set(courseCandidates.filter(Boolean))];
 
       try {
         // Query course_outcomes candidates in parallel
-        const coSnaps = await Promise.allSettled(candidates.map(k => getDoc(doc(db, 'course_outcomes', k))));
+        const coSnaps = await Promise.allSettled(uniqCandidates.map(k => getDoc(doc(db, 'course_outcomes', k))));
         for (const res of coSnaps) {
           if (res.status === 'fulfilled' && res.value.exists()) {
             const parsed = parseCoEntries(res.value.data());
             if (parsed.length > 0) {
-              if (isMounted) setCourseOutcomes(parsed);
+              if (isMounted && hasRealDesc(parsed)) setCourseOutcomes(parsed);
               if (hasRealDesc(parsed)) return;
             }
           }
         }
 
         // Query courses candidates in parallel
-        const courseSnaps = await Promise.allSettled(courseCandidates.map(k => getDoc(doc(db, 'courses', k))));
+        const courseSnaps = await Promise.allSettled(uniqCourseCandidates.map(k => getDoc(doc(db, 'courses', k))));
         for (const res of courseSnaps) {
           if (res.status === 'fulfilled' && res.value.exists()) {
             const bankData = res.value.data();
             if (bankData && Array.isArray(bankData.co)) {
               const parsed = bankData.co.map(c => ({
                 code: (c.id || c.code || 'CO1').toUpperCase(),
-                description: c.description || ''
+                description: (c.description || c.statement || c.details || c.content || c.name || '').trim()
               })).sort((a, b) => (parseInt(a.code.replace(/\D/g, '')) || 0) - (parseInt(b.code.replace(/\D/g, '')) || 0));
               if (parsed.length > 0 && isMounted) {
-                setCourseOutcomes(parsed);
-                return;
+                if (hasRealDesc(parsed)) setCourseOutcomes(parsed);
+                if (hasRealDesc(parsed)) return;
               }
             }
+          }
+        }
+
+        // Fallback scan of courses collection if direct key lookups missed
+        if (targetSubjNorm) {
+          const snapAll = await getDocs(collection(db, 'courses'));
+          let best = null;
+          snapAll.forEach(d => {
+            const data = d.data();
+            const codeField = normClean(data?.code || '');
+            const dIdNorm = normClean(d.id);
+            if (codeField === targetSubjNorm || codeField.includes(targetSubjNorm) || dIdNorm.includes(targetSubjNorm)) {
+              if (data.co && Array.isArray(data.co) && data.co.length > 0) {
+                const cand = data.co.map(c => ({
+                  code: (c.id || c.code || 'CO1').toUpperCase(),
+                  description: (c.description || c.statement || c.details || c.content || c.name || '').trim()
+                }));
+                if (hasRealDesc(cand)) {
+                  if (!best || hasRealDesc(cand)) best = cand.sort((a, b) => (parseInt(String(a.code || '').replace(/\D/g, '')) || 0) - (parseInt(String(b.code || '').replace(/\D/g, '')) || 0));
+                } else if (!best && cand.length > 0) {
+                  best = cand;
+                }
+              }
+            }
+          });
+          if (best && best.length && isMounted && hasRealDesc(best)) {
+            setCourseOutcomes(best);
+            return;
           }
         }
       } catch (_) { /* ignore */ }

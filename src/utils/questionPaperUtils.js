@@ -477,7 +477,7 @@ export const getQuestionPaperHTML = (
       const parts = str.split('-');
       const codePart = parts[0].trim();
       const titlePart = parts.slice(1).join('-').trim();
-      if (/^[A-Z0-9]+$/i.test(codePart) && titlePart) {
+      if (/^[A-Z0-9\s_\-\.\/]+$/i.test(codePart) && titlePart) {
         return titlePart;
       }
     }
