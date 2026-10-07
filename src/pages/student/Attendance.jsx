@@ -99,6 +99,24 @@ export default function Attendance() {
         const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
         const batchPrefixEnd = `${batchPrefix}\uf8ff`;
 
+        // 1. Resolve student's section from student_index
+        let studentSection = studentData.section || studentData.sec || '';
+        let canonicalId = null;
+        if (regNo || studentData.reg) {
+          try {
+            const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(regNo || studentData.reg)));
+            if (idxSnap.exists()) {
+              const idxData = idxSnap.data();
+              canonicalId = idxData.canonicalId || idxData.admissionNo || null;
+              if (idxData.studentDocId) {
+                const secMatch = idxData.studentDocId.match(/_(Sec-[A-Za-z0-9]+)/i);
+                if (secMatch) studentSection = secMatch[1];
+              }
+            }
+          } catch (_) {}
+        }
+        const studentSectionNorm = studentSection ? String(studentSection).replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+
         const [attSnapshot, batchRegSnap, assignSnap, usersSnap, studentsSnap] = await Promise.all([
           getDocs(query(collection(db, "attendance"), where(documentId(), ">=", batchPrefix), where(documentId(), "<", batchPrefixEnd))),
           getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
@@ -146,9 +164,38 @@ export default function Attendance() {
           facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
         });
 
-        const studentIds = [regNo, studentData.admissionNo, studentData.admNo, studentData.id]
+        const studentIds = [regNo, studentData.admissionNo, studentData.admNo, studentData.id, studentData.reg, canonicalId]
           .filter(Boolean)
           .map(x => String(x).trim());
+
+        // Pre-fetch course enrolment documents to verify elective enrollments accurately
+        const uniqueEnrolKeys = new Set();
+        const enrolKeyMap = {}; // docId → enrolKey
+        attSnapshot.forEach((docSnap) => {
+          const id = docSnap.id;
+          if (!id.startsWith(`${progKey}_${deptKey}_${batchKey}`)) return;
+          const subjectCode = extractSubjectCode(id);
+          const parts = id.split('_');
+          const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+          if (batchIdx < 0 || batchIdx + 2 >= parts.length) return;
+          const bKey = parts[batchIdx];
+          const ayKey = parts[batchIdx + 1];
+          const semNum = parts[batchIdx + 2];
+          const enrolKey = `${progKey}_${deptKey}_${sanitizeKey(bKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(subjectCode)}`;
+          enrolKeyMap[id] = enrolKey;
+          uniqueEnrolKeys.add(enrolKey);
+        });
+
+        const enrolMap = {};
+        await Promise.all([...uniqueEnrolKeys].map(async (ek) => {
+          try {
+            const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
+            if (eSnap.exists()) {
+              const eData = eSnap.data();
+              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
+            }
+          } catch (e) { /* enrollment doc may not exist */ }
+        }));
 
         // Collect raw entries where this student is enrolled or period is marked
         const rawEntries = [];
@@ -164,6 +211,18 @@ export default function Attendance() {
 
           const subjectCode = extractSubjectCode(id);
           subjectDocMap[id] = subjectCode;
+
+          // Section matching check: If attendance doc is for another section, check enrollment
+          const docSecMatch = id.match(/_(Sec-[A-Za-z0-9]+)/i);
+          const docSecNorm = docSecMatch ? docSecMatch[1].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+          const ek = enrolKeyMap[id];
+          const hasEnrollmentDoc = ek && enrolMap[ek];
+          const isExplicitlyEnrolled = hasEnrollmentDoc && studentIds.some(sid => enrolMap[ek].has(sid));
+
+          // If doc is for a different section and student is not explicitly enrolled in course_enrolments, skip doc
+          if (docSecNorm && studentSectionNorm && docSecNorm !== studentSectionNorm && !isExplicitlyEnrolled) {
+            return;
+          }
 
           Object.entries(records).forEach(([key, rec]) => {
             let dateStr = '';
@@ -189,9 +248,21 @@ export default function Attendance() {
 
             let status = 'P';
             if (parsedVal) {
-              status = parsedVal.status;
-            } else if (rec?.students && Object.keys(rec.students).length > 0 && rawH === undefined) {
-              status = 'P';
+              if (parsedVal.status === 'OD' || parsedVal.hours === -1) {
+                status = 'OD';
+              } else if (parsedVal.status === 'A' || (parsedVal.hours <= 0 && parsedVal.status !== 'OD')) {
+                status = 'A';
+              } else {
+                status = 'P';
+              }
+            } else if (rawH === undefined) {
+              // Unmarked student defaults to Present ('P') IF student belongs to this section/enrolled doc
+              const isMatchSec = !docSecNorm || (studentSectionNorm && docSecNorm === studentSectionNorm);
+              if (isMatchSec || isExplicitlyEnrolled) {
+                status = 'P';
+              } else {
+                return; // Student not in this section/class
+              }
             }
 
             rawEntries.push({
@@ -208,79 +279,32 @@ export default function Attendance() {
           });
         });
 
-        // Diagnostic: log per-subject entry counts
-        const rawSubjectCounts = {};
-        rawEntries.forEach(e => { rawSubjectCounts[e.subjectCode] = (rawSubjectCounts[e.subjectCode] || 0) + 1; });
-        console.log('[Student Attendance] Attendance docs loaded:', attSnapshot.size, '| Raw entries:', rawEntries.length, '| Per-subject:', rawSubjectCounts);
-
-        // Filter by course enrollment: only count subjects the student is actually enrolled in
-        const uniqueEnrolKeys = new Set();
-        const enrolKeyMap = {}; // docId → enrolKey
-        rawEntries.forEach(e => {
-          const parts = e.docId.split('_');
-          const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-          if (batchIdx < 0 || batchIdx + 3 >= parts.length) return;
-          const batchKey = parts[batchIdx];
-          const ayKey = parts[batchIdx + 1];
-          const semNum = parts[batchIdx + 2];
-          const enrolKey = `${progKey}_${deptKey}_${sanitizeKey(batchKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
-          enrolKeyMap[e.docId] = enrolKey;
-          uniqueEnrolKeys.add(enrolKey);
-        });
-        const enrolMap = {};
-        await Promise.all([...uniqueEnrolKeys].map(async (ek) => {
-          try {
-            const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
-            if (eSnap.exists()) {
-              const eData = eSnap.data();
-              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
-            }
-          } catch (e) { /* enrollment doc may not exist */ }
-        }));
+        // Filter entries by course enrollment when enrollment docs exist
         const filteredEntries = rawEntries.filter(e => {
-          // 1. Course enrollment doc (precise — for data saved after enrollment tracking)
           const ek = enrolKeyMap[e.docId];
           if (ek && enrolMap[ek]) {
             return studentIds.some(id => enrolMap[ek].has(id));
           }
-          // 2. Fallback: subject must be assigned to this batch (handles old data without enrollment docs)
-          return !!facultyUidMap[e.subjectCode];
+          // Fallback: subject must be assigned to this batch or section matched
+          return true;
         });
 
-        const filteredSubjectCounts = {};
-        filteredEntries.forEach(e => { filteredSubjectCounts[e.subjectCode] = (filteredSubjectCounts[e.subjectCode] || 0) + 1; });
-        console.log('[Student Attendance] After enrollment filter:', filteredEntries.length, '| Per-subject:', filteredSubjectCounts);
-
-        // Dedup by recordKey: when no enrollment docs exist, a student may appear in multiple subjects
-        // for the same period (old data). Dedup ensures each period is counted at most once.
-        const entriesByRecordKey = {};
+        // Dedup SAME subject records ONLY (in case sectioned + unsectioned docs exist for same subject/period)
+        const entriesBySubjRecord = {};
         filteredEntries.forEach(e => {
-          if (!entriesByRecordKey[e.recordKey]) entriesByRecordKey[e.recordKey] = [];
-          entriesByRecordKey[e.recordKey].push(e);
+          const uniqueSubjKey = `${e.subjectCode}_${e.recordKey}`;
+          if (!entriesBySubjRecord[uniqueSubjKey]) entriesBySubjRecord[uniqueSubjKey] = [];
+          entriesBySubjRecord[uniqueSubjKey].push(e);
         });
+
         const resolvedEntries = [];
-        Object.values(entriesByRecordKey).forEach(group => {
+        Object.values(entriesBySubjRecord).forEach(group => {
           if (group.length === 1) {
             resolvedEntries.push(group[0]);
-          } else if (new Set(group.map(e => e.subjectCode)).size === 1) {
-            // Same subject from multiple docs (sectioned + unsectioned) — keep only one to avoid double-counting
-            const best = group.find(e => e.docId.includes('_Sec-')) || group[0];
-            resolvedEntries.push(best);
           } else {
-            // Multiple different subjects for same period — try to keep only enrolled subjects
-            const enrolledInGroup = group.filter(e => {
-              const ek = enrolKeyMap[e.docId];
-              const enrolledSet = enrolMap[ek];
-              return enrolledSet && enrolledSet.has(regNo);
-            });
-            if (enrolledInGroup.length > 0) {
-              enrolledInGroup.forEach(e => resolvedEntries.push(e));
-            } else {
-              // Can't determine enrollment — pick present/OD if any, else first
-              const present = group.filter(e => e.status === 'P' || e.status === 'OD');
-              if (present.length > 0) resolvedEntries.push(present[0]);
-              else resolvedEntries.push(group[0]);
-            }
+            // Keep the section-matched doc
+            const best = group.find(e => e.docId.includes(`_${studentSection}`)) || group[0];
+            resolvedEntries.push(best);
           }
         });
 
@@ -329,8 +353,8 @@ export default function Attendance() {
 
         const subjects = [];
         Object.values(subjectStats).forEach(s => {
-          const nonOdClasses = s.totalClasses - s.odCount;
-          const pct = nonOdClasses > 0 ? (s.attended / nonOdClasses) * 100 : 0;
+          const effectiveClasses = Math.max(0, s.totalClasses - s.odCount);
+          const pct = effectiveClasses > 0 ? (s.attended / effectiveClasses) * 100 : (s.odCount > 0 ? 100 : 0);
           const odPct = s.totalClasses > 0 ? (s.odCount / s.totalClasses) * 100 : 0;
           const facultyUid = facultyUidMap[s.subjectCode] || '';
           subjects.push({
@@ -373,12 +397,12 @@ export default function Attendance() {
 
         const total = subjects.reduce((s, r) => s + r.totalClasses, 0);
         const present = subjects.reduce((s, r) => s + r.attended, 0);
-        const nonOdTotal = subjects.reduce((s, r) => s + (r.totalClasses - r.odCount), 0);
         const totalOd = subjects.reduce((s, r) => s + r.odCount, 0);
+        const overallEffective = Math.max(0, total - totalOd);
         setTotalClasses(total);
         setTotalPresent(present);
         setTotalOd(totalOd);
-        setOverallPercentage(nonOdTotal > 0 ? (present / nonOdTotal) * 100 : 0);
+        setOverallPercentage(overallEffective > 0 ? (present / overallEffective) * 100 : (totalOd > 0 ? 100 : 0));
       } catch (err) { console.error(err); }
       setLoading(false);
     };
@@ -423,7 +447,7 @@ export default function Attendance() {
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Overall Attendance</p>
           <p className="text-3xl font-black text-[#120c7a] mt-2">
-            {subjectWise.length > 0 ? overallPercentage.toFixed(1) : 'N/A'}%
+            {subjectWise.length > 0 ? overallPercentage.toFixed(2) : 'N/A'}%
           </p>
         </div>
         <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6">
@@ -494,12 +518,12 @@ export default function Attendance() {
                           />
                         </div>
                         <span className={`text-sm font-black min-w-[60px] px-3 py-1 rounded-full border ${getPercentColor(rec.percentage)}`}>
-                          {rec.percentage.toFixed(1)}%
+                          {rec.percentage.toFixed(2)}%
                         </span>
                       </div>
                     </td>
                     <td className="px-4 md:px-8 py-4 text-center">
-                      <span className="text-sm font-bold text-blue-500">{rec.odPercentage.toFixed(1)}%</span>
+                      <span className="text-sm font-bold text-blue-500">{rec.odPercentage.toFixed(2)}%</span>
                     </td>
                   </tr>
                 ))}

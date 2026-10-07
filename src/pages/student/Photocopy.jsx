@@ -32,6 +32,7 @@ import {
   Check,
   Edit2,
   RotateCcw,
+  Lock,
 } from "lucide-react";
 
 const sanitizeKey = (key) => {
@@ -795,8 +796,21 @@ export default function Photocopy() {
         </div>
       )}
 
-      {/* Official Instructions & Candidate Details Form Card */}
-      <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 p-6 md:p-8 space-y-6">
+      {/* Official Instructions, Candidate Details & Subject Selection Form */}
+      {!windowStatus.open ? (
+        <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-14 text-center border border-rose-100 space-y-4 animate-in fade-in duration-200">
+          <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mx-auto shadow-sm">
+            <Lock size={32} />
+          </div>
+          <h3 className="text-xl font-black text-slate-900">Answer Script Photocopy Applications Closed</h3>
+          <p className="text-sm font-semibold text-slate-600 max-w-lg mx-auto leading-relaxed">
+            Answer script photocopy applications are currently closed ({windowStatus.label}). Please contact the Exam Cell for the schedule and announcements.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Official Instructions & Candidate Details Form Card */}
+          <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 p-6 md:p-8 space-y-6">
         {/* Instruction to Candidates */}
         <div>
           <h3 className="text-center text-lg md:text-xl font-black text-slate-900 underline uppercase tracking-wide mb-4">
@@ -1060,6 +1074,8 @@ export default function Photocopy() {
           </div>
         </div>
       </div>
+      )}
+        </>
       )}
 
       {/* My applications */}

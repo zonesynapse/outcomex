@@ -10,8 +10,9 @@ import {
   Copy, RefreshCw, FileSearch, GraduationCap,
   Save, Loader2, CheckCircle2, AlertCircle,
   CalendarDays, IndianRupee, Power, FileText,
-  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet, RotateCcw, X
+  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet, RotateCcw, X, FileWarning
 } from "lucide-react";
+import PhotocopyProblemModal from "../../components/PhotocopyProblemModal";
 
 const FORM_TABS = [
   {
@@ -20,6 +21,13 @@ const FORM_TABS = [
     icon: Copy,
     desc: "Answer script photocopy applications (student end page hide / view control)",
     defaultFee: 300,
+  },
+  {
+    id: "photocopy_problem",
+    label: "Photo Copy Problem",
+    icon: FileWarning,
+    desc: "Answer script photocopy problem discrepancy reports",
+    defaultFee: 0,
   },
   {
     id: "revaluation",
@@ -171,6 +179,58 @@ export default function ExamFormSettingPage() {
     });
     return () => unsub();
   }, []);
+
+  // Submitted Photocopy Problem Discrepancy Applications state
+  const [problemApps, setProblemApps] = useState([]);
+  const [loadingProblemApps, setLoadingProblemApps] = useState(true);
+  const [selectedProblemApp, setSelectedProblemApp] = useState(null);
+  const [showProblemModal, setShowProblemModal] = useState(false);
+  const [revokeProblemModal, setRevokeProblemModal] = useState({ open: false, app: null });
+  const [revokeProblemMessage, setRevokeProblemMessage] = useState("");
+  const [revokingProblem, setRevokingProblem] = useState(false);
+
+  // Realtime sync of submitted photocopy problem applications
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "photocopy_problem_applications"), (snap) => {
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      list.sort((a, b) => {
+        const at = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : new Date(a.createdAt || 0).getTime();
+        const bt = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : new Date(b.createdAt || 0).getTime();
+        return bt - at;
+      });
+      setProblemApps(list);
+      setLoadingProblemApps(false);
+    }, (err) => {
+      console.error("Error fetching photocopy problem applications:", err);
+      setLoadingProblemApps(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleRevokeProblemByExamCell = async () => {
+    if (!revokeProblemModal.app?.id) return;
+    if (!revokeProblemMessage.trim()) {
+      showToast("Please enter a reason/message for revoking the application.", "error");
+      return;
+    }
+    setRevokingProblem(true);
+    try {
+      await updateDoc(doc(db, "photocopy_problem_applications", revokeProblemModal.app.id), {
+        status: "Revoked by Exam Cell",
+        revokeReason: revokeProblemMessage.trim(),
+        revokedBy: "Exam Cell Admin",
+        revokedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Problem report for ${revokeProblemModal.app.studentName || revokeProblemModal.app.regNo} revoked & returned.`, "success");
+      setRevokeProblemModal({ open: false, app: null });
+      setRevokeProblemMessage("");
+    } catch (err) {
+      console.error("Revoke problem error:", err);
+      showToast("Failed to revoke application: " + err.message, "error");
+    }
+    setRevokingProblem(false);
+  };
 
   const setField = (field, value) => {
     setForms((prev) => ({ ...prev, [activeTab]: { ...prev[activeTab], [field]: value } }));
@@ -662,6 +722,110 @@ export default function ExamFormSettingPage() {
           </div>
         )}
 
+        {/* Submitted Photocopy Problem Applications (Exam Cell View) */}
+        {activeTab === "photocopy_problem" && (
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden mt-6">
+            <div className="bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-950 p-6 text-white flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-base md:text-lg flex items-center gap-2">
+                  <FileWarning size={20} className="text-amber-300" />
+                  Submitted Photocopy Problem Discrepancy Reports
+                </h3>
+                <p className="text-xs text-blue-200 mt-0.5">
+                  Review student answer script missing pages, wrong scripts, or valuation errors forwarded by department HODs
+                </p>
+              </div>
+              <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
+                Total Reports: {problemApps.length}
+              </span>
+            </div>
+
+            <div className="p-6">
+              {loadingProblemApps ? (
+                <div className="py-12 text-center text-zinc-400">
+                  <Loader2 size={24} className="mx-auto animate-spin mb-2 text-[#120c7a]" />
+                  <p className="text-xs font-medium">Loading discrepancy reports...</p>
+                </div>
+              ) : problemApps.length === 0 ? (
+                <div className="py-12 text-center text-zinc-400 bg-slate-50 rounded-xl border border-dashed border-zinc-200">
+                  <FileWarning size={32} className="mx-auto mb-2 opacity-40 text-amber-500" />
+                  <p className="text-sm font-bold text-zinc-600">No Problem Discrepancy Reports Submitted Yet</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">When students submit photocopy problem forms and HOD moves them, they will appear here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 text-zinc-600 font-bold uppercase tracking-wider text-[10px] border-b border-zinc-200">
+                      <tr>
+                        <th className="p-3">Candidate / Reg No</th>
+                        <th className="p-3">Department</th>
+                        <th className="p-3">Subjects</th>
+                        <th className="p-3">Reported Issues</th>
+                        <th className="p-3 text-center">Status</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 text-zinc-700 font-medium">
+                      {problemApps.map((app) => (
+                        <tr key={app.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="p-3">
+                            <div className="font-bold text-zinc-900">{app.studentName || 'Student'}</div>
+                            <div className="text-[11px] font-mono text-indigo-700 font-semibold">{app.regNo || app.admissionNo || '—'}</div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-bold text-zinc-800">{formatDepartmentDisplay(app.department, app.programme)}</div>
+                            <div className="text-[10px] text-zinc-400">{app.batch ? `Batch ${app.batch}` : ''}</div>
+                          </td>
+                          <td className="p-3 font-bold text-zinc-900">
+                            {Array.isArray(app.subjects) ? app.subjects.map(s => s.subjectCode).join(", ") : "1 Subject"}
+                          </td>
+                          <td className="p-3 font-medium text-amber-900 max-w-xs truncate">
+                            {app.selectedProblems?.map(p => p.replace(/^\d+\.\s*/, '')).join(", ") || '—'}
+                          </td>
+                          <td className="p-3 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border uppercase ${
+                              app.status === "Moved to Exam Cell" || app.status === "Recommended to Exam Cell"
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                : app.status === "Revoked by Exam Cell" || app.status === "Revoked by HOD"
+                                ? "bg-rose-100 text-rose-800 border-rose-300"
+                                : "bg-blue-100 text-blue-800 border-blue-200"
+                            }`}>
+                              {app.status || "Submitted"}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setSelectedProblemApp(app);
+                                  setShowProblemModal(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1 border border-indigo-200 cursor-pointer"
+                              >
+                                <Eye size={13} /> View Form
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setRevokeProblemModal({ open: true, app });
+                                  setRevokeProblemMessage("");
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 text-xs font-bold transition-all flex items-center gap-1 border border-rose-200 cursor-pointer"
+                              >
+                                <RotateCcw size={13} /> Revoke
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Dedicated Exam Cell HDFC Gateway Credentials Card */}
         <ExamCellGatewayCard showToast={showToast} />
       </div>
@@ -863,6 +1027,89 @@ export default function ExamFormSettingPage() {
         onClose={() => setFeeReportModalOpen(false)}
         applications={photocopyApps}
       />
+
+      {/* Official Photocopy Problem View Modal for Exam Cell */}
+      <PhotocopyProblemModal
+        open={showProblemModal}
+        app={selectedProblemApp}
+        onClose={() => {
+          setShowProblemModal(false);
+          setSelectedProblemApp(null);
+        }}
+        isExamCell={true}
+        onRevoke={(app) => {
+          setRevokeProblemModal({ open: true, app });
+          setRevokeProblemMessage("");
+        }}
+      />
+
+      {/* Exam Cell Photocopy Problem Revoke Modal */}
+      {revokeProblemModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[230] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setRevokeProblemModal({ open: false, app: null })}>
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden border border-rose-100 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-rose-900 to-red-800 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/10 rounded-xl text-white">
+                  <RotateCcw size={20} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-base leading-tight">Revoke Photocopy Problem Report</h3>
+                  <p className="text-rose-200 text-xs">Return problem report with feedback to Department & Student</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevokeProblemModal({ open: false, app: null })}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs">
+                <p className="text-rose-950 font-semibold">
+                  You are revoking the discrepancy report for <span className="font-bold">{revokeProblemModal.app?.studentName} ({revokeProblemModal.app?.regNo})</span>.
+                </p>
+                <p className="text-rose-700 mt-1">
+                  Specify the reason below. The student will be allowed to edit and re-submit.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider block mb-2">
+                  Revoke Reason / Correction Feedback *
+                </label>
+                <textarea
+                  rows={4}
+                  value={revokeProblemMessage}
+                  onChange={(e) => setRevokeProblemMessage(e.target.value)}
+                  placeholder="e.g. Invalid register number or subject details provided..."
+                  className="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-medium text-zinc-800 focus:outline-none focus:border-rose-600 focus:bg-white transition-all"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-zinc-100">
+                <button
+                  type="button"
+                  onClick={() => setRevokeProblemModal({ open: false, app: null })}
+                  className="px-4 py-2.5 bg-zinc-100 text-zinc-700 font-bold rounded-xl text-xs hover:bg-zinc-200 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRevokeProblemByExamCell}
+                  disabled={revokingProblem || !revokeProblemMessage.trim()}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {revokingProblem ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Confirm Revoke & Send Feedback
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

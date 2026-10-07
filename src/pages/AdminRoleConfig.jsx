@@ -105,6 +105,7 @@ export default function AdminRoleConfig() {
     { id: "placement-offers", label: "Placement — Offers", path: "/placement/offers", module: "Placement" },
     { id: "placement-training", label: "Placement — Training", path: "/placement/training", module: "Placement" },
     { id: "placement-reports", label: "Placement — Reports", path: "/placement/reports", module: "Placement" },
+    { id: "coe-dashboard", label: "Controller of Examinations (COE) Workbench", path: "/coe", module: "COE" },
     { id: "payment-roles", label: "Examination — Payment Roles", path: "/exam-payment/roles", module: "COE" },
     { id: "payment-entries", label: "Examination — Payment Entries", path: "/exam-payment/entries", module: "COE" },
     { id: "payment-reports", label: "Examination — Payment Reports", path: "/exam-payment/reports", module: "COE" },

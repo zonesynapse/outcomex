@@ -54,6 +54,7 @@ export default function AppraisalReviews() {
 
   // Scoring states (Parity with HODDashboard review modal)
   const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
+  const [principalFacultyScoresMap, setPrincipalFacultyScoresMap] = useState({});
 
   // Non-teaching evaluation states
   const [nonTeachingEvalMarks, setNonTeachingEvalMarks] = useState({
@@ -328,6 +329,21 @@ export default function AppraisalReviews() {
     }
     setHodFacultyScoresMap(initialHodScores);
 
+    // Initialize Principal faculty criteria scores map (defaults to HOD scores)
+    const initialPrincipalScores = {};
+    if (app.principalReview?.principalScores) {
+      Object.assign(initialPrincipalScores, app.principalReview.principalScores);
+    } else {
+      Object.assign(initialPrincipalScores, initialHodScores);
+    }
+    setPrincipalFacultyScoresMap(initialPrincipalScores);
+
+    const bd = app.autoScore?.breakdown;
+    const allRows = bd ? [...(bd.part1Rows || []), ...(bd.part2Rows || [])] : [];
+    const initPrincipalTotal = allRows.length > 0
+      ? allRows.reduce((a, r) => a + (Number(initialPrincipalScores[r.id] ?? initialHodScores[r.id] ?? r.scored) || 0), 0)
+      : "";
+
     // Initialize non-teaching performance evaluation rating states
     const existingEval = app.performanceEvaluation;
     if (existingEval?.marks) {
@@ -348,7 +364,12 @@ export default function AppraisalReviews() {
     } else if (userRole === "Principal" || userRole === "Admin") {
       setComments(app.principalReview?.comments || "");
       setEvaluationGrade(app.principalReview?.grade || "Good");
-      setFinalRating(app.principalReview?.finalRating ?? app.principalReview?.rating ?? "");
+      const existingRating = app.principalReview?.finalRating ?? app.principalReview?.rating;
+      setFinalRating(
+        existingRating !== undefined && existingRating !== null && existingRating !== ""
+          ? String(existingRating)
+          : (initPrincipalTotal !== "" ? String(initPrincipalTotal) : "")
+      );
       setPrincipalCheckboxes({
         appreciated: app.principalReview?.checkboxes?.appreciated || false,
         satisfactory: app.principalReview?.checkboxes?.satisfactory || false,
@@ -409,6 +430,10 @@ export default function AppraisalReviews() {
       const p2HodT = p2.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
       const gHodT = p1HodT + p2HodT;
 
+      const p1PrincipalT = p1.reduce((sum, r) => sum + (Number(principalFacultyScoresMap[r.id] ?? hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+      const p2PrincipalT = p2.reduce((sum, r) => sum + (Number(principalFacultyScoresMap[r.id] ?? hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+      const gPrincipalT = p1PrincipalT + p2PrincipalT;
+
       if (!updatePayload.hodReview) {
         updatePayload.hodReview = selectedAppraisal.hodReview || {};
       }
@@ -416,6 +441,17 @@ export default function AppraisalReviews() {
       updatePayload.hodReview.hodPart1Total = p1HodT;
       updatePayload.hodReview.hodPart2Total = p2HodT;
       updatePayload.hodReview.hodTotalScore = gHodT;
+
+      if (!updatePayload.principalReview) {
+        updatePayload.principalReview = selectedAppraisal.principalReview || {};
+      }
+      updatePayload.principalReview.principalScores = principalFacultyScoresMap;
+      updatePayload.principalReview.principalPart1Total = p1PrincipalT;
+      updatePayload.principalReview.principalPart2Total = p2PrincipalT;
+      updatePayload.principalReview.principalTotalScore = gPrincipalT;
+      if (!updatePayload.principalReview.finalRating) {
+        updatePayload.principalReview.finalRating = finalRating !== "" ? String(finalRating) : String(gPrincipalT);
+      }
     }
 
     if (isNonTeaching) {
@@ -2447,12 +2483,19 @@ export default function AppraisalReviews() {
                         const p1 = bd.part1Rows || [];
                         const p2 = bd.part2Rows || [];
                         const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+                        const sumPrincipal = (rows) => rows.reduce((a, r) => a + (Number(principalFacultyScoresMap[r.id] ?? hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
                         const gHodT = sumHod(p1) + sumHod(p2);
+                        const gPrincipalT = sumPrincipal(p1) + sumPrincipal(p2);
                         const gM = selectedAppraisal.autoScore.maxTotal || (p1.length ? p1.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0) + (p2.length ? p2.reduce((a, r) => a + (Number(r.maxMarks) || 0), 0) : 0);
                         return (
-                          <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                            HOD Score: {gHodT} / {gM}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                              HOD Score: {gHodT} / {gM}
+                            </span>
+                            <span className="text-[10px] font-black text-purple-800 bg-purple-100/70 px-2.5 py-0.5 rounded-full border border-purple-200">
+                              Principal Score: {gPrincipalT} / {gM}
+                            </span>
+                          </div>
                         );
                       })()}
                     </div>
@@ -2464,6 +2507,7 @@ export default function AppraisalReviews() {
                           <th className="p-2.5 text-center">Max</th>
                           <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
                           <th className="p-2.5 text-center text-emerald-700 font-black">HOD Score</th>
+                          <th className="p-2.5 text-center text-purple-700 font-black">Principal Score</th>
                         </tr>
                       </thead>
                       {(() => {
@@ -2472,29 +2516,37 @@ export default function AppraisalReviews() {
                         const p2 = bd.part2Rows || [];
                         const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
                         const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+                        const sumPrincipal = (rows) => rows.reduce((a, r) => a + (Number(principalFacultyScoresMap[r.id] ?? hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
 
                         const p1T = selectedAppraisal.autoScore.part1Total ?? sum(p1, "scored");
                         const p1M = p1.length ? sum(p1, "maxMarks") : 0;
                         const p1HodT = sumHod(p1);
+                        const p1PrincipalT = sumPrincipal(p1);
 
                         const p2T = selectedAppraisal.autoScore.part2Total ?? sum(p2, "scored");
                         const p2M = p2.length ? sum(p2, "maxMarks") : 0;
                         const p2HodT = sumHod(p2);
+                        const p2PrincipalT = sumPrincipal(p2);
 
                         const gT = selectedAppraisal.autoScore.total ?? p1T + p2T;
                         const gM = selectedAppraisal.autoScore.maxTotal ?? p1M + p2M;
                         const gHodT = p1HodT + p2HodT;
+                        const gPrincipalT = p1PrincipalT + p2PrincipalT;
 
                         const isEditable = selectedAppraisal.status !== "Approved";
 
                         const rowEls = (rows) => rows.map((r) => {
                           const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
+                          const principalVal = principalFacultyScoresMap[r.id] ?? hodVal;
                           return (
                             <tr key={r.id} className="hover:bg-slate-50/50">
                               <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
                               <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
                               <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
                               <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                              <td className="p-2.5 text-center font-black text-emerald-700 font-bold">
+                                {hodVal}
+                              </td>
                               <td className="p-2.5 text-center font-black">
                                 {isEditable ? (
                                   <input
@@ -2502,19 +2554,23 @@ export default function AppraisalReviews() {
                                     step="0.5"
                                     min="0"
                                     max={r.maxMarks}
-                                    value={hodVal === undefined || hodVal === null ? "" : hodVal}
+                                    value={principalVal === undefined || principalVal === null ? "" : principalVal}
                                     onChange={(e) => {
                                       const inputVal = e.target.value;
                                       const parsed = inputVal === "" ? "" : Math.min(Number(r.maxMarks), Math.max(0, Number(inputVal)));
-                                      setHodFacultyScoresMap((prev) => ({
-                                        ...prev,
+                                      const nextMap = {
+                                        ...principalFacultyScoresMap,
                                         [r.id]: parsed
-                                      }));
+                                      };
+                                      setPrincipalFacultyScoresMap(nextMap);
+                                      const allRows = [...p1, ...p2];
+                                      const newTotal = allRows.reduce((a, row) => a + (Number(nextMap[row.id] ?? hodFacultyScoresMap[row.id] ?? row.scored) || 0), 0);
+                                      setFinalRating(String(newTotal));
                                     }}
-                                    className="w-16 text-center font-black text-emerald-900 bg-white border-2 border-emerald-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 focus:outline-none"
+                                    className="w-16 text-center font-black text-purple-900 bg-white border-2 border-purple-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-600 focus:outline-none"
                                   />
                                 ) : (
-                                  <span className="text-emerald-700 font-bold">{hodVal}</span>
+                                  <span className="text-purple-700 font-bold">{principalVal}</span>
                                 )}
                               </td>
                             </tr>
@@ -2526,7 +2582,7 @@ export default function AppraisalReviews() {
                             <tbody className="divide-y divide-zinc-100">
                               {p1.length > 0 && (
                                 <tr className="bg-slate-50/70">
-                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
+                                  <td colSpan={6} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
                                 </tr>
                               )}
                               {rowEls(p1)}
@@ -2536,11 +2592,12 @@ export default function AppraisalReviews() {
                                   <td className="p-2 text-center text-zinc-700">{p1M}</td>
                                   <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
                                   <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
+                                  <td className="p-2 text-center text-purple-800 font-black">{p1PrincipalT}</td>
                                 </tr>
                               )}
                               {p2.length > 0 && (
                                 <tr className="bg-slate-50/70">
-                                  <td colSpan={5} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
+                                  <td colSpan={6} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
                                 </tr>
                               )}
                               {rowEls(p2)}
@@ -2550,6 +2607,7 @@ export default function AppraisalReviews() {
                                   <td className="p-2 text-center text-zinc-700">{p2M}</td>
                                   <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
                                   <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
+                                  <td className="p-2 text-center text-purple-800 font-black">{p2PrincipalT}</td>
                                 </tr>
                               )}
                             </tbody>
@@ -2559,6 +2617,7 @@ export default function AppraisalReviews() {
                                 <td className="p-3 text-center text-zinc-200">{gM}</td>
                                 <td className="p-3 text-center text-base">{gT}</td>
                                 <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
+                                <td className="p-3 text-center text-base text-purple-200">{gPrincipalT}</td>
                               </tr>
                             </tfoot>
                           </>

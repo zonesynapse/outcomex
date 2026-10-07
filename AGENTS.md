@@ -1,5 +1,46 @@
 ## Summary of Changes
 
+### 500. Appraisal Review Non-Editable HOD Score & Editable Principal Score (`src/pages/AppraisalReviews.jsx`)
+- **Goal**:
+  1. Make the `HOD Score` column read-only (non-editable text display).
+  2. Add a `Principal Score` column prefilled with HOD scores, allowing Principal/Admin to edit individual criteria scores.
+  3. Automatically calculate and update the total Principal score into the `FINAL RATING` field in real-time.
+- **Changes**:
+  - `AppraisalReviews.jsx`:
+    - Updated `HOD Score` column cells to render static text (`<span className="text-emerald-700 font-bold">{hodVal}</span>`) without input boxes.
+    - Added `Principal Score` header and column (`principalFacultyScoresMap`) defaulting to HOD scores.
+    - Added `<input type="number">` for `Principal Score` that dynamically calculates the total across Part 1 & Part 2 criteria and auto-populates `setFinalRating(String(newTotal))`.
+    - Updated `handleReviewAction` payload to store `principalScores`, `principalPart1Total`, `principalPart2Total`, `principalTotalScore`, and `finalRating` in Firestore (`principalReview`).
+- **Result**: Production build succeeds cleanly in 7.63s with 0 errors.
+
+### 499. Exam Form Window Closed State & Form Field Hiding (`src/pages/student/Photocopy.jsx`, `src/pages/student/PhotocopyProblem.jsx`)
+- **Goal**: When Exam Cell sets an exam form window (Photocopy or Photo Copy Problem) to `Closed` or when the window date range has expired:
+  1. Hide all application form input fields, candidate profile tables, instructions, and subject selection/pay controls.
+  2. Display a clear, centered "Applications Closed" card with lock icon and schedule details.
+  3. Keep the student's submission history section visible below so previous applications can still be tracked.
+- **Changes**:
+  - `Photocopy.jsx`: Wrapped instructions, candidate details, and subject selection table in a `!windowStatus.open` conditional check. Added a centered "Answer Script Photocopy Applications Closed" card when closed.
+  - `PhotocopyProblem.jsx`: Added real-time subscription to `exam_cell_settings/photocopy_problem` (with fallback to `photocopy`). Wrapped candidate details, subject cards, 8 discrepancy checklists, and submit button in a `!windowStatus.open` check with an "Applications Closed" card.
+- **Result**: Production build succeeds cleanly in 9.93s with 0 errors.
+
+### 498. Per-Subject Discrepancy Checklist & Subject Code Input Validation (`src/pages/student/PhotocopyProblem.jsx`, `src/components/PhotocopyProblemModal.jsx`)
+- **Goal**:
+  1. Render the 8 Discrepancy Category Checkboxes individually for **EACH** subject added by the student rather than a single shared/common checklist.
+  2. Disallow spaces in the "Subject Code" input box.
+  3. Ensure the printable view modal (`PhotocopyProblemModal.jsx`) renders per-subject discrepancy reports accurately for HOD, Exam Cell, and Student views.
+- **Changes**:
+  - `PhotocopyProblem.jsx`: Updated subject state structure to hold `selectedProblems` and `detailedDescription` per subject card. Added `onKeyDown` space prevention and `onChange` space-stripping (`replace(/\s+/g, '')`) for Subject Code inputs. Each subject card now displays its own 8 discrepancy checkboxes and remarks.
+  - `PhotocopyProblemModal.jsx`: Updated report view/print layout so each applied subject displays its own card containing its details, checked 8 discrepancy categories, and remarks.
+- **Result**: Production build succeeds cleanly in 7.32s with 0 errors.
+
+### 497. Photocopy Problem Discrepancy Workflow & Syntax Fix (`src/pages/student/PhotocopyProblem.jsx`, `src/pages/HODDashboard.jsx`, `src/pages/ExamCell/ExamFormSettingPage.jsx`, `src/components/PhotocopyProblemModal.jsx`)
+- **Goal**: Implement the complete Photocopy Problem Discrepancy Representation feature and fix the build syntax error in `ExamFormSettingPage.jsx`.
+- **Changes**:
+  1. **Student Module**: Created `PhotocopyProblem.jsx` at `/student/photocopy-problem` featuring pre-filled candidate profile, interactive subject list builder, all 8 authentic discrepancy checkboxes (Script Missing, Page(s) Missing, Wrong Answer Script, Other, Question Not Valued, Total Mistake, Photocopy Content Not Clear, Result/Grade Mismatch), revoked feedback banner, and realtime history table.
+  2. **HOD Module**: Added **Answer Script Photocopy Problem Discrepancies** card on `HODDashboard.jsx` with real-time pending count badges, `PhotocopyProblemModal.jsx` for official report viewing/printing, `Move to Exam Cell` action, and `Revoke` modal with mandatory feedback message.
+  3. **Exam Cell Module**: Added **Photo Copy Problem** tab in `ExamFormSettingPage.jsx` placed between **Photocopy** and **Revaluation**, added submitted reports table with `View Form` and `Revoke` modals.
+  4. **Syntax & Build Fix**: Closed missing `}, []);` hook callback at line 180 and removed duplicate `</div>` in `ExamFormSettingPage.jsx`. Verified clean build (`npm run build` completed with 0 errors).
+
 ### 490. Production Deployment to Cloudflare Pages (`zonesynapse-ckcet-obe`)
 - **Goal**: Build and deploy the production bundle to Cloudflare Pages under the user's project name `zonesynapse-ckcet-obe`.
 - **Execution**:

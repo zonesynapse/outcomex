@@ -8,10 +8,52 @@ import {
   Lock, Eye, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
   Send, Edit3, BookOpen, Layers, RefreshCw, ChevronRight, Landmark, X, Printer,
   ShieldCheck, Award, FileCheck, Building2, Check, ArrowLeft, Info, HelpCircle,
-  ClipboardCheck, Mail, Camera, ExternalLink
+  ClipboardCheck, Mail, Camera, ExternalLink, Split
 } from "lucide-react";
 import { uploadFile } from "../../utils/fileUpload";
 import MathTemplateToolbar from "../../components/MathTemplateToolbar";
+
+const ROMAN_LABELS = ["i)", "ii)", "iii)", "iv)", "v)", "vi)", "vii)", "viii)"];
+const getRomanLabel = (idx) => ROMAN_LABELS[idx] || `${idx + 1})`;
+
+const createDefaultSubParts = (count, totalMarks) => {
+  const parts = [];
+  const target = Number(totalMarks) || 16;
+  const baseMark = Math.floor(target / count);
+  const remainder = target - (baseMark * count);
+
+  for (let i = 0; i < count; i++) {
+    const mark = (i === count - 1) ? (baseMark + remainder) : baseMark;
+    parts.push({
+      id: `sub_${i + 1}_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      label: getRomanLabel(i),
+      text: "",
+      marks: mark
+    });
+  }
+  return parts;
+};
+
+const getSubPartsSum = (subParts) => {
+  if (!Array.isArray(subParts)) return 0;
+  return subParts.reduce((sum, sp) => sum + (Number(sp.marks) || 0), 0);
+};
+
+const getSubPartsValidationMsg = (subParts, targetMarks, qLabel) => {
+  if (!Array.isArray(subParts) || subParts.length === 0) return null;
+  const currentSum = getSubPartsSum(subParts);
+  const target = Number(targetMarks) || 0;
+
+  if (currentSum !== target) {
+    const diff = Math.abs(target - currentSum);
+    if (currentSum < target) {
+      return `Correct mark ku question set panunga: Total allocated marks sum to ${currentSum} marks instead of ${target} marks for Question ${qLabel} (${diff} marks short). Please adjust sub-part marks to total ${target}.`;
+    } else {
+      return `Correct mark ku question set panunga: Total allocated marks sum to ${currentSum} marks which exceeds question total of ${target} marks for Question ${qLabel} (by ${diff} marks). Please adjust sub-part marks to total ${target}.`;
+    }
+  }
+  return null;
+};
 
 const optimizeBase64Image = (base64Str, maxTargetKB = 30) => {
   return new Promise((resolve) => {
@@ -750,6 +792,7 @@ export default function ExternalSetterWorkbench() {
 
   // 6. Click "Move to COE" -> Validate Checklist -> Open Claim Bill Form Modal
   const handleMoveToCoe = () => {
+    if (!validateAllSplitQuestions()) return;
     if (!isChecklistComplete) {
       alert("Please complete all 12 items of the Question Paper Setting Verification Checklist before submitting to COE.");
       setShowChecklistModal(true);
@@ -758,6 +801,106 @@ export default function ExternalSetterWorkbench() {
 
     setClaimBillStep("form");
     setShowClaimBillModal(true);
+  };
+
+  // 6.1 Sub-part Split Question Handlers
+  const handleToggleSplitQuestion = (secIdx, qIdx, isOptB, shouldSplit) => {
+    const updated = { ...qpData };
+    const q = updated.sections[secIdx].questions[qIdx];
+    const totalMarks = q.marks || (isOptB ? 16 : 16);
+
+    if (!isOptB) {
+      q.isSplit = shouldSplit;
+      if (shouldSplit && (!q.subParts || q.subParts.length === 0)) {
+        q.subCount = 2;
+        q.subParts = createDefaultSubParts(2, totalMarks);
+      }
+    } else {
+      q.isSplitOptionB = shouldSplit;
+      if (shouldSplit && (!q.subPartsOptionB || q.subPartsOptionB.length === 0)) {
+        q.subCountOptionB = 2;
+        q.subPartsOptionB = createDefaultSubParts(2, totalMarks);
+      }
+    }
+    setQpData(updated);
+  };
+
+  const handleChangeSubCount = (secIdx, qIdx, isOptB, newCount) => {
+    const updated = { ...qpData };
+    const q = updated.sections[secIdx].questions[qIdx];
+    const totalMarks = q.marks || 16;
+    const partsKey = isOptB ? "subPartsOptionB" : "subParts";
+    const countKey = isOptB ? "subCountOptionB" : "subCount";
+
+    q[countKey] = newCount;
+    q[partsKey] = createDefaultSubParts(newCount, totalMarks);
+    setQpData(updated);
+  };
+
+  const handleUpdateSubPartMark = (secIdx, qIdx, isOptB, subIdx, val) => {
+    const updated = { ...qpData };
+    const q = updated.sections[secIdx].questions[qIdx];
+    const totalMarks = q.marks || 16;
+    const partsKey = isOptB ? "subPartsOptionB" : "subParts";
+    const parts = [...(q[partsKey] || [])];
+
+    if (parts.length === 0) return;
+
+    parts[subIdx] = { ...parts[subIdx], marks: Number(val) || 0 };
+
+    // Smart auto-fill for last part if editing an earlier part
+    if (subIdx !== parts.length - 1 && parts.length > 1) {
+      let sumOther = 0;
+      for (let i = 0; i < parts.length - 1; i++) {
+        sumOther += Number(parts[i].marks) || 0;
+      }
+      const rem = totalMarks - sumOther;
+      if (rem >= 0) {
+        parts[parts.length - 1] = { ...parts[parts.length - 1], marks: rem };
+      }
+    }
+
+    q[partsKey] = parts;
+    setQpData(updated);
+  };
+
+  const handleUpdateSubPartText = (secIdx, qIdx, isOptB, subIdx, val) => {
+    const updated = { ...qpData };
+    const q = updated.sections[secIdx].questions[qIdx];
+    const partsKey = isOptB ? "subPartsOptionB" : "subParts";
+    const parts = [...(q[partsKey] || [])];
+
+    if (parts[subIdx]) {
+      parts[subIdx] = { ...parts[subIdx], text: val };
+    }
+    q[partsKey] = parts;
+    setQpData(updated);
+  };
+
+  const validateAllSplitQuestions = () => {
+    for (let secIdx = 0; secIdx < (qpData.sections || []).length; secIdx++) {
+      const sec = qpData.sections[secIdx];
+      for (let qIdx = 0; qIdx < (sec.questions || []).length; qIdx++) {
+        const q = sec.questions[qIdx];
+        const qNoLabel = `${q.qNo}${q.optionB !== undefined ? '(a)' : ''}`;
+
+        if (q.isSplit) {
+          const msg = getSubPartsValidationMsg(q.subParts, q.marks || 16, qNoLabel);
+          if (msg) {
+            alert(msg);
+            return false;
+          }
+        }
+        if (q.optionB !== undefined && q.isSplitOptionB) {
+          const msgOptB = getSubPartsValidationMsg(q.subPartsOptionB, q.marks || 16, `${q.qNo}(b)`);
+          if (msgOptB) {
+            alert(msgOptB);
+            return false;
+          }
+        }
+      }
+    }
+    return true;
   };
 
   // 7. Validate & Proceed to 1-time Claim Verification step
@@ -833,82 +976,83 @@ export default function ExternalSetterWorkbench() {
           <div className="absolute top-1/2 left-1/3 w-[500px] h-[500px] bg-indigo-400/15 rounded-full blur-3xl pointer-events-none" />
         </div>
 
-        {/* TOP BRANDING BAR (FULL WIDTH & LARGE LOGO BANNER) */}
-        <header className="relative z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl px-4 sm:px-8 lg:px-12 py-4 shadow-sm w-full">
-          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* TOP BRANDING BAR (FULL WIDTH & RESPONSIVE LOGO BANNER) */}
+        <header className="relative z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl px-3 sm:px-6 lg:px-12 py-2.5 sm:py-3.5 shadow-xs w-full">
+          <div className="w-full flex items-center justify-between gap-3 sm:gap-4">
 
             {/* Left: Prominent Full-Width CKCET Banner Logo + Location Code Badge */}
-            <div className="flex items-center gap-4 flex-1">
-              <div className="h-16 sm:h-20 lg:h-24 px-5 py-2.5 rounded-2xl bg-white shadow-md ring-1 ring-slate-200/90 shrink-0 flex items-center justify-center">
-                <img src="/logo.png" alt="CKCET Banner Logo" className="h-full w-auto max-w-[340px] sm:max-w-[550px] lg:max-w-[780px] object-contain drop-shadow-xs" />
+            <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
+              <div className="h-10 sm:h-14 lg:h-18 px-2.5 sm:px-4 py-1 sm:py-2 rounded-xl sm:rounded-2xl bg-white shadow-xs ring-1 ring-slate-200/90 shrink-0 flex items-center justify-center">
+                <img src="/logo.png" alt="CKCET Banner Logo" className="h-full w-auto max-w-[200px] sm:max-w-[420px] lg:max-w-[700px] object-contain drop-shadow-xs" />
               </div>
-              <span className="hidden xl:inline-flex items-center px-4 py-2 rounded-xl bg-blue-50 border border-blue-200/90 text-[#120c7a] text-xs font-black tracking-wider uppercase whitespace-nowrap shadow-2xs">
+              <span className="hidden xl:inline-flex items-center px-3.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200/90 text-[#120c7a] text-xs font-black tracking-wider uppercase whitespace-nowrap shadow-2xs">
                 Cuddalore • Code: 4207
               </span>
             </div>
 
             {/* Right: Controller of Examinations Division + Portal Badge */}
-            <div className="flex items-center gap-4 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-4 shrink-0">
               <div className="hidden lg:flex flex-col items-end">
-                <span className="text-xs sm:text-sm font-black text-[#120c7a] uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-xs sm:text-sm font-black text-[#120c7a] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
                   <ShieldCheck className="h-4 w-4 text-blue-700" />
                   Office of the Controller of Examinations
                 </span>
-                <span className="text-xs text-slate-500 font-semibold mt-0.5">End Semester Examinations {effectiveExamSession} Division</span>
+                <span className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">End Semester Examinations {effectiveExamSession} Division</span>
               </div>
-              <div className="h-10 w-px bg-slate-200/80 hidden lg:block" />
-              <div className="px-4 py-2.5 rounded-2xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-2 shadow-2xs whitespace-nowrap">
-                <Landmark className="h-4 w-4 text-[#120c7a]" />
-                <span>External Setter Portal</span>
+              <div className="h-8 sm:h-10 w-px bg-slate-200/80 hidden lg:block" />
+              <div className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-1.5 sm:gap-2 shadow-2xs whitespace-nowrap">
+                <Landmark className="h-4 w-4 text-[#120c7a] shrink-0" />
+                <span className="hidden sm:inline">External Setter Portal</span>
+                <span className="sm:hidden text-[11px]">Setter Portal</span>
               </div>
             </div>
 
           </div>
         </header>
 
-        {/* HERO + LOGIN CONTAINER (LIGHT MODE - FULL SPACE) */}
-        <main className="relative z-20 flex-1 flex items-center justify-center p-4 md:p-10">
-          <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+        {/* HERO + LOGIN CONTAINER (LIGHT MODE - RESPONSIVE SPACE) */}
+        <main className="relative z-20 flex-1 flex items-center justify-center p-3 sm:p-6 md:p-10">
+          <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 lg:gap-12 items-center">
 
             {/* LEFT COLUMN: HERO BRANDING & FEATURES */}
-            <div className="lg:col-span-7 space-y-6 text-left">
-              <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-blue-100/90 border border-blue-200 shadow-xs backdrop-blur-md">
-                <Sparkles className="h-4 w-4 text-[#120c7a] animate-pulse" />
-                <span className="text-xs font-black uppercase tracking-widest text-[#120c7a]">
+            <div className="lg:col-span-7 space-y-4 sm:space-y-6 text-left">
+              <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full bg-blue-100/90 border border-blue-200 shadow-xs backdrop-blur-md">
+                <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#120c7a] animate-pulse shrink-0" />
+                <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#120c7a]">
                   Confidential Question Setter Workbench
                 </span>
               </div>
 
-              <div className="space-y-3">
-                <h2 className="text-3xl md:text-5xl font-black text-[#120c7a] leading-tight tracking-tight">
+              <div className="space-y-2 sm:space-y-3">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-[#120c7a] leading-tight tracking-tight">
                   Next-Gen <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#120c7a] via-blue-700 to-indigo-800">Autonomous Examination</span> & Question Portal
                 </h2>
-                <p className="text-slate-700 text-sm md:text-base leading-relaxed font-medium max-w-2xl">
+                <p className="text-slate-700 text-xs sm:text-sm md:text-base leading-relaxed font-medium max-w-2xl">
                   Welcome, Honorable External Expert. Access CKCET confidential Outcome-Based Education (OBE) question paper framing system with integrated CO-PO mapping, Bloom's Taxonomy analytics, and instant verification claim workflows.
                 </p>
               </div>
 
 
               {/* INSTITUTION FOOTER BADGES */}
-              <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] font-bold text-slate-600 border-t border-slate-200/80">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-2 text-[10px] sm:text-[11px] font-bold text-slate-600 border-t border-slate-200/80">
                 <span className="flex items-center gap-1.5 text-slate-800 font-extrabold">
-                  <Building2 className="h-3.5 w-3.5 text-[#120c7a]" />
+                  <Building2 className="h-3.5 w-3.5 text-[#120c7a] shrink-0" />
                   C.K. College of Engineering & Technology
                 </span>
-                <span>•</span>
+                <span className="hidden sm:inline">•</span>
                 <span>Autonomous Examination Portal</span>
-                <span>•</span>
+                <span className="hidden sm:inline">•</span>
                 <span className="text-blue-800">Cuddalore, Tamil Nadu</span>
               </div>
             </div>
 
             {/* RIGHT COLUMN: ULTRA-HD LIGHT GLASSMORPHISM LOGIN CARD */}
-            <div className="lg:col-span-5">
+            <div className="lg:col-span-5 w-full max-w-md sm:max-w-lg lg:max-w-none mx-auto lg:mx-0">
               <div className="relative group">
                 {/* Subtle Card Border Glow Effect */}
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-[#120c7a]/20 via-blue-500/20 to-indigo-500/20 rounded-3xl blur-md opacity-60 group-hover:opacity-100 transition duration-1000" />
 
-                <div className="relative bg-white/95 backdrop-blur-2xl border border-blue-100 rounded-3xl p-7 sm:p-9 shadow-2xl shadow-blue-950/10 space-y-6">
+                <div className="relative bg-white/95 backdrop-blur-2xl border border-blue-100 rounded-3xl p-5 sm:p-7 md:p-9 shadow-2xl shadow-blue-950/10 space-y-5 sm:space-y-6">
 
                   {/* Card Header */}
                   <div className="text-center space-y-2">
@@ -1624,7 +1768,7 @@ export default function ExternalSetterWorkbench() {
                             </div>
 
                             {/* Question Text Area with CKEditor */}
-                            <div>
+                            <div className="space-y-3">
                               <QuestionCKEditor
                                 id={`sec_${secIdx}_q_${qIdx}_main`}
                                 value={q.text || ""}
@@ -1633,14 +1777,102 @@ export default function ExternalSetterWorkbench() {
                                   updated.sections[secIdx].questions[qIdx].text = val;
                                   setQpData(updated);
                                 }}
-                                placeholder={`Enter text for Question ${q.qNo}...`}
+                                placeholder={`Enter text for Question ${q.qNo}${q.optionB !== undefined ? '(a)' : ''}...`}
                               />
+
+                              {/* Split Question Toggle & Controls for Option A */}
+                              <div className="p-3 bg-blue-50/60 border border-blue-200/80 rounded-xl space-y-3 font-sans">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <label className="text-xs font-black text-[#120c7a] uppercase flex items-center gap-1.5">
+                                    <Split className="h-3.5 w-3.5 text-[#120c7a]" />
+                                    Are you willing to split Question {q.qNo}{q.optionB !== undefined ? '(a)' : ''} into sub-parts?
+                                  </label>
+
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleSplitQuestion(secIdx, qIdx, false, false)}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                        !q.isSplit ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                      }`}
+                                    >
+                                      No (Single Question)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleSplitQuestion(secIdx, qIdx, false, true)}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                        q.isSplit ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                      }`}
+                                    >
+                                      Yes (Split Sub-Parts)
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {q.isSplit && (
+                                  <div className="space-y-4 pt-2.5 border-t border-blue-200/70">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-blue-200">
+                                      <span className="text-xs font-bold text-zinc-800">Select Number of Sub-Parts:</span>
+                                      <select
+                                        value={q.subCount || q.subParts?.length || 2}
+                                        onChange={(e) => handleChangeSubCount(secIdx, qIdx, false, Number(e.target.value))}
+                                        className="bg-blue-50 border border-blue-300 text-xs font-bold text-[#120c7a] rounded-lg px-2.5 py-1"
+                                      >
+                                        <option value={2}>2 Sub-Parts (i, ii)</option>
+                                        <option value={3}>3 Sub-Parts (i, ii, iii)</option>
+                                        <option value={4}>4 Sub-Parts (i, ii, iii, iv)</option>
+                                        <option value={5}>5 Sub-Parts (i, ii, iii, iv, v)</option>
+                                      </select>
+                                    </div>
+
+                                    {/* Sub-parts CKEditors & Mark Inputs */}
+                                    {q.subParts?.map((sub, sIdx) => (
+                                      <div key={sub.id || sIdx} className="p-3 bg-white border border-blue-100 rounded-xl space-y-2.5 shadow-2xs">
+                                        <div className="flex items-center justify-between bg-blue-50/50 p-2 rounded-lg border border-blue-100">
+                                          <span className="text-xs font-black text-[#120c7a] font-mono">
+                                            Sub-part {sub.label || getRomanLabel(sIdx)}
+                                          </span>
+
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="text-[11px] font-bold text-zinc-600">Marks:</span>
+                                            <input
+                                              type="number"
+                                              min={1}
+                                              max={q.marks || 16}
+                                              value={sub.marks}
+                                              onChange={(e) => handleUpdateSubPartMark(secIdx, qIdx, false, sIdx, Number(e.target.value))}
+                                              className="w-16 bg-emerald-50 border border-emerald-300 text-xs font-extrabold text-emerald-900 rounded-lg px-2 py-1 text-center font-mono"
+                                            />
+                                            <span className="text-xs font-extrabold text-zinc-500">/ {q.marks || 16}</span>
+                                          </div>
+                                        </div>
+
+                                        <QuestionCKEditor
+                                          id={`sec_${secIdx}_q_${qIdx}_sub_${sIdx}`}
+                                          value={sub.text || ""}
+                                          onChange={(val) => handleUpdateSubPartText(secIdx, qIdx, false, sIdx, val)}
+                                          placeholder={`Enter text for Sub-part ${sub.label || getRomanLabel(sIdx)}...`}
+                                        />
+                                      </div>
+                                    ))}
+
+                                    {/* Sub-parts Validation Alert */}
+                                    {getSubPartsValidationMsg(q.subParts, q.marks || 16, `${q.qNo}${q.optionB !== undefined ? '(a)' : ''}`) && (
+                                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-2 animate-shake">
+                                        <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                                        <span>{getSubPartsValidationMsg(q.subParts, q.marks || 16, `${q.qNo}${q.optionB !== undefined ? '(a)' : ''}`)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
 
                             {/* Option B for Either-OR Choice questions */}
                             {q.optionB !== undefined && (
-                              <div className="pt-2 border-t border-zinc-100">
-                                <span className="text-[10px] font-black text-amber-700 uppercase tracking-wider block mb-1">
+                              <div className="pt-4 mt-3 border-t-2 border-dashed border-amber-200/80 space-y-3">
+                                <span className="text-xs font-black text-amber-800 uppercase tracking-wider block bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg w-fit">
                                   OR Choice - Option (b) Question Text:
                                 </span>
                                 <QuestionCKEditor
@@ -1653,6 +1885,94 @@ export default function ExternalSetterWorkbench() {
                                   }}
                                   placeholder={`Enter Option (b) text for Question ${q.qNo}...`}
                                 />
+
+                                {/* Split Question Toggle & Controls for Option B */}
+                                <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl space-y-3 font-sans">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <label className="text-xs font-black text-amber-900 uppercase flex items-center gap-1.5">
+                                      <Split className="h-3.5 w-3.5 text-amber-700" />
+                                      Are you willing to split Question {q.qNo}(b) into sub-parts?
+                                    </label>
+
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleSplitQuestion(secIdx, qIdx, true, false)}
+                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                          !q.isSplitOptionB ? "bg-amber-700 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                        }`}
+                                      >
+                                        No (Single Question)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleSplitQuestion(secIdx, qIdx, true, true)}
+                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                          q.isSplitOptionB ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                        }`}
+                                      >
+                                        Yes (Split Sub-Parts)
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {q.isSplitOptionB && (
+                                    <div className="space-y-4 pt-2.5 border-t border-amber-200/70">
+                                      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-amber-200">
+                                        <span className="text-xs font-bold text-zinc-800">Select Number of Sub-Parts:</span>
+                                        <select
+                                          value={q.subCountOptionB || q.subPartsOptionB?.length || 2}
+                                          onChange={(e) => handleChangeSubCount(secIdx, qIdx, true, Number(e.target.value))}
+                                          className="bg-amber-50 border border-amber-300 text-xs font-bold text-amber-900 rounded-lg px-2.5 py-1"
+                                        >
+                                          <option value={2}>2 Sub-Parts (i, ii)</option>
+                                          <option value={3}>3 Sub-Parts (i, ii, iii)</option>
+                                          <option value={4}>4 Sub-Parts (i, ii, iii, iv)</option>
+                                          <option value={5}>5 Sub-Parts (i, ii, iii, iv, v)</option>
+                                        </select>
+                                      </div>
+
+                                      {/* Sub-parts CKEditors & Mark Inputs */}
+                                      {q.subPartsOptionB?.map((sub, sIdx) => (
+                                        <div key={sub.id || sIdx} className="p-3 bg-white border border-amber-100 rounded-xl space-y-2.5 shadow-2xs">
+                                          <div className="flex items-center justify-between bg-amber-50/50 p-2 rounded-lg border border-amber-100">
+                                            <span className="text-xs font-black text-amber-900 font-mono">
+                                              Sub-part {sub.label || getRomanLabel(sIdx)}
+                                            </span>
+
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="text-[11px] font-bold text-zinc-600">Marks:</span>
+                                              <input
+                                                type="number"
+                                                min={1}
+                                                max={q.marks || 16}
+                                                value={sub.marks}
+                                                onChange={(e) => handleUpdateSubPartMark(secIdx, qIdx, true, sIdx, Number(e.target.value))}
+                                                className="w-16 bg-emerald-50 border border-emerald-300 text-xs font-extrabold text-emerald-900 rounded-lg px-2 py-1 text-center font-mono"
+                                              />
+                                              <span className="text-xs font-extrabold text-zinc-500">/ {q.marks || 16}</span>
+                                            </div>
+                                          </div>
+
+                                          <QuestionCKEditor
+                                            id={`sec_${secIdx}_q_${qIdx}_sub_optB_${sIdx}`}
+                                            value={sub.text || ""}
+                                            onChange={(val) => handleUpdateSubPartText(secIdx, qIdx, true, sIdx, val)}
+                                            placeholder={`Enter text for Option (b) Sub-part ${sub.label || getRomanLabel(sIdx)}...`}
+                                          />
+                                        </div>
+                                      ))}
+
+                                      {/* Sub-parts Validation Alert */}
+                                      {getSubPartsValidationMsg(q.subPartsOptionB, q.marks || 16, `${q.qNo}(b)`) && (
+                                        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-2 animate-shake">
+                                          <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                                          <span>{getSubPartsValidationMsg(q.subPartsOptionB, q.marks || 16, `${q.qNo}(b)`)}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1664,7 +1984,10 @@ export default function ExternalSetterWorkbench() {
 
                 <div className="flex justify-end pt-4">
                   <button
-                    onClick={() => setViewState("preview")}
+                    onClick={() => {
+                      if (!validateAllSplitQuestions()) return;
+                      setViewState("preview");
+                    }}
                     className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-2 shadow-md cursor-pointer"
                   >
                     <Eye className="h-4 w-4" />
@@ -1848,14 +2171,33 @@ export default function ExternalSetterWorkbench() {
                         if (!isEitherOr) {
                           return (
                             <tr key={qIdx} className="border-b border-black">
-                              <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                              <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                 {qNoDisplay}
                               </td>
-                              <td className="border border-black p-2.5 align-middle">
-                                <div
-                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                  dangerouslySetInnerHTML={{ __html: q.text || "(Question text pending)" }}
-                                />
+                              <td className="border border-black p-2.5 align-top">
+                                {q.isSplit && q.subParts?.length > 0 ? (
+                                  <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                    {q.subParts.map((sub, sIdx) => (
+                                      <div key={sIdx} className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                                          <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                          <div
+                                            className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                            dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                          />
+                                        </div>
+                                        <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                          ({sub.marks})
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div
+                                    className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                    dangerouslySetInnerHTML={{ __html: q.text || "(Question text pending)" }}
+                                  />
+                                )}
                               </td>
                               <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                 {q.marks || 2}
@@ -1874,14 +2216,33 @@ export default function ExternalSetterWorkbench() {
                           <Fragment key={qIdx}>
                             {/* Option A Row */}
                             <tr className="border-b border-black">
-                              <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                              <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                 {q.qNo}(a)
                               </td>
-                              <td className="border border-black p-2.5 align-middle">
-                                <div
-                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                  dangerouslySetInnerHTML={{ __html: q.text || "(Question text pending)" }}
-                                />
+                              <td className="border border-black p-2.5 align-top">
+                                {q.isSplit && q.subParts?.length > 0 ? (
+                                  <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                    {q.subParts.map((sub, sIdx) => (
+                                      <div key={sIdx} className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                                          <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                          <div
+                                            className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                            dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                          />
+                                        </div>
+                                        <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                          ({sub.marks})
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div
+                                    className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                    dangerouslySetInnerHTML={{ __html: q.text || "(Question text pending)" }}
+                                  />
+                                )}
                               </td>
                               <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                 {q.marks || 16}
@@ -1907,14 +2268,33 @@ export default function ExternalSetterWorkbench() {
 
                             {/* Option B Row */}
                             <tr className="border-b border-black">
-                              <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                              <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                 {q.qNo}(b)
                               </td>
-                              <td className="border border-black p-2.5 align-middle">
-                                <div
-                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                  dangerouslySetInnerHTML={{ __html: q.optionB || "(Option b text pending)" }}
-                                />
+                              <td className="border border-black p-2.5 align-top">
+                                {q.isSplitOptionB && q.subPartsOptionB?.length > 0 ? (
+                                  <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                    {q.subPartsOptionB.map((sub, sIdx) => (
+                                      <div key={sIdx} className="flex items-start justify-between gap-2">
+                                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                                          <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                          <div
+                                            className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                            dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                          />
+                                        </div>
+                                        <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                          ({sub.marks})
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div
+                                    className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                    dangerouslySetInnerHTML={{ __html: q.optionB || "(Option b text pending)" }}
+                                  />
+                                )}
                               </td>
                               <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                 {q.marks || 16}
@@ -2655,11 +3035,11 @@ export default function ExternalSetterWorkbench() {
             </div>
 
             {/* Modal Footer Controls */}
-            <div className="bg-zinc-100 p-4 px-6 border-t border-zinc-300 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0 print:hidden">
+            <div className="bg-zinc-100 p-3.5 sm:p-4 px-4 sm:px-6 border-t border-zinc-300 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shrink-0 print:hidden">
               <div className="text-xs font-semibold text-zinc-600">
                 {isChecklistComplete ? (
                   <span className="text-emerald-700 font-extrabold flex items-center gap-1.5">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" /> All 12 Checklist Items Verified! "Move to COE" button is now unlocked.
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" /> All 12 Checklist Items Verified! "Move to COE" button is now unlocked.
                   </span>
                 ) : (
                   <span className="text-amber-800 font-bold">
@@ -2668,11 +3048,11 @@ export default function ExternalSetterWorkbench() {
                 )}
               </div>
 
-              <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="flex flex-wrap sm:flex-nowrap items-center justify-end gap-2.5 w-full md:w-auto shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowChecklistModal(false)}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-bold transition-all cursor-pointer"
+                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
                 >
                   Close / Return to Preview
                 </button>
@@ -2686,12 +3066,12 @@ export default function ExternalSetterWorkbench() {
                     }
                   }}
                   disabled={!isChecklistComplete}
-                  className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${isChecklistComplete
+                  className={`flex-1 sm:flex-none px-4 sm:px-5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${isChecklistComplete
                     ? "bg-[#120c7a] hover:bg-[#0e0a60] text-white shadow-lg shadow-[#120c7a]/20"
                     : "bg-zinc-300 text-zinc-500 cursor-not-allowed border border-zinc-300"
                     }`}
                 >
-                  <Send className="h-4 w-4" />
+                  <Send className="h-4 w-4 shrink-0" />
                   <span>Confirm & Unlock 'Move to COE'</span>
                 </button>
               </div>

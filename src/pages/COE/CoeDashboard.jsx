@@ -1,13 +1,17 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { db } from "../../firebase";
+import { db, auth } from "../../firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import {
-  collection, doc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp
 } from "firebase/firestore";
+import * as OTPAuth from "otpauth";
+import QRCode from "qrcode";
 import {
   Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon,
   Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle,
-  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar
+  Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar,
+  Shield, QrCode, Key, ShieldCheck, AlertTriangle, ChevronRight
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
@@ -20,6 +24,171 @@ import { formatProgrammeKey, matchRegulation, sanitizeKey, formatDepartmentDispl
 export default function CoeDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("users"); // "users" | "patterns" | "assignment" | "submitted"
+
+  // --------------------------------------------------------------------------
+  // 2FA AUTHENTICATOR (TOTP) SECURITY GATE FOR COE DASHBOARD
+  // --------------------------------------------------------------------------
+  const [currentUser, setCurrentUser] = useState(() => auth.currentUser);
+  const [is2FaVerified, setIs2FaVerified] = useState(false);
+  const [loading2Fa, setLoading2Fa] = useState(true);
+  const [user2FaSecret, setUser2FaSecret] = useState(null); // Base32 secret string if 2FA set up
+
+  // Setup & Input States
+  const [isSetupMode, setIsSetupMode] = useState(false);
+  const [newSetupSecret, setNewSetupSecret] = useState("");
+  const [qrCodeUrl, setQrCodeUrl] = useState("");
+  const [totpInput, setTotpInput] = useState("");
+  const [totpError, setTotpError] = useState("");
+  const [verifyingTotp, setVerifyingTotp] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (usr) => {
+      setCurrentUser(usr);
+      if (usr) {
+        checkUser2Fa(usr);
+      } else {
+        checkUser2Fa({ uid: "coe_master_user", email: "admin@ckcet.ac.in" });
+      }
+    });
+    return () => unsubAuth();
+  }, []);
+
+  const checkUser2Fa = async (usr) => {
+    setLoading2Fa(true);
+    try {
+      // Global Master 2FA Key doc ID: global_master_coe_2fa
+      const masterDocRef = doc(db, "coe_2fa_secrets", "global_master_coe_2fa");
+      const docSnap = await getDoc(masterDocRef);
+
+      if (docSnap.exists() && docSnap.data()?.secret) {
+        setUser2FaSecret(docSnap.data().secret);
+        setIsSetupMode(false);
+      } else {
+        await initNew2FaSetup(usr);
+      }
+    } catch (err) {
+      console.warn("2FA fetch note:", err?.message || err);
+      await initNew2FaSetup(usr);
+    } finally {
+      setLoading2Fa(false);
+    }
+  };
+
+  const initNew2FaSetup = async (usr) => {
+    setIsSetupMode(true);
+    const secretObj = new OTPAuth.Secret({ size: 20 });
+    const b32Secret = secretObj.base32;
+    setNewSetupSecret(b32Secret);
+
+    const emailToUse = usr?.email || "coe.master@ckcet.ac.in";
+
+    const totp = new OTPAuth.TOTP({
+      issuer: "CKCET-COE",
+      label: emailToUse,
+      algorithm: "SHA1",
+      digits: 6,
+      period: 30,
+      secret: secretObj
+    });
+
+    const uri = totp.toString();
+    try {
+      const qrData = await QRCode.toDataURL(uri, {
+        margin: 2,
+        width: 240,
+        color: { dark: "#120c7a", light: "#ffffff" }
+      });
+      setQrCodeUrl(qrData);
+    } catch (qrErr) {
+      console.error("QR generation error:", qrErr);
+    }
+  };
+
+  const handleVerify2FaCode = async (e) => {
+    e?.preventDefault();
+    const cleanCode = String(totpInput || "").trim();
+    if (!cleanCode || cleanCode.length < 6) {
+      setTotpError("Please enter all 6 digits of the Authenticator passcode.");
+      return;
+    }
+
+    setVerifyingTotp(true);
+    setTotpError("");
+
+    try {
+      if (isSetupMode) {
+        const totp = new OTPAuth.TOTP({
+          issuer: "CKCET-COE",
+          label: currentUser?.email || "coe.master@ckcet.ac.in",
+          algorithm: "SHA1",
+          digits: 6,
+          period: 30,
+          secret: OTPAuth.Secret.fromBase32(newSetupSecret)
+        });
+
+        const delta = totp.validate({ token: cleanCode, window: 1 });
+        if (delta !== null) {
+          // Save to Global Master 2FA Firestore document
+          await setDoc(doc(db, "coe_2fa_secrets", "global_master_coe_2fa"), {
+            keyType: "global_master_coe_2fa",
+            setupByEmail: currentUser?.email || "admin@ckcet.ac.in",
+            setupByUid: currentUser?.uid || "coe_master_user",
+            secret: newSetupSecret,
+            isEnabled: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+
+          setUser2FaSecret(newSetupSecret);
+          setIsSetupMode(false);
+          setIs2FaVerified(true);
+          setTotpInput("");
+        } else {
+          setTotpError("Invalid 6-digit code! Please check your Authenticator app (Google Authenticator / Authy / Microsoft Authenticator) and try again.");
+        }
+      } else {
+        const totp = new OTPAuth.TOTP({
+          issuer: "CKCET-COE",
+          label: currentUser?.email || "coe.master@ckcet.ac.in",
+          algorithm: "SHA1",
+          digits: 6,
+          period: 30,
+          secret: OTPAuth.Secret.fromBase32(user2FaSecret)
+        });
+
+        const delta = totp.validate({ token: cleanCode, window: 1 });
+        if (delta !== null) {
+          setIs2FaVerified(true);
+          setTotpInput("");
+        } else {
+          setTotpError("Invalid Authenticator Passcode! Please check your Authenticator app and enter the current 6-digit code.");
+        }
+      }
+    } catch (err) {
+      console.error("2FA Verification error:", err);
+      setTotpError("Verification failed: " + (err?.message || "Invalid code"));
+    } finally {
+      setVerifyingTotp(false);
+    }
+  };
+
+  const handleSurrender2FaToOwner = async () => {
+    if (!window.confirm("Surrender / Reset Global Master 2FA Key?\n\nThis will remove the current testing 2FA secret from Firestore. When the official COE Owner logs in from their account, they will be presented with a fresh QR Code to scan into their mobile Authenticator app.")) return;
+    setLoading2Fa(true);
+    try {
+      await deleteDoc(doc(db, "coe_2fa_secrets", "global_master_coe_2fa"));
+      setUser2FaSecret(null);
+      setIs2FaVerified(false);
+      await initNew2FaSetup(currentUser || { uid: "coe_master_user", email: "admin@ckcet.ac.in" });
+      alert("Global Master 2FA secret has been reset! The QR Code is now ready for setup by the COE Owner.");
+    } catch (err) {
+      console.error("2FA surrender error:", err);
+      alert("Failed to reset 2FA secret: " + (err?.message || err));
+    } finally {
+      setLoading2Fa(false);
+    }
+  };
 
   // --------------------------------------------------------------------------
   // DYNAMIC HOOKS & METADATA (Matching IAScheduleCreation.jsx)
@@ -1282,6 +1451,214 @@ export default function CoeDashboard() {
       setSavingGuideline(false);
     }
   };
+
+  // --------------------------------------------------------------------------
+  // RENDER: 2FA SECURITY GATE MODAL (If 2FA is not yet verified for this session)
+  // --------------------------------------------------------------------------
+  if (!is2FaVerified) {
+    return (
+      <Layout title="Controller of Examinations (COE) - 2FA Security Gate">
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+          {/* Ambient Lighting Background Orbs */}
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="w-full max-w-lg bg-white/95 backdrop-blur-2xl border border-blue-200/90 rounded-3xl p-7 sm:p-9 shadow-2xl shadow-blue-950/40 relative z-10 space-y-6 text-slate-800">
+
+            {/* Header Branding */}
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center justify-center h-16 w-16 bg-[#120c7a] rounded-2xl text-white shadow-xl shadow-[#120c7a]/20 ring-4 ring-blue-50 mb-1">
+                <ShieldCheck className="h-9 w-9 text-amber-300 animate-pulse" />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#120c7a] text-[10px] font-black uppercase tracking-widest">
+                <Lock className="h-3 w-3 text-[#120c7a]" /> 2FA Authenticator Security Gate
+              </div>
+              <h2 className="text-2xl font-black text-[#120c7a] tracking-tight font-serif">
+                COE Dashboard Access
+              </h2>
+              <p className="text-slate-500 text-xs font-semibold max-w-xs mx-auto">
+                {currentUser?.email ? (
+                  <span>Authenticated Account: <strong className="text-slate-800 font-extrabold">{currentUser.email}</strong></span>
+                ) : (
+                  <span>Office of the Controller of Examinations Security Protection</span>
+                )}
+              </p>
+            </div>
+
+            {loading2Fa ? (
+              <div className="py-12 text-center space-y-3">
+                <RefreshCw className="h-8 w-8 text-[#120c7a] animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-600">Verifying 2FA Security Credentials...</p>
+              </div>
+            ) : isSetupMode ? (
+              /* FIRST TIME 2FA SETUP FORM (QR CODE) */
+              <div className="space-y-5 animate-in fade-in duration-300">
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold space-y-1">
+                  <span className="font-extrabold flex items-center gap-1.5 text-amber-950">
+                    <Sparkles className="h-4 w-4 text-amber-600" /> First-Time 2FA Security Setup Required
+                  </span>
+                  <p className="text-[11px] leading-relaxed">
+                    Scan the QR code below using <strong>Google Authenticator</strong>, <strong>Authy</strong>, or <strong>Microsoft Authenticator</strong> app on your mobile phone.
+                  </p>
+                </div>
+
+                {/* QR Code Container */}
+                <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  {qrCodeUrl ? (
+                    <img src={qrCodeUrl} alt="2FA QR Code" className="h-48 w-48 rounded-xl border border-blue-200 p-2 bg-white shadow-md" />
+                  ) : (
+                    <div className="h-48 w-48 bg-slate-200 animate-pulse rounded-xl" />
+                  )}
+                  <span className="text-[10px] font-mono text-slate-500 font-bold uppercase tracking-wider">
+                    CKCET COE • TOTP Standard (RFC 6238)
+                  </span>
+                </div>
+
+                {/* Secret Key Manual Fallback */}
+                <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs font-mono">
+                  <div className="truncate mr-2">
+                    <span className="text-[10px] text-slate-500 font-sans block font-bold uppercase">Secret Key (Manual Entry):</span>
+                    <strong className="text-slate-800 text-xs tracking-wider">{newSetupSecret}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(newSetupSecret);
+                      setCopySuccess(true);
+                      setTimeout(() => setCopySuccess(false), 2000);
+                    }}
+                    className="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <Copy className="h-3 w-3" /> {copySuccess ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+
+                {/* Verification Form */}
+                <form onSubmit={handleVerify2FaCode} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                      <span>Enter 6-Digit Code From App</span>
+                      <span className="text-[10px] text-blue-700 font-bold">Step 2 of 2</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      autoFocus
+                      placeholder="• • • • • •"
+                      value={totpInput}
+                      onChange={(e) => setTotpInput(e.target.value.replace(/\D/g, ""))}
+                      className="w-full bg-white border-2 border-blue-200 focus:border-[#120c7a] rounded-2xl px-4 py-3 text-center text-2xl font-mono font-black tracking-[0.5em] text-[#120c7a] outline-none shadow-xs transition-all"
+                    />
+                  </div>
+
+                  {totpError && (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>{totpError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={verifyingTotp || totpInput.length < 6}
+                    className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {verifyingTotp ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                        <span>Verifying & Saving Secret...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="h-4 w-4 text-amber-300" />
+                        <span>Verify & Save 2FA Setup</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              /* SUBSEQUENT VISIT 2FA PASSCODE PROMPT */
+              <div className="space-y-5 animate-in fade-in duration-300">
+                <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-[#120c7a] text-xs font-semibold space-y-1">
+                  <span className="font-extrabold flex items-center gap-1.5 text-[#120c7a]">
+                    <Shield className="h-4 w-4 text-[#120c7a]" /> Enter 6-Digit Authenticator Code
+                  </span>
+                  <p className="text-[11px] leading-relaxed">
+                    Open your <strong>Google Authenticator</strong> or <strong>Authy</strong> app and enter the current 6-digit passcode for <strong>CKCET-COE</strong>.
+                  </p>
+                </div>
+
+                <form onSubmit={handleVerify2FaCode} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5 block">
+                      6-Digit Security Passcode
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={6}
+                      autoFocus
+                      placeholder="• • • • • •"
+                      value={totpInput}
+                      onChange={(e) => setTotpInput(e.target.value.replace(/\D/g, ""))}
+                      className="w-full bg-white border-2 border-blue-200 focus:border-[#120c7a] rounded-2xl px-4 py-3.5 text-center text-3xl font-mono font-black tracking-[0.5em] text-[#120c7a] outline-none shadow-xs transition-all"
+                    />
+                  </div>
+
+                  {totpError && (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>{totpError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={verifyingTotp || totpInput.length < 6}
+                    className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 text-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {verifyingTotp ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                        <span>Verifying Code...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="h-4 w-4 text-amber-300" />
+                        <span>Verify & Access COE Dashboard</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-500">
+                  <button
+                    type="button"
+                    onClick={handleSurrender2FaToOwner}
+                    className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-md border border-amber-200"
+                  >
+                    <Key className="h-3 w-3 text-amber-600" /> Surrender 2FA Key to Owner
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/exam-cell")}
+                    className="text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    Exit to Exam Cell
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title="Controller of Examinations (COE)">
