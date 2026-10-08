@@ -148,6 +148,68 @@ export default function PhotocopyProblem() {
     return () => unsub();
   }, []);
 
+  const [photocopyAppliedSubjects, setPhotocopyAppliedSubjects] = useState([]);
+  const [hasAutoLoadedPhotocopy, setHasAutoLoadedPhotocopy] = useState(false);
+
+  // Automatically fetch student's applied photocopy subjects from Photocopy.jsx (photocopy_applications)
+  useEffect(() => {
+    if (!studentData) return;
+    const studentKeys = [
+      studentData.regNo,
+      studentData.reg,
+      studentData.admissionNo,
+      studentData.admNo,
+      studentData.uid,
+      auth.currentUser?.uid,
+      auth.currentUser?.email
+    ].filter(Boolean).map(k => String(k).trim().toLowerCase());
+
+    const unsub = onSnapshot(collection(db, "photocopy_applications"), (snap) => {
+      const extractedSubjects = [];
+      const seenCodes = new Set();
+
+      snap.forEach(d => {
+        const data = d.data();
+        const matches = studentKeys.some(sk =>
+          String(data.regNo || '').trim().toLowerCase() === sk ||
+          String(data.studentUid || '').trim().toLowerCase() === sk ||
+          String(data.email || '').trim().toLowerCase() === sk
+        );
+
+        if (matches && Array.isArray(data.subjects)) {
+          data.subjects.forEach(s => {
+            const cleanCode = String(s.subjectCode || s.code || '').replace(/\s+/g, '').toUpperCase();
+            if (cleanCode && !seenCodes.has(cleanCode)) {
+              seenCodes.add(cleanCode);
+              extractedSubjects.push({
+                semesterNo: s.semesterNo || s.semester || "",
+                subjectCode: cleanCode,
+                subjectTitle: s.subjectTitle || s.name || s.subjectName || "",
+                examName: s.examName || "End Semester Exam",
+                selectedProblems: [],
+                detailedDescription: ""
+              });
+            }
+          });
+        }
+      });
+
+      if (extractedSubjects.length > 0) {
+        setPhotocopyAppliedSubjects(extractedSubjects);
+      }
+    });
+
+    return () => unsub();
+  }, [studentData]);
+
+  // Auto-prefill subject cards from photocopy applications on load
+  useEffect(() => {
+    if (!editingAppId && photocopyAppliedSubjects.length > 0 && !hasAutoLoadedPhotocopy) {
+      setSubjects(photocopyAppliedSubjects);
+      setHasAutoLoadedPhotocopy(true);
+    }
+  }, [photocopyAppliedSubjects, editingAppId, hasAutoLoadedPhotocopy]);
+
   // Listen to student's submitted photocopy problem applications
   useEffect(() => {
     if (!studentData) return;
@@ -474,13 +536,29 @@ export default function PhotocopyProblem() {
               <h2 className="text-lg font-bold text-slate-900">1. Subject(s) Related to Discrepancy & Checklists</h2>
               <p className="text-xs text-slate-500 mt-0.5">Specify subject details and tick the discrepancy points for each subject individually.</p>
             </div>
-            <button
-              type="button"
-              onClick={handleAddSubjectRow}
-              className="px-4 py-2.5 bg-indigo-50 text-[#120c7a] hover:bg-indigo-100 font-bold rounded-2xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-            >
-              <Plus size={16} /> Add Subject
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {photocopyAppliedSubjects.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubjects(photocopyAppliedSubjects);
+                    showToast(`Loaded ${photocopyAppliedSubjects.length} subject(s) from your Photocopy Application!`, 'success');
+                  }}
+                  className="px-3.5 py-2.5 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-bold rounded-2xl text-xs transition-all flex items-center gap-1.5 border border-emerald-200 cursor-pointer shadow-sm"
+                  title="Auto-fill subjects from your applied Photocopy Application"
+                >
+                  <CheckCircle2 size={15} className="text-emerald-600" />
+                  Auto-fill from Photocopy App ({photocopyAppliedSubjects.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleAddSubjectRow}
+                className="px-4 py-2.5 bg-indigo-50 text-[#120c7a] hover:bg-indigo-100 font-bold rounded-2xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Plus size={16} /> Add Subject
+              </button>
+            </div>
           </div>
 
           <div className="space-y-8">
