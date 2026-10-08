@@ -551,13 +551,6 @@ export default function PhotocopyProblem() {
                   Auto-fill from Photocopy App ({photocopyAppliedSubjects.length})
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleAddSubjectRow}
-                className="px-4 py-2.5 bg-indigo-50 text-[#120c7a] hover:bg-indigo-100 font-bold rounded-2xl text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
-              >
-                <Plus size={16} /> Add Subject
-              </button>
             </div>
           </div>
 

@@ -1,14 +1,14 @@
 ## Summary of Changes
 
-### 501. Auto-Prefill Applied Photocopy Subjects on Photocopy Problem Form (`src/pages/student/PhotocopyProblem.jsx`)
-- **Goal**: Auto-populate all subjects for which the student applied for Photocopy in `Photocopy.jsx` into the `PhotocopyProblem.jsx` subject cards automatically, avoiding manual typing while keeping all fields fully editable.
+### 501. Auto-Prefill Applied Photocopy Subjects on Photocopy Problem Form & Remove Add Subject Button (`src/pages/student/PhotocopyProblem.jsx`)
+- **Goal**: Auto-populate all subjects for which the student applied for Photocopy in `Photocopy.jsx` into the `PhotocopyProblem.jsx` subject cards automatically, avoiding manual typing while keeping all fields fully editable, and remove the "Add Subject" button.
 - **Changes**:
   - `PhotocopyProblem.jsx`:
     - Added real-time subscription to `photocopy_applications` collection matching the student's register number / UID / email.
     - Extracted all unique applied subjects (`semesterNo`, `subjectCode`, `subjectTitle`) and auto-prefilled `subjects` state on page load.
     - Kept subject code, title, and semester input fields editable with space-prevention validation.
-    - Added an `"Auto-fill from Photocopy App"` button in Section 1 header to allow quick re-syncing at any time.
-- **Result**: Production build succeeds cleanly in 7.84s with 0 errors.
+    - Removed the `"Add Subject"` button so the form strictly enforces the photocopy-applied subjects list.
+- **Result**: Production build succeeds cleanly in 7.20s with 0 errors.
 
 ### 500. Appraisal Review Non-Editable HOD Score & Editable Principal Score (`src/pages/AppraisalReviews.jsx`)
 - **Goal**:
