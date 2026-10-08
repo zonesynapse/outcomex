@@ -976,33 +976,30 @@ export default function ExternalSetterWorkbench() {
           <div className="absolute top-1/2 left-1/3 w-[500px] h-[500px] bg-indigo-400/15 rounded-full blur-3xl pointer-events-none" />
         </div>
 
-        {/* TOP BRANDING BAR (FULL WIDTH & RESPONSIVE LOGO BANNER) */}
-        <header className="relative z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl px-3 sm:px-6 lg:px-12 py-2.5 sm:py-3.5 shadow-xs w-full">
-          <div className="w-full flex items-center justify-between gap-3 sm:gap-4">
+        {/* TOP BRANDING BAR (FULL WIDTH & RESPONSIVE LOGO BANNER MATCHING IMAGE 2) */}
+        <header className="relative z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl px-4 sm:px-8 lg:px-12 py-2.5 sm:py-3 shadow-xs w-full">
+          <div className="w-full flex items-center justify-between gap-4">
 
-            {/* Left: Prominent Full-Width CKCET Banner Logo + Location Code Badge */}
-            <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
-              <div className="h-10 sm:h-14 lg:h-18 px-2.5 sm:px-4 py-1 sm:py-2 rounded-xl sm:rounded-2xl bg-white shadow-xs ring-1 ring-slate-200/90 shrink-0 flex items-center justify-center">
-                <img src="/logo.png" alt="CKCET Banner Logo" className="h-full w-auto max-w-[200px] sm:max-w-[420px] lg:max-w-[700px] object-contain drop-shadow-xs" />
+            {/* Left: Clean CKCET Banner Logo */}
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="h-10 sm:h-12 lg:h-14 shrink-0 flex items-center">
+                <img src="/logo.png" alt="CKCET Banner Logo" className="h-full w-auto max-w-[260px] sm:max-w-[460px] lg:max-w-[650px] object-contain" />
               </div>
-              <span className="hidden xl:inline-flex items-center px-3.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200/90 text-[#120c7a] text-xs font-black tracking-wider uppercase whitespace-nowrap shadow-2xs">
-                Cuddalore • Code: 4207
-              </span>
             </div>
 
-            {/* Right: Controller of Examinations Division + Portal Badge */}
-            <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+            {/* Right: Office of Controller of Examinations + Portal Badge */}
+            <div className="flex items-center gap-3 sm:gap-4 shrink-0">
               <div className="hidden lg:flex flex-col items-end">
                 <span className="text-xs sm:text-sm font-black text-[#120c7a] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
                   <ShieldCheck className="h-4 w-4 text-blue-700" />
                   Office of the Controller of Examinations
                 </span>
-                <span className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">End Semester Examinations {effectiveExamSession} Division</span>
+                <span className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">End Semester Examinations {effectiveExamSession}</span>
               </div>
               <div className="h-8 sm:h-10 w-px bg-slate-200/80 hidden lg:block" />
-              <div className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-xl sm:rounded-2xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-1.5 sm:gap-2 shadow-2xs whitespace-nowrap">
+              <div className="px-3.5 sm:px-4 py-2 rounded-xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-2 shadow-2xs whitespace-nowrap">
                 <Landmark className="h-4 w-4 text-[#120c7a] shrink-0" />
-                <span className="hidden sm:inline">External Setter Portal</span>
+                <span className="hidden sm:inline">ESE - QP Setter Portal</span>
                 <span className="sm:hidden text-[11px]">Setter Portal</span>
               </div>
             </div>
@@ -1010,60 +1007,59 @@ export default function ExternalSetterWorkbench() {
           </div>
         </header>
 
-        {/* HERO + LOGIN CONTAINER (LIGHT MODE - RESPONSIVE SPACE) */}
-        <main className="relative z-20 flex-1 flex items-center justify-center p-3 sm:p-6 md:p-10">
-          <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 lg:gap-12 items-center">
+        {/* HERO + LOGIN CONTAINER (MATCHING MOCKUP DESIGN EXACTLY) */}
+        <main className="relative z-20 flex-1 flex items-center justify-center p-4 sm:p-6 md:p-10">
+          <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
 
-            {/* LEFT COLUMN: HERO BRANDING & FEATURES */}
-            <div className="lg:col-span-7 space-y-4 sm:space-y-6 text-left">
-              <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-4 py-1 sm:py-1.5 rounded-full bg-blue-100/90 border border-blue-200 shadow-xs backdrop-blur-md">
-                <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#120c7a] animate-pulse shrink-0" />
-                <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#120c7a]">
-                  Confidential Question Setter Workbench
-                </span>
+            {/* LEFT COLUMN: CENTERED HERO BRANDING */}
+            <div className="lg:col-span-7 space-y-6 text-center flex flex-col items-center justify-center">
+
+              {/* CENTERED BADGE WITH EXTENDED SIDE LINES */}
+              <div className="flex items-center justify-center gap-3 sm:gap-4 w-full">
+                <div className="w-12 sm:w-20 lg:w-24 h-px bg-slate-400/60" />
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50/90 border border-blue-200/90 shadow-2xs backdrop-blur-md">
+                  <div className="p-1 rounded-md bg-[#120c7a] text-white">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-[#120c7a]">
+                    Confidential Question Setter Workbench
+                  </span>
+                </div>
+                <div className="w-12 sm:w-20 lg:w-24 h-px bg-slate-400/60" />
               </div>
 
-              <div className="space-y-2 sm:space-y-3">
-                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-[#120c7a] leading-tight tracking-tight">
-                  Next-Gen <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#120c7a] via-blue-700 to-indigo-800">Autonomous Examination</span> & Question Portal
+              {/* CENTERED TITLE & DESCRIPTION */}
+              <div className="space-y-4 text-center">
+                <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.12] tracking-tight text-[#0b132b]">
+                  Next-Gen <span className="text-[#2563eb]">Autonomous Examination</span>
+                  <br />
+                  <span className="text-[#2563eb]">& Question Portal</span>
                 </h2>
-                <p className="text-slate-700 text-xs sm:text-sm md:text-base leading-relaxed font-medium max-w-2xl">
-                  Welcome, Honorable External Expert. Access CKCET confidential Outcome-Based Education (OBE) question paper framing system with integrated CO-PO mapping, Bloom's Taxonomy analytics, and instant verification claim workflows.
+                <p className="text-slate-600 text-base sm:text-lg font-medium leading-relaxed max-w-2xl mx-auto text-center">
+                  A first-of-its-kind digital initiative of <span className="text-slate-900 font-extrabold">CKCET</span>, enabling secure, seamless and expert-driven <span className="text-slate-900 font-extrabold">Question Paper Setting</span> for Autonomous End Semester Examinations.
                 </p>
               </div>
 
-
-              {/* INSTITUTION FOOTER BADGES */}
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-2 text-[10px] sm:text-[11px] font-bold text-slate-600 border-t border-slate-200/80">
-                <span className="flex items-center gap-1.5 text-slate-800 font-extrabold">
-                  <Building2 className="h-3.5 w-3.5 text-[#120c7a] shrink-0" />
-                  C.K. College of Engineering & Technology
-                </span>
-                <span className="hidden sm:inline">•</span>
-                <span>Autonomous Examination Portal</span>
-                <span className="hidden sm:inline">•</span>
-                <span className="text-blue-800">Cuddalore, Tamil Nadu</span>
-              </div>
             </div>
 
-            {/* RIGHT COLUMN: ULTRA-HD LIGHT GLASSMORPHISM LOGIN CARD */}
+            {/* RIGHT COLUMN: WHITE GLASSMORPHISM LOGIN CARD */}
             <div className="lg:col-span-5 w-full max-w-md sm:max-w-lg lg:max-w-none mx-auto lg:mx-0">
               <div className="relative group">
-                {/* Subtle Card Border Glow Effect */}
+                {/* Card Glow Effect */}
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-[#120c7a]/20 via-blue-500/20 to-indigo-500/20 rounded-3xl blur-md opacity-60 group-hover:opacity-100 transition duration-1000" />
 
-                <div className="relative bg-white/95 backdrop-blur-2xl border border-blue-100 rounded-3xl p-5 sm:p-7 md:p-9 shadow-2xl shadow-blue-950/10 space-y-5 sm:space-y-6">
+                <div className="relative bg-white/95 backdrop-blur-2xl border border-blue-100/90 rounded-3xl p-6 sm:p-8 md:p-9 shadow-2xl shadow-blue-950/15 space-y-6">
 
                   {/* Card Header */}
                   <div className="text-center space-y-2">
-                    <div className="inline-flex items-center justify-center h-16 w-16 bg-[#120c7a] rounded-2xl text-white shadow-xl shadow-[#120c7a]/20 ring-4 ring-blue-50 mb-2">
-                      <Lock className="h-8 w-8 text-amber-300" />
+                    <div className="inline-flex items-center justify-center h-14 w-14 bg-[#120c7a] rounded-2xl text-white shadow-xl shadow-[#120c7a]/20 ring-4 ring-blue-50 mb-1 mx-auto">
+                      <Lock className="h-7 w-7 text-amber-300" />
                     </div>
-                    <h3 className="text-2xl font-black text-[#120c7a] tracking-tight font-serif">
-                      External Setter Sign In
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tight font-serif">
+                      QP Setter Sign In
                     </h3>
                     <p className="text-slate-500 text-xs font-semibold max-w-xs mx-auto">
-                      Enter your official email and password sent in your COE invitation document.
+                      Sign in using the official credentials provided in your COE invitation.
                     </p>
                   </div>
 
@@ -1078,15 +1074,10 @@ export default function ExternalSetterWorkbench() {
                   {/* Form */}
                   <form onSubmit={handleLogin} className="space-y-4">
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <Mail className="h-3.5 w-3.5 text-[#120c7a]" />
-                          Registered Email Address
-                        </label>
-                        <span className="text-[10px] text-[#120c7a] font-extrabold uppercase tracking-wider bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                          COE Issued
-                        </span>
-                      </div>
+                      <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 mb-1.5">
+                        <Mail className="h-3.5 w-3.5 text-[#120c7a]" />
+                        Registered Email Address
+                      </label>
                       <div className="relative">
                         <input
                           type="email"
@@ -1094,19 +1085,17 @@ export default function ExternalSetterWorkbench() {
                           placeholder="professor@iitm.ac.in / name@institution.edu"
                           value={loginEmail}
                           onChange={(e) => setLoginEmail(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
+                          className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
                           required
                         />
                       </div>
                     </div>
 
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                          <Lock className="h-3.5 w-3.5 text-[#120c7a]" />
-                          Secure Access Password
-                        </label>
-                      </div>
+                      <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 mb-1.5">
+                        <Lock className="h-3.5 w-3.5 text-[#120c7a]" />
+                        Secure Access Password
+                      </label>
                       <div className="relative">
                         <input
                           type="password"
@@ -1114,7 +1103,7 @@ export default function ExternalSetterWorkbench() {
                           placeholder="Enter password sent in official invitation"
                           value={loginPassword}
                           onChange={(e) => setLoginPassword(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
+                          className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
                           required
                         />
                       </div>
@@ -1123,7 +1112,7 @@ export default function ExternalSetterWorkbench() {
                     <button
                       type="submit"
                       disabled={authenticating}
-                      className="w-full bg-gradient-to-r from-[#120c7a] via-[#1a1499] to-[#0e0a60] hover:from-[#0e0a60] hover:to-[#080640] text-white font-black py-4 px-6 rounded-2xl shadow-xl shadow-[#120c7a]/25 hover:shadow-[#120c7a]/40 transition-all duration-300 flex items-center justify-center gap-3 text-sm cursor-pointer disabled:opacity-50 border border-blue-900/30 transform active:scale-95 mt-2"
+                      className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-[#120c7a]/20 hover:shadow-[#120c7a]/30 transition-all duration-300 flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50 mt-2"
                     >
                       {authenticating ? (
                         <>
@@ -1147,10 +1136,9 @@ export default function ExternalSetterWorkbench() {
                       Strictly Confidential • Authorized Personnel Only
                     </p>
                     <p className="text-[10px] text-slate-400 font-semibold">
-                      C.K. College of Engineering & Technology • COE Division
+                      C.K. College of Engineering & Technology • COE
                     </p>
                   </div>
-
                 </div>
               </div>
             </div>
@@ -1158,12 +1146,10 @@ export default function ExternalSetterWorkbench() {
           </div>
         </main>
 
-        {/* BOTTOM FOOTER (LIGHT MODE) */}
-        <footer className="relative z-20 border-t border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-3 text-center text-xs text-slate-600 font-semibold">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-            <span>© {new Date().getFullYear()} C.K. College of Engineering & Technology. All rights reserved.</span>
-            <span className="text-slate-500 text-[11px]">Designed for End Semester Examinations ({effectiveExamSession}) Autonomous Framing</span>
-          </div>
+        {/* BOTTOM FOOTER (MATCHING IMAGE 2) */}
+        <footer className="relative z-20 border-t border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-3 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 font-semibold gap-2">
+          <span>© 2026 C.K. College of Engineering & Technology. All rights reserved.</span>
+          <span>Designed for End Semester Examinations ({effectiveExamSession}) Autonomous Framing</span>
         </footer>
       </div>
     );
@@ -1792,18 +1778,16 @@ export default function ExternalSetterWorkbench() {
                                     <button
                                       type="button"
                                       onClick={() => handleToggleSplitQuestion(secIdx, qIdx, false, false)}
-                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                        !q.isSplit ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
-                                      }`}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${!q.isSplit ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                        }`}
                                     >
                                       No (Single Question)
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => handleToggleSplitQuestion(secIdx, qIdx, false, true)}
-                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                        q.isSplit ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
-                                      }`}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${q.isSplit ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                        }`}
                                     >
                                       Yes (Split Sub-Parts)
                                     </button>
@@ -1898,18 +1882,16 @@ export default function ExternalSetterWorkbench() {
                                       <button
                                         type="button"
                                         onClick={() => handleToggleSplitQuestion(secIdx, qIdx, true, false)}
-                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                          !q.isSplitOptionB ? "bg-amber-700 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
-                                        }`}
+                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${!q.isSplitOptionB ? "bg-amber-700 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                          }`}
                                       >
                                         No (Single Question)
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => handleToggleSplitQuestion(secIdx, qIdx, true, true)}
-                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                          q.isSplitOptionB ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
-                                        }`}
+                                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${q.isSplitOptionB ? "bg-emerald-600 text-white shadow-xs" : "bg-white text-zinc-700 border border-zinc-300"
+                                          }`}
                                       >
                                         Yes (Split Sub-Parts)
                                       </button>

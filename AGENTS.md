@@ -1,5 +1,133 @@
 ## Summary of Changes
 
+### 513. Removal of Blank Default Subject Row & Read-Only Photocopy Enforcement (`src/pages/student/Revaluation.jsx`)
+- **Goal**:
+  1. Prevent candidates from seeing a blank editable row (`Sem #`, `Subject Code`, `Subject Title`) when all photocopy subjects are already applied or when no photocopy application exists.
+  2. Enforce strict Anna University policy that Revaluation can ONLY be requested for answer scripts previously obtained via Photocopy.
+  3. Render clean read-only text badges for subject details (`Semester No`, `Subject Code`, `Subject Title`, `Grade`, `Result`) instead of editable text inputs.
+  4. Render an informative empty state card ("No Eligible Photocopy Answer Scripts Found") when `subjectRows` is empty.
+- **Changes**:
+  - `Revaluation.jsx`:
+    - Updated initial `subjectRows` state to `[]` (removed hardcoded default blank row `{ id: 1, semesterNo: '', subjectCode: '' }`).
+    - Replaced table input elements (`<input type="text">`, `<select>`) with clean read-only text elements and badges.
+    - Added empty state card container when `subjectRows.length === 0`.
+- **Result**: Production build succeeds cleanly in 7.36s with 0 errors.
+
+### 512. Dynamic `alreadyApplied` Subject Sync & Selection Lock Fix (`src/pages/student/Revaluation.jsx`)
+- **Goal**: Prevent subjects already submitted for revaluation in previous applications (e.g. `EE25C01`) from remaining checkable/selectable in the "Eligible Answer Scripts & Subject Details" table.
+- **Root Cause**: `photocopyAppliedSubjects` initial load set `subjectRows` state once on page load when `previouslyAppliedSubjectCodes` was empty. When the application status updated to `Submitted to HOD` / `Paid`, `subjectRows` state did not re-evaluate `alreadyApplied` dynamically during table row rendering, leaving the selection checkbox enabled.
+- **Changes**:
+  - `Revaluation.jsx`:
+    - Updated `subjectRows.map` callback to evaluate `isAlreadyApplied = Boolean(r.alreadyApplied || (cleanCode && previouslyAppliedSubjectCodes.has(cleanCode)))` dynamically on every render pass.
+    - Updated `selectedRows` memo and `handleToggleSelectRow` to dynamically check `previouslyAppliedSubjectCodes`.
+    - Automatically synced `alreadyApplied` status into `subjectRows` state whenever `previouslyAppliedSubjectCodes` or `photocopyAppliedSubjects` change.
+- **Result**: Production build succeeds cleanly in 7.26s with 0 errors.
+
+### 511. Fix Refresh Status HDFC Gateway Success Verification & Client-Side Firestore Update Fallback (`functions/index.js`, `src/pages/student/Revaluation.jsx`)
+- **Goal**: Resolve issue where clicking "Refresh Status" for a successful HDFC payment did not update the application status in Firestore from "Payment Pending" to "Submitted to HOD" / "Paid".
+- **Root Cause**:
+  1. `verifyExamCellPayment` in `functions/index.js` did not receive `appId` explicitly from client calls, relying on `paymentRecord.appId` which could be empty for sessions initialized before `orderId` linking.
+  2. Status verification checked only primary `responseData.status` / `order_status` without searching nested gateway response objects (`payment_gateway_response.status`, `payment_links.status`) or checking existing `hdfcStatus` / `status` on `exam_cell_payments`.
+  3. Client-side `verifyPaymentOnReturn` in `Revaluation.jsx` did not perform a direct Firestore fallback update on `revaluation_applications` when success was confirmed by gateway or `exam_cell_payments`.
+- **Changes**:
+  - `functions/index.js`: Updated `verifyExamCellPayment` to accept `appId` in request payload, inspect `payment_gateway_response.status` / `payment_links.status`, and verify against `successStatuses` (`CHARGED`, `SUCCESS`, `PAID`, `COMPLETED`, `CAPTURED`, `SETTLED`, `AUTHENTICATED`).
+  - `Revaluation.jsx`: Updated `verifyPaymentOnReturn(orderId, targetAppId)` to pass `appId` to `verifyExamCellPayment`, perform direct fallback check on `exam_cell_payments` document, and explicitly update `revaluation_applications` with `paymentStatus: "Paid"`, `status: "Submitted to HOD"`, `billAttached: true`. Updated `handleRefreshAppStatus` to pass `app.id` and search `exam_cell_payments` by `uid`, `appId`, or `regNo`.
+- **Result**: Production build succeeds cleanly in 8.02s with 0 errors.
+
+### 510. Unconditional Refresh Status Action & Missing Order ID Resolution for Payment Pending Applications (`src/pages/student/Revaluation.jsx`)
+- **Goal**:
+  1. Render "Refresh Status" button (`<RotateCcw />`) unconditionally for **ALL** applications with `status: 'Payment Pending'` or `paymentStatus !== 'Paid'` in the Action column.
+  2. If `app.orderId` is missing on older Firestore documents, automatically query `exam_cell_payments` by `appId` / candidate `regNo` to retrieve the gateway `orderId`, attach it to `revaluation_applications`, and poll HDFC Gateway via `verifyPaymentOnReturn(orderId)`.
+- **Changes**:
+  - `Revaluation.jsx`: Added `handleRefreshAppStatus` function that retrieves missing `orderId` from `exam_cell_payments` when necessary and updates Firestore. Updated table rendering to display `Refresh Status` unconditionally for all pending payment rows (`!isPaid`).
+- **Result**: Production build succeeds cleanly in 7.23s with 0 errors.
+
+### 509. Display Pending Payment Applications with Refresh Status Action & Conditional Submit to HOD (`src/pages/student/Revaluation.jsx`)
+- **Goal**:
+  1. Render applications with `paymentStatus: 'Pending'` / `status: 'Payment Pending'` in "My Revaluation Applications History" table below so candidates can track pending checkout attempts.
+  2. Hide "Submit to HOD" button for pending applications, showing it strictly when `paymentStatus === 'Paid'`.
+  3. Render "Refresh Status" button (`<RotateCcw />`) for pending payment rows with an `orderId` to poll gateway status and update Firestore in real time.
+- **Changes**:
+  - `Revaluation.jsx`: Added `activeApplications` memo (includes pending payment, excludes cancelled). Updated history table mapping to `activeApplications`. Rendered `Refresh Status` button for pending payment rows with `orderId`. Scoped `Submit to HOD` button to `isPaid === true`.
+- **Result**: Production build succeeds cleanly in 8.44s with 0 errors.
+
+### 508. Fix Revaluation Payment Verification & Firestore Update Integration (`functions/index.js`, `src/pages/student/Revaluation.jsx`)
+- **Goal**: Resolve issue where HDFC payment for Revaluation succeeded on gateway but stayed `paymentStatus: "Pending"` in Firestore with no `orderId` attached to `revaluation_applications` document `DfP9zEmppUl12GTfdJFR`.
+- **Root Cause**:
+  1. `createExamCellPaymentSession` in `functions/index.js` hardcoded updating `photocopy_applications` collection for any `appId`, failing silently for revaluation applications and stranding `revaluation_applications` without an `orderId`.
+  2. `verifyExamCellPayment` in `functions/index.js` hardcoded updating `photocopy_applications` on payment success.
+  3. Client-side `handleStartPayment` in `Revaluation.jsx` did not update `orderId` on the `revaluation_applications` document before redirecting to the payment gateway.
+- **Changes**:
+  - `functions/index.js`: Updated `createExamCellPaymentSession` to target `revaluation_applications` when `category` contains "Revaluation". Updated `verifyExamCellPayment` to dynamically update `revaluation_applications` or `photocopy_applications`, setting `paymentStatus: "Paid"`, `status: "Submitted to HOD"`, `billAttached: true`, and attaching `electronicBill` and `transactionId`.
+  - `Revaluation.jsx`: Updated `handleStartPayment` to save `orderId` to `revaluation_applications` before redirecting. Added auto-verify `useEffect` on page load and `"Verify Status"` button in history table to poll gateway status.
+- **Result**: Production build succeeds cleanly in 9.51s with 0 errors.
+
+### 507. Dynamic Exam Cell Setting Sync & Application Window Lock State (`src/pages/student/Revaluation.jsx`, `src/pages/ExamCell/ExamFormSettingPage.jsx`)
+- **Goal**:
+  1. Synchronize the Last Date (`toDate`), From Date (`fromDate`), and Fee Amount (`feePerSubject`) set by Exam Cell in `ExamFormSettingPage.jsx` directly to `Revaluation.jsx` in real time.
+  2. Automatically lock and hide application inputs/subject tables when the window is set to Closed or date range has expired (matching `Photocopy.jsx` & `PhotocopyProblem.jsx`), displaying the centered "Applications Closed" card.
+- **Changes**:
+  - `Revaluation.jsx`: Subscribed to `doc(db, 'exam_cell_settings', 'revaluation')` in real-time. Instructions card dynamically renders `formatDisplayDate(config.toDate)` and `config.feePerSubject`. Wrapped candidate details form, instructions, subject table, and pay action buttons in `!windowStatus.open` check with locked banner.
+- **Result**: Production build succeeds cleanly in 8.63s with 0 errors.
+
+### 506. Mandatory Upload, Submit to HOD, HOD Recommendation & Exam Cell Revaluation Workflow (`src/pages/student/Revaluation.jsx`, `src/pages/HODDashboard.jsx`, `src/pages/ExamCell/ExamFormSettingPage.jsx`)
+- **Goal**:
+  1. Enforce mandatory 60KB file upload validation for every selected subject row before proceeding to payment.
+  2. Enable "Submit to HOD" action for paid applications in `Revaluation.jsx`.
+  3. Integrate Revaluation Applications card, view modal with attached file downloads, and HOD Recommendation/Revoke actions in `HODDashboard.jsx`.
+  4. Integrate Submitted Revaluation Applications section under the Revaluation tab in `ExamFormSettingPage.jsx` for Exam Cell review and status updates.
+- **Changes**:
+  - `Revaluation.jsx`: Enforced `!r.fileData` validation check in `handleSubmitApplication`. Added `handleSubmitToHod` and `handleLoadRevokedApp` helpers and rendered `Submit to HOD` / `Edit` buttons in the student's history table.
+  - `HODDashboard.jsx`: Subscribed to `revaluation_applications` for HOD's department, rendered **Answer Script Revaluation Applications** pending table card, and added view modal with attached subject file downloads + `Recommend & Forward to Exam Cell` and `Revoke` modals.
+  - `ExamFormSettingPage.jsx`: Subscribed to `revaluation_applications` in real-time, rendered **Submitted Revaluation Applications** section under the **Revaluation** tab with status dropdown controls (`Submitted to HOD`, `Recommended by HOD`, `Approved`, `Result Published`, `Revoked by Exam Cell`).
+- **Result**: Production build succeeds cleanly in 8.62s with 0 errors.
+
+### 505. History Table Filter & Quota Tracking for Paid Revaluation Applications Only (`src/pages/student/Revaluation.jsx`)
+- **Goal**: Prevent unpaid/pending applications (`paymentStatus !== 'Paid'` / `status === 'Payment Pending'`) from populating under "My Revaluation Applications History" immediately upon clicking "Pay". Ensure applications only appear in history and count towards quota when payment is successfully confirmed.
+- **Changes**:
+  - `Revaluation.jsx`:
+    - Created `paidApplications` memo filtering `applications` to include only documents where `paymentStatus === 'Paid'` or `status !== 'Payment Pending'` and `status !== 'Cancelled'`.
+    - Updated `previouslyAppliedSubjectCodes` and `totalPreviouslyAppliedCount` calculations to use `paidApplications`.
+    - Updated "My Revaluation Applications History" table and header badge count to render `paidApplications` list exclusively.
+- **Result**: Production build succeeds cleanly in 7.66s with 0 errors.
+
+### 504. Fix Uncaught ReferenceError: photocopyAppliedSubjects in Revaluation (`src/pages/student/Revaluation.jsx`)
+- **Goal**: Fix runtime console error `Uncaught ReferenceError: photocopyAppliedSubjects is not defined` when loading `/student/revaluation`.
+- **Root Cause**: `photocopyAppliedSubjects` and `hasAutoLoadedPhotocopy` state declarations were missing from the component state section, causing `useEffect` hook at line 339 to throw a `ReferenceError`.
+- **Changes**:
+  - `Revaluation.jsx`: Declared `const [photocopyAppliedSubjects, setPhotocopyAppliedSubjects] = useState([]);` and `const [hasAutoLoadedPhotocopy, setHasAutoLoadedPhotocopy] = useState(false);` in state initialization block.
+- **Result**: Production build succeeds cleanly in 6.74s with 0 errors.
+
+### 503. Revaluation Subject Checkbox Selection, Persistent Quota & 60KB Upload Column (`src/pages/student/Revaluation.jsx`)
+- **Goal**:
+  1. Remove the "Add Row" button and replace the trash delete action with a subject selection Checkbox.
+  2. Prevent checking more than 5 subjects in total across all applications (enforce maximum 5 quota).
+  3. Prevent applying for the same subject a 2nd time (disable checkbox and display "Already Applied" badge for previously submitted subjects).
+  4. Preserve persistent quota tracking across sessions/logins (e.g. if 3 subjects were applied previously, remaining quota shows 2/5 and never resets to 0/5).
+  5. Add an `UPLOAD` column before the selection checkbox with a strict 60KB file size limit validation.
+- **Changes**:
+  - `Revaluation.jsx`:
+    - Removed `handleAddRow` and the `+ Add Row` button element.
+    - Replaced the `Action` delete column with a `Select` Checkbox column. Added `handleToggleSelectRow` with maximum 5 quota check.
+    - Added `previouslyAppliedSubjectCodes` memo to detect and disable subjects already submitted in previous applications.
+    - Added an `UPLOAD (MAX 60KB)` column with file input handling (`handleFileUpload`) enforcing `file.size <= 60 * 1024` (60KB).
+    - Updated fee calculation and form payload to include only checked/selected new subjects.
+- **Result**: Production build succeeds cleanly in 7.58s with 0 errors.
+
+### 502. Student Answer Script Revaluation Module (`src/pages/student/Revaluation.jsx`, `src/App.tsx`, `src/components/student/StudentLayout.jsx`)
+- **Goal**: Create the student Answer Script Revaluation module matching `Photocopy.jsx` design system, incorporating all 7 authentic candidate instructions and UI fields, replacing "Photocopy" with "Revaluation".
+- **Changes**:
+  - `Revaluation.jsx`:
+    - Created student page at `/student/revaluation` with real-time settings subscription (`exam_cell_settings/revaluation`, fallback ₹400/subject).
+    - Rendered the 7 authentic Anna University instructions to candidates card.
+    - Rendered candidate profile details card (`Verified Profile` badge, Name, Register Number, Department, Month & Year of Examination).
+    - Rendered subject details table (Semester No., Subject Code, Subject Title, Grade, Result, Price ₹400, Action) with 5-subject quota calculation.
+    - Integrated Exam Cell HDFC payment gateway session initiation and real-time order verification.
+    - Added student revaluation applications history table with status tracking and view modal.
+  - `App.tsx`: Added `/student/revaluation` route.
+  - `StudentLayout.jsx`: Added `Revaluation` item to `studentMenuItems`.
+- **Result**: Production build succeeds cleanly in 7.28s with 0 errors.
+
 ### 501. Auto-Prefill Applied Photocopy Subjects on Photocopy Problem Form & Remove Add Subject Button (`src/pages/student/PhotocopyProblem.jsx`)
 - **Goal**: Auto-populate all subjects for which the student applied for Photocopy in `Photocopy.jsx` into the `PhotocopyProblem.jsx` subject cards automatically, avoiding manual typing while keeping all fields fully editable, and remove the "Add Subject" button.
 - **Changes**:

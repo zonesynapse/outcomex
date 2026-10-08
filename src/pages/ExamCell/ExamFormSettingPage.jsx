@@ -207,6 +207,47 @@ export default function ExamFormSettingPage() {
     return () => unsub();
   }, []);
 
+  // Submitted Revaluation Applications state
+  const [revaluationApps, setRevaluationApps] = useState([]);
+  const [loadingRevalApps, setLoadingRevalApps] = useState(true);
+  const [selectedRevalApp, setSelectedRevalApp] = useState(null);
+  const [showRevalModal, setShowRevalModal] = useState(false);
+
+  useEffect(() => {
+    const q = query(collection(db, "revaluation_applications"), orderBy("appliedAt", "desc"));
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(app => {
+          const isPaid = app.paymentStatus === "Paid" || app.billAttached === true || !!app.electronicBill || !!app.transactionId;
+          const isConfirmedStatus = ["Payment Confirmed", "Submitted to HOD", "Recommended by HOD", "Approved", "Result Published", "Revoked by HOD", "Revoked by Exam Cell"].includes(app.status);
+          return (isPaid || isConfirmedStatus) && app.status !== "Payment Pending" && app.paymentStatus !== "Pending";
+        });
+      setRevaluationApps(list);
+      setLoadingRevalApps(false);
+    }, (err) => {
+      console.error("Error fetching revaluation applications:", err);
+      setLoadingRevalApps(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleUpdateRevaluationStatus = async (appId, newStatus) => {
+    setUpdatingStatusId(appId);
+    try {
+      await updateDoc(doc(db, "revaluation_applications", appId), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser?.email || "Exam Cell",
+      });
+      showToast(`Revaluation application status updated to "${newStatus}"`, "success");
+    } catch (err) {
+      console.error("Error updating revaluation status:", err);
+      showToast("Failed to update status: " + err.message, "error");
+    }
+    setUpdatingStatusId(null);
+  };
+
   const handleRevokeProblemByExamCell = async () => {
     if (!revokeProblemModal.app?.id) return;
     if (!revokeProblemMessage.trim()) {
@@ -815,6 +856,116 @@ export default function ExamFormSettingPage() {
                                 <RotateCcw size={13} /> Revoke
                               </button>
                             </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Submitted Revaluation Applications Section (Revaluation Tab) */}
+        {activeTab === "revaluation" && (
+          <div className="bg-white rounded-2xl border border-zinc-200 shadow-lg overflow-hidden space-y-0 mt-6">
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 px-6 py-4 flex flex-wrap items-center justify-between gap-3 text-white">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  <RefreshCw size={18} className="text-amber-300" /> Submitted Revaluation Applications
+                </h3>
+                <p className="text-xs text-blue-200 font-medium">
+                  Review student revaluation forms with attached candidate files, payment status, and HOD recommendations.
+                </p>
+              </div>
+              <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
+                Total Applications: {revaluationApps.length}
+              </span>
+            </div>
+
+            <div className="p-6">
+              {loadingRevalApps ? (
+                <div className="py-12 text-center text-zinc-400">
+                  <Loader2 size={24} className="mx-auto animate-spin mb-2 text-[#120c7a]" />
+                  <p className="text-xs font-medium">Loading submitted revaluation applications...</p>
+                </div>
+              ) : revaluationApps.length === 0 ? (
+                <div className="py-12 text-center text-zinc-400 bg-slate-50 rounded-xl border border-dashed border-zinc-200">
+                  <RefreshCw size={32} className="mx-auto mb-2 opacity-40 text-zinc-400" />
+                  <p className="text-sm font-bold text-zinc-600">No Submitted Revaluation Applications Yet</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">When students submit revaluation requests and HOD recommends them, they will appear here.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-zinc-200 rounded-xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 text-zinc-600 font-bold uppercase tracking-wider text-[10px] border-b border-zinc-200">
+                      <tr>
+                        <th className="p-3">Candidate / Reg No</th>
+                        <th className="p-3">Department</th>
+                        <th className="p-3">Subjects</th>
+                        <th className="p-3 text-center">Fee Status</th>
+                        <th className="p-3 text-center">HOD Recommendation</th>
+                        <th className="p-3 text-center">Status</th>
+                        <th className="p-3 text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 font-medium">
+                      {revaluationApps.map((app) => (
+                        <tr key={app.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-3">
+                            <div className="font-bold text-zinc-900">{app.studentName}</div>
+                            <div className="font-mono text-[11px] text-zinc-500">{app.regNo}</div>
+                          </td>
+                          <td className="p-3 font-semibold text-zinc-700">
+                            {formatDepartmentDisplay(app.department, app.programme)}
+                          </td>
+                          <td className="p-3">
+                            {Array.isArray(app.subjects) && app.subjects.length > 0 ? (
+                              <div className="space-y-1">
+                                {app.subjects.map((sub, idx) => (
+                                  <div key={idx} className="text-[11px]">
+                                    <span className="font-mono font-bold text-slate-900 mr-1">[{sub.subjectCode}]</span>
+                                    <span className="text-slate-700">{sub.subjectTitle}</span>
+                                    {sub.fileData ? (
+                                      <a href={sub.fileData} download={sub.fileName || `reval_${sub.subjectCode}.pdf`} className="ml-2 text-indigo-600 hover:underline font-bold inline-flex items-center gap-0.5">
+                                        <Download size={11} /> File
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : '—'}
+                          </td>
+                          <td className="p-3 text-center font-bold text-emerald-700">
+                            ₹{app.feeAmount || 0} (Paid ✓)
+                          </td>
+                          <td className="p-3 text-center">
+                            <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase ${app.status === 'Recommended by HOD' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-600'}`}>
+                              {app.status === 'Recommended by HOD' ? `✓ ${app.hodSignature || 'Recommended'}` : app.status || 'Pending'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <select
+                              value={app.status}
+                              onChange={(e) => handleUpdateRevaluationStatus(app.id, e.target.value)}
+                              disabled={updatingStatusId === app.id}
+                              className="bg-white border border-zinc-300 rounded-lg text-[11px] font-bold px-2 py-1 focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value="Submitted to HOD">Submitted to HOD</option>
+                              <option value="Recommended by HOD">Recommended by HOD</option>
+                              <option value="Approved">Approved</option>
+                              <option value="Result Published">Result Published</option>
+                              <option value="Revoked by Exam Cell">Revoked by Exam Cell</option>
+                            </select>
+                          </td>
+                          <td className="p-3 text-center">
+                            <button
+                              onClick={() => { setSelectedRevalApp(app); setShowRevalModal(true); }}
+                              className="px-3 py-1.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <Eye size={13} /> View
+                            </button>
                           </td>
                         </tr>
                       ))}

@@ -573,6 +573,15 @@ export default function HODDashboard() {
   const [revokeMessage, setRevokeMessage] = useState("");
   const [revokingPhoto, setRevokingPhoto] = useState(false);
 
+  // Revaluation Applications State
+  const [revaluationApps, setRevaluationApps] = useState([]);
+  const [selectedRevalApp, setSelectedRevalApp] = useState(null);
+  const [showRevalAppModal, setShowRevalAppModal] = useState(false);
+  const [recommendingReval, setRecommendingReval] = useState(false);
+  const [revokeRevalModal, setRevokeRevalModal] = useState({ open: false, app: null });
+  const [revokeRevalMessage, setRevokeRevalMessage] = useState("");
+  const [revokingReval, setRevokingReval] = useState(false);
+
   useEffect(() => {
     if (!hodDepartment) return;
     const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -605,6 +614,84 @@ export default function HODDashboard() {
     });
     return () => unsub();
   }, [hodDepartment]);
+
+  useEffect(() => {
+    if (!hodDepartment) return;
+    const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetDeptNorm = norm(hodDepartment);
+
+    const unsub = onSnapshot(collection(db, 'revaluation_applications'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const filtered = list.filter(app => {
+        const isPaid = app.paymentStatus === 'Paid' || app.billAttached === true || !!app.electronicBill || !!app.transactionId;
+        const isConfirmedStatus = ['Payment Confirmed', 'Submitted to HOD', 'Applied'].includes(app.status);
+        if ((!isPaid && !isConfirmedStatus) || app.status === 'Payment Pending' || app.paymentStatus === 'Pending') {
+          return false;
+        }
+        if (app.status === 'Recommended by HOD' || app.status === 'Revoked by HOD' || app.status === 'Revoked by Exam Cell' || app.status === 'Closed') {
+          return false;
+        }
+        if (!app.department) return true;
+        return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
+      });
+      filtered.sort((a, b) => {
+        const at = a.appliedAt?.toMillis ? a.appliedAt.toMillis() : new Date(a.appliedAt || 0).getTime();
+        const bt = b.appliedAt?.toMillis ? b.appliedAt.toMillis() : new Date(b.appliedAt || 0).getTime();
+        return bt - at;
+      });
+      setRevaluationApps(filtered);
+    });
+    return () => unsub();
+  }, [hodDepartment]);
+
+  const handleRecommendRevaluation = async (app) => {
+    if (!app?.id) return;
+    setRecommendingReval(true);
+    try {
+      const hodSig = hodName || auth.currentUser?.displayName || auth.currentUser?.email || 'HOD Signature';
+      const hodSigUrl = currentHodSignature || userProfile?.signatureUrl || '';
+      await updateDoc(doc(db, 'revaluation_applications', app.id), {
+        status: 'Recommended by HOD',
+        hodSignature: hodSig,
+        hodSignatureUrl: hodSigUrl,
+        hodRecommendedBy: auth.currentUser?.email || '',
+        hodRecommendedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Revaluation application for ${app.studentName || app.regNo} recommended & submitted to Exam Cell!`, 'success');
+      setShowRevalAppModal(false);
+      setSelectedRevalApp(null);
+    } catch (err) {
+      console.error("Recommend revaluation error:", err);
+      showToast("Failed to recommend application: " + err.message, "error");
+    }
+    setRecommendingReval(false);
+  };
+
+  const handleRevokeRevaluation = async () => {
+    if (!revokeRevalModal.app?.id) return;
+    if (!revokeRevalMessage.trim()) {
+      showToast("Please enter a reason/message for revoking the application.", "error");
+      return;
+    }
+    setRevokingReval(true);
+    try {
+      await updateDoc(doc(db, 'revaluation_applications', revokeRevalModal.app.id), {
+        status: 'Revoked by HOD',
+        revokeReason: revokeRevalMessage.trim(),
+        revokedBy: auth.currentUser?.email || '',
+        revokedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      showToast(`Application for ${revokeRevalModal.app.studentName || revokeRevalModal.app.regNo} revoked & returned to student for correction.`, 'success');
+      setRevokeRevalModal({ open: false, app: null });
+      setRevokeRevalMessage("");
+    } catch (err) {
+      console.error("Revoke revaluation error:", err);
+      showToast("Failed to revoke application: " + err.message, "error");
+    }
+    setRevokingReval(false);
+  };
 
   const handleRecommendPhotocopy = async (app) => {
     if (!app?.id) return;
@@ -4100,6 +4187,85 @@ const isDeptMatch = (docDept, targetDept) => {
           </div>
         )}
 
+        {/* ═══ Answer Script Revaluation Applications (HOD Approval & Recommendation) ═══ */}
+        {revaluationApps.length > 0 && (
+          <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 mt-6">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4 border-b border-zinc-100 pb-4">
+              <div>
+                <h2 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                  <RefreshCw size={18} className="text-[#120c7a]" />
+                  Answer Script Revaluation Applications
+                  <span className="text-xs bg-indigo-100 text-indigo-700 px-2.5 py-0.5 rounded-full font-bold">
+                    {hodDepartment || "Department"}
+                  </span>
+                  <span className="text-xs bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">
+                    {revaluationApps.length} Pending Recommendation
+                  </span>
+                </h2>
+                <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+                  Review candidate details, subjects, and attached payment bill before recommending to Exam Cell
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead>
+                  <tr className="bg-zinc-50 text-zinc-700 font-bold border-b border-zinc-200">
+                    <th className="p-3">Register No</th>
+                    <th className="p-3">Student Name</th>
+                    <th className="p-3">Department</th>
+                    <th className="p-3 text-center">Subject(s)</th>
+                    <th className="p-3 text-center">Fee Status</th>
+                    <th className="p-3 text-center">HOD Recommendation</th>
+                    <th className="p-3 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {revaluationApps.map((app) => (
+                    <tr key={app.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-3 font-mono font-bold text-zinc-900">{app.regNo || '—'}</td>
+                      <td className="p-3 font-bold text-zinc-800">{app.studentName}</td>
+                      <td className="p-3 font-medium text-zinc-600">{formatDepartmentDisplay(app.department, app.programme)}</td>
+                      <td className="p-3 text-center font-bold text-[#120c7a]">
+                        {app.subjectCount || (Array.isArray(app.subjects) ? app.subjects.length : 1)} Subject(s)
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+                          ✓ PAID (Bill Attached)
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase ${app.status === 'Recommended by HOD' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : app.status === 'Revoked by HOD' ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-blue-50 text-blue-800 border-blue-200'}`}>
+                          {app.status === 'Recommended by HOD' ? `✓ Recommended by HOD (${app.hodSignature || ''})` : app.status === 'Revoked by HOD' ? 'Revoked (Returned to Student)' : 'Pending Recommendation'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => { setSelectedRevalApp(app); setShowRevalAppModal(true); }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] hover:bg-[#0f0a66] text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                          >
+                            <Eye size={13} /> View Form
+                          </button>
+                          {app.status !== 'Recommended by HOD' && app.status !== 'Revoked by HOD' && (
+                            <button
+                              onClick={() => { setRevokeRevalModal({ open: true, app }); setRevokeRevalMessage(""); }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                            >
+                              <RotateCcw size={13} /> Revoke
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ═══ Answer Script Photocopy Problem Discrepancies (HOD Review & Forward) ═══ */}
         {photocopyProblemApps.length > 0 && (
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 mt-6">
@@ -6446,6 +6612,163 @@ const isDeptMatch = (docDept, targetDept) => {
                   className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
                 >
                   {revokingPhoto ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  Confirm Revoke & Return
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revaluation Application View Modal */}
+      {showRevalAppModal && selectedRevalApp && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowRevalAppModal(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden border border-slate-200" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-950 px-6 py-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-2xl backdrop-blur-sm">
+                  <RefreshCw size={22} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">Answer Script Revaluation Form</h3>
+                  <p className="text-blue-200 text-[11px] font-medium">Candidate: {selectedRevalApp.studentName} ({selectedRevalApp.regNo})</p>
+                </div>
+              </div>
+              <button onClick={() => setShowRevalAppModal(false)} className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <span className="text-slate-400 font-bold block text-[10px] uppercase">Register No</span>
+                  <span className="font-mono font-bold text-slate-900">{selectedRevalApp.regNo}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-bold block text-[10px] uppercase">Student Name</span>
+                  <span className="font-bold text-slate-900">{selectedRevalApp.studentName}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-bold block text-[10px] uppercase">Department</span>
+                  <span className="font-bold text-slate-900">{selectedRevalApp.department}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-bold block text-[10px] uppercase">Fee Amount</span>
+                  <span className="font-bold text-emerald-700">₹{selectedRevalApp.feeAmount} (Paid ✓)</span>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider mb-3">Applied Revaluation Subjects</h4>
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="p-3">Sem</th>
+                        <th className="p-3">Code</th>
+                        <th className="p-3">Title</th>
+                        <th className="p-3 text-center">Grade</th>
+                        <th className="p-3 text-center">Result</th>
+                        <th className="p-3 text-center">Attached File</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-semibold">
+                      {Array.isArray(selectedRevalApp.subjects) && selectedRevalApp.subjects.map((sub, idx) => (
+                        <tr key={idx}>
+                          <td className="p-3 text-slate-500">{sub.semesterNo || '—'}</td>
+                          <td className="p-3 font-mono text-slate-900">{sub.subjectCode}</td>
+                          <td className="p-3 text-slate-800">{sub.subjectTitle}</td>
+                          <td className="p-3 text-center"><span className="bg-blue-50 text-[#120c7a] px-2 py-0.5 rounded font-black">{sub.grade || 'U'}</span></td>
+                          <td className="p-3 text-center"><span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black">{sub.result || 'Fail'}</span></td>
+                          <td className="p-3 text-center">
+                            {sub.fileData ? (
+                              <a href={sub.fileData} download={sub.fileName || `reval_${sub.subjectCode}.pdf`} className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline">
+                                <Download size={13} /> Download ({sub.fileSize ? `${Math.round(sub.fileSize / 1024)}KB` : '<60KB'})
+                              </a>
+                            ) : (
+                              <span className="text-slate-400 text-[11px]">No file</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button onClick={() => setShowRevalAppModal(false)} className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 transition cursor-pointer">
+                Close
+              </button>
+              <button
+                onClick={() => handleRecommendRevaluation(selectedRevalApp)}
+                disabled={recommendingReval}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer"
+              >
+                {recommendingReval ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                Recommended & Forward to Exam Cell
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HOD Revaluation Revoke Modal */}
+      {revokeRevalModal.open && (
+        <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setRevokeRevalModal({ open: false, app: null })}>
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden border border-amber-100" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-amber-900 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/15 rounded-2xl backdrop-blur-sm text-white">
+                  <RotateCcw size={22} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-base leading-tight">Revoke Revaluation Application</h3>
+                  <p className="text-amber-100 text-[11px] font-semibold">Send back to candidate for corrections (Fee stays Paid ✓)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevokeRevalModal({ open: false, app: null })}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 text-xs font-semibold text-amber-900 space-y-1">
+                <p><strong>Candidate:</strong> {revokeRevalModal.app?.studentName} ({revokeRevalModal.app?.regNo})</p>
+                <p className="text-[11px] text-amber-700">Enter your feedback or correction instructions below. The candidate can edit details or uploads and re-submit to HOD.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Revoke Reason / Correction Instructions *
+                </label>
+                <textarea
+                  value={revokeRevalMessage}
+                  onChange={(e) => setRevokeRevalMessage(e.target.value)}
+                  placeholder="e.g. Please re-upload clearer answer script document and re-submit."
+                  rows={4}
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-2xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-amber-500 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setRevokeRevalModal({ open: false, app: null })}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRevokeRevaluation}
+                  disabled={revokingReval || !revokeRevalMessage.trim()}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  {revokingReval ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
                   Confirm Revoke & Return
                 </button>
               </div>
